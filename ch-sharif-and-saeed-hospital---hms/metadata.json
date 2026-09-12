@@ -1,0 +1,6 @@
+{
+  "name": "CH Sharif and Saeed Hospital - HMS",
+  "description": "Production-grade Hospital Management System for CH Sharif and Saeed Hospital, developed by iSysware Software Solutions.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,234 @@
+import React, { useState } from 'react';
+import {
+  X,
+  FileText,
+  FileSpreadsheet,
+  Printer,
+  Download,
+  CheckCircle2,
+  AlertCircle,
+  Building2,
+  Calendar,
+  UserCheck,
+} from 'lucide-react';
+import { HospitalService, ServiceFilterState } from '../../../types/serviceRates';
+import { User } from '../../../types';
+import {
+  downloadServicesPDF,
+  downloadServicesExcel,
+} from '../../../services/serviceRatesExportService';
+import {
+  getHospitalProfile,
+  getProfileFieldValue,
+} from '../../../services/hospitalProfileService';
+import { formatDisplayDate } from '../../../utils/dateConstants';
+
+interface ServiceExportModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  services: HospitalService[];
+  filters: ServiceFilterState;
+  currentUser: User | null;
+}
+
+export const ServiceExportModal: React.FC<ServiceExportModalProps> = ({
+  isOpen,
+  onClose,
+  services,
+  filters,
+  currentUser,
+}) => {
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [downloadingExcel, setDownloadingExcel] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  if (!isOpen) return null;
+
+  const profile = getHospitalProfile();
+  const hospitalName = profile.name || 'CH Sharif and Saeed Hospital';
+  const regNo = getProfileFieldValue(profile.registrationNumber);
+  const taxNo = getProfileFieldValue(profile.taxNumber);
+  const phone = getProfileFieldValue(profile.primaryPhone);
+
+  const generatedByName = currentUser?.name || 'Prof. Dr. Tariq Saeed';
+  const generatedByRole = currentUser?.role || 'Super Admin';
+  const generatedDate = formatDisplayDate(new Date());
+
+  const handleDownloadPDF = async () => {
+    try {
+      setDownloadingPdf(true);
+      await downloadServicesPDF(services, filters, currentUser);
+      setToastMessage('PDF report generated and downloaded successfully.');
+      setTimeout(() => setToastMessage(null), 4000);
+    } catch (err) {
+      console.error(err);
+      setToastMessage('Failed to generate PDF. Please try again.');
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
+
+  const handleDownloadExcel = async () => {
+    try {
+      setDownloadingExcel(true);
+      await downloadServicesExcel(services, filters, currentUser);
+      setToastMessage('Excel workbook (.xlsx) downloaded successfully.');
+      setTimeout(() => setToastMessage(null), 4000);
+    } catch (err) {
+      console.error(err);
+      setToastMessage('Failed to export Excel. Please try again.');
+    } finally {
+      setDownloadingExcel(false);
+    }
+  };
+
+  const handleBrowserPrint = () => {
+    window.print();
+  };
+
+  return (
+    <div
+      id="service-export-modal-backdrop"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4 overflow-y-auto"
+    >
+      <div
+        id="service-export-modal-content"
+        className="bg-white w-full max-w-xl rounded-2xl shadow-xl border border-slate-200 overflow-hidden my-8"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200/80 bg-slate-50/60">
+          <div>
+            <h2 className="text-base font-bold text-slate-800">
+              Export Services & Rates Directory
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Official hospital charge master export with governance metadata
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-6 space-y-5">
+          {/* Toast Notification */}
+          {toastMessage && (
+            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{toastMessage}</span>
+            </div>
+          )}
+
+          {/* Scope Card */}
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500 font-medium">Export Scope:</span>
+              <span className="font-bold text-slate-800">
+                {services.length} Service{services.length === 1 ? '' : 's'} Selected
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500 font-medium">Hospital Entity:</span>
+              <span className="font-semibold text-slate-800">{hospitalName}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500 font-medium">Hospital Reg / NTN:</span>
+              <span className="font-medium text-slate-700">
+                Reg: {regNo} • NTN: {taxNo}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500 font-medium">Generated By:</span>
+              <span className="font-medium text-slate-700">
+                {generatedByName} ({generatedByRole})
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500 font-medium">Date of Export:</span>
+              <span className="font-medium text-slate-700">{generatedDate}</span>
+            </div>
+          </div>
+
+          {/* Export Action Buttons */}
+          <div className="space-y-3">
+            {/* Direct Download PDF */}
+            <button
+              id="export-services-pdf-btn"
+              onClick={handleDownloadPDF}
+              disabled={downloadingPdf}
+              className="w-full flex items-center justify-between p-3.5 rounded-xl border border-emerald-200 bg-[#effaf5] hover:bg-[#e4f6ef] text-[#08775A] transition-all duration-200 shadow-xs group"
+            >
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-lg bg-emerald-100 text-[#08775A] group-hover:scale-105 transition-transform">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div className="text-left">
+                  <div className="text-sm font-bold">Download Official PDF</div>
+                  <div className="text-xs text-emerald-700/80">
+                    Landscape A4 format with hospital registration and 8 structured columns
+                  </div>
+                </div>
+              </div>
+              <Download className="w-4 h-4 text-[#08775A]" />
+            </button>
+
+            {/* Direct Download Excel */}
+            <button
+              id="export-services-excel-btn"
+              onClick={handleDownloadExcel}
+              disabled={downloadingExcel}
+              className="w-full flex items-center justify-between p-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 transition-all duration-200 shadow-xs group"
+            >
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-lg bg-emerald-50 text-emerald-700 group-hover:scale-105 transition-transform">
+                  <FileSpreadsheet className="w-5 h-5" />
+                </div>
+                <div className="text-left">
+                  <div className="text-sm font-bold">Download Excel Workbook (.xlsx)</div>
+                  <div className="text-xs text-slate-500">
+                    Multi-sheet file including Master Catalog and Export Metadata audit
+                  </div>
+                </div>
+              </div>
+              <Download className="w-4 h-4 text-slate-400" />
+            </button>
+
+            {/* Browser Print / Preview */}
+            <button
+              id="export-services-print-btn"
+              onClick={handleBrowserPrint}
+              className="w-full flex items-center justify-between p-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 transition-all duration-200 shadow-xs group"
+            >
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-lg bg-slate-100 text-slate-600 group-hover:scale-105 transition-transform">
+                  <Printer className="w-5 h-5" />
+                </div>
+                <div className="text-left">
+                  <div className="text-sm font-bold">Print / Browser Preview</div>
+                  <div className="text-xs text-slate-500">
+                    Open browser print dialog formatted for physical paper or digital printer
+                  </div>
+                </div>
+              </div>
+              <Printer className="w-4 h-4 text-slate-400" />
+            </button>
+          </div>
+
+          {/* Footer */}
+          <div className="flex justify-end pt-3 border-t border-slate-100">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};

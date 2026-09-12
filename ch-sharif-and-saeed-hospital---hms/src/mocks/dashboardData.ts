@@ -1,0 +1,413 @@
+import { NotificationItem } from '../types';
+
+export interface KPICardData {
+  id: string;
+  title: string;
+  value: string;
+  numericValue?: number;
+  change: string;
+  isPositive: boolean;
+  period: string;
+  iconName: string;
+  colorClass: string;
+  accentBg: string;
+}
+
+export const TOP_KPI_CARDS: KPICardData[] = [
+  {
+    id: 'kpi_today_patients',
+    title: "Today's Patients",
+    value: '284',
+    change: '+14.2%',
+    isPositive: true,
+    period: 'vs yesterday',
+    iconName: 'Users',
+    colorClass: 'text-[#08775A]',
+    accentBg: 'bg-[#effaf5] border-[#c2e7db]',
+  },
+  {
+    id: 'kpi_opd_visits',
+    title: 'OPD Visits',
+    value: '192',
+    change: '+8.6%',
+    isPositive: true,
+    period: '14 consultants active',
+    iconName: 'Stethoscope',
+    colorClass: 'text-[#08775A]',
+    accentBg: 'bg-[#effaf5] border-[#c2e7db]',
+  },
+  {
+    id: 'kpi_emergency_visits',
+    title: 'Emergency Visits',
+    value: '38',
+    change: '+3 cases',
+    isPositive: false,
+    period: '6 critical in triage',
+    iconName: 'AlertTriangle',
+    colorClass: 'text-rose-700',
+    accentBg: 'bg-rose-50 border-rose-200',
+  },
+  {
+    id: 'kpi_current_admissions',
+    title: 'Current Admissions',
+    value: '54',
+    change: '82% Occupancy',
+    isPositive: true,
+    period: '68 total beds',
+    iconName: 'Bed',
+    colorClass: 'text-[#08775A]',
+    accentBg: 'bg-[#effaf5] border-[#c2e7db]',
+  },
+  {
+    id: 'kpi_today_billing',
+    title: "Today's Billing",
+    value: 'PKR 1,420,500',
+    change: '+18.5%',
+    isPositive: true,
+    period: '342 invoiced slips',
+    iconName: 'Receipt',
+    colorClass: 'text-emerald-700',
+    accentBg: 'bg-emerald-50 border-emerald-200',
+  },
+  {
+    id: 'kpi_today_collections',
+    title: "Today's Collections",
+    value: 'PKR 1,280,000',
+    change: '90.1% Realized',
+    isPositive: true,
+    period: 'Cash & electronic POS',
+    iconName: 'CreditCard',
+    colorClass: 'text-teal-700',
+    accentBg: 'bg-teal-50 border-teal-200',
+  },
+  {
+    id: 'kpi_outstanding_balance',
+    title: 'Outstanding Balance',
+    value: 'PKR 140,500',
+    change: '-4.2%',
+    isPositive: true,
+    period: 'Pending panel claims',
+    iconName: 'Clock',
+    colorClass: 'text-amber-700',
+    accentBg: 'bg-amber-50 border-amber-200',
+  },
+  {
+    id: 'kpi_pharmacy_sales',
+    title: 'Pharmacy Sales',
+    value: 'PKR 465,200',
+    change: '+11.4%',
+    isPositive: true,
+    period: '312 prescriptions dispensed',
+    iconName: 'Pill',
+    colorClass: 'text-[#08775A]',
+    accentBg: 'bg-[#effaf5] border-[#c2e7db]',
+  },
+];
+
+export const HOURLY_PATIENT_FLOW = [
+  { time: '08:00', opd: 22, emergency: 4, admitted: 2 },
+  { time: '09:00', opd: 48, emergency: 6, admitted: 5 },
+  { time: '10:00', opd: 65, emergency: 8, admitted: 7 },
+  { time: '11:00', opd: 78, emergency: 9, admitted: 11 },
+  { time: '12:00', opd: 62, emergency: 12, admitted: 8 },
+  { time: '13:00', opd: 38, emergency: 7, admitted: 4 },
+  { time: '14:00', opd: 50, emergency: 8, admitted: 6 },
+  { time: '15:00', opd: 45, emergency: 10, admitted: 5 },
+  { time: '16:00', opd: 34, emergency: 14, admitted: 6 },
+];
+
+export const DEPARTMENT_PATIENT_STATS = [
+  { name: 'Cardiology', count: 68, percentage: 24, color: '#08775A' },
+  { name: 'General Medicine', count: 54, percentage: 19, color: '#149E75' },
+  { name: 'Pediatrics', count: 46, percentage: 16, color: '#22c55e' },
+  { name: 'Orthopedics', count: 42, percentage: 15, color: '#0f766e' },
+  { name: 'Gynaecology', count: 38, percentage: 13, color: '#334155' },
+  { name: 'Surgery & ER', count: 36, percentage: 13, color: '#e11d48' },
+];
+
+export const REVENUE_TREND_DATA = [
+  { day: 'Mon', opd: 410000, ipd: 650000, pharmacy: 310000, lab: 180000 },
+  { day: 'Tue', opd: 460000, ipd: 590000, pharmacy: 340000, lab: 210000 },
+  { day: 'Wed', opd: 520000, ipd: 720000, pharmacy: 390000, lab: 240000 },
+  { day: 'Thu', opd: 490000, ipd: 680000, pharmacy: 360000, lab: 220000 },
+  { day: 'Fri', opd: 430000, ipd: 540000, pharmacy: 320000, lab: 195000 },
+  { day: 'Sat', opd: 580000, ipd: 810000, pharmacy: 420000, lab: 290000 },
+  { day: 'Sun (Today)', opd: 480500, ipd: 710000, pharmacy: 465200, lab: 230000 },
+];
+
+export const PAYMENT_METHODS_BREAKDOWN = [
+  { method: 'Cash', amount: 'PKR 640,000', share: '50%', color: 'bg-emerald-600' },
+  { method: 'POS Card', amount: 'PKR 384,000', share: '30%', color: 'bg-[#08775A]' },
+  { method: 'JazzCash / EasyPaisa', amount: 'PKR 153,600', share: '12%', color: 'bg-amber-600' },
+  { method: 'Corporate Panel', amount: 'PKR 102,400', share: '8%', color: 'bg-slate-700' },
+];
+
+export const RECENT_ADMISSIONS = [
+  {
+    mrn: 'MRN-2026-0842',
+    name: 'Muhammad Tariq Khan',
+    ageGender: '56 / M',
+    ward: 'Executive Suite 304',
+    bed: 'Bed 304-A',
+    admittedAt: 'Today, 06:15 AM',
+    consultant: 'Prof. Dr. Tariq Saeed',
+    diagnosis: 'Acute Coronary Syndrome',
+    status: 'Admitted' as const,
+  },
+  {
+    mrn: 'MRN-2026-0839',
+    name: 'Zubaida Begum',
+    ageGender: '62 / F',
+    ward: 'ICU High Dependency',
+    bed: 'ICU Bed 04',
+    admittedAt: 'Today, 04:30 AM',
+    consultant: 'Dr. Salman Haider',
+    diagnosis: 'Severe DKA with Sepsis',
+    status: 'Admitted' as const,
+  },
+  {
+    mrn: 'MRN-2026-0821',
+    name: 'Hamza Farooq',
+    ageGender: '28 / M',
+    ward: 'Male Surgical Ward',
+    bed: 'Bed MS-12',
+    admittedAt: 'Yesterday, 10:45 PM',
+    consultant: 'Dr. Kamran Akram',
+    diagnosis: 'Post Laparoscopic Appendectomy',
+    status: 'Admitted' as const,
+  },
+  {
+    mrn: 'MRN-2026-0815',
+    name: 'Saima Jamil',
+    ageGender: '34 / F',
+    ward: 'Maternity Ward',
+    bed: 'Bed MAT-06',
+    admittedAt: 'Yesterday, 02:20 PM',
+    consultant: 'Dr. Farhana Yasmeen',
+    diagnosis: 'Elective C-Section (Post-op Day 1)',
+    status: 'Admitted' as const,
+  },
+  {
+    mrn: 'MRN-2026-0790',
+    name: 'Abdul Rehman',
+    ageGender: '45 / M',
+    ward: 'Ortho Ward A',
+    bed: 'Bed OR-02',
+    admittedAt: 'Sep 4, 09:10 AM',
+    consultant: 'Dr. M. Sharif Chaudhary',
+    diagnosis: 'Closed Tibia-Fibula Fracture',
+    status: 'Discharged' as const,
+  },
+];
+
+export const LOW_STOCK_MEDICINES = [
+  {
+    itemCode: 'MED-INJ-004',
+    name: 'Inj. Ceftriaxone 1g IV',
+    category: 'Injectables / Antibiotics',
+    currentStock: 24,
+    minThreshold: 100,
+    unit: 'Vials',
+    status: 'Low Stock' as const,
+  },
+  {
+    itemCode: 'MED-INJ-012',
+    name: 'Inj. Heparin 25,000 IU',
+    category: 'Cardiovascular / ICU',
+    currentStock: 8,
+    minThreshold: 40,
+    unit: 'Vials',
+    status: 'Low Stock' as const,
+  },
+  {
+    itemCode: 'MED-TAB-089',
+    name: 'Tab. Augmentin 625mg',
+    category: 'Antibiotics / Oral',
+    currentStock: 45,
+    minThreshold: 200,
+    unit: 'Strips',
+    status: 'Low Stock' as const,
+  },
+  {
+    itemCode: 'CON-SUR-033',
+    name: 'Surgical Gloves 7.5 Latex',
+    category: 'Operation Theater Consumables',
+    currentStock: 0,
+    minThreshold: 150,
+    unit: 'Pairs',
+    status: 'Out of Stock' as const,
+  },
+];
+
+export const EXPIRING_MEDICINES = [
+  {
+    itemCode: 'MED-INS-002',
+    name: 'Humalog Mix 25 KwikPen',
+    batchNo: 'HM-2024-B9',
+    shelf: 'Cold Storage Shelf C',
+    expiryDate: '2026-09-24',
+    daysRemaining: 18,
+    quantity: 15,
+    status: 'Near Expiry' as const,
+  },
+  {
+    itemCode: 'MED-INJ-044',
+    name: 'Inj. Meropenem 1g',
+    batchNo: 'MR-9901-X',
+    shelf: 'Rack 4 - Box B',
+    expiryDate: '2026-09-30',
+    daysRemaining: 24,
+    quantity: 32,
+    status: 'Near Expiry' as const,
+  },
+  {
+    itemCode: 'MED-SYR-018',
+    name: 'Brufen Syrup 120ml',
+    batchNo: 'BF-8812',
+    shelf: 'Pediatric Section P1',
+    expiryDate: '2026-08-30',
+    daysRemaining: -7,
+    quantity: 6,
+    status: 'Expired' as const,
+  },
+];
+
+export const RECENT_TRANSACTIONS = [
+  {
+    id: 'TXN-2026-9812',
+    mrn: 'MRN-2026-0842',
+    patientName: 'Muhammad Tariq Khan',
+    service: 'Coronary Angiography Package',
+    amount: 85000,
+    method: 'POS Card',
+    status: 'Paid' as const,
+    timestamp: '10:45 AM',
+  },
+  {
+    id: 'TXN-2026-9811',
+    mrn: 'MRN-2026-0899',
+    patientName: 'Rasheed Ahmed',
+    service: 'Specialist OPD Consultation',
+    amount: 3500,
+    method: 'Cash',
+    status: 'Paid' as const,
+    timestamp: '10:42 AM',
+  },
+  {
+    id: 'TXN-2026-9810',
+    mrn: 'MRN-2026-0744',
+    patientName: 'Khadija Bibi',
+    service: 'Pharmacy Dispensing Slip #312',
+    amount: 8450,
+    method: 'JazzCash',
+    status: 'Paid' as const,
+    timestamp: '10:38 AM',
+  },
+  {
+    id: 'TXN-2026-9809',
+    mrn: 'MRN-2026-0820',
+    patientName: 'State Life Panel / Patient: A. Qadir',
+    service: 'IPD Interim Bill - Bed #18',
+    amount: 45000,
+    method: 'Corporate Panel',
+    status: 'Pending' as const,
+    timestamp: '10:20 AM',
+  },
+  {
+    id: 'TXN-2026-9808',
+    mrn: 'MRN-2026-0902',
+    patientName: 'Kamran Bhatti',
+    service: 'Digital X-Ray Cervical Spine',
+    amount: 2200,
+    method: 'Cash',
+    status: 'Paid' as const,
+    timestamp: '10:15 AM',
+  },
+];
+
+export const RECENT_USER_ACTIVITY = [
+  {
+    id: 'act_1',
+    user: 'Super Admin',
+    role: 'Super Admin',
+    action: 'Audited Doctor Commission Rates',
+    module: 'Administration',
+    ip: '192.168.1.10 (Admin Office)',
+    time: '12 mins ago',
+  },
+  {
+    id: 'act_2',
+    user: 'Asif Mehmood',
+    role: 'Front Desk & Billing',
+    action: 'Generated OPD Slip #OPD-2026-192',
+    module: 'Billing Desk',
+    ip: '192.168.1.42 (Counter 1)',
+    time: '24 mins ago',
+  },
+  {
+    id: 'act_3',
+    user: 'Dr. Farhana Yasmeen',
+    role: 'Clinical Staff',
+    action: 'Updated Inpatient Clinical Note (Bed MAT-06)',
+    module: 'Admissions',
+    ip: '192.168.2.15 (Ward Workstation)',
+    time: '38 mins ago',
+  },
+  {
+    id: 'act_4',
+    user: 'Naveed Akhtar',
+    role: 'Pharmacy Pharmacist',
+    action: 'Dispensed Prescription RX-9941',
+    module: 'Pharmacy Sales',
+    ip: '192.168.1.80 (Main Pharmacy)',
+    time: '45 mins ago',
+  },
+  {
+    id: 'act_5',
+    user: 'Zahid Iqbal',
+    role: 'Inventory Storekeeper',
+    action: 'Approved Goods Received Note GRN-2026-018',
+    module: 'Inventory GRN',
+    ip: '192.168.3.12 (Stores Server)',
+    time: '1 hour ago',
+  },
+];
+
+export const MOCK_NOTIFICATIONS: NotificationItem[] = [
+  {
+    id: 'notif_1',
+    title: 'Emergency Triage Alert',
+    message: 'Patient with chest pain admitted to ER Red Zone Bed 01.',
+    time: '5m ago',
+    read: false,
+    type: 'urgent',
+    module: 'Emergency',
+  },
+  {
+    id: 'notif_2',
+    title: 'Low Medicine Threshold',
+    message: 'Inj. Ceftriaxone 1g IV has reached 24 vials (reorder level: 100).',
+    time: '22m ago',
+    read: false,
+    type: 'warning',
+    module: 'Pharmacy',
+  },
+  {
+    id: 'notif_3',
+    title: 'Bed Vacated & Sanitized',
+    message: 'Bed 204 in Semi-Private Ward A is now available for admissions.',
+    time: '45m ago',
+    read: true,
+    type: 'success',
+    module: 'Admissions',
+  },
+  {
+    id: 'notif_4',
+    title: 'Daily Billing Target',
+    message: "Today's hospital billing crossed PKR 1.4 Million at 11:30 AM.",
+    time: '1h ago',
+    read: true,
+    type: 'info',
+    module: 'Billing',
+  },
+];

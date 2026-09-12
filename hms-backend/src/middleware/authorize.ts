@@ -1,0 +1,68 @@
+import type { NextFunction, Request, Response } from 'express';
+import { AuthenticationError, AuthorizationError } from '@/shared/errors/AppError';
+import type { ModuleKey, PortalRole } from '@/config/constants';
+
+export type Action = 'view' | 'create' | 'edit' | 'delete' | 'approve' | 'export' | 'refund' | 'void' | 'config';
+
+/**
+ * Declarative role → module → action policy map (§3.3, §7.9), loaded once
+ * at boot. `authorize(module, action)` checks `policy[role][module]`.
+ *
+ * PHASE 1 SCOPE: seeded with the `identity` module only, since that is the
+ * only module with implemented endpoints so far. Extend this map as each
+ * module in §3.3's Access-Control Matrix is implemented — do NOT scatter
+ * ad hoc `if (role === ...)` checks through controllers instead (§3.4).
+ *
+ * Record-scoped ownership checks (e.g. "own settlement only", §3.5) are
+ * NOT expressible here — they are enforced in the service layer against the
+ * specific row, per §7.9.
+ */
+type Policy = Partial<Record<PortalRole, Partial<Record<ModuleKey, Set<Action>>>>>;
+
+const fullAccess: Action[] = ['view', 'create', 'edit', 'delete', 'approve', 'export', 'refund', 'void', 'config'];
+
+const policy: Policy = {
+  SUPER_ADMIN: {
+    identity: new Set(fullAccess),
+    setup: new Set(fullAccess),
+    frontdesk: new Set(fullAccess),
+  },
+  ADMIN: {
+    identity: new Set(fullAccess),
+    setup: new Set(fullAccess),
+    frontdesk: new Set(fullAccess),
+  },
+  // Read-only oversight of Hospital Setup (§3.3 matrix: Admission = "V (read-only)").
+  ADMISSION: {
+    setup: new Set<Action>(['view']),
+    frontdesk: new Set<Action>(['view']),
+  },
+  // Front Desk/Billing: full patient-registry CRUD (§3.3), read-only Setup
+  // (services/wards/panels are read in the billing flow, §8.4/§8.7).
+  FRONT_DESK_BILLING: {
+    setup: new Set<Action>(['view']),
+    frontdesk: new Set(fullAccess),
+  },
+};
+
+/**
+ * Per-route authorization middleware (§7.6 step 7). Must run after
+ * `authenticate`. Rejects with `403` independent of what the frontend sent
+ * or hid — the backend is the source of truth (§3.4).
+ */
+export function authorize(module: ModuleKey, action: Action) {
+  return (req: Request, _res: Response, next: NextFunction) => {
+    if (!req.user) {
+      throw new AuthenticationError();
+    }
+
+    const allowed = policy[req.user.role]?.[module]?.has(action) ?? false;
+    if (!allowed) {
+      throw new AuthorizationError(
+        `Role ${req.user.role} is not permitted to ${action} on module ${module}`,
+      );
+    }
+
+    next();
+  };
+}
