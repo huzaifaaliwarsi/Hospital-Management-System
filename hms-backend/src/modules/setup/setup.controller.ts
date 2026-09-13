@@ -27,7 +27,7 @@ export const setupController = {
     res.json({ data: await setupService.updateDepartment(req.params.id as string, req.body, actorId(req)) });
   },
   deactivateDepartment: async (req: Request, res: Response) => {
-    res.json({ data: await setupService.deactivateDepartment(req.params.id as string) });
+    res.json({ data: await setupService.deactivateDepartment(req.params.id as string, actorId(req)) });
   },
 
   // Service Rates
@@ -38,10 +38,10 @@ export const setupController = {
     res.status(201).json({ data: await setupService.createServiceRate(req.body, actorId(req)) });
   },
   updateServiceRate: async (req: Request, res: Response) => {
-    res.json({ data: await setupService.updateServiceRate(req.params.id as string, req.body) });
+    res.json({ data: await setupService.updateServiceRate(req.params.id as string, req.body, actorId(req)) });
   },
   deactivateServiceRate: async (req: Request, res: Response) => {
-    res.json({ data: await setupService.deactivateServiceRate(req.params.id as string) });
+    res.json({ data: await setupService.deactivateServiceRate(req.params.id as string, actorId(req)) });
   },
 
   // Wards / Rooms / Beds
@@ -52,19 +52,19 @@ export const setupController = {
     res.status(201).json({ data: await setupService.createWard(req.body, actorId(req)) });
   },
   updateWard: async (req: Request, res: Response) => {
-    res.json({ data: await setupService.updateWard(req.params.id as string, req.body) });
+    res.json({ data: await setupService.updateWard(req.params.id as string, req.body, actorId(req)) });
   },
   createRoom: async (req: Request, res: Response) => {
     res.status(201).json({ data: await setupService.createRoom(req.body, actorId(req)) });
   },
   updateRoom: async (req: Request, res: Response) => {
-    res.json({ data: await setupService.updateRoom(req.params.id as string, req.body) });
+    res.json({ data: await setupService.updateRoom(req.params.id as string, req.body, actorId(req)) });
   },
   createBed: async (req: Request, res: Response) => {
     res.status(201).json({ data: await setupService.createBed(req.body, actorId(req)) });
   },
   updateBed: async (req: Request, res: Response) => {
-    res.json({ data: await setupService.updateBed(req.params.id as string, req.body) });
+    res.json({ data: await setupService.updateBed(req.params.id as string, req.body, actorId(req)) });
   },
 
   // Corporate Panels
@@ -75,9 +75,31 @@ export const setupController = {
     res.status(201).json({ data: await setupService.createCorporatePanel(req.body, actorId(req)) });
   },
   updateCorporatePanel: async (req: Request, res: Response) => {
-    res.json({ data: await setupService.updateCorporatePanel(req.params.id as string, req.body) });
+    res.json({ data: await setupService.updateCorporatePanel(req.params.id as string, req.body, actorId(req)) });
   },
   replaceDiscountRules: async (req: Request, res: Response) => {
     res.json({ data: await setupService.replaceDiscountRules(req.params.id as string, req.body) });
+  },
+
+  // Shifts
+  listShifts: async (req: Request, res: Response) => {
+    const { departmentId, shiftType, isActive, search } = req.query as Record<string, string | undefined>;
+    res.json({
+      data: await setupService.listShifts({
+        departmentId,
+        shiftType,
+        isActive: isActive === undefined ? undefined : isActive === 'true',
+        search,
+      }),
+    });
+  },
+  createShift: async (req: Request, res: Response) => {
+    res.status(201).json({ data: await setupService.createShift(req.body, actorId(req)) });
+  },
+  updateShift: async (req: Request, res: Response) => {
+    res.json({ data: await setupService.updateShift(req.params.id as string, req.body, actorId(req)) });
+  },
+  deactivateShift: async (req: Request, res: Response) => {
+    res.json({ data: await setupService.deactivateShift(req.params.id as string, actorId(req)) });
   },
 };

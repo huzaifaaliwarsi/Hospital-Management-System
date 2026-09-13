@@ -108,12 +108,12 @@ export const PatientImportModal: React.FC<PatientImportModalProps> = ({
   const invalidCount = results.filter((r) => r.status === 'INVALID').length;
   const errorRows = results.filter((r) => r.status === 'INVALID' || r.status === 'EXACT_DUPLICATE');
 
-  const handleConfirmImport = () => {
+  const handleConfirmImport = async () => {
     // Only import valid rows (or possible duplicates if staff proceeds)
     const rowsToCommit = results.filter(
       (r) => r.status === 'VALID' || r.status === 'POSSIBLE_DUPLICATE'
     );
-    const summary = commitBatchPatients(rowsToCommit, currentUser);
+    const summary = await commitBatchPatients(rowsToCommit, currentUser);
     setIsCommitted(true);
     setCommitSummary(summary);
     onImportComplete(summary);

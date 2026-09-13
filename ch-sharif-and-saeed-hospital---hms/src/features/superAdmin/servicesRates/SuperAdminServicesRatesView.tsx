@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   AlertCircle,
   AlertTriangle,
+  Loader2,
 } from 'lucide-react';
 import { useAuth } from '../../../context/AuthContext';
 import {
@@ -14,7 +15,7 @@ import {
   ServiceFilterState,
   ServiceFormValues,
 } from '../../../types/serviceRates';
-import { ServiceRatesService } from '../../../services/serviceRatesService';
+import { ServiceRatesService, fetchServices } from '../../../services/serviceRatesService';
 import { DepartmentService } from '../../../services/departmentService';
 import { ServicesKPIBar } from './ServicesKPIBar';
 import { ServicesFilterBar } from './ServicesFilterBar';
@@ -57,9 +58,20 @@ export const SuperAdminServicesRatesView: React.FC = () => {
     setTimeout(() => setToast(null), 4500);
   };
 
-  const loadData = () => {
-    const list = ServiceRatesService.getServices();
-    setServices(list);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const loadData = async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const list = await fetchServices();
+      setServices(list);
+    } catch (err: any) {
+      setLoadError(err?.message || 'Failed to load services from the server.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -104,32 +116,32 @@ export const SuperAdminServicesRatesView: React.FC = () => {
     setIsDetailModalOpen(true);
   };
 
-  const handleSaveService = (values: ServiceFormValues) => {
+  const handleSaveService = async (values: ServiceFormValues) => {
     try {
       if (selectedService) {
-        ServiceRatesService.updateService(selectedService.id, values, currentUser);
+        await ServiceRatesService.updateService(selectedService.id, values, currentUser);
         showToast('success', `Service "${values.name}" updated successfully.`);
       } else {
-        ServiceRatesService.createService(values, currentUser);
+        await ServiceRatesService.createService(values, currentUser);
         showToast('success', `Service "${values.name}" created successfully.`);
       }
       setIsAddEditModalOpen(false);
       setSelectedService(null);
-      loadData();
+      await loadData();
     } catch (err: any) {
       showToast('error', err.message || 'Failed to save service.');
     }
   };
 
-  const handleToggleStatus = (service: HospitalService) => {
+  const handleToggleStatus = async (service: HospitalService) => {
     try {
       const nextStatus = service.status === 'Active' ? 'Inactive' : 'Active';
-      ServiceRatesService.changeServiceStatus(service.id, nextStatus, currentUser);
+      await ServiceRatesService.changeServiceStatus(service.id, nextStatus, currentUser);
       showToast(
         'success',
         `Service "${service.name}" is now marked as ${nextStatus}.`
       );
-      loadData();
+      await loadData();
     } catch (err: any) {
       showToast('error', err.message || 'Failed to update status.');
     }
@@ -150,12 +162,12 @@ export const SuperAdminServicesRatesView: React.FC = () => {
     setServiceToDelete(service);
   };
 
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (!serviceToDelete) return;
-    const res = ServiceRatesService.deleteService(serviceToDelete.id);
+    const res = await ServiceRatesService.deleteService(serviceToDelete.id);
     if (res.success) {
       showToast('success', `Service "${serviceToDelete.name}" deleted from master catalog.`);
-      loadData();
+      await loadData();
     } else {
       showToast('error', res.message || 'Failed to delete service.');
     }
@@ -170,6 +182,31 @@ export const SuperAdminServicesRatesView: React.FC = () => {
       showToast('error', 'Failed to generate PDF.');
     }
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-24 text-slate-500 gap-2 text-sm">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        <span>Loading services & rates…</span>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 gap-3 text-center">
+        <AlertTriangle className="h-8 w-8 text-rose-500" />
+        <p className="text-sm text-rose-700 font-medium">{loadError}</p>
+        <button
+          type="button"
+          onClick={loadData}
+          className="px-4 py-2 bg-[#08775A] hover:bg-[#0e7d5a] text-white text-xs font-semibold rounded-lg"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div id="super-admin-services-rates-view" className="p-6 max-w-7xl mx-auto">

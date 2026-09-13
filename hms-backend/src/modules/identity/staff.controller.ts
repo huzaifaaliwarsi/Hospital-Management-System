@@ -27,7 +27,8 @@ export const staffController = {
   },
 
   async deactivate(req: Request, res: Response) {
-    const staff = await staffService.deactivate(req.params.id as string);
+    if (!req.user) throw new AuthenticationError();
+    const staff = await staffService.deactivate(req.params.id as string, req.user.sub);
     res.json({ data: staff });
   },
 

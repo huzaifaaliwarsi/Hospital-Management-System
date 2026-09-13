@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { staffRepository } from './staff.repository';
 import { NotFoundError } from '@/shared/errors/AppError';
 import { buildPaginationMeta } from '@/shared/pagination';
+import { resolveActorLabel } from '@/shared/actorLabel';
 import type {
   CreateStaffBody,
   UpdateStaffBody,
@@ -35,6 +36,7 @@ export const staffService = {
   },
 
   async create(body: CreateStaffBody, createdById: string) {
+    const actorLabel = await resolveActorLabel(createdById);
     let lastError: unknown;
     for (let attempt = 0; attempt < MAX_EMPLOYEE_ID_RETRIES; attempt += 1) {
       const nextSequence = (await staffRepository.count()) + 1 + attempt;
@@ -43,14 +45,18 @@ export const staffService = {
         const data: Prisma.StaffCreateInput = {
           employeeId,
           fullName: body.fullName,
+          fatherGuardianName: body.fatherGuardianName,
+          cnic: body.cnic,
           category: body.category,
           department: { connect: { id: body.departmentId } },
           designation: body.designation,
           phone: body.phone,
+          alternatePhone: body.alternatePhone,
           email: body.email,
           joiningDate: body.joiningDate,
           notes: body.notes,
-          createdBy: createdById,
+          createdBy: actorLabel,
+          updatedBy: actorLabel,
         };
         return await staffRepository.create(data);
       } catch (error: unknown) {
@@ -66,7 +72,8 @@ export const staffService = {
 
   async update(id: string, body: UpdateStaffBody, updatedById: string) {
     await this.getById(id);
-    const data: Prisma.StaffUpdateInput = { ...body, updatedBy: updatedById };
+    const actorLabel = await resolveActorLabel(updatedById);
+    const data: Prisma.StaffUpdateInput = { ...body, updatedBy: actorLabel };
     if (body.departmentId) {
       data.department = { connect: { id: body.departmentId } };
       delete (data as Record<string, unknown>).departmentId;
@@ -74,9 +81,10 @@ export const staffService = {
     return staffRepository.update(id, data);
   },
 
-  async deactivate(id: string) {
+  async deactivate(id: string, updatedById: string) {
     await this.getById(id);
-    return staffRepository.deactivate(id);
+    const actorLabel = await resolveActorLabel(updatedById);
+    return staffRepository.update(id, { isActive: false, employmentStatus: 'INACTIVE', updatedBy: actorLabel });
   },
 
   async getFullProfile(id: string) {

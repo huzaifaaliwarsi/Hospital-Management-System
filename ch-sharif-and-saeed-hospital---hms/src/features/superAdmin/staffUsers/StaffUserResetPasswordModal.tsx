@@ -51,7 +51,7 @@ export const StaffUserResetPasswordModal: React.FC<StaffUserResetPasswordModalPr
     setError(null);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
@@ -71,7 +71,7 @@ export const StaffUserResetPasswordModal: React.FC<StaffUserResetPasswordModalPr
       return;
     }
 
-    const res = StaffUserService.resetStaffPassword(
+    const res = await StaffUserService.resetStaffPassword(
       staff.id,
       newPassword,
       requireChange,

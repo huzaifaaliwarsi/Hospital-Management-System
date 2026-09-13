@@ -70,7 +70,7 @@ export const StaffUserStatusModal: React.FC<StaffUserStatusModalProps> = ({
 
   const config = getModalConfig();
 
-  const handleConfirm = (e: React.FormEvent) => {
+  const handleConfirm = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
@@ -79,7 +79,7 @@ export const StaffUserStatusModal: React.FC<StaffUserStatusModalProps> = ({
       return;
     }
 
-    const res = StaffUserService.updateStaffStatus(staff.id, targetStatus, currentUser);
+    const res = await StaffUserService.updateStaffStatus(staff.id, targetStatus, currentUser);
     if (!res.success) {
       setError(res.error || 'Failed to update status.');
       return;

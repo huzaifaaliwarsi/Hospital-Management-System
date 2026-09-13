@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   AlertCircle,
   FileSpreadsheet,
+  Loader2,
 } from 'lucide-react';
 import {
   Patient,
@@ -22,6 +23,7 @@ import {
 } from '../../../types/patient';
 import { User } from '../../../types';
 import {
+  fetchPatients,
   getAllPatients,
   filterPatients,
   getPatientRegistryKpis,
@@ -79,10 +81,25 @@ export const PatientRegistryView: React.FC<PatientRegistryViewProps> = ({ curren
     type: 'success' | 'error' | 'info';
   } | null>(null);
 
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const loadPatients = async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const list = await fetchPatients();
+      setPatients(list);
+    } catch (err: any) {
+      setLoadError(err?.message || 'Failed to load patients from the server.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Load patient records on mount
   useEffect(() => {
-    const list = getAllPatients();
-    setPatients(list);
+    loadPatients();
   }, []);
 
   const showToast = (text: string, type: 'success' | 'error' | 'info' = 'success') => {
@@ -118,10 +135,10 @@ export const PatientRegistryView: React.FC<PatientRegistryViewProps> = ({ curren
   };
 
   // Register or Update Patient Save
-  const handleSavePatient = (formData: PatientFormData) => {
+  const handleSavePatient = async (formData: PatientFormData) => {
     if (patientToEdit) {
       // Update
-      const res = updatePatient(patientToEdit.id, formData, currentUser);
+      const res = await updatePatient(patientToEdit.id, formData, currentUser);
       if (res.success && res.patient) {
         const updatedList = getAllPatients();
         setPatients(updatedList);
@@ -138,7 +155,7 @@ export const PatientRegistryView: React.FC<PatientRegistryViewProps> = ({ curren
       }
     } else {
       // Create new
-      const res = createPatient(formData, currentUser);
+      const res = await createPatient(formData, currentUser);
       if (res.success && res.patient) {
         const updatedList = getAllPatients();
         setPatients(updatedList);
@@ -177,8 +194,8 @@ export const PatientRegistryView: React.FC<PatientRegistryViewProps> = ({ curren
   };
 
   // Confirm Status Change
-  const handleConfirmStatus = (patientId: string, newStatus: PatientStatus) => {
-    const res = updatePatientStatus(patientId, newStatus, currentUser);
+  const handleConfirmStatus = async (patientId: string, newStatus: PatientStatus) => {
+    const res = await updatePatientStatus(patientId, newStatus, currentUser);
     if (res.success && res.patient) {
       const updatedList = getAllPatients();
       setPatients(updatedList);
@@ -201,6 +218,31 @@ export const PatientRegistryView: React.FC<PatientRegistryViewProps> = ({ curren
       `Import complete: ${summary.patientsCreated} patient(s) registered with permanent MR numbers.`
     );
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-24 text-slate-500 gap-2 text-sm">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        <span>Loading patient registry…</span>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 gap-3 text-center">
+        <AlertCircle className="h-8 w-8 text-rose-500" />
+        <p className="text-sm text-rose-700 font-medium">{loadError}</p>
+        <button
+          type="button"
+          onClick={loadPatients}
+          className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-lg"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">

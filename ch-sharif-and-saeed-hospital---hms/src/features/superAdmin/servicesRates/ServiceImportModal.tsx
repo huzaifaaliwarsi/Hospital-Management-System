@@ -75,10 +75,20 @@ export const ServiceImportModal: React.FC<ServiceImportModalProps> = ({
     }
   };
 
-  const handleCommit = () => {
+  const [isImporting, setIsImporting] = useState(false);
+
+  const handleCommit = async () => {
     if (!validationResult || validationResult.validRows.length === 0) return;
-    const count = ServiceRatesService.importServices(validationResult.validRows, currentUser);
-    onImportComplete(count);
+    setIsImporting(true);
+    try {
+      const { imported, failures } = await ServiceRatesService.importServices(validationResult.validRows, currentUser);
+      if (failures.length > 0) {
+        alert(`Imported ${imported} service(s). ${failures.length} row(s) failed:\n${failures.join('\n')}`);
+      }
+      onImportComplete(imported);
+    } finally {
+      setIsImporting(false);
+    }
   };
 
   const allRows = validationResult
@@ -338,15 +348,15 @@ export const ServiceImportModal: React.FC<ServiceImportModalProps> = ({
             <button
               id="commit-services-import-btn"
               onClick={handleCommit}
-              disabled={validationResult.validRows.length === 0}
+              disabled={validationResult.validRows.length === 0 || isImporting}
               className={`inline-flex items-center gap-2 px-5 py-2 text-xs font-semibold rounded-lg shadow-xs transition-colors ${
-                validationResult.validRows.length > 0
+                validationResult.validRows.length > 0 && !isImporting
                   ? 'bg-[#08775A] hover:bg-[#065f46] text-white'
                   : 'bg-slate-200 text-slate-400 cursor-not-allowed'
               }`}
             >
               <Upload className="w-4 h-4" />
-              Commit Import ({validationResult.validRows.length} Valid Records)
+              {isImporting ? 'Importing…' : `Commit Import (${validationResult.validRows.length} Valid Records)`}
             </button>
           )}
         </div>

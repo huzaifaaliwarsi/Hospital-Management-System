@@ -22,7 +22,7 @@ interface EditHospitalProfileModalProps {
   isOpen: boolean;
   onClose: () => void;
   profile: HospitalProfile;
-  onSave: (updatedProfile: HospitalProfile) => void;
+  onSave: (updatedProfile: HospitalProfile) => Promise<void>;
 }
 
 type TabKey =
@@ -73,6 +73,7 @@ export const EditHospitalProfileModal: React.FC<EditHospitalProfileModalProps> =
   const [activeTab, setActiveTab] = useState<TabKey>('identity');
   const [formData, setFormData] = useState<HospitalProfile>({ ...profile });
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [isSaving, setIsSaving] = useState(false);
 
   // Confirmation Modals
   const [showUnsavedConfirm, setShowUnsavedConfirm] = useState(false);
@@ -251,19 +252,24 @@ export const EditHospitalProfileModal: React.FC<EditHospitalProfileModalProps> =
     executeSave();
   };
 
-  const executeSave = () => {
+  const executeSave = async () => {
     const updated: HospitalProfile = {
       ...formData,
       name: formData.name.trim(),
       invoicePrefix: (formData.invoicePrefix || 'INV').toUpperCase().trim(),
       receiptPrefix: (formData.receiptPrefix || 'REC').toUpperCase().trim(),
-      updatedAt: 'Just now (08 Sep 2026)',
-      updatedBy: 'Super Admin',
     };
 
-    onSave(updated);
-    toast.success('Hospital profile updated successfully.', 'Profile Saved');
-    onClose();
+    setIsSaving(true);
+    try {
+      await onSave(updated);
+      toast.success('Hospital profile updated successfully.', 'Profile Saved');
+      onClose();
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to save hospital profile.', 'Save Failed');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -1335,10 +1341,11 @@ export const EditHospitalProfileModal: React.FC<EditHospitalProfileModalProps> =
             <button
               type="button"
               onClick={() => handleSave()}
-              className="inline-flex items-center gap-2 px-5 py-2 bg-[#129b70] hover:bg-[#08775A] text-white text-xs font-semibold rounded-lg shadow-xs transition-colors cursor-pointer"
+              disabled={isSaving}
+              className="inline-flex items-center gap-2 px-5 py-2 bg-[#129b70] hover:bg-[#08775A] disabled:opacity-60 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-lg shadow-xs transition-colors cursor-pointer"
             >
               <Save className="h-4 w-4" />
-              <span>Save Profile Changes</span>
+              <span>{isSaving ? 'Saving…' : 'Save Profile Changes'}</span>
             </button>
           </div>
         </div>

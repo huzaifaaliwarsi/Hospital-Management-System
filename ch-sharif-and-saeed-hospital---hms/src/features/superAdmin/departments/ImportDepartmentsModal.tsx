@@ -123,7 +123,10 @@ export const ImportDepartmentsModal: React.FC<ImportDepartmentsModalProps> = ({
   const invalidRows = validationResults.filter((r) => r.status === 'Invalid');
   const duplicateRows = validationResults.filter((r) => r.status === 'Duplicate');
 
-  const handleConfirmImport = () => {
+  const [isImporting, setIsImporting] = useState(false);
+  const [importFailures, setImportFailures] = useState<string[]>([]);
+
+  const handleConfirmImport = async () => {
     const departmentsToImport = validRows
       .map((r) => r.convertedDepartment)
       .filter((d): d is Department => !!d);
@@ -133,8 +136,27 @@ export const ImportDepartmentsModal: React.FC<ImportDepartmentsModalProps> = ({
       return;
     }
 
-    onImportSuccess(departmentsToImport);
-    setImportedCount(departmentsToImport.length);
+    setIsImporting(true);
+    const created: Department[] = [];
+    const failures: string[] = [];
+    // Persisted one at a time against the real backend — each row is its
+    // own `POST /setup/departments`, so a mid-batch failure (e.g. a race
+    // on a duplicate code) never leaves fabricated rows in the UI.
+    for (const draft of departmentsToImport) {
+      try {
+        const saved = await DepartmentService.createDepartmentFromImportRow(draft);
+        created.push(saved);
+      } catch (err: any) {
+        failures.push(`${draft.code}: ${err?.message || 'Failed to import'}`);
+      }
+    }
+    setIsImporting(false);
+    setImportFailures(failures);
+
+    if (created.length > 0) {
+      onImportSuccess(created);
+    }
+    setImportedCount(created.length);
     setStep('completed');
   };
 
@@ -357,11 +379,18 @@ export const ImportDepartmentsModal: React.FC<ImportDepartmentsModalProps> = ({
               </div>
               <div>
                 <h4 className="text-base font-bold text-slate-900">
-                  Departments Imported Successfully
+                  {importFailures.length > 0 ? 'Import Completed With Some Errors' : 'Departments Imported Successfully'}
                 </h4>
                 <p className="text-xs text-slate-600 mt-1 max-w-md mx-auto">
                   {importedCount} new department(s) have been registered and added to the hospital directory.
                 </p>
+                {importFailures.length > 0 && (
+                  <ul className="mt-3 text-left text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg p-3 max-w-md mx-auto space-y-1">
+                    {importFailures.map((f, i) => (
+                      <li key={i}>• {f}</li>
+                    ))}
+                  </ul>
+                )}
               </div>
 
               <div className="pt-2">
@@ -390,11 +419,11 @@ export const ImportDepartmentsModal: React.FC<ImportDepartmentsModalProps> = ({
             <button
               type="button"
               onClick={handleConfirmImport}
-              disabled={validRows.length === 0}
+              disabled={validRows.length === 0 || isImporting}
               className="inline-flex items-center gap-2 rounded-lg bg-[#08775A] px-5 py-2 text-xs font-semibold text-white hover:bg-[#0e7d5a] disabled:opacity-50 transition-colors shadow-xs"
             >
-              <CheckCircle2 className="h-4 w-4" />
-              <span>Confirm Import ({validRows.length} Valid Rows)</span>
+              {isImporting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              <span>{isImporting ? 'Importing…' : `Confirm Import (${validRows.length} Valid Rows)`}</span>
             </button>
           </div>
         )}

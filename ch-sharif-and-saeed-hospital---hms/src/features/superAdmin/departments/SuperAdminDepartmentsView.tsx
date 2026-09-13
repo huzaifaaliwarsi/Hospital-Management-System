@@ -24,6 +24,7 @@ import {
   ShieldAlert,
   FileDown,
   Loader2,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   Department,
@@ -31,13 +32,11 @@ import {
   DepartmentFormValues,
   DepartmentType,
 } from '../../../types/department';
-import {
-  INITIAL_DEPARTMENTS,
-  MOCK_DEPARTMENT_HEAD_OPTIONS,
-} from './departmentMockData';
+import { MOCK_DEPARTMENT_HEAD_OPTIONS } from './departmentMockData';
 import {
   DepartmentService,
   VALID_DEPARTMENT_TYPES,
+  fetchDepartments,
 } from '../../../services/departmentService';
 import {
   downloadDepartmentPDF,
@@ -56,14 +55,27 @@ export const SuperAdminDepartmentsView: React.FC = () => {
   const { currentUser } = useAuth();
   const toast = useToast();
 
-  // State: Departments master list with persistence
-  const [departments, setDepartments] = useState<Department[]>(() =>
-    DepartmentService.loadDepartmentsFromStorage(INITIAL_DEPARTMENTS)
-  );
+  // State: Departments master list — loaded from the real backend
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const loadDepartments = React.useCallback(async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const data = await fetchDepartments();
+      setDepartments(data);
+    } catch (err: any) {
+      setLoadError(err?.message || 'Failed to load departments from the server.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    DepartmentService.saveDepartmentsToStorage(departments);
-  }, [departments]);
+    loadDepartments();
+  }, [loadDepartments]);
 
   // State: Filters
   const [filters, setFilters] = useState<DepartmentFilterState>({
@@ -324,6 +336,31 @@ export const SuperAdminDepartmentsView: React.FC = () => {
       window.print();
     }, 150);
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-24 text-slate-500 gap-2 text-sm">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        <span>Loading departments…</span>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 gap-3 text-center">
+        <AlertTriangle className="h-8 w-8 text-rose-500" />
+        <p className="text-sm text-rose-700 font-medium">{loadError}</p>
+        <button
+          type="button"
+          onClick={loadDepartments}
+          className="px-4 py-2 bg-[#08775A] hover:bg-[#0e7d5a] text-white text-xs font-semibold rounded-lg"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 animate-in fade-in duration-200">

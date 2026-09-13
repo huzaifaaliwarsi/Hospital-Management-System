@@ -7,13 +7,15 @@ import {
   FileText,
   Clock,
   ChevronDown,
+  Loader2,
+  AlertTriangle,
 } from 'lucide-react';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
 import { Shift, ShiftFilterState, ShiftFormData } from '../../../types/shift';
 import { Department } from '../../../types/department';
 import { DepartmentService } from '../../../services/departmentService';
-import { ShiftService } from '../../../services/shiftService';
+import { ShiftService, fetchShifts } from '../../../services/shiftService';
 import {
   downloadShiftsPDF,
   downloadShiftsExcel,
@@ -56,10 +58,21 @@ export const ShiftManagementView: React.FC = () => {
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
   const [shiftForStatusChange, setShiftForStatusChange] = useState<Shift | null>(null);
 
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   // Load initial dataset & departments
-  const refreshShifts = useCallback(() => {
-    const loaded = ShiftService.loadShifts();
-    setShifts(loaded);
+  const refreshShifts = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const loaded = await fetchShifts();
+      setShifts(loaded);
+    } catch (err: any) {
+      setLoadError(err?.message || 'Failed to load shifts from the server.');
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -112,18 +125,18 @@ export const ShiftManagementView: React.FC = () => {
   };
 
   // Save Shift (Create or Update or Duplicate)
-  const handleSaveShift = (formData: ShiftFormData) => {
+  const handleSaveShift = async (formData: ShiftFormData) => {
     try {
       if (isDuplicateMode || !formModalShift) {
         // Create new shift record
-        const created = ShiftService.createShift(formData, currentUser);
+        const created = await ShiftService.createShift(formData, currentUser);
         toast.success(
           `Shift "${created.name}" (${created.code}) created successfully.`,
           'Shift Created'
         );
       } else {
         // Update existing shift record
-        const updated = ShiftService.updateShift(
+        const updated = await ShiftService.updateShift(
           formModalShift.id,
           formData,
           currentUser
@@ -134,7 +147,7 @@ export const ShiftManagementView: React.FC = () => {
         );
       }
       setIsFormModalOpen(false);
-      refreshShifts();
+      await refreshShifts();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to save shift';
       toast.error(message, 'Validation Error');
@@ -142,11 +155,11 @@ export const ShiftManagementView: React.FC = () => {
   };
 
   // Confirm Status Toggle
-  const handleConfirmStatusToggle = () => {
+  const handleConfirmStatusToggle = async () => {
     if (!shiftForStatusChange) return;
 
     try {
-      const updated = ShiftService.toggleShiftStatus(
+      const updated = await ShiftService.toggleShiftStatus(
         shiftForStatusChange.id,
         currentUser
       );
@@ -195,6 +208,31 @@ export const ShiftManagementView: React.FC = () => {
       toast.error(message, 'Print Error');
     }
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-24 text-slate-500 gap-2 text-sm">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        <span>Loading shifts…</span>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 gap-3 text-center">
+        <AlertTriangle className="h-8 w-8 text-rose-500" />
+        <p className="text-sm text-rose-700 font-medium">{loadError}</p>
+        <button
+          type="button"
+          onClick={refreshShifts}
+          className="px-4 py-2 bg-[#149E75] hover:bg-[#08775A] text-white text-xs font-semibold rounded-lg"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">

@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   AlertCircle,
+  Loader2,
 } from 'lucide-react';
 import { useAuth } from '../../../context/AuthContext';
 import {
@@ -19,7 +20,7 @@ import {
   RoomFormValues,
   BedFormValues,
 } from '../../../types/wardsRoomsBeds';
-import { WardsRoomsBedsService } from '../../../services/wardsRoomsBedsService';
+import { WardsRoomsBedsService, fetchWardHierarchy } from '../../../services/wardsRoomsBedsService';
 import { DepartmentService } from '../../../services/departmentService';
 import { WardsRoomsBedsTopSummary } from './WardsRoomsBedsTopSummary';
 import { WardTab } from './WardTab';
@@ -92,10 +93,22 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
     setTimeout(() => setToast(null), 4500);
   };
 
-  const loadData = () => {
-    setWards(WardsRoomsBedsService.getWards());
-    setRooms(WardsRoomsBedsService.getRooms());
-    setBeds(WardsRoomsBedsService.getBeds());
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const loadData = async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const { wards: w, rooms: r, beds: b } = await fetchWardHierarchy();
+      setWards(w);
+      setRooms(r);
+      setBeds(b);
+    } catch (err: any) {
+      setLoadError(err?.message || 'Failed to load wards / rooms / beds from the server.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -129,29 +142,29 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
   };
 
   // Ward CRUD
-  const handleSaveWard = (values: WardFormValues) => {
+  const handleSaveWard = async (values: WardFormValues) => {
     try {
       if (selectedWard) {
-        WardsRoomsBedsService.updateWard(selectedWard.id, values, currentUser);
+        await WardsRoomsBedsService.updateWard(selectedWard.id, values, currentUser);
         showToast('success', `Ward "${values.name}" updated successfully.`);
       } else {
-        WardsRoomsBedsService.createWard(values, currentUser);
+        await WardsRoomsBedsService.createWard(values, currentUser);
         showToast('success', `Ward "${values.name}" created successfully.`);
       }
       setIsWardModalOpen(false);
       setSelectedWard(null);
-      loadData();
+      await loadData();
     } catch (err: any) {
       showToast('error', err.message || 'Failed to save ward.');
     }
   };
 
-  const handleToggleWardStatus = (w: Ward) => {
+  const handleToggleWardStatus = async (w: Ward) => {
     try {
       const nextStatus = w.status === 'Active' ? 'Inactive' : 'Active';
-      WardsRoomsBedsService.changeWardStatus(w.id, nextStatus, currentUser);
+      await WardsRoomsBedsService.changeWardStatus(w.id, nextStatus, currentUser);
       showToast('success', `Ward "${w.name}" marked as ${nextStatus}.`);
-      loadData();
+      await loadData();
     } catch (err: any) {
       showToast('error', err.message);
     }
@@ -173,29 +186,29 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
   };
 
   // Room CRUD
-  const handleSaveRoom = (values: RoomFormValues) => {
+  const handleSaveRoom = async (values: RoomFormValues) => {
     try {
       if (selectedRoom) {
-        WardsRoomsBedsService.updateRoom(selectedRoom.id, values, currentUser);
+        await WardsRoomsBedsService.updateRoom(selectedRoom.id, values, currentUser);
         showToast('success', `Room "${values.name}" updated successfully.`);
       } else {
-        WardsRoomsBedsService.createRoom(values, currentUser);
+        await WardsRoomsBedsService.createRoom(values, currentUser);
         showToast('success', `Room "${values.name}" created successfully.`);
       }
       setIsRoomModalOpen(false);
       setSelectedRoom(null);
-      loadData();
+      await loadData();
     } catch (err: any) {
       showToast('error', err.message || 'Failed to save room.');
     }
   };
 
-  const handleToggleRoomStatus = (r: Room) => {
+  const handleToggleRoomStatus = async (r: Room) => {
     try {
       const nextStatus = r.status === 'Active' ? 'Inactive' : 'Active';
-      WardsRoomsBedsService.changeRoomStatus(r.id, nextStatus, currentUser);
+      await WardsRoomsBedsService.changeRoomStatus(r.id, nextStatus, currentUser);
       showToast('success', `Room "${r.name}" marked as ${nextStatus}.`);
-      loadData();
+      await loadData();
     } catch (err: any) {
       showToast('error', err.message);
     }
@@ -216,33 +229,33 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
   };
 
   // Bed CRUD
-  const handleSaveBed = (values: BedFormValues) => {
+  const handleSaveBed = async (values: BedFormValues) => {
     try {
       if (selectedBed) {
-        WardsRoomsBedsService.updateBed(selectedBed.id, values, currentUser);
+        await WardsRoomsBedsService.updateBed(selectedBed.id, values, currentUser);
         showToast('success', `Bed "${values.bedNumber}" updated successfully.`);
       } else {
-        WardsRoomsBedsService.createBed(values, currentUser);
+        await WardsRoomsBedsService.createBed(values, currentUser);
         showToast('success', `Bed "${values.bedNumber}" created successfully.`);
       }
       setIsBedModalOpen(false);
       setSelectedBed(null);
-      loadData();
+      await loadData();
     } catch (err: any) {
       showToast('error', err.message || 'Failed to save bed.');
     }
   };
 
-  const handleToggleBedOperational = (b: Bed) => {
+  const handleToggleBedOperational = async (b: Bed) => {
     try {
       if (b.occupancyStatus === 'Occupied') {
         showToast('warning', 'Cannot change operational status: Bed is currently occupied.');
         return;
       }
       const nextStatus = b.operationalStatus === 'Active' ? 'Out of Service' : 'Active';
-      WardsRoomsBedsService.changeBedOperationalStatus(b.id, nextStatus, currentUser);
+      await WardsRoomsBedsService.changeBedOperationalStatus(b.id, nextStatus, currentUser);
       showToast('success', `Bed "${b.bedNumber}" is now ${nextStatus}.`);
-      loadData();
+      await loadData();
     } catch (err: any) {
       showToast('error', err.message);
     }
@@ -264,26 +277,26 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
   };
 
   // Confirm delete
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (!itemToDelete) return;
     const { type, item } = itemToDelete;
 
     if (type === 'ward') {
-      const res = WardsRoomsBedsService.deleteWard(item.id);
+      const res = await WardsRoomsBedsService.deleteWard(item.id);
       if (res.success) {
         showToast('success', `Ward "${item.name}" deleted.`);
       } else {
         showToast('error', res.message || 'Failed to delete ward.');
       }
     } else if (type === 'room') {
-      const res = WardsRoomsBedsService.deleteRoom(item.id);
+      const res = await WardsRoomsBedsService.deleteRoom(item.id);
       if (res.success) {
         showToast('success', `Room "${item.name}" deleted.`);
       } else {
         showToast('error', res.message || 'Failed to delete room.');
       }
     } else if (type === 'bed') {
-      const res = WardsRoomsBedsService.deleteBed(item.id);
+      const res = await WardsRoomsBedsService.deleteBed(item.id);
       if (res.success) {
         showToast('success', `Bed "${item.bedNumber}" deleted.`);
       } else {
@@ -292,8 +305,33 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
     }
 
     setItemToDelete(null);
-    loadData();
+    await loadData();
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-24 text-slate-500 gap-2 text-sm">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        <span>Loading wards, rooms & beds…</span>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 gap-3 text-center">
+        <AlertTriangle className="h-8 w-8 text-rose-500" />
+        <p className="text-sm text-rose-700 font-medium">{loadError}</p>
+        <button
+          type="button"
+          onClick={loadData}
+          className="px-4 py-2 bg-[#08775A] hover:bg-[#0e7d5a] text-white text-xs font-semibold rounded-lg"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div id="super-admin-wards-rooms-beds-view" className="p-6 max-w-7xl mx-auto">

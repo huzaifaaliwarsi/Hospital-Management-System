@@ -44,6 +44,7 @@ import { SuperAdminStaffUsersView } from './staffUsers/SuperAdminStaffUsersView'
 import { ShiftManagementView } from './shifts/ShiftManagementView';
 import { SuperAdminReportsView } from './SuperAdminReportsView';
 import { PatientRegistryView } from './patientRegistry/PatientRegistryView';
+import { SuperAdminCorporatePanelsView } from './corporatePanels/SuperAdminCorporatePanelsView';
 import {
   MOCK_DEPARTMENTS,
   DepartmentRecord,
@@ -218,6 +219,11 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
   // 1g. Check if this is Panel Patient Registry Page
   if (activeModuleId === 'panel_patient_registry') {
     return <PatientRegistryView currentUser={currentUser} />;
+  }
+
+  // 1h. Check if this is Corporate Panels Page
+  if (activeModuleId === 'corporate_panels') {
+    return <SuperAdminCorporatePanelsView />;
   }
 
   // 2. Check if this is a Report Page (Global Reporting Standard)

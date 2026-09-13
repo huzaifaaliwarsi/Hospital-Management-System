@@ -1,8 +1,8 @@
 import * as XLSX from 'xlsx';
+import apiClient from './apiClient';
 import { User } from '../types';
 import {
   StaffUser,
-  StaffCredential,
   StaffUserFormValues,
   StaffUserFilterState,
   StaffAuditLogEntry,
@@ -15,1131 +15,363 @@ import {
   StaffCategory,
   STAFF_PORTAL_ROLES,
   STAFF_CATEGORIES,
-  STAFF_PORTALS,
 } from '../types/staffUser';
-import { DepartmentService, formatAuditUser, formatAuditTimestamp } from './departmentService';
+import { DepartmentService } from './departmentService';
+import { formatDisplayDate } from '../utils/dateConstants';
 
-export const STAFF_USERS_STORAGE_KEY = 'hms_staff_users_master_catalog_v1';
-export const STAFF_CREDENTIALS_STORAGE_KEY = 'hms_staff_credentials_store_v1';
-export const STAFF_AUDIT_STORAGE_KEY = 'hms_staff_audit_logs_v1';
+/**
+ * Live Staff Users service — combines two real backend resources into one
+ * flattened `StaffUser` row per the frontend's existing contract:
+ *   - the HR record: `/api/v1/staff*` (Prisma `Staff`)
+ *   - the optional login/portal account linked to it: `/api/v1/portal-users*`
+ *     (Prisma `PortalUser`, `staffId` FK) — its absence IS the
+ *     'STAFF_RECORD_ONLY' access type, a valid, deliberate state.
+ * Same in-memory-cache pattern as the other rewired services — never
+ * localStorage, no fake credential store, no fabricated audit log.
+ */
 
-export const INITIAL_STAFF_CREDENTIALS: StaffCredential[] = [
-  {
-    staffUserId: 'STF-001',
-    username: 'frontdesk',
-    demoPassword: '123456',
-    assignedPortal: 'front-desk',
-    requirePasswordChange: false,
-    updatedAt: '01 Jan 2024, 09:00 AM',
-  },
-  {
-    staffUserId: 'STF-002',
-    username: 'demo.frontdesk',
-    demoPassword: 'Demo12345',
-    assignedPortal: 'front-desk',
-    requirePasswordChange: false,
-    updatedAt: '01 Feb 2024, 09:00 AM',
-  },
-  {
-    staffUserId: 'STF-003',
-    username: 'admission',
-    demoPassword: '123456',
-    assignedPortal: 'admission',
-    requirePasswordChange: false,
-    updatedAt: '01 Jan 2024, 09:00 AM',
-  },
-  {
-    staffUserId: 'STF-004',
-    username: 'hamza.admission',
-    demoPassword: 'Hamza123',
-    assignedPortal: 'admission',
-    requirePasswordChange: false,
-    updatedAt: '15 Feb 2024, 10:30 AM',
-  },
-  {
-    staffUserId: 'STF-007',
-    username: 'inventory',
-    demoPassword: '123456',
-    assignedPortal: 'inventory',
-    requirePasswordChange: false,
-    updatedAt: '01 Jan 2024, 09:00 AM',
-  },
-  {
-    staffUserId: 'STF-008',
-    username: 'bilal.store',
-    demoPassword: 'Bilal123',
-    assignedPortal: 'inventory',
-    requirePasswordChange: false,
-    updatedAt: '10 Apr 2024, 02:00 PM',
-  },
-  {
-    staffUserId: 'STF-012',
-    username: 'kamran.billing',
-    demoPassword: 'Kamran123',
-    assignedPortal: 'front-desk',
-    requirePasswordChange: false,
-    updatedAt: '01 May 2024, 09:00 AM',
-  },
-];
+const PORTAL_ROLE_TO_KEY: Record<string, StaffPortalKey> = {
+  FRONT_DESK_BILLING: 'front-desk',
+  ADMISSION: 'admission',
+  INVENTORY_MANAGEMENT: 'inventory',
+};
+const KEY_TO_PORTAL_ROLE: Record<StaffPortalKey, string> = {
+  'front-desk': 'FRONT_DESK_BILLING',
+  admission: 'ADMISSION',
+  inventory: 'INVENTORY_MANAGEMENT',
+};
+// Staff-tier portal roles this page manages (Admin/Super Admin accounts live on the Admin Users page).
+const STAFF_PORTAL_ROLES_QUERY = 'FRONT_DESK_BILLING,ADMISSION,INVENTORY_MANAGEMENT';
 
-export const INITIAL_STAFF_USERS: StaffUser[] = [
-  {
-    id: 'STF-001',
-    employeeCode: 'EMP-FD-01',
-    fullName: 'Ahmed Raza',
-    fatherGuardianName: 'Muhammad Raza',
-    phone: '+92 301 2345678',
-    alternatePhone: '+92 301 2345679',
-    email: 'ahmed.raza@sharif-saeed.hospital',
-    cnic: '35201-1234567-1',
-    designation: 'Senior Billing Officer',
-    departmentId: 'DEP-09',
-    departmentName: 'Hospital Administration & Executive Services',
-    staffCategory: 'Billing / Cashier',
-    accessType: 'PORTAL_USER',
-    assignedPortal: 'front-desk',
-    staffRole: 'Senior Billing Officer / Cashier',
-    username: 'frontdesk',
-    status: 'ACTIVE',
-    requirePasswordChange: false,
-    lastLoginAt: '09 Sep 2026, 08:00 AM',
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '01 Jan 2024, 09:00 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '08 Sep 2026, 04:30 PM',
-    linkedActivityCount: 185,
-  },
-  {
-    id: 'STF-002',
-    employeeCode: 'EMP-FD-02',
-    fullName: 'Zainab Tariq',
-    fatherGuardianName: 'Tariq Mehmood',
-    phone: '+92 302 3456789',
-    alternatePhone: '',
-    email: 'zainab.tariq@sharif-saeed.hospital',
-    cnic: '35201-2345678-2',
-    designation: 'Front Desk Officer',
-    departmentId: 'DEP-09',
-    departmentName: 'Hospital Administration & Executive Services',
-    staffCategory: 'Front Desk / Reception',
-    accessType: 'PORTAL_USER',
-    assignedPortal: 'front-desk',
-    staffRole: 'Front Desk Officer',
-    username: 'demo.frontdesk',
-    status: 'ACTIVE',
-    requirePasswordChange: false,
-    lastLoginAt: '08 Sep 2026, 09:15 AM',
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '01 Feb 2024, 09:00 AM',
-    updatedBy: 'Dr. Farhana Yasmeen (Admin)',
-    updatedAt: '07 Sep 2026, 02:20 PM',
-    linkedActivityCount: 92,
-  },
-  {
-    id: 'STF-003',
-    employeeCode: 'EMP-ADM-01',
-    fullName: 'Sara Khan',
-    fatherGuardianName: 'Muhammad Akram Khan',
-    phone: '+92 303 4567890',
-    alternatePhone: '+92 333 4567890',
-    email: 'sara.khan@sharif-saeed.hospital',
-    cnic: '35202-3456789-3',
-    designation: 'Admission Officer',
-    departmentId: 'DEP-09',
-    departmentName: 'Hospital Administration & Executive Services',
-    staffCategory: 'Admission',
-    accessType: 'PORTAL_USER',
-    assignedPortal: 'admission',
-    staffRole: 'Admission Officer',
-    username: 'admission',
-    status: 'ACTIVE',
-    requirePasswordChange: false,
-    lastLoginAt: '09 Sep 2026, 07:45 AM',
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '01 Jan 2024, 09:00 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '08 Sep 2026, 05:10 PM',
-    linkedActivityCount: 140,
-  },
-  {
-    id: 'STF-004',
-    employeeCode: 'EMP-ADM-02',
-    fullName: 'Hamza Naveed',
-    fatherGuardianName: 'Naveed Akhtar',
-    phone: '+92 304 5678901',
-    alternatePhone: '',
-    email: 'hamza.naveed@sharif-saeed.hospital',
-    cnic: '35202-4567890-4',
-    designation: 'Ward Inpatient Coordinator',
-    departmentId: 'DEP-01',
-    departmentName: 'Internal Medicine & Critical Care',
-    staffCategory: 'Admission',
-    accessType: 'PORTAL_USER',
-    assignedPortal: 'admission',
-    staffRole: 'Ward Coordinator',
-    username: 'hamza.admission',
-    status: 'ACTIVE',
-    requirePasswordChange: false,
-    lastLoginAt: '08 Sep 2026, 03:20 PM',
-    createdBy: 'Dr. Farhana Yasmeen (Admin)',
-    createdAt: '15 Feb 2024, 10:30 AM',
-    updatedBy: 'Dr. Farhana Yasmeen (Admin)',
-    updatedAt: '06 Sep 2026, 11:45 AM',
-    linkedActivityCount: 78,
-  },
-  {
-    id: 'STF-005',
-    employeeCode: 'EMP-PH-01',
-    fullName: 'Ali Hassan',
-    fatherGuardianName: 'Hassan Raza',
-    phone: '+92 305 6789012',
-    alternatePhone: '',
-    email: 'ali.hassan@sharif-saeed.hospital',
-    cnic: '35201-5678901-5',
-    designation: 'Head Pharmacist',
-    departmentId: 'DEP-08',
-    departmentName: 'Pharmacy & Central Dispensary',
-    staffCategory: 'Pharmacy',
-    accessType: 'STAFF_RECORD_ONLY',
-    assignedPortal: null,
-    staffRole: null,
-    username: null,
-    status: 'ACTIVE',
-    requirePasswordChange: false,
-    lastLoginAt: null,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '01 Jan 2024, 09:00 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '07 Sep 2026, 06:10 PM',
-    linkedActivityCount: 310,
-  },
-  {
-    id: 'STF-006',
-    employeeCode: 'EMP-PH-02',
-    fullName: 'Ayesha Noor',
-    fatherGuardianName: 'Noor Muhammad',
-    phone: '+92 306 7890123',
-    alternatePhone: '+92 321 7890123',
-    email: 'ayesha.noor@sharif-saeed.hospital',
-    cnic: '35201-6789012-6',
-    designation: 'Pharmacy Cashier',
-    departmentId: 'DEP-08',
-    departmentName: 'Pharmacy & Central Dispensary',
-    staffCategory: 'Pharmacy',
-    accessType: 'STAFF_RECORD_ONLY',
-    assignedPortal: null,
-    staffRole: null,
-    username: null,
-    status: 'ACTIVE',
-    requirePasswordChange: false,
-    lastLoginAt: null,
-    createdBy: 'Dr. Farhana Yasmeen (Admin)',
-    createdAt: '01 Mar 2024, 11:00 AM',
-    updatedBy: 'Dr. Farhana Yasmeen (Admin)',
-    updatedAt: '05 Sep 2026, 04:00 PM',
-    linkedActivityCount: 165,
-  },
-  {
-    id: 'STF-007',
-    employeeCode: 'EMP-INV-01',
-    fullName: 'Usman Ali',
-    fatherGuardianName: 'Muhammad Ali',
-    phone: '+92 307 8901234',
-    alternatePhone: '',
-    email: 'usman.ali@sharif-saeed.hospital',
-    cnic: '35202-7890123-7',
-    designation: 'Central Store Manager',
-    departmentId: 'DEP-08',
-    departmentName: 'Pharmacy & Central Dispensary',
-    staffCategory: 'Inventory / Store',
-    accessType: 'PORTAL_USER',
-    assignedPortal: 'inventory',
-    staffRole: 'Store Manager',
-    username: 'inventory',
-    status: 'ACTIVE',
-    requirePasswordChange: false,
-    lastLoginAt: '09 Sep 2026, 08:05 AM',
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '01 Jan 2024, 09:00 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '08 Sep 2026, 03:50 PM',
-    linkedActivityCount: 220,
-  },
-  {
-    id: 'STF-008',
-    employeeCode: 'EMP-INV-02',
-    fullName: 'Bilal Siddiqui',
-    fatherGuardianName: 'Siddiq Ahmed',
-    phone: '+92 308 9012345',
-    alternatePhone: '',
-    email: 'bilal.siddiqui@sharif-saeed.hospital',
-    cnic: '35201-8901234-8',
-    designation: 'Store Keeper & Inventory Officer',
-    departmentId: 'DEP-08',
-    departmentName: 'Pharmacy & Central Dispensary',
-    staffCategory: 'Inventory / Store',
-    accessType: 'PORTAL_USER',
-    assignedPortal: 'inventory',
-    staffRole: 'Store Keeper',
-    username: 'bilal.store',
-    status: 'ACTIVE',
-    requirePasswordChange: false,
-    lastLoginAt: '07 Sep 2026, 11:30 AM',
-    createdBy: 'Dr. Farhana Yasmeen (Admin)',
-    createdAt: '10 Apr 2024, 02:00 PM',
-    updatedBy: 'Dr. Farhana Yasmeen (Admin)',
-    updatedAt: '04 Sep 2026, 09:15 AM',
-    linkedActivityCount: 95,
-  },
-  {
-    id: 'STF-009',
-    employeeCode: 'EMP-DOC-01',
-    fullName: 'Dr. Ayesha Malik',
-    fatherGuardianName: 'Dr. Abdul Malik',
-    phone: '+92 300 1122334',
-    alternatePhone: '',
-    email: 'ayesha.malik@sharif-saeed.hospital',
-    cnic: '35202-9012345-9',
-    designation: 'Senior Interventional Cardiologist',
-    departmentId: 'DEP-03',
-    departmentName: 'Cardiology & CCU',
-    staffCategory: 'Doctor',
-    accessType: 'STAFF_RECORD_ONLY',
-    assignedPortal: null,
-    staffRole: null,
-    username: null,
-    status: 'ACTIVE',
-    requirePasswordChange: false,
-    lastLoginAt: null,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '15 Jan 2024, 10:00 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '01 Sep 2026, 11:00 AM',
-    linkedActivityCount: 45,
-  },
-  {
-    id: 'STF-010',
-    employeeCode: 'EMP-DOC-02',
-    fullName: 'Dr. Tariq Qureshi',
-    fatherGuardianName: 'Muhammad Ishaq Qureshi',
-    phone: '+92 300 2233445',
-    alternatePhone: '',
-    email: 'tariq.qureshi@sharif-saeed.hospital',
-    cnic: '35201-0123456-0',
-    designation: 'Consultant General & Laparoscopic Surgeon',
-    departmentId: 'DEP-02',
-    departmentName: 'General & Laparoscopic Surgery',
-    staffCategory: 'Doctor',
-    accessType: 'STAFF_RECORD_ONLY',
-    assignedPortal: null,
-    staffRole: null,
-    username: null,
-    status: 'ACTIVE',
-    requirePasswordChange: false,
-    lastLoginAt: null,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '01 Feb 2024, 09:30 AM',
-    updatedBy: 'Dr. Farhana Yasmeen (Admin)',
-    updatedAt: '03 Sep 2026, 02:40 PM',
-    linkedActivityCount: 38,
-  },
-  {
-    id: 'STF-011',
-    employeeCode: 'EMP-NUR-01',
-    fullName: 'Sister Fatima Bibi',
-    fatherGuardianName: 'Bashir Ahmed',
-    phone: '+92 300 3344556',
-    alternatePhone: '',
-    email: 'fatima.bibi@sharif-saeed.hospital',
-    cnic: '35202-1234567-8',
-    designation: 'Head Emergency & Trauma Nurse',
-    departmentId: 'DEP-07',
-    departmentName: 'Emergency & Trauma Complex',
-    staffCategory: 'Nursing',
-    accessType: 'STAFF_RECORD_ONLY',
-    assignedPortal: null,
-    staffRole: null,
-    username: null,
-    status: 'ACTIVE',
-    requirePasswordChange: false,
-    lastLoginAt: null,
-    createdBy: 'Dr. Farhana Yasmeen (Admin)',
-    createdAt: '15 Mar 2024, 08:30 AM',
-    updatedBy: 'Dr. Farhana Yasmeen (Admin)',
-    updatedAt: '02 Sep 2026, 10:15 AM',
-    linkedActivityCount: 12,
-  },
-  {
-    id: 'STF-012',
-    employeeCode: 'EMP-FD-03',
-    fullName: 'Kamran Asif',
-    fatherGuardianName: 'Asif Mehmood',
-    phone: '+92 300 4455667',
-    alternatePhone: '',
-    email: 'kamran.asif@sharif-saeed.hospital',
-    cnic: '35201-3456789-4',
-    designation: 'Night Billing Cashier',
-    departmentId: 'DEP-09',
-    departmentName: 'Hospital Administration & Executive Services',
-    staffCategory: 'Billing / Cashier',
-    accessType: 'PORTAL_USER',
-    assignedPortal: 'front-desk',
-    staffRole: 'Billing Officer',
-    username: 'kamran.billing',
-    status: 'INACTIVE',
-    requirePasswordChange: false,
-    lastLoginAt: '12 Aug 2026, 11:45 PM',
-    createdBy: 'Dr. Farhana Yasmeen (Admin)',
-    createdAt: '01 May 2024, 09:00 AM',
-    updatedBy: 'Dr. Farhana Yasmeen (Admin)',
-    updatedAt: '15 Aug 2026, 09:00 AM',
-    statusChangedBy: 'Dr. Farhana Yasmeen (Admin)',
-    statusChangedAt: '15 Aug 2026, 09:00 AM',
-    linkedActivityCount: 24,
-  },
-  {
-    id: 'STF-013',
-    employeeCode: 'EMP-PH-03',
-    fullName: 'Nasir Mehmood',
-    fatherGuardianName: 'Mehmood Ul Hassan',
-    phone: '+92 300 5566778',
-    alternatePhone: '',
-    email: 'nasir.mehmood@sharif-saeed.hospital',
-    cnic: '35202-5678901-2',
-    designation: 'Assistant Pharmacy Technician',
-    departmentId: 'DEP-08',
-    departmentName: 'Pharmacy & Central Dispensary',
-    staffCategory: 'Pharmacy',
-    accessType: 'STAFF_RECORD_ONLY',
-    assignedPortal: null,
-    staffRole: null,
-    username: null,
-    status: 'SUSPENDED',
-    requirePasswordChange: false,
-    lastLoginAt: null,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '15 Jun 2024, 10:00 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '25 Jul 2026, 11:30 AM',
-    statusChangedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    statusChangedAt: '25 Jul 2026, 11:30 AM',
-    linkedActivityCount: 18,
-  },
-  {
-    id: 'STF-014',
-    employeeCode: 'EMP-CLN-01',
-    fullName: 'Muhammad Waqas',
-    fatherGuardianName: 'Muhammad Rafiq',
-    phone: '+92 300 6677889',
-    alternatePhone: '',
-    email: 'm.waqas@sharif-saeed.hospital',
-    cnic: '35201-7890123-6',
-    designation: 'Senior Medical Laboratory Technologist',
-    departmentId: 'DEP-06',
-    departmentName: 'Pathology & Diagnostic Laboratories',
-    staffCategory: 'Clinical Support',
-    accessType: 'STAFF_RECORD_ONLY',
-    assignedPortal: null,
-    staffRole: null,
-    username: null,
-    status: 'ACTIVE',
-    requirePasswordChange: false,
-    lastLoginAt: null,
-    createdBy: 'Dr. Farhana Yasmeen (Admin)',
-    createdAt: '01 Jul 2024, 09:30 AM',
-    updatedBy: 'Dr. Farhana Yasmeen (Admin)',
-    updatedAt: '05 Sep 2026, 01:20 PM',
+function formatTimestamp(iso?: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const dateStr = formatDisplayDate(d);
+  const timeStr = d.toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' });
+  return `${dateStr}, ${timeStr}`;
+}
+
+/** Maps a backend Staff row (with its `portalUser` relation included) onto the frontend `StaffUser` shape. */
+function toStaffUser(raw: Record<string, any>): StaffUser {
+  const pu = raw.portalUser;
+  const assignedPortal = pu ? PORTAL_ROLE_TO_KEY[pu.role] ?? null : null;
+  const status: StaffStatus = !raw.isActive ? 'INACTIVE' : pu?.status === 'SUSPENDED' ? 'SUSPENDED' : 'ACTIVE';
+
+  return {
+    id: raw.id,
+    employeeCode: raw.employeeId,
+    fullName: raw.fullName,
+    fatherGuardianName: raw.fatherGuardianName || undefined,
+    phone: raw.phone,
+    alternatePhone: raw.alternatePhone || undefined,
+    email: raw.email || '',
+    cnic: raw.cnic || undefined,
+    designation: raw.designation,
+    departmentId: raw.departmentId,
+    departmentName: raw.department?.name || '',
+    staffCategory: raw.category as StaffCategory,
+    accessType: pu ? 'PORTAL_USER' : 'STAFF_RECORD_ONLY',
+    assignedPortal,
+    staffRole: pu ? raw.designation : null,
+    username: pu?.username || null,
+    status,
+    requirePasswordChange: pu?.mustResetPassword ?? false,
+    lastLoginAt: pu?.lastLoginAt ? formatTimestamp(pu.lastLoginAt) : null,
+    createdBy: raw.createdBy || 'System',
+    createdAt: formatTimestamp(raw.createdAt),
+    updatedBy: raw.updatedBy || 'System',
+    updatedAt: formatTimestamp(raw.updatedAt),
+    passwordResetBy: pu?.passwordResetBy || undefined,
+    passwordResetAt: pu?.passwordResetAt ? formatTimestamp(pu.passwordResetAt) : undefined,
     linkedActivityCount: 0,
-  },
-];
+    // Internal, not part of the public StaffUser type but read back by this module below.
+    // @ts-expect-error - stash the linked portal user id for update/status/reset calls.
+    __portalUserId: pu?.id,
+  };
+}
+
+function getPortalUserId(u: StaffUser): string | undefined {
+  return (u as any).__portalUserId;
+}
+
+let cachedStaffUsers: StaffUser[] = [];
+
+export async function fetchStaffUsers(): Promise<StaffUser[]> {
+  const res = await apiClient.get<{ data: Record<string, any>[] }>('/staff', { params: { pageSize: 100 } });
+  cachedStaffUsers = res.data.data.map(toStaffUser);
+  return cachedStaffUsers;
+}
+
+export async function primeStaffUsersCache(): Promise<void> {
+  try {
+    await fetchStaffUsers();
+  } catch {
+    // Leave cache empty; the Staff Users page itself will surface the real error on its own fetch.
+  }
+}
 
 export class StaffUserService {
-  /**
-   * Retrieve all staff users from localStorage, initializing if empty
-   */
   static getStaffUsers(): StaffUser[] {
-    try {
-      const stored = localStorage.getItem(STAFF_USERS_STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
-        }
-      }
-    } catch (e) {
-      console.warn('Failed to load staff users from localStorage, falling back to initial data', e);
-    }
-    // Initialize defaults
-    StaffUserService.saveStaffUsers(INITIAL_STAFF_USERS);
-    StaffUserService.saveCredentials(INITIAL_STAFF_CREDENTIALS);
-    return INITIAL_STAFF_USERS;
+    return cachedStaffUsers;
+  }
+
+  static getStaffUserById(id: string): StaffUser | undefined {
+    return cachedStaffUsers.find((u) => u.id === id);
+  }
+
+  static getStaffUserByUsername(username: string): StaffUser | undefined {
+    const clean = username.trim().toLowerCase();
+    return cachedStaffUsers.find((u) => u.username && u.username.toLowerCase() === clean);
   }
 
   /**
-   * Save staff users dataset to localStorage
+   * The offline/backend-unreachable fallback login path in `AuthContext.tsx`
+   * calls these — there is no more local plaintext-credential store (real
+   * passwords only ever live, hashed, on the backend), so they always
+   * report "no local credential", correctly failing that fallback closed.
    */
-  static saveStaffUsers(users: StaffUser[]): void {
-    try {
-      localStorage.setItem(STAFF_USERS_STORAGE_KEY, JSON.stringify(users));
-    } catch (e) {
-      console.error('Failed to save staff users to localStorage', e);
-    }
+  static getCredentialByUserId(_staffUserId: string): undefined {
+    return undefined;
+  }
+  static getCredentialByUsername(_username: string): undefined {
+    return undefined;
+  }
+  static recordLogin(_id: string): void {
+    // No-op — real last-login tracking happens server-side (`PortalUser.lastLoginAt`).
   }
 
-  /**
-   * Retrieve credentials store
-   */
-  static getCredentials(): StaffCredential[] {
-    try {
-      const stored = localStorage.getItem(STAFF_CREDENTIALS_STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
-        }
-      }
-    } catch (e) {
-      console.warn('Failed to load staff credentials from localStorage', e);
-    }
-    StaffUserService.saveCredentials(INITIAL_STAFF_CREDENTIALS);
-    return INITIAL_STAFF_CREDENTIALS;
-  }
-
-  /**
-   * Save credentials store
-   */
-  static saveCredentials(creds: StaffCredential[]): void {
-    try {
-      localStorage.setItem(STAFF_CREDENTIALS_STORAGE_KEY, JSON.stringify(creds));
-    } catch (e) {
-      console.error('Failed to save staff credentials to localStorage', e);
-    }
-  }
-
-  /**
-   * Retrieve audit logs
-   */
   static getAuditLogs(): StaffAuditLogEntry[] {
-    try {
-      const stored = localStorage.getItem(STAFF_AUDIT_STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) {
-          return parsed;
-        }
-      }
-    } catch (e) {
-      console.warn('Failed to load staff audit logs from localStorage', e);
-    }
+    // The backend's real `AuditLog` table (populated automatically per
+    // request) is the actual audit trail now; there is no client-facing
+    // read endpoint for it yet (tracked in the completion plan), so this
+    // returns empty rather than fabricated entries.
     return [];
   }
 
-  /**
-   * Log an audit event
-   */
-  static logAudit(
-    entry: Omit<StaffAuditLogEntry, 'id' | 'timestamp'>
-  ): void {
-    const logs = StaffUserService.getAuditLogs();
-    const newEntry: StaffAuditLogEntry = {
-      ...entry,
-      id: `LOG-STF-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      timestamp: formatAuditTimestamp(),
-    };
-    logs.unshift(newEntry);
-    try {
-      localStorage.setItem(STAFF_AUDIT_STORAGE_KEY, JSON.stringify(logs.slice(0, 500)));
-    } catch (e) {
-      console.error('Failed to save staff audit log', e);
-    }
-  }
-
-  /**
-   * Get single staff user by ID
-   */
-  static getStaffUserById(id: string): StaffUser | undefined {
-    const users = StaffUserService.getStaffUsers();
-    return users.find((u) => u.id === id);
-  }
-
-  /**
-   * Get staff user by username (case-insensitive)
-   */
-  static getStaffUserByUsername(username: string): StaffUser | undefined {
-    const clean = username.trim().toLowerCase();
-    const users = StaffUserService.getStaffUsers();
-    return users.find((u) => u.username && u.username.toLowerCase() === clean);
-  }
-
-  /**
-   * Get credential by staff user ID
-   */
-  static getCredentialByUserId(staffUserId: string): StaffCredential | undefined {
-    const creds = StaffUserService.getCredentials();
-    return creds.find((c) => c.staffUserId === staffUserId);
-  }
-
-  /**
-   * Get credential by username
-   */
-  static getCredentialByUsername(username: string): StaffCredential | undefined {
-    const clean = username.trim().toLowerCase();
-    const creds = StaffUserService.getCredentials();
-    return creds.find((c) => c.username.toLowerCase() === clean);
-  }
-
-  /**
-   * Validate CNIC formatting (xxxxx-xxxxxxx-x)
-   */
   static isValidCNIC(cnic?: string | null): boolean {
-    if (!cnic || !cnic.trim()) return true; // optional
-    const regex = /^\d{5}-\d{7}-\d{1}$/;
-    return regex.test(cnic.trim());
+    if (!cnic || !cnic.trim()) return true;
+    return /^\d{5}-\d{7}-\d{1}$/.test(cnic.trim());
   }
 
-  /**
-   * Validate password rules (min 8 chars, 1 letter, 1 number)
-   */
   static isValidPassword(password: string): { valid: boolean; message?: string } {
-    if (password.length < 8) {
-      return { valid: false, message: 'Password must be at least 8 characters long.' };
-    }
-    if (!/[A-Za-z]/.test(password)) {
-      return { valid: false, message: 'Password must contain at least one letter.' };
-    }
-    if (!/[0-9]/.test(password)) {
-      return { valid: false, message: 'Password must contain at least one number.' };
-    }
+    if (password.length < 8) return { valid: false, message: 'Password must be at least 8 characters long.' };
+    if (!/[A-Za-z]/.test(password)) return { valid: false, message: 'Password must contain at least one letter.' };
+    if (!/[0-9]/.test(password)) return { valid: false, message: 'Password must contain at least one number.' };
     return { valid: true };
   }
 
-  /**
-   * Check if employeeCode is already in use
-   */
   static isEmployeeCodeDuplicate(code: string, currentId?: string): boolean {
     const clean = code.trim().toLowerCase();
-    const users = StaffUserService.getStaffUsers();
-    return users.some(
-      (u) => u.employeeCode.toLowerCase() === clean && u.id !== currentId
-    );
+    return cachedStaffUsers.some((u) => u.employeeCode.toLowerCase() === clean && u.id !== currentId);
   }
 
-  /**
-   * Check if username is already in use
-   */
   static isUsernameDuplicate(username: string, currentId?: string): boolean {
     const clean = username.trim().toLowerCase();
     if (!clean) return false;
-    const users = StaffUserService.getStaffUsers();
-    return users.some(
-      (u) => u.username && u.username.toLowerCase() === clean && u.id !== currentId
-    );
+    return cachedStaffUsers.some((u) => u.username && u.username.toLowerCase() === clean && u.id !== currentId);
   }
 
-  /**
-   * Generate next sequential Staff User ID e.g. STF-015
-   */
-  static generateNextId(): string {
-    const users = StaffUserService.getStaffUsers();
-    let maxNum = 0;
-    users.forEach((u) => {
-      const match = u.id.match(/^STF-(\d+)$/);
-      if (match) {
-        const num = parseInt(match[1], 10);
-        if (num > maxNum) maxNum = num;
-      }
-    });
-    return `STF-${String(maxNum + 1).padStart(3, '0')}`;
-  }
-
-  /**
-   * Create a new Staff User
-   */
-  static createStaffUser(
-    values: StaffUserFormValues,
-    currentUser: User | null
-  ): { success: boolean; user?: StaffUser; error?: string } {
-    // 1. Basic validation
-    if (!values.fullName.trim()) {
-      return { success: false, error: 'Full Name is required.' };
-    }
-    if (!values.employeeCode.trim()) {
-      return { success: false, error: 'Employee Code is required.' };
-    }
-    if (StaffUserService.isEmployeeCodeDuplicate(values.employeeCode)) {
-      return {
-        success: false,
-        error: `Employee Code "${values.employeeCode}" is already in use by another staff member.`,
-      };
-    }
-    if (!values.phone.trim()) {
-      return { success: false, error: 'Primary phone number is required.' };
-    }
-    if (!values.designation.trim()) {
-      return { success: false, error: 'Designation is required.' };
-    }
-    if (!values.departmentId) {
-      return { success: false, error: 'Department selection is required.' };
-    }
-    if (values.cnic && !StaffUserService.isValidCNIC(values.cnic)) {
-      return {
-        success: false,
-        error: 'Invalid CNIC format. Please use standard format (xxxxx-xxxxxxx-x).',
-      };
+  /** `POST /staff` (+ `POST /portal-users` when Portal User access is requested) */
+  static async createStaffUser(values: StaffUserFormValues, currentUser: User | null): Promise<{ success: boolean; user?: StaffUser; error?: string }> {
+    if (!values.fullName.trim()) return { success: false, error: 'Full Name is required.' };
+    if (!values.phone.trim()) return { success: false, error: 'Primary phone number is required.' };
+    if (!values.designation.trim()) return { success: false, error: 'Designation is required.' };
+    if (!values.departmentId) return { success: false, error: 'Department selection is required.' };
+    if (values.cnic && !this.isValidCNIC(values.cnic)) {
+      return { success: false, error: 'Invalid CNIC format. Please use standard format (xxxxx-xxxxxxx-x).' };
     }
 
-    // 2. Portal User specific validation
     if (values.accessType === 'PORTAL_USER') {
-      if (!values.assignedPortal) {
-        return { success: false, error: 'Assigned Portal is required for Portal User.' };
-      }
-      if (!values.staffRole) {
-        return { success: false, error: 'Staff Role is required for Portal User.' };
-      }
+      if (!values.assignedPortal) return { success: false, error: 'Assigned Portal is required for Portal User.' };
+      if (!values.staffRole) return { success: false, error: 'Staff Role is required for Portal User.' };
       const allowedRoles = STAFF_PORTAL_ROLES[values.assignedPortal as StaffPortalKey] || [];
       if (!allowedRoles.includes(values.staffRole as StaffRole)) {
-        return {
-          success: false,
-          error: `Staff role "${values.staffRole}" is incompatible with portal "${values.assignedPortal}".`,
-        };
+        return { success: false, error: `Staff role "${values.staffRole}" is incompatible with portal "${values.assignedPortal}".` };
       }
-      if (!values.username.trim()) {
-        return { success: false, error: 'Username is required for Portal User.' };
-      }
-      if (StaffUserService.isUsernameDuplicate(values.username)) {
-        return {
-          success: false,
-          error: `Username "${values.username}" is already taken. Please choose another.`,
-        };
-      }
-      if (!values.password) {
-        return { success: false, error: 'Temporary password is required for Portal User.' };
-      }
-      const passValidation = StaffUserService.isValidPassword(values.password);
-      if (!passValidation.valid) {
-        return { success: false, error: passValidation.message };
-      }
-      if (values.password !== values.confirmPassword) {
-        return { success: false, error: 'Password and Confirm Password do not match.' };
-      }
+      if (!values.username.trim()) return { success: false, error: 'Username is required for Portal User.' };
+      if (!values.password) return { success: false, error: 'Temporary password is required for Portal User.' };
+      const passValidation = this.isValidPassword(values.password);
+      if (!passValidation.valid) return { success: false, error: passValidation.message };
+      if (values.password !== values.confirmPassword) return { success: false, error: 'Password and Confirm Password do not match.' };
     }
 
-    // Resolve Department details
-    const departments = DepartmentService.getDepartments();
-    const dept = departments.find((d) => d.id === values.departmentId);
-    const departmentName = dept ? dept.name : values.departmentName || 'General Department';
-
-    const newId = StaffUserService.generateNextId();
-    const timestamp = formatAuditTimestamp();
-    const actor = formatAuditUser(currentUser);
-
-    const newStaff: StaffUser = {
-      id: newId,
-      employeeCode: values.employeeCode.trim().toUpperCase(),
-      fullName: values.fullName.trim(),
-      fatherGuardianName: values.fatherGuardianName.trim() || undefined,
-      phone: values.phone.trim(),
-      alternatePhone: values.alternatePhone.trim() || undefined,
-      email: values.email.trim().toLowerCase(),
-      cnic: values.cnic.trim() || undefined,
-      designation: values.designation.trim(),
-      departmentId: values.departmentId,
-      departmentName,
-      staffCategory: values.staffCategory,
-      accessType: values.accessType,
-      assignedPortal: values.accessType === 'PORTAL_USER' ? (values.assignedPortal as StaffPortalKey) : null,
-      staffRole: values.accessType === 'PORTAL_USER' ? values.staffRole : null,
-      username: values.accessType === 'PORTAL_USER' ? values.username.trim().toLowerCase() : null,
-      status: values.status,
-      requirePasswordChange: values.accessType === 'PORTAL_USER' ? values.requirePasswordChange : false,
-      lastLoginAt: null,
-      createdBy: actor,
-      createdAt: timestamp,
-      updatedBy: actor,
-      updatedAt: timestamp,
-      linkedActivityCount: 0,
-    };
-
-    // Save Staff User
-    const users = StaffUserService.getStaffUsers();
-    users.unshift(newStaff);
-    StaffUserService.saveStaffUsers(users);
-
-    // Save Credentials if Portal User
-    if (values.accessType === 'PORTAL_USER' && values.password) {
-      const creds = StaffUserService.getCredentials();
-      creds.push({
-        staffUserId: newId,
-        username: newStaff.username!,
-        demoPassword: values.password,
-        assignedPortal: newStaff.assignedPortal!,
-        requirePasswordChange: values.requirePasswordChange,
-        updatedAt: timestamp,
+    try {
+      const staffRes = await apiClient.post<{ data: Record<string, any> }>('/staff', {
+        fullName: values.fullName.trim(),
+        fatherGuardianName: values.fatherGuardianName?.trim() || undefined,
+        cnic: values.cnic?.trim() || undefined,
+        category: values.staffCategory,
+        departmentId: values.departmentId,
+        designation: values.designation.trim(),
+        phone: values.phone.trim(),
+        alternatePhone: values.alternatePhone?.trim() || undefined,
+        email: values.email?.trim() || undefined,
+        joiningDate: new Date().toISOString().slice(0, 10), // not yet collected by this form — defaults to today
       });
-      StaffUserService.saveCredentials(creds);
-    }
+      const staffId = staffRes.data.data.id;
 
-    // Audit log
-    StaffUserService.logAudit({
-      staffUserId: newId,
-      staffName: newStaff.fullName,
-      employeeCode: newStaff.employeeCode,
-      action: 'CREATE',
-      actorName: currentUser?.name || 'Prof. Dr. Tariq Saeed',
-      actorRole: currentUser?.role || 'Super Admin',
-      details: `Created new staff user (${values.accessType === 'PORTAL_USER' ? `Portal: ${values.assignedPortal}` : 'Staff Record Only'})`,
-    });
-
-    return { success: true, user: newStaff };
-  }
-
-  /**
-   * Update an existing Staff User
-   */
-  static updateStaffUser(
-    id: string,
-    values: StaffUserFormValues,
-    currentUser: User | null
-  ): { success: boolean; user?: StaffUser; error?: string } {
-    const users = StaffUserService.getStaffUsers();
-    const index = users.findIndex((u) => u.id === id);
-    if (index === -1) {
-      return { success: false, error: 'Staff user not found.' };
-    }
-
-    const existing = users[index];
-
-    // Basic validation
-    if (!values.fullName.trim()) {
-      return { success: false, error: 'Full Name is required.' };
-    }
-    if (!values.employeeCode.trim()) {
-      return { success: false, error: 'Employee Code is required.' };
-    }
-    if (StaffUserService.isEmployeeCodeDuplicate(values.employeeCode, id)) {
-      return {
-        success: false,
-        error: `Employee Code "${values.employeeCode}" is already in use by another staff member.`,
-      };
-    }
-    if (!values.phone.trim()) {
-      return { success: false, error: 'Primary phone number is required.' };
-    }
-    if (!values.designation.trim()) {
-      return { success: false, error: 'Designation is required.' };
-    }
-    if (!values.departmentId) {
-      return { success: false, error: 'Department selection is required.' };
-    }
-    if (values.cnic && !StaffUserService.isValidCNIC(values.cnic)) {
-      return {
-        success: false,
-        error: 'Invalid CNIC format. Please use standard format (xxxxx-xxxxxxx-x).',
-      };
-    }
-
-    // Access type transitions & validation
-    if (values.accessType === 'PORTAL_USER') {
-      if (!values.assignedPortal) {
-        return { success: false, error: 'Assigned Portal is required for Portal User.' };
-      }
-      if (!values.staffRole) {
-        return { success: false, error: 'Staff Role is required for Portal User.' };
-      }
-      const allowedRoles = STAFF_PORTAL_ROLES[values.assignedPortal as StaffPortalKey] || [];
-      if (!allowedRoles.includes(values.staffRole as StaffRole)) {
-        return {
-          success: false,
-          error: `Staff role "${values.staffRole}" is incompatible with portal "${values.assignedPortal}".`,
-        };
-      }
-      if (!values.username.trim()) {
-        return { success: false, error: 'Username is required for Portal User.' };
-      }
-      if (StaffUserService.isUsernameDuplicate(values.username, id)) {
-        return {
-          success: false,
-          error: `Username "${values.username}" is already taken. Please choose another.`,
-        };
-      }
-
-      // If converting from STAFF_RECORD_ONLY to PORTAL_USER, password is required
-      if (existing.accessType === 'STAFF_RECORD_ONLY') {
-        if (!values.password) {
-          return {
-            success: false,
-            error: 'Temporary password is required when enabling Portal User access.',
-          };
-        }
-        const passValidation = StaffUserService.isValidPassword(values.password);
-        if (!passValidation.valid) {
-          return { success: false, error: passValidation.message };
-        }
-        if (values.password !== values.confirmPassword) {
-          return { success: false, error: 'Password and Confirm Password do not match.' };
-        }
-      }
-    }
-
-    // Resolve Department details
-    const departments = DepartmentService.getDepartments();
-    const dept = departments.find((d) => d.id === values.departmentId);
-    const departmentName = dept ? dept.name : values.departmentName || existing.departmentName;
-
-    const timestamp = formatAuditTimestamp();
-    const actor = formatAuditUser(currentUser);
-
-    const updatedUser: StaffUser = {
-      ...existing,
-      employeeCode: values.employeeCode.trim().toUpperCase(),
-      fullName: values.fullName.trim(),
-      fatherGuardianName: values.fatherGuardianName.trim() || undefined,
-      phone: values.phone.trim(),
-      alternatePhone: values.alternatePhone.trim() || undefined,
-      email: values.email.trim().toLowerCase(),
-      cnic: values.cnic.trim() || undefined,
-      designation: values.designation.trim(),
-      departmentId: values.departmentId,
-      departmentName,
-      staffCategory: values.staffCategory,
-      accessType: values.accessType,
-      assignedPortal: values.accessType === 'PORTAL_USER' ? (values.assignedPortal as StaffPortalKey) : null,
-      staffRole: values.accessType === 'PORTAL_USER' ? values.staffRole : null,
-      username: values.accessType === 'PORTAL_USER' ? values.username.trim().toLowerCase() : null,
-      status: values.status,
-      requirePasswordChange:
-        values.accessType === 'PORTAL_USER' ? values.requirePasswordChange : false,
-      updatedBy: actor,
-      updatedAt: timestamp,
-    };
-
-    users[index] = updatedUser;
-    StaffUserService.saveStaffUsers(users);
-
-    // Handle credentials updates
-    const creds = StaffUserService.getCredentials();
-    const credIndex = creds.findIndex((c) => c.staffUserId === id);
-
-    if (values.accessType === 'PORTAL_USER') {
-      if (credIndex >= 0) {
-        // Update existing credentials record (portal/username/requirePasswordChange)
-        creds[credIndex] = {
-          ...creds[credIndex],
-          username: updatedUser.username!,
-          assignedPortal: updatedUser.assignedPortal!,
-          requirePasswordChange: values.requirePasswordChange,
-          updatedAt: timestamp,
-          ...(values.password ? { demoPassword: values.password } : {}),
-        };
-      } else if (values.password) {
-        // Create new credential record (converted from STAFF_RECORD_ONLY)
-        creds.push({
-          staffUserId: id,
-          username: updatedUser.username!,
-          demoPassword: values.password,
-          assignedPortal: updatedUser.assignedPortal!,
-          requirePasswordChange: values.requirePasswordChange,
-          updatedAt: timestamp,
+      if (values.accessType === 'PORTAL_USER') {
+        await apiClient.post('/portal-users', {
+          staffId,
+          fullName: values.fullName.trim(),
+          username: values.username.trim().toLowerCase(),
+          email: values.email?.trim() || undefined,
+          phone: values.phone.trim(),
+          password: values.password,
+          role: KEY_TO_PORTAL_ROLE[values.assignedPortal as StaffPortalKey],
         });
       }
-      StaffUserService.saveCredentials(creds);
-    } else {
-      // Converted to STAFF_RECORD_ONLY: remove credentials from login store
-      if (credIndex >= 0) {
-        creds.splice(credIndex, 1);
-        StaffUserService.saveCredentials(creds);
+      if (values.status === 'INACTIVE') {
+        await apiClient.post(`/staff/${staffId}/deactivate`);
+      }
+
+      await fetchStaffUsers();
+      const created = this.getStaffUserById(staffId);
+      return { success: true, user: created };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to create staff user.' };
+    }
+  }
+
+  /** `PATCH /staff/:id` (+ create/update/remove the linked `/portal-users*` record as access type changes) */
+  static async updateStaffUser(id: string, values: StaffUserFormValues, currentUser: User | null): Promise<{ success: boolean; user?: StaffUser; error?: string }> {
+    const existing = this.getStaffUserById(id);
+    if (!existing) return { success: false, error: 'Staff user not found.' };
+
+    if (!values.fullName.trim()) return { success: false, error: 'Full Name is required.' };
+    if (!values.phone.trim()) return { success: false, error: 'Primary phone number is required.' };
+    if (!values.departmentId) return { success: false, error: 'Department selection is required.' };
+    if (values.cnic && !this.isValidCNIC(values.cnic)) {
+      return { success: false, error: 'Invalid CNIC format. Please use standard format (xxxxx-xxxxxxx-x).' };
+    }
+
+    if (values.accessType === 'PORTAL_USER') {
+      if (!values.assignedPortal || !values.staffRole) {
+        return { success: false, error: 'Assigned Portal and Staff Role are required for Portal User.' };
+      }
+      if (existing.accessType === 'STAFF_RECORD_ONLY') {
+        if (!values.username.trim()) return { success: false, error: 'Username is required for Portal User.' };
+        if (!values.password) return { success: false, error: 'Temporary password is required when enabling Portal User access.' };
+        const passValidation = this.isValidPassword(values.password);
+        if (!passValidation.valid) return { success: false, error: passValidation.message };
+        if (values.password !== values.confirmPassword) return { success: false, error: 'Password and Confirm Password do not match.' };
       }
     }
 
-    // Audit log
-    StaffUserService.logAudit({
-      staffUserId: id,
-      staffName: updatedUser.fullName,
-      employeeCode: updatedUser.employeeCode,
-      action: 'UPDATE',
-      actorName: currentUser?.name || 'Prof. Dr. Tariq Saeed',
-      actorRole: currentUser?.role || 'Super Admin',
-      details: `Updated staff profile details (Status: ${updatedUser.status}, Access: ${updatedUser.accessType})`,
-    });
-
-    return { success: true, user: updatedUser };
-  }
-
-  /**
-   * Update staff account status (ACTIVE, INACTIVE, SUSPENDED)
-   */
-  static updateStaffStatus(
-    id: string,
-    newStatus: StaffStatus,
-    currentUser: User | null
-  ): { success: boolean; error?: string } {
-    const users = StaffUserService.getStaffUsers();
-    const user = users.find((u) => u.id === id);
-    if (!user) {
-      return { success: false, error: 'Staff user not found.' };
-    }
-
-    const timestamp = formatAuditTimestamp();
-    const actor = formatAuditUser(currentUser);
-
-    user.status = newStatus;
-    user.statusChangedBy = actor;
-    user.statusChangedAt = timestamp;
-    user.updatedBy = actor;
-    user.updatedAt = timestamp;
-
-    StaffUserService.saveStaffUsers(users);
-
-    StaffUserService.logAudit({
-      staffUserId: id,
-      staffName: user.fullName,
-      employeeCode: user.employeeCode,
-      action: 'STATUS_CHANGE',
-      actorName: currentUser?.name || 'Prof. Dr. Tariq Saeed',
-      actorRole: currentUser?.role || 'Super Admin',
-      details: `Changed account status to ${newStatus}`,
-    });
-
-    return { success: true };
-  }
-
-  /**
-   * Reset staff user password (Portal User only)
-   */
-  static resetStaffPassword(
-    id: string,
-    newPassword: string,
-    requirePasswordChange: boolean,
-    currentUser: User | null
-  ): { success: boolean; error?: string } {
-    const user = StaffUserService.getStaffUserById(id);
-    if (!user) {
-      return { success: false, error: 'Staff user not found.' };
-    }
-    if (user.accessType !== 'PORTAL_USER') {
-      return { success: false, error: 'Cannot reset password for a Staff Record Only entry.' };
-    }
-
-    const validation = StaffUserService.isValidPassword(newPassword);
-    if (!validation.valid) {
-      return { success: false, error: validation.message };
-    }
-
-    const timestamp = formatAuditTimestamp();
-    const actor = formatAuditUser(currentUser);
-
-    // Update credential store
-    const creds = StaffUserService.getCredentials();
-    const credIndex = creds.findIndex((c) => c.staffUserId === id);
-    if (credIndex >= 0) {
-      creds[credIndex].demoPassword = newPassword;
-      creds[credIndex].requirePasswordChange = requirePasswordChange;
-      creds[credIndex].updatedAt = timestamp;
-    } else {
-      creds.push({
-        staffUserId: id,
-        username: user.username || `staff.${id.toLowerCase()}`,
-        demoPassword: newPassword,
-        assignedPortal: user.assignedPortal || 'front-desk',
-        requirePasswordChange,
-        updatedAt: timestamp,
+    try {
+      await apiClient.patch(`/staff/${id}`, {
+        fullName: values.fullName.trim(),
+        fatherGuardianName: values.fatherGuardianName?.trim() || undefined,
+        cnic: values.cnic?.trim() || undefined,
+        category: values.staffCategory,
+        departmentId: values.departmentId,
+        designation: values.designation.trim(),
+        phone: values.phone.trim(),
+        alternatePhone: values.alternatePhone?.trim() || undefined,
+        email: values.email?.trim() || undefined,
+        isActive: values.status !== 'INACTIVE',
       });
-    }
-    StaffUserService.saveCredentials(creds);
 
-    // Update staff user record
-    const users = StaffUserService.getStaffUsers();
-    const u = users.find((item) => item.id === id);
-    if (u) {
-      u.passwordResetBy = actor;
-      u.passwordResetAt = timestamp;
-      u.requirePasswordChange = requirePasswordChange;
-      u.updatedBy = actor;
-      u.updatedAt = timestamp;
-      StaffUserService.saveStaffUsers(users);
-    }
+      const portalUserId = getPortalUserId(existing);
+      if (values.accessType === 'PORTAL_USER') {
+        if (portalUserId) {
+          await apiClient.patch(`/portal-users/${portalUserId}`, {
+            fullName: values.fullName.trim(),
+            email: values.email?.trim() || undefined,
+            phone: values.phone.trim(),
+            role: KEY_TO_PORTAL_ROLE[values.assignedPortal as StaffPortalKey],
+          });
+          const wantsSuspended = values.status === 'SUSPENDED';
+          if (wantsSuspended !== (existing.status === 'SUSPENDED')) {
+            await apiClient.post(`/portal-users/${portalUserId}/status`, { status: wantsSuspended ? 'SUSPENDED' : 'ACTIVE' });
+          }
+        } else {
+          // Converting from STAFF_RECORD_ONLY to PORTAL_USER
+          await apiClient.post('/portal-users', {
+            staffId: id,
+            fullName: values.fullName.trim(),
+            username: values.username.trim().toLowerCase(),
+            email: values.email?.trim() || undefined,
+            phone: values.phone.trim(),
+            password: values.password,
+            role: KEY_TO_PORTAL_ROLE[values.assignedPortal as StaffPortalKey],
+          });
+        }
+      } else if (portalUserId) {
+        // Converting to STAFF_RECORD_ONLY: remove portal access if it has no linked activity.
+        try {
+          await apiClient.delete(`/portal-users/${portalUserId}`);
+        } catch (err: any) {
+          await fetchStaffUsers();
+          return {
+            success: false,
+            error: err?.message || 'This account has linked activity and its portal access cannot be removed. Suspend it instead.',
+          };
+        }
+      }
 
-    StaffUserService.logAudit({
-      staffUserId: id,
-      staffName: user.fullName,
-      employeeCode: user.employeeCode,
-      action: 'PASSWORD_RESET',
-      actorName: currentUser?.name || 'Prof. Dr. Tariq Saeed',
-      actorRole: currentUser?.role || 'Super Admin',
-      details: 'Workstation credentials reset by management',
-    });
-
-    return { success: true };
-  }
-
-  /**
-   * Delete staff user with activity safeguard
-   */
-  static deleteStaffUser(
-    id: string,
-    currentUser: User | null
-  ): { success: boolean; error?: string } {
-    const users = StaffUserService.getStaffUsers();
-    const user = users.find((u) => u.id === id);
-    if (!user) {
-      return { success: false, error: 'Staff user not found.' };
-    }
-
-    // Safeguard check: If staff has recorded hospital activity, prevent hard deletion
-    if (user.linkedActivityCount && user.linkedActivityCount > 0) {
-      return {
-        success: false,
-        error:
-          'This staff account has recorded hospital activity and cannot be permanently deleted. Deactivate it instead.',
-      };
-    }
-
-    // Perform deletion
-    const filteredUsers = users.filter((u) => u.id !== id);
-    StaffUserService.saveStaffUsers(filteredUsers);
-
-    // Clean up credentials
-    const creds = StaffUserService.getCredentials().filter((c) => c.staffUserId !== id);
-    StaffUserService.saveCredentials(creds);
-
-    StaffUserService.logAudit({
-      staffUserId: id,
-      staffName: user.fullName,
-      employeeCode: user.employeeCode,
-      action: 'DELETE',
-      actorName: currentUser?.name || 'Prof. Dr. Tariq Saeed',
-      actorRole: currentUser?.role || 'Super Admin',
-      details: `Permanently removed staff record (0 linked activities)`,
-    });
-
-    return { success: true };
-  }
-
-  /**
-   * Record login time on authentication
-   */
-  static recordLogin(id: string): void {
-    const users = StaffUserService.getStaffUsers();
-    const user = users.find((u) => u.id === id);
-    if (user) {
-      user.lastLoginAt = formatAuditTimestamp();
-      StaffUserService.saveStaffUsers(users);
+      await fetchStaffUsers();
+      const updated = this.getStaffUserById(id);
+      return { success: true, user: updated };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to update staff user.' };
     }
   }
 
-  /**
-   * Filter and search staff users
-   */
-  static filterStaffUsers(
-    users: StaffUser[],
-    filters: StaffUserFilterState
-  ): StaffUser[] {
+  /** `POST /staff/:id/deactivate` or `PATCH /staff/:id` (reactivate), plus `/portal-users/:id/status` when applicable */
+  static async updateStaffStatus(id: string, newStatus: StaffStatus, _currentUser: User | null): Promise<{ success: boolean; error?: string }> {
+    const existing = this.getStaffUserById(id);
+    if (!existing) return { success: false, error: 'Staff user not found.' };
+
+    try {
+      if (newStatus === 'INACTIVE') {
+        await apiClient.post(`/staff/${id}/deactivate`);
+      } else if (!existing.status || existing.status === 'INACTIVE') {
+        await apiClient.patch(`/staff/${id}`, { isActive: true });
+      }
+
+      const portalUserId = getPortalUserId(existing);
+      if (portalUserId && newStatus !== 'INACTIVE') {
+        await apiClient.post(`/portal-users/${portalUserId}/status`, { status: newStatus === 'SUSPENDED' ? 'SUSPENDED' : 'ACTIVE' });
+      }
+
+      await fetchStaffUsers();
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to update status.' };
+    }
+  }
+
+  /** `POST /portal-users/:id/reset-password` */
+  static async resetStaffPassword(id: string, newPassword: string, _requirePasswordChange: boolean, _currentUser: User | null): Promise<{ success: boolean; error?: string }> {
+    const existing = this.getStaffUserById(id);
+    if (!existing) return { success: false, error: 'Staff user not found.' };
+    if (existing.accessType !== 'PORTAL_USER') return { success: false, error: 'Cannot reset password for a Staff Record Only entry.' };
+
+    const validation = this.isValidPassword(newPassword);
+    if (!validation.valid) return { success: false, error: validation.message };
+
+    try {
+      const portalUserId = getPortalUserId(existing);
+      await apiClient.post(`/portal-users/${portalUserId}/reset-password`, { newPassword });
+      await fetchStaffUsers();
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to reset password.' };
+    }
+  }
+
+  /** The backend has no hard-delete for Staff/PortalUser (same data-integrity stance as elsewhere). */
+  static async deleteStaffUser(_id: string, _currentUser: User | null): Promise<{ success: boolean; error?: string }> {
+    return { success: false, error: 'Staff accounts cannot be permanently deleted for data-integrity reasons. Deactivate it instead.' };
+  }
+
+  static filterStaffUsers(users: StaffUser[], filters: StaffUserFilterState): StaffUser[] {
     const search = (filters.searchTerm || '').trim().toLowerCase();
-
     return users.filter((u) => {
-      // 1. Search filter across Employee Code, Staff Name, Phone, Email, CNIC, Designation, Department, Username
       if (search) {
-        const matchesSearch =
+        const matches =
           u.employeeCode.toLowerCase().includes(search) ||
           u.fullName.toLowerCase().includes(search) ||
           u.phone.toLowerCase().includes(search) ||
@@ -1148,47 +380,18 @@ export class StaffUserService {
           u.designation.toLowerCase().includes(search) ||
           u.departmentName.toLowerCase().includes(search) ||
           (u.username && u.username.toLowerCase().includes(search));
-
-        if (!matchesSearch) return false;
+        if (!matches) return false;
       }
-
-      // 2. Department filter
-      if (filters.departmentId && filters.departmentId !== 'ALL') {
-        if (u.departmentId !== filters.departmentId) return false;
-      }
-
-      // 3. Staff Category filter
-      if (filters.staffCategory && filters.staffCategory !== 'ALL') {
-        if (u.staffCategory !== filters.staffCategory) return false;
-      }
-
-      // 4. Access Type filter
-      if (filters.accessType && filters.accessType !== 'ALL') {
-        if (u.accessType !== filters.accessType) return false;
-      }
-
-      // 5. Assigned Portal filter
-      if (filters.assignedPortal && filters.assignedPortal !== 'ALL') {
-        if (u.assignedPortal !== filters.assignedPortal) return false;
-      }
-
-      // 6. Status filter
-      if (filters.status && filters.status !== 'ALL') {
-        if (u.status !== filters.status) return false;
-      }
-
-      // 7. Optional Staff Role filter
-      if (filters.staffRole && filters.staffRole !== 'ALL') {
-        if (u.staffRole !== filters.staffRole) return false;
-      }
-
+      if (filters.departmentId && filters.departmentId !== 'ALL' && u.departmentId !== filters.departmentId) return false;
+      if (filters.staffCategory && filters.staffCategory !== 'ALL' && u.staffCategory !== filters.staffCategory) return false;
+      if (filters.accessType && filters.accessType !== 'ALL' && u.accessType !== filters.accessType) return false;
+      if (filters.assignedPortal && filters.assignedPortal !== 'ALL' && u.assignedPortal !== filters.assignedPortal) return false;
+      if (filters.status && filters.status !== 'ALL' && u.status !== filters.status) return false;
+      if (filters.staffRole && filters.staffRole !== 'ALL' && u.staffRole !== filters.staffRole) return false;
       return true;
     });
   }
 
-  /**
-   * Generate downloadable Excel import template
-   */
   static generateImportTemplate(): void {
     const templateData = [
       {
@@ -1239,16 +442,11 @@ export class StaffUserService {
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(templateData);
     const wsInfo = XLSX.utils.json_to_sheet(instructionsData);
-
     XLSX.utils.book_append_sheet(wb, ws, 'Staff Import Template');
     XLSX.utils.book_append_sheet(wb, wsInfo, 'Field Instructions');
-
     XLSX.writeFile(wb, 'staff_users_import_template.xlsx');
   }
 
-  /**
-   * Parse and validate uploaded Excel file
-   */
   static async parseAndValidateImport(file: File): Promise<StaffImportValidationResult> {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -1261,14 +459,10 @@ export class StaffUserService {
           const worksheet = workbook.Sheets[firstSheetName];
           const rawRows: any[] = XLSX.utils.sheet_to_json(worksheet);
 
-          const existingUsers = StaffUserService.getStaffUsers();
+          const existingUsers = this.getStaffUsers();
           const existingCodes = new Set(existingUsers.map((u) => u.employeeCode.toLowerCase()));
-          const existingUsernames = new Set(
-            existingUsers.filter((u) => u.username).map((u) => u.username!.toLowerCase())
-          );
-          const existingCnics = new Set(
-            existingUsers.filter((u) => u.cnic).map((u) => u.cnic!.toLowerCase())
-          );
+          const existingUsernames = new Set(existingUsers.filter((u) => u.username).map((u) => u.username!.toLowerCase()));
+          const existingCnics = new Set(existingUsers.filter((u) => u.cnic).map((u) => u.cnic!.toLowerCase()));
 
           const departments = DepartmentService.getDepartments();
           const deptMap = new Map<string, { id: string; name: string }>();
@@ -1280,11 +474,10 @@ export class StaffUserService {
 
           const seenBatchCodes = new Set<string>();
           const seenBatchUsernames = new Set<string>();
-
           const rows: ImportedStaffRow[] = [];
 
           rawRows.forEach((row, idx) => {
-            const rowNumber = idx + 2; // header is row 1
+            const rowNumber = idx + 2;
             const errors: string[] = [];
 
             const employeeCode = String(row.employee_code || row.EmployeeCode || '').trim();
@@ -1303,7 +496,6 @@ export class StaffUserService {
             const rawUsername = String(row.username || row.Username || '').trim();
             const status = String(row.status || row.Status || 'ACTIVE').trim().toUpperCase();
 
-            // Validate Employee Code
             if (!employeeCode) {
               errors.push('Employee Code is required.');
             } else if (existingCodes.has(employeeCode.toLowerCase())) {
@@ -1314,67 +506,42 @@ export class StaffUserService {
               seenBatchCodes.add(employeeCode.toLowerCase());
             }
 
-            // Validate Full Name
-            if (!fullName) {
-              errors.push('Staff Full Name is required.');
-            }
+            if (!fullName) errors.push('Staff Full Name is required.');
+            if (!phone) errors.push('Phone number is required.');
+            if (!designation) errors.push('Designation is required.');
 
-            // Validate Phone
-            if (!phone) {
-              errors.push('Phone number is required.');
-            }
-
-            // Validate Designation
-            if (!designation) {
-              errors.push('Designation is required.');
-            }
-
-            // Validate Department
             let resolvedDept: { id: string; name: string } | undefined;
             if (!departmentCode) {
               errors.push('Department code is required.');
             } else {
               resolvedDept = deptMap.get(departmentCode.toLowerCase());
               if (!resolvedDept) {
-                // Try keyword match
-                resolvedDept = deptMap.get('dep-09'); // fallback
-                if (!resolvedDept) {
-                  errors.push(`Unknown department code "${departmentCode}".`);
-                }
+                errors.push(`Unknown department code "${departmentCode}".`);
               }
             }
 
-            // Validate Staff Category
             if (!staffCategory || !STAFF_CATEGORIES.includes(staffCategory as StaffCategory)) {
-              errors.push(
-                `Invalid staff category "${staffCategory}". Allowed: ${STAFF_CATEGORIES.slice(0, 5).join(', ')}...`
-              );
+              errors.push(`Invalid staff category "${staffCategory}". Allowed: ${STAFF_CATEGORIES.slice(0, 5).join(', ')}...`);
             }
 
-            // Validate Access Type
             if (accessType !== 'PORTAL_USER' && accessType !== 'STAFF_RECORD_ONLY') {
               errors.push('Access Type must be either PORTAL_USER or STAFF_RECORD_ONLY.');
             }
 
-            // Portal User validations
             let validatedUsername: string | undefined;
             if (accessType === 'PORTAL_USER') {
               const validPortals: StaffPortalKey[] = ['front-desk', 'admission', 'inventory'];
               if (!assignedPortal || !validPortals.includes(assignedPortal as StaffPortalKey)) {
                 errors.push('Assigned portal must be one of: front-desk, admission, inventory.');
               } else {
-                // Validate role for selected portal
                 const allowedRoles = STAFF_PORTAL_ROLES[assignedPortal as StaffPortalKey];
                 if (!staffRole) {
                   errors.push(`Staff role is required for portal "${assignedPortal}".`);
                 } else if (!allowedRoles.includes(staffRole as StaffRole)) {
-                  errors.push(
-                    `Role "${staffRole}" is invalid for portal "${assignedPortal}". Allowed: ${allowedRoles.join(', ')}`
-                  );
+                  errors.push(`Role "${staffRole}" is invalid for portal "${assignedPortal}". Allowed: ${allowedRoles.join(', ')}`);
                 }
               }
 
-              // Resolve username
               if (rawUsername) {
                 if (existingUsernames.has(rawUsername.toLowerCase())) {
                   errors.push(`Username "${rawUsername}" is already in use.`);
@@ -1385,9 +552,8 @@ export class StaffUserService {
                   seenBatchUsernames.add(validatedUsername);
                 }
               } else {
-                // Auto generate username: first.last
                 const parts = fullName.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean);
-                let base = parts.length > 1 ? `${parts[0]}.${parts[parts.length - 1]}` : parts[0] || 'staff';
+                const base = parts.length > 1 ? `${parts[0]}.${parts[parts.length - 1]}` : parts[0] || 'staff';
                 let candidate = base;
                 let counter = 1;
                 while (existingUsernames.has(candidate) || seenBatchUsernames.has(candidate)) {
@@ -1399,16 +565,14 @@ export class StaffUserService {
               }
             }
 
-            // Validate CNIC format if present
             if (cnic) {
-              if (!StaffUserService.isValidCNIC(cnic)) {
+              if (!this.isValidCNIC(cnic)) {
                 errors.push('CNIC must follow format xxxxx-xxxxxxx-x.');
               } else if (existingCnics.has(cnic.toLowerCase())) {
                 errors.push(`CNIC "${cnic}" already registered to another staff user.`);
               }
             }
 
-            // Validate status
             if (status !== 'ACTIVE' && status !== 'INACTIVE' && status !== 'SUSPENDED') {
               errors.push('Status must be ACTIVE, INACTIVE, or SUSPENDED.');
             }
@@ -1437,43 +601,27 @@ export class StaffUserService {
           });
 
           const validRows = rows.filter((r) => r.isValid).length;
-          resolve({
-            totalRows: rows.length,
-            validRows,
-            invalidRows: rows.length - validRows,
-            rows,
-          });
+          resolve({ totalRows: rows.length, validRows, invalidRows: rows.length - validRows, rows });
         } catch (err: any) {
           reject(new Error(err?.message || 'Failed to parse Excel file. Please ensure it is a valid .xlsx file.'));
         }
       };
 
-      reader.onerror = () => {
-        reject(new Error('Failed to read file from disk.'));
-      };
-
+      reader.onerror = () => reject(new Error('Failed to read file from disk.'));
       reader.readAsArrayBuffer(file);
     });
   }
 
-  /**
-   * Commit verified imported rows and generate temporary credentials for Portal Users
-   */
-  static commitImport(
+  /** Persists each validated row via real `POST /staff` (+ `/portal-users`) calls, one row at a time. */
+  static async commitImport(
     validRows: ImportedStaffRow[],
     currentUser: User | null
-  ): {
+  ): Promise<{
     success: boolean;
     importedCount: number;
-    generatedCredentials: {
-      employeeCode: string;
-      fullName: string;
-      portal: string;
-      role: string;
-      username: string;
-      temporaryPassword: string;
-    }[];
-  } {
+    failures: string[];
+    generatedCredentials: { employeeCode: string; fullName: string; portal: string; role: string; username: string; temporaryPassword: string }[];
+  }> {
     const departments = DepartmentService.getDepartments();
     const deptMap = new Map<string, { id: string; name: string }>();
     departments.forEach((d) => {
@@ -1482,112 +630,67 @@ export class StaffUserService {
       deptMap.set(d.name.toLowerCase(), { id: d.id, name: d.name });
     });
 
-    const timestamp = formatAuditTimestamp();
-    const actor = formatAuditUser(currentUser);
-    const users = StaffUserService.getStaffUsers();
-    const creds = StaffUserService.getCredentials();
+    const generatedCredentials: { employeeCode: string; fullName: string; portal: string; role: string; username: string; temporaryPassword: string }[] = [];
+    const failures: string[] = [];
+    let importedCount = 0;
 
-    const generatedCredentials: {
-      employeeCode: string;
-      fullName: string;
-      portal: string;
-      role: string;
-      username: string;
-      temporaryPassword: string;
-    }[] = [];
-
-    validRows.forEach((row) => {
-      const newId = StaffUserService.generateNextId();
-      const dept = deptMap.get(row.departmentCode.toLowerCase()) || {
-        id: 'DEP-09',
-        name: 'Hospital Administration & Executive Services',
-      };
-
-      // Generate random temporary password for Portal User
-      const tempPassword = `Staff#${Math.floor(1000 + Math.random() * 9000)}`;
-
-      const newStaff: StaffUser = {
-        id: newId,
-        employeeCode: row.employeeCode.toUpperCase(),
-        fullName: row.fullName,
-        fatherGuardianName: row.fatherGuardianName || undefined,
-        phone: row.phone,
-        alternatePhone: row.alternatePhone || undefined,
-        email: row.email,
-        cnic: row.cnic || undefined,
-        designation: row.designation,
-        departmentId: dept.id,
-        departmentName: dept.name,
-        staffCategory: row.staffCategory as StaffCategory,
-        accessType: row.accessType as StaffAccessType,
-        assignedPortal: row.accessType === 'PORTAL_USER' ? (row.assignedPortal as StaffPortalKey) : null,
-        staffRole: row.accessType === 'PORTAL_USER' ? row.staffRole || null : null,
-        username: row.accessType === 'PORTAL_USER' ? row.username || null : null,
-        status: (row.status as StaffStatus) || 'ACTIVE',
-        requirePasswordChange: true,
-        lastLoginAt: null,
-        createdBy: actor,
-        createdAt: timestamp,
-        updatedBy: actor,
-        updatedAt: timestamp,
-        linkedActivityCount: 0,
-      };
-
-      users.unshift(newStaff);
-
-      if (row.accessType === 'PORTAL_USER' && newStaff.username && newStaff.assignedPortal) {
-        creds.push({
-          staffUserId: newId,
-          username: newStaff.username,
-          demoPassword: tempPassword,
-          assignedPortal: newStaff.assignedPortal,
-          requirePasswordChange: true,
-          updatedAt: timestamp,
-        });
-
-        generatedCredentials.push({
-          employeeCode: newStaff.employeeCode,
-          fullName: newStaff.fullName,
-          portal: newStaff.assignedPortal,
-          role: newStaff.staffRole || 'Staff',
-          username: newStaff.username,
-          temporaryPassword: tempPassword,
-        });
+    for (const row of validRows) {
+      const dept = deptMap.get(row.departmentCode.toLowerCase());
+      if (!dept) {
+        failures.push(`${row.employeeCode}: department "${row.departmentCode}" not found`);
+        continue;
       }
-    });
+      const tempPassword = `Staff#${Math.floor(1000 + Math.random() * 9000)}`;
+      try {
+        const result = await this.createStaffUser(
+          {
+            fullName: row.fullName,
+            employeeCode: row.employeeCode,
+            fatherGuardianName: row.fatherGuardianName || '',
+            cnic: row.cnic || '',
+            phone: row.phone,
+            alternatePhone: row.alternatePhone || '',
+            email: row.email,
+            designation: row.designation,
+            departmentId: dept.id,
+            departmentName: dept.name,
+            staffCategory: row.staffCategory as StaffCategory,
+            status: (row.status as StaffStatus) || 'ACTIVE',
+            accessType: row.accessType as StaffAccessType,
+            assignedPortal: (row.assignedPortal as StaffPortalKey) || '',
+            staffRole: row.staffRole || '',
+            username: row.username || '',
+            password: tempPassword,
+            confirmPassword: tempPassword,
+            requirePasswordChange: true,
+          },
+          currentUser
+        );
+        if (!result.success) {
+          failures.push(`${row.employeeCode}: ${result.error}`);
+          continue;
+        }
+        importedCount += 1;
+        if (row.accessType === 'PORTAL_USER' && row.username) {
+          generatedCredentials.push({
+            employeeCode: row.employeeCode,
+            fullName: row.fullName,
+            portal: row.assignedPortal || '',
+            role: row.staffRole || 'Staff',
+            username: row.username,
+            temporaryPassword: tempPassword,
+          });
+        }
+      } catch (err: any) {
+        failures.push(`${row.employeeCode}: ${err?.message || 'Failed to import'}`);
+      }
+    }
 
-    StaffUserService.saveStaffUsers(users);
-    StaffUserService.saveCredentials(creds);
-
-    StaffUserService.logAudit({
-      staffUserId: 'BATCH',
-      staffName: 'Batch Import',
-      employeeCode: 'MULTIPLE',
-      action: 'IMPORT',
-      actorName: currentUser?.name || 'Prof. Dr. Tariq Saeed',
-      actorRole: currentUser?.role || 'Super Admin',
-      details: `Successfully batch imported ${validRows.length} staff records`,
-    });
-
-    return {
-      success: true,
-      importedCount: validRows.length,
-      generatedCredentials,
-    };
+    return { success: true, importedCount, failures, generatedCredentials };
   }
 
-  /**
-   * Download temporary credentials as Excel workbook
-   */
   static downloadTemporaryCredentials(
-    creds: {
-      employeeCode: string;
-      fullName: string;
-      portal: string;
-      role: string;
-      username: string;
-      temporaryPassword: string;
-    }[]
+    creds: { employeeCode: string; fullName: string; portal: string; role: string; username: string; temporaryPassword: string }[]
   ): void {
     const wb = XLSX.utils.book_new();
     const formatted = creds.map((c) => ({
@@ -1599,7 +702,6 @@ export class StaffUserService {
       'Temporary Password': c.temporaryPassword,
       Note: 'Must change password on first login.',
     }));
-
     const ws = XLSX.utils.json_to_sheet(formatted);
     XLSX.utils.book_append_sheet(wb, ws, 'Staff Credentials');
     XLSX.writeFile(wb, `staff_temporary_credentials_${Date.now()}.xlsx`);

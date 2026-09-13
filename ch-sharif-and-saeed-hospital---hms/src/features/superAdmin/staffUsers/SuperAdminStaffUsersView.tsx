@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   AlertCircle,
   ShieldCheck,
+  Loader2,
 } from 'lucide-react';
 import {
   StaffUser,
@@ -16,7 +17,7 @@ import {
   StaffUserFormValues,
   StaffStatus,
 } from '../../../types/staffUser';
-import { StaffUserService } from '../../../services/staffUserService';
+import { StaffUserService, fetchStaffUsers } from '../../../services/staffUserService';
 import { DepartmentService } from '../../../services/departmentService';
 import { Department } from '../../../types/department';
 import { useAuth } from '../../../context/AuthContext';
@@ -75,12 +76,23 @@ export const SuperAdminStaffUsersView: React.FC = () => {
     }, 4000);
   };
 
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   // Load staff and departments
-  const refreshData = () => {
-    const list = StaffUserService.getStaffUsers();
-    setStaffList(list);
-    const depts = DepartmentService.getDepartments();
-    setDepartments(depts);
+  const refreshData = async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const list = await fetchStaffUsers();
+      setStaffList(list);
+      const depts = DepartmentService.getDepartments();
+      setDepartments(depts);
+    } catch (err: any) {
+      setLoadError(err?.message || 'Failed to load staff users from the server.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -93,24 +105,24 @@ export const SuperAdminStaffUsersView: React.FC = () => {
   }, [staffList, filters]);
 
   // Handlers for Add/Edit
-  const handleSaveStaff = (values: StaffUserFormValues) => {
+  const handleSaveStaff = async (values: StaffUserFormValues) => {
     if (editingStaff) {
       // Edit
-      const res = StaffUserService.updateStaffUser(editingStaff.id, values, currentUser);
+      const res = await StaffUserService.updateStaffUser(editingStaff.id, values, currentUser);
       if (res.success && res.user) {
         showToast(`Staff member "${res.user.fullName}" updated successfully.`);
         setEditingStaff(null);
-        refreshData();
+        await refreshData();
       } else {
         showToast(res.error || 'Failed to update staff user.', 'error');
       }
     } else {
       // Add
-      const res = StaffUserService.createStaffUser(values, currentUser);
+      const res = await StaffUserService.createStaffUser(values, currentUser);
       if (res.success && res.user) {
         showToast(`Staff member "${res.user.fullName}" added successfully.`);
         setIsAddModalOpen(false);
-        refreshData();
+        await refreshData();
       } else {
         showToast(res.error || 'Failed to add staff user.', 'error');
       }
@@ -121,6 +133,31 @@ export const SuperAdminStaffUsersView: React.FC = () => {
   const handlePrintDirectory = () => {
     window.print();
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-24 text-slate-500 gap-2 text-sm">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        <span>Loading staff users…</span>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 gap-3 text-center">
+        <AlertCircle className="h-8 w-8 text-rose-500" />
+        <p className="text-sm text-rose-700 font-medium">{loadError}</p>
+        <button
+          type="button"
+          onClick={refreshData}
+          className="px-4 py-2 bg-[#129b70] hover:bg-[#0e7d5a] text-white text-xs font-semibold rounded-lg"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

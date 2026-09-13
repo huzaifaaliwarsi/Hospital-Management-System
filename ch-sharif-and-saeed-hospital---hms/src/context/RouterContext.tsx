@@ -103,14 +103,26 @@ export const RouterProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const navigate = useCallback((path: string, options?: { replace?: boolean }) => {
     const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    // Only running embedded (e.g. an iframe preview container) needs the
+    // `#/path` fallback — appending it in a normal standalone browser tab
+    // just makes the address bar show the path twice
+    // (`/admin/dashboard#/admin/dashboard`) for no benefit.
+    const isEmbedded = (() => {
+      try {
+        return window.self !== window.top;
+      } catch {
+        return true; // cross-origin access throws only when actually embedded
+      }
+    })();
     try {
       if (options?.replace) {
         window.history.replaceState({}, '', cleanPath);
       } else {
         window.history.pushState({}, '', cleanPath);
       }
-      // Also update hash as fallback for iframe reliability
-      window.location.hash = `#${cleanPath}`;
+      if (isEmbedded) {
+        window.location.hash = `#${cleanPath}`;
+      }
     } catch {
       window.location.hash = `#${cleanPath}`;
     }

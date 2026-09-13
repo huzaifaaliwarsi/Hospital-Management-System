@@ -20,17 +20,23 @@ const phoneSchema = z.string().transform((val, ctx) => {
  */
 export const createStaffBodySchema = z.object({
   fullName: z.string().min(1).max(150),
+  fatherGuardianName: z.string().max(150).optional(),
+  cnic: z.string().max(20).optional(),
   category: z.string().min(1).max(50),
   departmentId: z.string().uuid(),
   designation: z.string().min(1).max(100),
   phone: phoneSchema,
+  alternatePhone: z.string().max(30).optional(),
   email: z.string().email().optional(),
   joiningDate: z.coerce.date(),
   notes: z.string().optional(),
 });
 export type CreateStaffBody = z.infer<typeof createStaffBodySchema>;
 
-export const updateStaffBodySchema = createStaffBodySchema.partial();
+export const updateStaffBodySchema = createStaffBodySchema.partial().extend({
+  isActive: z.boolean().optional(),
+  employmentStatus: z.enum(['ACTIVE', 'INACTIVE', 'TERMINATED']).optional(),
+});
 export type UpdateStaffBody = z.infer<typeof updateStaffBodySchema>;
 
 export const listStaffQuerySchema = paginationQuerySchema.extend({

@@ -13,7 +13,7 @@ const write = authorize('frontdesk', 'edit');
 
 router.get('/check-duplicate', view, validate({ query: s.checkDuplicateQuerySchema }), asyncHandler(c.checkDuplicate));
 
-router.get('/panel', view, asyncHandler(c.listPanelPatients));
+router.get('/panel', view, validate({ query: s.listPanelPatientsQuerySchema }), asyncHandler(c.listPanelPatients));
 router.post('/panel', create, validate({ body: s.createPanelPatientSchema }), asyncHandler(c.createPanelPatient));
 router.patch('/panel/:id', write, validate({ params: s.idParamsSchema, body: s.updatePanelPatientSchema }), asyncHandler(c.updatePanelPatient));
 

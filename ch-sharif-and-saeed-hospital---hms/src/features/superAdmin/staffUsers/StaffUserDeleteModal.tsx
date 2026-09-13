@@ -26,9 +26,9 @@ export const StaffUserDeleteModal: React.FC<StaffUserDeleteModalProps> = ({
 
   const hasActivity = staff.linkedActivityCount > 0;
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     setError(null);
-    const res = StaffUserService.deleteStaffUser(staff.id, currentUser);
+    const res = await StaffUserService.deleteStaffUser(staff.id, currentUser);
     if (!res.success) {
       setError(res.error || 'Failed to delete staff account.');
       return;

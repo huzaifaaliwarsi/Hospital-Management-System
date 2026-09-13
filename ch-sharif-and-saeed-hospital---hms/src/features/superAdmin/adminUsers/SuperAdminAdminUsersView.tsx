@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   AlertCircle,
   X,
+  Loader2,
 } from 'lucide-react';
 import {
   AdminUser,
@@ -14,7 +15,7 @@ import {
   AdminUserFormValues,
   AdminUserStatus,
 } from '../../../types/adminUser';
-import { AdminUserService } from '../../../services/adminUserService';
+import { AdminUserService, fetchAdminUsers } from '../../../services/adminUserService';
 import { useAuth } from '../../../context/AuthContext';
 import { AdminUsersKPIBar } from './AdminUsersKPIBar';
 import { AdminUsersFilterBar } from './AdminUsersFilterBar';
@@ -32,9 +33,9 @@ export const SuperAdminAdminUsersView: React.FC = () => {
   const { currentUser } = useAuth();
 
   // Primary Data State
-  const [users, setUsers] = useState<AdminUser[]>(() =>
-    AdminUserService.getAdminUsers()
-  );
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Filters State
   const [filters, setFilters] = useState<AdminUserFilterState>({
@@ -70,10 +71,22 @@ export const SuperAdminAdminUsersView: React.FC = () => {
     }, 4500);
   };
 
-  const refreshUsers = () => {
-    const updated = AdminUserService.getAdminUsers();
-    setUsers(updated);
+  const refreshUsers = async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const updated = await fetchAdminUsers();
+      setUsers(updated);
+    } catch (err: any) {
+      setLoadError(err?.message || 'Failed to load admin users from the server.');
+    } finally {
+      setIsLoading(false);
+    }
   };
+
+  useEffect(() => {
+    refreshUsers();
+  }, []);
 
   // Filtered dataset
   const filteredUsers = useMemo(() => {
@@ -87,24 +100,24 @@ export const SuperAdminAdminUsersView: React.FC = () => {
   }, [users]);
 
   // Handlers for CRUD
-  const handleSaveUser = (values: AdminUserFormValues, editId?: string) => {
+  const handleSaveUser = async (values: AdminUserFormValues, editId?: string) => {
     try {
       if (editId) {
         // Edit existing
-        const updated = AdminUserService.updateAdmin(
+        const updated = await AdminUserService.updateAdmin(
           editId,
           values,
           currentUser
         );
-        refreshUsers();
+        await refreshUsers();
         setEditingUser(null);
         showToast(
           `Administrator account for "${updated.fullName}" updated successfully.`
         );
       } else {
         // Create new
-        const created = AdminUserService.createAdmin(values, currentUser);
-        refreshUsers();
+        const created = await AdminUserService.createAdmin(values, currentUser);
+        await refreshUsers();
         setIsAddModalOpen(false);
         showToast(
           `Administrator account "${created.fullName}" (@${created.username}) provisioned successfully.`
@@ -119,20 +132,20 @@ export const SuperAdminAdminUsersView: React.FC = () => {
     }
   };
 
-  const handleResetPasswordSuccess = (
+  const handleResetPasswordSuccess = async (
     newPass: string,
     requireChange: boolean
   ) => {
     if (!resetPasswordUser) return;
     try {
-      AdminUserService.resetPassword(
+      await AdminUserService.resetPassword(
         resetPasswordUser.id,
         newPass,
         newPass,
         requireChange,
         currentUser
       );
-      refreshUsers();
+      await refreshUsers();
       setResetPasswordUser(null);
       showToast(
         `Temporary password for ${resetPasswordUser.fullName} updated successfully.`
@@ -146,12 +159,12 @@ export const SuperAdminAdminUsersView: React.FC = () => {
     }
   };
 
-  const handleConfirmStatusChange = () => {
+  const handleConfirmStatusChange = async () => {
     if (!statusChangeTarget) return;
     try {
       const { user, nextStatus } = statusChangeTarget;
-      AdminUserService.changeStatus(user.id, nextStatus, currentUser);
-      refreshUsers();
+      await AdminUserService.changeStatus(user.id, nextStatus, currentUser);
+      await refreshUsers();
       setStatusChangeTarget(null);
       showToast(
         `Status for ${user.fullName} transitioned to ${nextStatus}.`
@@ -165,16 +178,16 @@ export const SuperAdminAdminUsersView: React.FC = () => {
     }
   };
 
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (!deleteTarget) return;
     try {
-      const result = AdminUserService.deleteAdmin(deleteTarget.id, currentUser);
+      const result = await AdminUserService.deleteAdmin(deleteTarget.id, currentUser);
       if (!result.success) {
         showToast(result.message || 'Failed to delete user.', 'error');
         setDeleteTarget(null);
         return;
       }
-      refreshUsers();
+      await refreshUsers();
       setDeleteTarget(null);
       showToast(`Account for ${deleteTarget.fullName} deleted permanently.`);
     } catch (err: unknown) {
@@ -193,6 +206,31 @@ export const SuperAdminAdminUsersView: React.FC = () => {
       status: 'ALL',
     });
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-24 text-slate-500 gap-2 text-sm">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        <span>Loading admin users…</span>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 gap-3 text-center">
+        <AlertCircle className="h-8 w-8 text-rose-500" />
+        <p className="text-sm text-rose-700 font-medium">{loadError}</p>
+        <button
+          type="button"
+          onClick={refreshUsers}
+          className="px-4 py-2 bg-[#08775A] hover:bg-[#0e7d5a] text-white text-xs font-semibold rounded-lg"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div id="superadmin-admin-users-view" className="space-y-4">

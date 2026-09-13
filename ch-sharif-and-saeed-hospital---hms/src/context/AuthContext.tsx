@@ -1,9 +1,20 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, PortalKey, StaffAccount, UserSession, AccountabilityAuditTrace } from '../types';
+import { StaffPortalKey } from '../types/staffUser';
 import { PORTAL_CONFIGS } from '../constants/portalNavigations';
 import { AdminUserService } from '../services/adminUserService';
 import { StaffUserService } from '../services/staffUserService';
 import { authApiService, mapRoleToPortalKey, mapRoleToUserRole } from '../services/authApiService';
+import { primeHospitalProfileCache } from '../services/hospitalProfileService';
+import { primeDepartmentsCache } from '../services/departmentService';
+import { primeServicesCache } from '../services/serviceRatesService';
+import { primeWardsRoomsBedsCache } from '../services/wardsRoomsBedsService';
+import { primeAdminUsersCache } from '../services/adminUserService';
+import { primeStaffUsersCache } from '../services/staffUserService';
+import { primeShiftsCache } from '../services/shiftService';
+import { primeCorporatePanelsCache } from '../services/panelService';
+import { AUTH_TOKEN_REFRESHED_EVENT, AUTH_SESSION_EXPIRED_EVENT } from '../services/apiClient';
+import { primePatientRegistryCache } from '../services/patientRegistryService';
 
 // Operational staff demo fallback accounts (Admin and Super Admin are authoritatively managed in AdminUserService)
 export const MOCK_STAFF_ACCOUNTS: Record<string, StaffAccount> = {
@@ -159,13 +170,14 @@ function validateAndNormalizeRestoredSession(): {
       return null;
     }
 
-    // 1. Super Admin role: must exist in AdminUserService, active, strictly 'super-admin'
+    // 1. Super Admin role — restoring a session trusts the JWT already
+    // issued by the backend (`session.token`, attached to every subsequent
+    // API call by `apiClient`'s interceptor); that token is the real
+    // account-still-active check, not a synchronous local cache lookup
+    // (which is empty at this point in the render — `AdminUserService`'s
+    // cache is only populated by an async fetch that hasn't run yet).
     if (user.role === 'Super Admin' || (user as any).role === 'SUPER_ADMIN') {
-      const adminUser =
-        AdminUserService.getAdminUserById(user.id) ||
-        AdminUserService.getAdminUserByUsername(user.username);
-
-      if (!adminUser || adminUser.status !== 'ACTIVE' || adminUser.role !== 'SUPER_ADMIN') {
+      if (!session.token) {
         clearStoredAuth();
         return null;
       }
@@ -190,13 +202,9 @@ function validateAndNormalizeRestoredSession(): {
       };
     }
 
-    // 2. Admin role: must exist in AdminUserService, active, strictly 'admin'
+    // 2. Admin role — same JWT-trust rationale as Super Admin above.
     if (user.role === 'Admin' || (user as any).role === 'ADMIN') {
-      const adminUser =
-        AdminUserService.getAdminUserById(user.id) ||
-        AdminUserService.getAdminUserByUsername(user.username);
-
-      if (!adminUser || adminUser.status !== 'ACTIVE' || adminUser.role !== 'ADMIN') {
+      if (!session.token) {
         clearStoredAuth();
         return null;
       }
@@ -221,31 +229,12 @@ function validateAndNormalizeRestoredSession(): {
       };
     }
 
-    // 3. Operational Staff (Front Desk, Admission, Inventory)
-    // Check StaffUserService first
-    const staffUser =
-      StaffUserService.getStaffUserById(user.id) ||
-      StaffUserService.getStaffUserByUsername(user.username);
-
-    if (staffUser) {
-      // STAFF_RECORD_ONLY must NEVER restore an authenticated session
-      if (staffUser.accessType === 'STAFF_RECORD_ONLY') {
-        clearStoredAuth();
-        return null;
-      }
-
-      if (staffUser.accessType !== 'PORTAL_USER' || staffUser.status !== 'ACTIVE') {
-        clearStoredAuth();
-        return null;
-      }
-
-      // Assigned portal must match restored portal
-      if (!staffUser.assignedPortal || staffUser.assignedPortal !== user.portal) {
-        clearStoredAuth();
-        return null;
-      }
-
-      const assignedPortal = staffUser.assignedPortal;
+    // 3. Operational Staff (Front Desk, Admission, Inventory) — same
+    // JWT-trust rationale as Super Admin/Admin above: `StaffUserService`'s
+    // cache is also async-populated and empty at this point in the render.
+    const validStaffPortals: StaffPortalKey[] = ['front-desk', 'admission', 'inventory'];
+    if (session.token && validStaffPortals.includes(user.portal as StaffPortalKey)) {
+      const assignedPortal = user.portal as StaffPortalKey;
       const normalizedUser: User = {
         ...user,
         portal: assignedPortal,
@@ -322,6 +311,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // ignore storage error
     }
   }, [currentUser, session, activePortal]);
+
+  // Warm the hospital-profile in-memory cache once per authenticated
+  // session so print/export/letterhead helpers have real backend data
+  // synchronously available (see `hospitalProfileService.ts`).
+  useEffect(() => {
+    if (currentUser) {
+      primeHospitalProfileCache();
+      primeDepartmentsCache();
+      primeServicesCache();
+      primeWardsRoomsBedsCache();
+      primeAdminUsersCache();
+      primeStaffUsersCache();
+      primeShiftsCache();
+      primeCorporatePanelsCache();
+      primePatientRegistryCache();
+    }
+  }, [currentUser?.id]);
 
   const hasPortalAccess = (portalKey: PortalKey): boolean => {
     if (!currentUser) return false;
@@ -412,224 +418,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.warn('Backend login unavailable, evaluating local credentials:', apiErr.message);
     }
 
-    // 4. Fallback: Check Admin Users repository (Super Admin & Admin accounts)
+    // 4. Admin/Super Admin accounts have no offline fallback — their real
+    // password only ever lives, hashed, on the backend (`PortalUser`).
+    // If we get here, the backend login attempt above failed to reach the
+    // server at all; a matching username in the Admin Users list is not
+    // sufficient to authenticate without it.
     const adminUser =
       AdminUserService.getAdminUserByUsername(cleanUsername) ||
-      AdminUserService.getAdminUsers().find(
-        (u) => u.email.toLowerCase() === cleanUsername
-      );
-
+      AdminUserService.getAdminUsers().find((u) => u.email.toLowerCase() === cleanUsername);
     if (adminUser) {
-      // Look up credential from isolated AdminCredential store
-      const credential =
-        AdminUserService.getCredentialByUserId(adminUser.id) ||
-        AdminUserService.getCredentialByUsername(adminUser.username);
-
-      // Verify configured password strictly (no universal bypass)
-      if (!credential || credential.password !== password) {
-        return {
-          success: false,
-          error: 'Invalid username or password.',
-        };
-      }
-
-      // Verify account status
-      if (adminUser.status === 'INACTIVE') {
-        return {
-          success: false,
-          error: 'Your account is inactive. Contact the system administrator.',
-        };
-      }
-
-      if (adminUser.status === 'SUSPENDED') {
-        return {
-          success: false,
-          error: 'Your account has been suspended. Contact the system administrator.',
-        };
-      }
-
-      // Check portal authorization:
-      // Super Admin account: strictly Super Admin Portal
-      // Admin account: strictly Admin Portal
-      // Operational portals cannot be accessed directly with admin accounts
-      const allowedPortals: PortalKey[] =
-        adminUser.role === 'SUPER_ADMIN' ? ['super-admin'] : ['admin'];
-
-      if (!allowedPortals.includes(portalKey)) {
-        return {
-          success: false,
-          error: 'Your account does not have access to the selected portal.',
-        };
-      }
-
-      // Record successful login in AdminUserService
-      AdminUserService.recordLogin(adminUser.id);
-
-      const now = new Date();
-      const loginTimeStr = new Intl.DateTimeFormat('en-PK', {
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true,
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric',
-      }).format(now);
-
-      const authenticatedUser: User = {
-        id: adminUser.id,
-        username: adminUser.username,
-        name: adminUser.fullName,
-        email: adminUser.email,
-        role: adminUser.role === 'SUPER_ADMIN' ? 'Super Admin' : 'Admin',
-        department:
-          adminUser.role === 'SUPER_ADMIN'
-            ? 'Hospital Administration & Executive Governance'
-            : 'Clinical Operations & Medical Administration',
-        portal: portalKey,
-        allowedPortals,
-        permissions:
-          adminUser.role === 'SUPER_ADMIN'
-            ? ['all_access', 'audit_control', 'user_management', 'security_governance']
-            : ['admin_operations', 'roster_management', 'bed_allocation', 'service_pricing'],
-        status: 'active',
-        lastLogin: `Today at ${loginTimeStr}`,
-        isSuperAdminProtected: adminUser.role === 'SUPER_ADMIN',
-      };
-
-      const newSession: UserSession = {
-        userId: authenticatedUser.id,
-        name: authenticatedUser.name,
-        username: authenticatedUser.username,
-        role: authenticatedUser.role,
-        selectedPortal: portalKey,
-        allowedPortals: authenticatedUser.allowedPortals,
-        permissions: authenticatedUser.permissions,
-        status: 'active',
-        loginTime: loginTimeStr,
-        token: `hms_auth_${authenticatedUser.id}_${Date.now()}`,
-      };
-
-      setCurrentUser(authenticatedUser);
-      setSession(newSession);
-      setActivePortal(portalKey);
-
       return {
-        success: true,
-        portal: portalKey,
+        success: false,
+        error: 'Unable to reach the authentication server. Please check your connection and try again.',
       };
     }
 
-    // 4. Check Staff Users repository (Operational & Clinical Staff accounts)
+    // 5. Staff (Front Desk / Admission / Inventory) accounts also have no
+    // offline fallback for the same reason as Admin/Super Admin above —
+    // their real password only ever lives, hashed, on the backend.
     const staffUser =
       StaffUserService.getStaffUserByUsername(cleanUsername) ||
-      StaffUserService.getStaffUsers().find(
-        (u) => u.email.toLowerCase() === cleanUsername
-      );
-
-    if (staffUser) {
-      // 4a. Staff Record Only must NEVER authenticate
-      if (staffUser.accessType === 'STAFF_RECORD_ONLY') {
-        return {
-          success: false,
-          error: 'This staff member does not have portal login access.',
-        };
-      }
-
-      // 4b. Look up credential from isolated StaffCredential store
-      const credential =
-        StaffUserService.getCredentialByUserId(staffUser.id) ||
-        (staffUser.username ? StaffUserService.getCredentialByUsername(staffUser.username) : undefined);
-
-      // Verify configured password strictly (no universal bypass)
-      if (!credential || credential.demoPassword !== password) {
-        return {
-          success: false,
-          error: 'Invalid username or password.',
-        };
-      }
-
-      // 4c. Verify account status
-      if (staffUser.status === 'INACTIVE') {
-        return {
-          success: false,
-          error: 'Your account is inactive. Contact the system administrator.',
-        };
-      }
-
-      if (staffUser.status === 'SUSPENDED') {
-        return {
-          success: false,
-          error: 'Your account has been suspended. Contact the system administrator.',
-        };
-      }
-
-      // 4d. Check portal authorization
-      // Operational staff credentials must NEVER authenticate to Admin or Super Admin portal
-      // And must match their assignedPortal exactly
-      if (!staffUser.assignedPortal || portalKey !== staffUser.assignedPortal) {
-        return {
-          success: false,
-          error: 'Your account does not have access to the selected portal.',
-        };
-      }
-
-      // 4e. Record successful login in StaffUserService
-      StaffUserService.recordLogin(staffUser.id);
-
-      const now = new Date();
-      const loginTimeStr = new Intl.DateTimeFormat('en-PK', {
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true,
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric',
-      }).format(now);
-
-      const authenticatedUser: User = {
-        id: staffUser.id,
-        username: staffUser.username || staffUser.employeeCode.toLowerCase(),
-        name: staffUser.fullName,
-        email: staffUser.email,
-        role: (staffUser.staffRole as any) || 'Hospital Staff',
-        department: staffUser.departmentName,
-        portal: portalKey,
-        allowedPortals: [staffUser.assignedPortal],
-        permissions:
-          portalKey === 'front-desk'
-            ? ['patient_registration', 'token_generation', 'billing_cashier', 'receipt_issuance']
-            : portalKey === 'admission'
-            ? ['bed_management', 'admission_clearance', 'discharge_management', 'ward_transfers']
-            : ['grn_entry', 'purchase_orders', 'stock_transfer', 'inventory_audit'],
-        status: staffUser.status === 'ACTIVE' ? 'active' : 'inactive',
-        lastLogin: `Today at ${loginTimeStr}`,
-        isSuperAdminProtected: false,
-      };
-
-      const newSession: UserSession = {
-        userId: authenticatedUser.id,
-        name: authenticatedUser.name,
-        username: authenticatedUser.username,
-        role: authenticatedUser.role,
-        selectedPortal: portalKey,
-        allowedPortals: authenticatedUser.allowedPortals,
-        permissions: authenticatedUser.permissions,
-        status: 'active',
-        loginTime: loginTimeStr,
-        token: `hms_auth_staff_${authenticatedUser.id}_${Date.now()}`,
-      };
-
-      setCurrentUser(authenticatedUser);
-      setSession(newSession);
-      setActivePortal(portalKey);
-
+      StaffUserService.getStaffUsers().find((u) => u.email.toLowerCase() === cleanUsername);
+    if (staffUser && staffUser.accessType === 'PORTAL_USER') {
       return {
-        success: true,
-        portal: portalKey,
+        success: false,
+        error: 'Unable to reach the authentication server. Please check your connection and try again.',
       };
     }
 
-    // 5. Fallback to operational staff demo accounts (Front Desk, Admission, Pharmacy, Inventory)
+    // 6. Fallback to operational staff demo accounts (Front Desk, Admission, Pharmacy, Inventory)
     const account = MOCK_STAFF_ACCOUNTS[cleanUsername];
     if (!account) {
       return {
@@ -712,6 +529,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // ignore
     }
   };
+
+  // Keep the in-memory session's token in sync with `apiClient`'s silent
+  // background refresh (access tokens are short-lived, 15 minutes), and
+  // fall back to a clean logout if that refresh ultimately fails —
+  // otherwise the app would keep showing a "logged in" shell that 401s on
+  // every request forever with no way to recover short of clearing storage
+  // by hand.
+  useEffect(() => {
+    const handleTokenRefreshed = (e: Event) => {
+      const newToken = (e as CustomEvent<{ accessToken: string }>).detail?.accessToken;
+      if (!newToken) return;
+      setSession((prev) => (prev ? { ...prev, token: newToken } : prev));
+    };
+    const handleSessionExpired = () => {
+      logout();
+    };
+    window.addEventListener(AUTH_TOKEN_REFRESHED_EVENT, handleTokenRefreshed);
+    window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, handleSessionExpired);
+    return () => {
+      window.removeEventListener(AUTH_TOKEN_REFRESHED_EVENT, handleTokenRefreshed);
+      window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, handleSessionExpired);
+    };
+  }, []);
 
   const switchPortal = (targetPortal: PortalKey): boolean => {
     if (!currentUser) return false;

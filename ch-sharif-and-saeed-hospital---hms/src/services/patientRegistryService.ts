@@ -1,3 +1,4 @@
+import apiClient from './apiClient';
 import {
   Patient,
   PatientFormData,
@@ -10,17 +11,23 @@ import {
   BloodGroup,
   PayerType,
   GuardianRelation,
-  PATIENT_GENDERS,
-  PAYER_TYPES,
-  PATIENT_STATUSES,
   BLOOD_GROUPS,
   GUARDIAN_RELATIONS,
 } from '../types/patient';
 import { User } from '../types';
-import { getPanelById, getPanelByCode } from './panelService';
+import { getPanelByCode } from './panelService';
 
-const PATIENT_REGISTRY_STORAGE_KEY = 'hms_patient_registry_v1';
-const CURRENT_OPERATIONAL_YEAR = 2026;
+/**
+ * Live Patient Registry service. This Super Admin screen is the
+ * **Panel Patient Registry** (§4.6 D16 p.7): a permanent, reusable patient
+ * identity always tied to a Corporate Panel — backed by
+ * `/api/v1/patients/panel`. Self-pay visitors are, by design, a separate
+ * *temporary, per-visit* identity (`/api/v1/patients/encounters`) that is
+ * never reused across visits and has no permanent registry record — they
+ * still show up here (read-only) if present, but are registered/edited at
+ * Front Desk, not in this master registry. Same in-memory-cache pattern as
+ * the other rewired services — never localStorage.
+ */
 
 // Normalize Pakistani CNIC to XXXXX-XXXXXXX-X format
 export function normalizeCnic(rawCnic?: string): string {
@@ -32,14 +39,11 @@ export function normalizeCnic(rawCnic?: string): string {
   return rawCnic.trim();
 }
 
-// Validate Pakistani CNIC format (13 digits formatted as 5-7-1)
 export function isValidCnic(cnic: string): boolean {
   if (!cnic.trim()) return true; // optional
-  const cnicPattern = /^\d{5}-\d{7}-\d{1}$/;
-  return cnicPattern.test(cnic.trim());
+  return /^\d{5}-\d{7}-\d{1}$/.test(cnic.trim());
 }
 
-// Normalize Pakistani phone number
 export function normalizePhone(phone: string): string {
   if (!phone) return '';
   const digits = phone.replace(/\D/g, '');
@@ -52,581 +56,148 @@ export function normalizePhone(phone: string): string {
   return phone.trim();
 }
 
-// Validate primary phone
 export function isValidPhone(phone: string): boolean {
   if (!phone.trim()) return false;
   const digits = phone.replace(/\D/g, '');
   return digits.length >= 10 && digits.length <= 15;
 }
 
-// Calculate age from Date of Birth string (YYYY-MM-DD)
+/** Age as of today — never a fixed/hardcoded reference date. */
 export function calculateAgeFromDob(dobString: string): number {
   if (!dobString) return 0;
   const birthDate = new Date(dobString);
   if (isNaN(birthDate.getTime())) return 0;
-
-  // Use hospital operational year (2026) for consistent calculation
-  const today = new Date(CURRENT_OPERATIONAL_YEAR, 8, 9); // Sep 9, 2026
+  const today = new Date();
   let age = today.getFullYear() - birthDate.getFullYear();
   const m = today.getMonth() - birthDate.getMonth();
-  if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
-    age--;
-  }
+  if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) age--;
   return Math.max(0, age);
 }
 
-// Initial realistic Pakistani hospital patient seed dataset
-export const INITIAL_MOCK_PATIENTS: Patient[] = [
-  {
-    id: 'PAT-001',
-    mrNumber: 'MR-2026-000001',
-    fullName: 'Muhammad Tariq Khan',
-    fatherGuardianName: 'Abdul Hameed Khan',
-    guardianRelation: 'Father',
-    dateOfBirth: '1980-04-14',
-    age: 46,
-    ageIsEstimated: false,
-    gender: 'Male',
-    cnic: '35202-1428591-3',
-    passportNumber: 'PA992140',
-    primaryPhone: '0300-8451293',
-    alternatePhone: '0321-4920194',
-    email: 'tariq.khan@gmail.com',
-    addressLine1: 'House 42, Sector G-3, Phase 5, DHA',
-    addressLine2: 'Near Jalal Sons',
-    city: 'Lahore',
-    province: 'Punjab',
-    country: 'Pakistan',
-    bloodGroup: 'B+',
-    payerType: 'Corporate / Panel',
-    panelId: 'DEMO-PNL-01',
-    panelName: 'Demo Corporate Panel A',
-    panelMemberId: 'DEMO-MEM-0012',
-    emergencyContactName: 'Abdul Hameed Khan',
-    emergencyContactRelation: 'Father',
-    emergencyContactPhone: '0300-4123456',
-    status: 'ACTIVE',
-    registrationDate: '2026-01-05',
-    lastVisitDate: '2026-09-02',
-    createdBy: 'Prof. Dr. Tariq Saeed',
-    createdAt: '2026-01-05T09:15:00.000Z',
-    updatedBy: 'Dr. Farhana Yasmeen',
-    updatedAt: '2026-09-02T11:20:00.000Z',
-  },
-  {
-    id: 'PAT-002',
-    mrNumber: 'MR-2026-000002',
-    fullName: 'Zainab Bibi',
-    fatherGuardianName: 'Muhammad Aslam',
-    guardianRelation: 'Spouse',
-    dateOfBirth: '1992-08-22',
-    age: 34,
-    ageIsEstimated: false,
-    gender: 'Female',
-    cnic: '35201-9281726-2',
-    passportNumber: '',
-    primaryPhone: '0321-7788990',
-    alternatePhone: '',
-    email: 'zainab.aslam@outlook.com',
-    addressLine1: 'Flat 12-B, Askari Heights, Cantt',
-    addressLine2: 'Bedian Road',
-    city: 'Lahore',
-    province: 'Punjab',
-    country: 'Pakistan',
-    bloodGroup: 'O+',
-    payerType: 'Self Pay',
-    panelId: '',
-    panelName: '',
-    panelMemberId: '',
-    emergencyContactName: 'Muhammad Aslam',
-    emergencyContactRelation: 'Spouse',
-    emergencyContactPhone: '0321-9988771',
-    status: 'ACTIVE',
-    registrationDate: '2026-01-12',
-    lastVisitDate: '2026-08-28',
-    createdBy: 'Prof. Dr. Tariq Saeed',
-    createdAt: '2026-01-12T10:30:00.000Z',
-    updatedBy: 'Prof. Dr. Tariq Saeed',
-    updatedAt: '2026-08-28T14:45:00.000Z',
-  },
-  {
-    id: 'PAT-003',
-    mrNumber: 'MR-2026-000003',
-    fullName: 'Chaudhry Riaz Ahmad',
-    fatherGuardianName: 'Chaudhry Ghulam Rasul',
-    guardianRelation: 'Father',
-    dateOfBirth: '1962-11-05',
-    age: 63,
-    ageIsEstimated: false,
-    gender: 'Male',
-    cnic: '35200-4829104-5',
-    passportNumber: 'AB812901',
-    primaryPhone: '0333-4192834',
-    alternatePhone: '042-35712345',
-    email: 'riaz.chaudhry@riaztextiles.com',
-    addressLine1: 'Bungalow 18, Street 4, Gulberg III',
-    addressLine2: 'Opposite Jamia Mosque',
-    city: 'Lahore',
-    province: 'Punjab',
-    country: 'Pakistan',
-    bloodGroup: 'A+',
-    payerType: 'Corporate / Panel',
-    panelId: 'DEMO-PNL-02',
-    panelName: 'Demo Insurance Panel B',
-    panelMemberId: 'DEMO-MEM-0034',
-    emergencyContactName: 'Hamza Riaz',
-    emergencyContactRelation: 'Son',
-    emergencyContactPhone: '0333-8899221',
-    status: 'ACTIVE',
-    registrationDate: '2026-01-20',
-    lastVisitDate: '2026-09-04',
-    createdBy: 'Prof. Dr. Tariq Saeed',
-    createdAt: '2026-01-20T11:00:00.000Z',
-    updatedBy: 'Dr. Farhana Yasmeen',
-    updatedAt: '2026-09-04T16:10:00.000Z',
-  },
-  {
-    id: 'PAT-004',
-    mrNumber: 'MR-2026-000004',
-    fullName: 'Fatima Zahra',
-    fatherGuardianName: 'Syed Ali Raza',
-    guardianRelation: 'Father',
-    dateOfBirth: '2019-06-18',
-    age: 7,
-    ageIsEstimated: false,
-    gender: 'Female',
-    cnic: '',
-    passportNumber: '',
-    primaryPhone: '0345-6677881',
-    alternatePhone: '',
-    email: 'ali.raza@syedholdings.pk',
-    addressLine1: 'House 88, Block F, Model Town',
-    addressLine2: '',
-    city: 'Lahore',
-    province: 'Punjab',
-    country: 'Pakistan',
-    bloodGroup: 'O-',
-    payerType: 'Self Pay',
-    panelId: '',
-    panelName: '',
-    panelMemberId: '',
-    emergencyContactName: 'Syed Ali Raza',
-    emergencyContactRelation: 'Father',
-    emergencyContactPhone: '0345-6677881',
-    status: 'ACTIVE',
-    registrationDate: '2026-02-01',
-    lastVisitDate: '2026-08-15',
-    createdBy: 'Dr. Farhana Yasmeen',
-    createdAt: '2026-02-01T08:45:00.000Z',
-    updatedBy: 'Dr. Farhana Yasmeen',
-    updatedAt: '2026-08-15T09:20:00.000Z',
-  },
-  {
-    id: 'PAT-005',
-    mrNumber: 'MR-2026-000005',
-    fullName: 'Maj. (R) Khalid Mahmood',
-    fatherGuardianName: 'Col. Muhammad Rafiq',
-    guardianRelation: 'Father',
-    dateOfBirth: '1955-03-30',
-    age: 71,
-    ageIsEstimated: false,
-    gender: 'Male',
-    cnic: '35201-1928374-7',
-    passportNumber: 'PK771829',
-    primaryPhone: '0301-9988112',
-    alternatePhone: '0300-1122334',
-    email: 'khalid.mahmood@fauji.org.pk',
-    addressLine1: 'House 14-C, Officers Colony, Sarwar Road',
-    addressLine2: 'Cantt',
-    city: 'Lahore',
-    province: 'Punjab',
-    country: 'Pakistan',
-    bloodGroup: 'AB+',
-    payerType: 'Corporate / Panel',
-    panelId: 'DEMO-PNL-03',
-    panelName: 'Demo Employer Panel C',
-    panelMemberId: 'DEMO-MEM-0056',
-    emergencyContactName: 'Begum Nasreen Khalid',
-    emergencyContactRelation: 'Spouse',
-    emergencyContactPhone: '0301-8877665',
-    status: 'ACTIVE',
-    registrationDate: '2026-02-10',
-    lastVisitDate: '2026-09-01',
-    createdBy: 'Prof. Dr. Tariq Saeed',
-    createdAt: '2026-02-10T14:15:00.000Z',
-    updatedBy: 'Dr. Farhana Yasmeen',
-    updatedAt: '2026-09-01T15:00:00.000Z',
-  },
-  {
-    id: 'PAT-006',
-    mrNumber: 'MR-2026-000006',
-    fullName: 'Amina Siddiqui',
-    fatherGuardianName: 'Khurram Siddiqui',
-    guardianRelation: 'Spouse',
-    dateOfBirth: '1988-12-04',
-    age: 37,
-    ageIsEstimated: false,
-    gender: 'Female',
-    cnic: '35202-6677889-4',
-    passportNumber: '',
-    primaryPhone: '0322-4455667',
-    alternatePhone: '',
-    email: 'amina.siddiqui@gmail.com',
-    addressLine1: 'Apartment 402, Royal Residencia, Johar Town',
-    addressLine2: 'Phase 2',
-    city: 'Lahore',
-    province: 'Punjab',
-    country: 'Pakistan',
-    bloodGroup: 'B-',
-    payerType: 'Corporate / Panel',
-    panelId: 'DEMO-PNL-02',
-    panelName: 'Demo Insurance Panel B',
-    panelMemberId: 'DEMO-MEM-0067',
-    emergencyContactName: 'Khurram Siddiqui',
-    emergencyContactRelation: 'Spouse',
-    emergencyContactPhone: '0322-8877661',
-    status: 'ACTIVE',
-    registrationDate: '2026-02-22',
-    lastVisitDate: '2026-07-20',
-    createdBy: 'Dr. Farhana Yasmeen',
-    createdAt: '2026-02-22T09:30:00.000Z',
-    updatedBy: 'Dr. Farhana Yasmeen',
-    updatedAt: '2026-07-20T10:15:00.000Z',
-  },
-  {
-    id: 'PAT-007',
-    mrNumber: 'MR-2026-000007',
-    fullName: 'Abdul Rehman',
-    fatherGuardianName: 'Bashir Ahmad',
-    guardianRelation: 'Father',
-    dateOfBirth: '',
-    age: 52,
-    ageIsEstimated: true,
-    gender: 'Male',
-    cnic: '35201-3849102-1',
-    passportNumber: '',
-    primaryPhone: '0312-8899001',
-    alternatePhone: '',
-    email: '',
-    addressLine1: 'House 19, Mohallah Chah Miran',
-    addressLine2: 'Misri Shah',
-    city: 'Lahore',
-    province: 'Punjab',
-    country: 'Pakistan',
-    bloodGroup: 'Unknown',
-    payerType: 'Self Pay',
-    panelId: '',
-    panelName: '',
-    panelMemberId: '',
-    emergencyContactName: 'Bashir Ahmad',
-    emergencyContactRelation: 'Father',
-    emergencyContactPhone: '0312-5544332',
-    status: 'ACTIVE',
-    registrationDate: '2026-03-01',
-    lastVisitDate: '2026-08-30',
-    createdBy: 'Prof. Dr. Tariq Saeed',
-    createdAt: '2026-03-01T12:20:00.000Z',
-    updatedBy: 'Prof. Dr. Tariq Saeed',
-    updatedAt: '2026-08-30T13:00:00.000Z',
-  },
-  {
-    id: 'PAT-008',
-    mrNumber: 'MR-2026-000008',
-    fullName: 'Shahnaz Begum',
-    fatherGuardianName: 'Muhammad Sharif',
-    guardianRelation: 'Spouse',
-    dateOfBirth: '1948-07-19',
-    age: 78,
-    ageIsEstimated: false,
-    gender: 'Female',
-    cnic: '35202-9988776-6',
-    passportNumber: '',
-    primaryPhone: '0300-5544332',
-    alternatePhone: '',
-    email: '',
-    addressLine1: 'House 112, Street 8, Samanabad',
-    addressLine2: 'Poonch Road',
-    city: 'Lahore',
-    province: 'Punjab',
-    country: 'Pakistan',
-    bloodGroup: 'A-',
-    payerType: 'Self Pay',
-    panelId: '',
-    panelName: '',
-    panelMemberId: '',
-    emergencyContactName: 'Tariq Sharif',
-    emergencyContactRelation: 'Son',
-    emergencyContactPhone: '0300-1199228',
-    status: 'ACTIVE',
-    registrationDate: '2026-03-15',
-    lastVisitDate: '2026-08-12',
-    createdBy: 'Prof. Dr. Tariq Saeed',
-    createdAt: '2026-03-15T11:40:00.000Z',
-    updatedBy: 'Prof. Dr. Tariq Saeed',
-    updatedAt: '2026-08-12T16:50:00.000Z',
-  },
-  {
-    id: 'PAT-009',
-    mrNumber: 'MR-2026-000009',
-    fullName: 'Engr. Shahbaz Akhtar',
-    fatherGuardianName: 'Akhtar Hussain',
-    guardianRelation: 'Father',
-    dateOfBirth: '1976-02-15',
-    age: 50,
-    ageIsEstimated: false,
-    gender: 'Male',
-    cnic: '35201-5544332-9',
-    passportNumber: 'OG889102',
-    primaryPhone: '0345-8877665',
-    alternatePhone: '051-9201948',
-    email: 'shahbaz.akhtar@ogdcl.gov.pk',
-    addressLine1: 'House 5, Street 2, Cavalry Ground',
-    addressLine2: 'Cantt',
-    city: 'Lahore',
-    province: 'Punjab',
-    country: 'Pakistan',
-    bloodGroup: 'AB-',
-    payerType: 'Corporate / Panel',
-    panelId: 'DEMO-PNL-01',
-    panelName: 'Demo Corporate Panel A',
-    panelMemberId: 'DEMO-MEM-0089',
-    emergencyContactName: 'Dr. Saima Shahbaz',
-    emergencyContactRelation: 'Spouse',
-    emergencyContactPhone: '0345-1122998',
-    status: 'ACTIVE',
-    registrationDate: '2026-03-25',
-    lastVisitDate: '2026-08-04',
-    createdBy: 'Dr. Farhana Yasmeen',
-    createdAt: '2026-03-25T15:10:00.000Z',
-    updatedBy: 'Dr. Farhana Yasmeen',
-    updatedAt: '2026-08-04T11:00:00.000Z',
-  },
-  {
-    id: 'PAT-010',
-    mrNumber: 'MR-2026-000010',
-    fullName: 'Late Haji Ghulam Rasool',
-    fatherGuardianName: 'Karam Din',
-    guardianRelation: 'Father',
-    dateOfBirth: '1940-01-10',
-    age: 86,
-    ageIsEstimated: false,
-    gender: 'Male',
-    cnic: '35200-1122334-1',
-    passportNumber: '',
-    primaryPhone: '0300-4499881',
-    alternatePhone: '',
-    email: '',
-    addressLine1: 'Haveli Ghulam Rasool, Walled City',
-    addressLine2: 'Bhati Gate',
-    city: 'Lahore',
-    province: 'Punjab',
-    country: 'Pakistan',
-    bloodGroup: 'O+',
-    payerType: 'Self Pay',
-    panelId: '',
-    panelName: '',
-    panelMemberId: '',
-    emergencyContactName: 'Muhammad Munir Rasool',
-    emergencyContactRelation: 'Son',
-    emergencyContactPhone: '0300-4499881',
-    status: 'DECEASED',
-    registrationDate: '2026-04-02',
-    lastVisitDate: '2026-07-14',
-    createdBy: 'Prof. Dr. Tariq Saeed',
-    createdAt: '2026-04-02T10:00:00.000Z',
-    updatedBy: 'Prof. Dr. Tariq Saeed',
-    updatedAt: '2026-07-15T09:30:00.000Z',
-  },
-  {
-    id: 'PAT-011',
-    mrNumber: 'MR-2026-000011',
-    fullName: 'Naseem Akhtar',
-    fatherGuardianName: 'Muhammad Yaqoob',
-    guardianRelation: 'Spouse',
-    dateOfBirth: '1970-09-18',
-    age: 55,
-    ageIsEstimated: false,
-    gender: 'Female',
-    cnic: '35202-7711229-8',
-    passportNumber: '',
-    primaryPhone: '0331-4455882',
-    alternatePhone: '',
-    email: '',
-    addressLine1: 'House 28, Block D, Faisal Town',
-    addressLine2: 'Near Kotha Pind',
-    city: 'Lahore',
-    province: 'Punjab',
-    country: 'Pakistan',
-    bloodGroup: 'B+',
-    payerType: 'Corporate / Panel',
-    panelId: 'PNL-01',
-    panelName: 'State Life Insurance Corporation (Sehat Card Plus)',
-    panelMemberId: 'SLI-338819-PK',
-    emergencyContactName: 'Muhammad Yaqoob',
-    emergencyContactRelation: 'Spouse',
-    emergencyContactPhone: '0331-9988112',
-    status: 'INACTIVE',
-    registrationDate: '2026-04-18',
-    lastVisitDate: '2026-05-10',
-    createdBy: 'Dr. Farhana Yasmeen',
-    createdAt: '2026-04-18T13:45:00.000Z',
-    updatedBy: 'Dr. Farhana Yasmeen',
-    updatedAt: '2026-05-10T14:20:00.000Z',
-  },
-  {
-    id: 'PAT-012',
-    mrNumber: 'MR-2026-000012',
-    fullName: 'Bilal Hassan Cheema',
-    fatherGuardianName: 'Hassan Nisar Cheema',
-    guardianRelation: 'Father',
-    dateOfBirth: '1998-05-25',
-    age: 28,
-    ageIsEstimated: false,
-    gender: 'Male',
-    cnic: '35201-8899001-3',
-    passportNumber: 'CH991823',
-    primaryPhone: '0334-9988776',
-    alternatePhone: '',
-    email: 'bilal.cheema@techventures.io',
-    addressLine1: 'Apartment 701, Indigo Heights, Gulberg III',
-    addressLine2: 'Noor Jahan Road',
-    city: 'Lahore',
-    province: 'Punjab',
-    country: 'Pakistan',
-    bloodGroup: 'A+',
-    payerType: 'Corporate / Panel',
-    panelId: 'DEMO-PNL-03',
-    panelName: 'Demo Employer Panel C',
-    panelMemberId: 'DEMO-MEM-0099',
-    emergencyContactName: 'Hassan Nisar Cheema',
-    emergencyContactRelation: 'Father',
-    emergencyContactPhone: '0334-1122334',
-    status: 'ACTIVE',
-    registrationDate: '2026-05-02',
-    lastVisitDate: undefined, // Never visited
-    createdBy: 'Prof. Dr. Tariq Saeed',
-    createdAt: '2026-05-02T16:00:00.000Z',
-    updatedBy: 'Prof. Dr. Tariq Saeed',
-    updatedAt: '2026-05-02T16:00:00.000Z',
-  },
-];
-
-// Initialize patient storage if not present
-export function initPatientRegistry(): Patient[] {
-  if (typeof window === 'undefined') return INITIAL_MOCK_PATIENTS;
-  try {
-    const raw = localStorage.getItem(PATIENT_REGISTRY_STORAGE_KEY);
-    if (!raw) {
-      localStorage.setItem(
-        PATIENT_REGISTRY_STORAGE_KEY,
-        JSON.stringify(INITIAL_MOCK_PATIENTS)
-      );
-      return INITIAL_MOCK_PATIENTS;
-    }
-    // Clean up any unverified real-world insurance corporate names from older sessions:
-    if (
-      raw.includes('State Life') ||
-      raw.includes('PNL-01') ||
-      raw.includes('EFU Life') ||
-      raw.includes('Jubilee Life') ||
-      raw.includes('Fauji Foundation') ||
-      raw.includes('OGDCL') ||
-      raw.includes('PSO')
-    ) {
-      localStorage.setItem(
-        PATIENT_REGISTRY_STORAGE_KEY,
-        JSON.stringify(INITIAL_MOCK_PATIENTS)
-      );
-      return INITIAL_MOCK_PATIENTS;
-    }
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      localStorage.setItem(
-        PATIENT_REGISTRY_STORAGE_KEY,
-        JSON.stringify(INITIAL_MOCK_PATIENTS)
-      );
-      return INITIAL_MOCK_PATIENTS;
-    }
-    return parsed;
-  } catch {
-    return INITIAL_MOCK_PATIENTS;
-  }
+function formatIsoDate(iso?: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toISOString().slice(0, 10);
 }
 
-// Persist patients to storage
-function savePatients(patients: Patient[]): void {
-  if (typeof window === 'undefined') return;
+/** Maps a backend `PanelPatient` row onto the frontend `Patient` shape. */
+function toPatientFromPanel(raw: Record<string, any>): Patient {
+  const cnicOrPassport: string = raw.cnicOrPassport || '';
+  const looksLikeCnic = isValidCnic(cnicOrPassport);
+  return {
+    id: raw.id,
+    mrNumber: raw.mrNumber,
+    fullName: raw.fullName,
+    fatherGuardianName: raw.guardianName || '',
+    guardianRelation: (raw.guardianRelation as GuardianRelation) || 'Father',
+    dateOfBirth: formatIsoDate(raw.dob) || undefined,
+    age: raw.dob ? calculateAgeFromDob(raw.dob) : 0,
+    ageIsEstimated: !raw.dob,
+    gender: (raw.gender as PatientGender) || 'Other / Not Specified',
+    cnic: cnicOrPassport && looksLikeCnic ? cnicOrPassport : undefined,
+    passportNumber: cnicOrPassport && !looksLikeCnic ? cnicOrPassport : undefined,
+    primaryPhone: raw.phone || '',
+    alternatePhone: raw.alternatePhone || undefined,
+    email: raw.email || undefined,
+    addressLine1: raw.addressLine1 || undefined,
+    addressLine2: raw.addressLine2 || undefined,
+    city: raw.city || '',
+    province: raw.province || '',
+    country: raw.country || '',
+    bloodGroup: (raw.bloodGroup as BloodGroup) || 'Unknown',
+    payerType: 'Corporate / Panel',
+    panelId: raw.corporatePanelId,
+    panelName: raw.corporatePanel?.organizationName || '',
+    panelMemberId: raw.panelMemberId || undefined,
+    emergencyContactName: raw.emergencyContactName || undefined,
+    emergencyContactRelation: raw.emergencyContactRelation || undefined,
+    emergencyContactPhone: raw.emergencyContactPhone || undefined,
+    status: (raw.status as PatientStatus) || 'ACTIVE',
+    registrationDate: formatIsoDate(raw.createdAt),
+    lastVisitDate: undefined,
+    createdBy: raw.createdByLabel || 'System',
+    createdAt: raw.createdAt,
+    updatedBy: raw.updatedByLabel || 'System',
+    updatedAt: raw.updatedAt,
+  };
+}
+
+/** Maps a backend `SelfPayEncounter` row — a thinner, per-visit, non-editable identity. */
+function toPatientFromSelfPay(raw: Record<string, any>): Patient {
+  const cnicOrPassport: string = raw.cnicOrPassport || '';
+  const looksLikeCnic = isValidCnic(cnicOrPassport);
+  return {
+    id: raw.id,
+    mrNumber: '— (Self-Pay, per-visit)',
+    fullName: raw.fullName,
+    fatherGuardianName: raw.guardianName || '',
+    guardianRelation: 'Father',
+    dateOfBirth: formatIsoDate(raw.dob) || undefined,
+    age: raw.dob ? calculateAgeFromDob(raw.dob) : 0,
+    ageIsEstimated: !raw.dob,
+    gender: (raw.gender as PatientGender) || 'Other / Not Specified',
+    cnic: cnicOrPassport && looksLikeCnic ? cnicOrPassport : undefined,
+    passportNumber: cnicOrPassport && !looksLikeCnic ? cnicOrPassport : undefined,
+    primaryPhone: raw.phone || '',
+    city: '',
+    province: '',
+    country: '',
+    bloodGroup: 'Unknown',
+    payerType: 'Self Pay',
+    status: raw.isActive === false ? 'INACTIVE' : 'ACTIVE',
+    registrationDate: formatIsoDate(raw.createdAt),
+    lastVisitDate: undefined,
+    createdBy: 'System',
+    createdAt: raw.createdAt,
+    updatedBy: 'System',
+    updatedAt: raw.createdAt,
+  };
+}
+
+let cachedPatients: Patient[] = [];
+
+export async function fetchPatients(): Promise<Patient[]> {
+  const [panelRes, selfPayRes] = await Promise.all([
+    apiClient.get<{ data: Record<string, any>[] }>('/patients/panel', { params: { pageSize: 200 } }),
+    apiClient.get<{ data: Record<string, any>[] }>('/patients/encounters'),
+  ]);
+  cachedPatients = [...panelRes.data.data.map(toPatientFromPanel), ...selfPayRes.data.data.map(toPatientFromSelfPay)];
+  return cachedPatients;
+}
+
+export async function primePatientRegistryCache(): Promise<void> {
   try {
-    localStorage.setItem(PATIENT_REGISTRY_STORAGE_KEY, JSON.stringify(patients));
-  } catch (err) {
-    console.error('Failed to save patient registry to storage:', err);
+    await fetchPatients();
+  } catch {
+    // Leave cache empty; the Patient Registry page itself will surface the real error on its own fetch.
   }
 }
 
 export function getAllPatients(): Patient[] {
-  return initPatientRegistry();
+  return cachedPatients;
 }
 
 export function getPatientById(id: string): Patient | undefined {
-  const patients = getAllPatients();
-  return patients.find((p) => p.id === id);
+  return cachedPatients.find((p) => p.id === id);
 }
 
 export function getPatientByMr(mrNumber: string): Patient | undefined {
-  const patients = getAllPatients();
-  const norm = mrNumber.trim().toUpperCase();
-  return patients.find((p) => p.mrNumber.toUpperCase() === norm);
+  return cachedPatients.find((p) => p.mrNumber === mrNumber);
 }
 
-// Centralized MR Number generator
-// Pattern: MR-YYYY-XXXXXX (e.g. MR-2026-000013)
-// Auto-generated, unique, sequence collision-safe across storage reloads.
+/** Preview only — the real, race-free MR number is assigned server-side on create. */
 export function generateNextMrNumber(): string {
-  const patients = getAllPatients();
-  const year = CURRENT_OPERATIONAL_YEAR;
-  const prefix = `MR-${year}-`;
-
-  let maxSeq = 0;
-  for (const p of patients) {
-    if (p.mrNumber && p.mrNumber.startsWith(prefix)) {
-      const seqStr = p.mrNumber.slice(prefix.length);
-      const seqNum = parseInt(seqStr, 10);
-      if (!isNaN(seqNum) && seqNum > maxSeq) {
-        maxSeq = seqNum;
-      }
-    }
-  }
-
-  // Next sequence candidate
-  let candidateSeq = maxSeq + 1;
-  let candidate = `${prefix}${String(candidateSeq).padStart(6, '0')}`;
-
-  // Extra collision check against all existing patients
-  const existingSet = new Set(patients.map((p) => p.mrNumber.toUpperCase()));
-  while (existingSet.has(candidate.toUpperCase())) {
-    candidateSeq++;
-    candidate = `${prefix}${String(candidateSeq).padStart(6, '0')}`;
-  }
-
-  return candidate;
+  const panelCount = cachedPatients.filter((p) => p.payerType === 'Corporate / Panel').length;
+  return `MR-${new Date().getFullYear()}-${String(panelCount + 1).padStart(6, '0')}`;
 }
 
-// Centralized duplicate check with tiered severity
 export function checkDuplicates(
-  candidate: {
-    cnic?: string;
-    passportNumber?: string;
-    primaryPhone?: string;
-    fullName?: string;
-    fatherGuardianName?: string;
-    dateOfBirth?: string;
-  },
+  candidate: { cnic?: string; passportNumber?: string; primaryPhone?: string; fullName?: string; fatherGuardianName?: string; dateOfBirth?: string },
   excludePatientId?: string
 ): DuplicateCheckResult {
   const patients = getAllPatients();
-  const otherPatients = excludePatientId
-    ? patients.filter((p) => p.id !== excludePatientId)
-    : patients;
+  const otherPatients = excludePatientId ? patients.filter((p) => p.id !== excludePatientId) : patients;
 
   const normalizedCnic = normalizeCnic(candidate.cnic);
   const normalizedPassport = candidate.passportNumber?.trim().toUpperCase();
@@ -635,11 +206,8 @@ export function checkDuplicates(
   const normalizedGuardian = candidate.fatherGuardianName?.trim().toLowerCase();
   const normalizedDob = candidate.dateOfBirth?.trim();
 
-  // 1. STRONG / EXACT: Exact CNIC (Block saving)
   if (normalizedCnic && isValidCnic(normalizedCnic)) {
-    const matched = otherPatients.filter(
-      (p) => p.cnic && normalizeCnic(p.cnic) === normalizedCnic
-    );
+    const matched = otherPatients.filter((p) => p.cnic && normalizeCnic(p.cnic) === normalizedCnic);
     if (matched.length > 0) {
       return {
         severity: 'STRONG_EXACT',
@@ -653,13 +221,8 @@ export function checkDuplicates(
     }
   }
 
-  // 1b. STRONG / EXACT: Exact Passport (Block saving)
   if (normalizedPassport && normalizedPassport.length >= 6) {
-    const matched = otherPatients.filter(
-      (p) =>
-        p.passportNumber &&
-        p.passportNumber.trim().toUpperCase() === normalizedPassport
-    );
+    const matched = otherPatients.filter((p) => p.passportNumber && p.passportNumber.trim().toUpperCase() === normalizedPassport);
     if (matched.length > 0) {
       return {
         severity: 'STRONG_EXACT',
@@ -673,14 +236,8 @@ export function checkDuplicates(
     }
   }
 
-  // 2. HIGH WARNING:
-  // Same Full Name + Date of Birth
   if (normalizedName && normalizedDob) {
-    const matched = otherPatients.filter(
-      (p) =>
-        p.fullName.trim().toLowerCase() === normalizedName &&
-        p.dateOfBirth?.trim() === normalizedDob
-    );
+    const matched = otherPatients.filter((p) => p.fullName.trim().toLowerCase() === normalizedName && p.dateOfBirth?.trim() === normalizedDob);
     if (matched.length > 0) {
       return {
         severity: 'HIGH_WARNING',
@@ -694,7 +251,6 @@ export function checkDuplicates(
     }
   }
 
-  // Same Full Name + Father/Guardian Name + Phone
   if (normalizedName && normalizedGuardian && normalizedPhone && normalizedPhone.length >= 10) {
     const matched = otherPatients.filter(
       (p) =>
@@ -716,12 +272,8 @@ export function checkDuplicates(
     }
   }
 
-  // 3. WEAK WARNING:
-  // Same Primary Phone only (normalized digits >= 10)
   if (normalizedPhone && normalizedPhone.length >= 10) {
-    const matched = otherPatients.filter(
-      (p) => p.primaryPhone && p.primaryPhone.replace(/\D/g, '') === normalizedPhone
-    );
+    const matched = otherPatients.filter((p) => p.primaryPhone && p.primaryPhone.replace(/\D/g, '') === normalizedPhone);
     if (matched.length > 0) {
       return {
         severity: 'WEAK_WARNING',
@@ -735,11 +287,8 @@ export function checkDuplicates(
     }
   }
 
-  // Same Full Name only
   if (normalizedName && normalizedName.length >= 4) {
-    const matched = otherPatients.filter(
-      (p) => p.fullName.trim().toLowerCase() === normalizedName
-    );
+    const matched = otherPatients.filter((p) => p.fullName.trim().toLowerCase() === normalizedName);
     if (matched.length > 0) {
       return {
         severity: 'WEAK_WARNING',
@@ -753,227 +302,115 @@ export function checkDuplicates(
     }
   }
 
+  return { severity: 'NONE', isExactCnic: false, isExactPassport: false, isPossibleDuplicate: false, matchedPatients: [], reason: '' };
+}
+
+function toBackendPanelPayload(formData: PatientFormData): Record<string, unknown> {
   return {
-    severity: 'NONE',
-    isExactCnic: false,
-    isExactPassport: false,
-    isPossibleDuplicate: false,
-    matchedPatients: [],
-    reason: '',
+    fullName: formData.fullName.trim(),
+    guardianName: formData.fatherGuardianName?.trim() || undefined,
+    guardianRelation: formData.guardianRelation || undefined,
+    gender: formData.gender || undefined,
+    dob: formData.dateOfBirth || undefined,
+    cnicOrPassport: normalizeCnic(formData.cnic) || formData.passportNumber?.trim() || undefined,
+    phone: formData.primaryPhone ? normalizePhone(formData.primaryPhone) : undefined,
+    alternatePhone: formData.alternatePhone ? normalizePhone(formData.alternatePhone) : undefined,
+    email: formData.email?.trim() || undefined,
+    addressLine1: formData.addressLine1?.trim() || undefined,
+    addressLine2: formData.addressLine2?.trim() || undefined,
+    city: formData.city?.trim() || undefined,
+    province: formData.province?.trim() || undefined,
+    country: formData.country?.trim() || undefined,
+    bloodGroup: formData.bloodGroup && formData.bloodGroup !== 'Unknown' ? formData.bloodGroup : undefined,
+    emergencyContactName: formData.emergencyContactName?.trim() || undefined,
+    emergencyContactRelation: formData.emergencyContactRelation?.trim() || undefined,
+    emergencyContactPhone: formData.emergencyContactPhone ? normalizePhone(formData.emergencyContactPhone) : undefined,
+    status: formData.status || 'ACTIVE',
+    corporatePanelId: formData.panelId,
+    panelMemberId: formData.panelMemberId?.trim() || undefined,
   };
 }
 
-export function resolveActorName(currentUser: User | null): string {
-  if (currentUser?.name && currentUser.name.trim()) return currentUser.name;
-  if (typeof window !== 'undefined') {
-    try {
-      const stored = localStorage.getItem('hms_auth_user');
-      if (stored) {
-        const u = JSON.parse(stored);
-        if (u?.name && u.name.trim()) return u.name;
-      }
-    } catch {
-      // ignore
-    }
-  }
-  return 'Hospital Administrator';
+function toBackendSelfPayPayload(formData: PatientFormData): Record<string, unknown> {
+  const address = [formData.addressLine1, formData.addressLine2, formData.city, formData.province, formData.country].filter(Boolean).join(', ');
+  return {
+    fullName: formData.fullName.trim(),
+    guardianName: formData.fatherGuardianName?.trim() || undefined,
+    gender: formData.gender || undefined,
+    dob: formData.dateOfBirth || undefined,
+    cnicOrPassport: normalizeCnic(formData.cnic) || formData.passportNumber?.trim() || undefined,
+    phone: formData.primaryPhone ? normalizePhone(formData.primaryPhone) : undefined,
+    address: address || undefined,
+  };
 }
 
-// Create a new patient
-export function createPatient(
-  formData: PatientFormData,
-  currentUser: User | null
-): { success: boolean; patient?: Patient; error?: string; duplicateInfo?: DuplicateCheckResult } {
-  // Validate Required Fields
-  if (!formData.fullName.trim()) {
-    return { success: false, error: 'Full Name is required.' };
-  }
-  if (!formData.gender) {
-    return { success: false, error: 'Gender is required.' };
-  }
-  if (!formData.primaryPhone.trim()) {
-    return { success: false, error: 'Primary Phone is required.' };
-  }
-  if (!isValidPhone(formData.primaryPhone)) {
-    return {
-      success: false,
-      error: 'Please provide a valid phone number (at least 10 digits).',
-    };
-  }
-
-  // CNIC validation
+function validateCommonFields(formData: PatientFormData): string | null {
+  if (!formData.fullName.trim()) return 'Full Name is required.';
+  if (!formData.gender) return 'Gender is required.';
+  if (!formData.primaryPhone.trim()) return 'Primary Phone is required.';
+  if (!isValidPhone(formData.primaryPhone)) return 'Please provide a valid phone number (at least 10 digits).';
   const normalizedCnic = normalizeCnic(formData.cnic);
-  if (normalizedCnic && !isValidCnic(normalizedCnic)) {
-    return {
-      success: false,
-      error: 'CNIC must follow the Pakistani format: XXXXX-XXXXXXX-X (13 digits).',
-    };
-  }
-
-  // Payer Type Validation
-  if (!formData.payerType) {
-    return { success: false, error: 'Payer Type is required.' };
-  }
+  if (normalizedCnic && !isValidCnic(normalizedCnic)) return 'CNIC must follow the Pakistani format: XXXXX-XXXXXXX-X (13 digits).';
+  if (!formData.payerType) return 'Payer Type is required.';
   if (formData.payerType === 'Corporate / Panel') {
-    if (!formData.panelId) {
-      return { success: false, error: 'Please select a Corporate Panel.' };
-    }
-    if (!formData.panelMemberId.trim()) {
-      return {
-        success: false,
-        error: 'Panel Member ID / Card Number is required for Corporate / Panel payer.',
-      };
-    }
+    if (!formData.panelId) return 'Please select a Corporate Panel.';
+    if (!formData.panelMemberId.trim()) return 'Panel Member ID / Card Number is required for Corporate / Panel payer.';
   }
+  return null;
+}
 
-  // Check Exact Duplicates (CNIC / Passport)
+/** `POST /patients/panel` (Corporate / Panel) or `POST /patients/encounters` (Self Pay) */
+export async function createPatient(
+  formData: PatientFormData,
+  _currentUser: User | null
+): Promise<{ success: boolean; patient?: Patient; error?: string; duplicateInfo?: DuplicateCheckResult }> {
+  const validationError = validateCommonFields(formData);
+  if (validationError) return { success: false, error: validationError };
+
   const dupCheck = checkDuplicates({
-    cnic: normalizedCnic,
+    cnic: normalizeCnic(formData.cnic),
     passportNumber: formData.passportNumber,
     primaryPhone: formData.primaryPhone,
     fullName: formData.fullName,
     fatherGuardianName: formData.fatherGuardianName,
     dateOfBirth: formData.dateOfBirth,
   });
-
   if (dupCheck.isExactCnic || dupCheck.isExactPassport) {
-    return {
-      success: false,
-      error: dupCheck.reason,
-      duplicateInfo: dupCheck,
-    };
+    return { success: false, error: dupCheck.reason, duplicateInfo: dupCheck };
   }
 
-  // Calculate age if DOB provided
-  let finalAge = Number(formData.age) || 0;
-  let finalAgeEstimated = formData.ageIsEstimated;
-  if (formData.dateOfBirth) {
-    finalAge = calculateAgeFromDob(formData.dateOfBirth);
-    finalAgeEstimated = false;
-  } else {
-    finalAgeEstimated = true;
+  try {
+    if (formData.payerType === 'Corporate / Panel') {
+      const res = await apiClient.post<{ data: Record<string, any> }>('/patients/panel', toBackendPanelPayload(formData));
+      await fetchPatients();
+      return { success: true, patient: getPatientById(res.data.data.id) };
+    }
+    const res = await apiClient.post<{ data: Record<string, any> }>('/patients/encounters', toBackendSelfPayPayload(formData));
+    await fetchPatients();
+    return { success: true, patient: getPatientById(res.data.data.id) };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to register patient.' };
   }
-
-  // Panel details resolution
-  let panelName = '';
-  if (formData.payerType === 'Corporate / Panel' && formData.panelId) {
-    const p = getPanelById(formData.panelId);
-    panelName = p ? p.name : formData.panelName;
-  }
-
-  // Generate MR Number
-  const newMrNumber = generateNextMrNumber();
-  const actorName = resolveActorName(currentUser);
-  const todayStr = '2026-09-09';
-  const nowIso = new Date().toISOString();
-
-  const newPatient: Patient = {
-    id: `PAT-${Date.now().toString().slice(-6)}`,
-    mrNumber: newMrNumber,
-    fullName: formData.fullName.trim(),
-    fatherGuardianName: formData.fatherGuardianName.trim(),
-    guardianRelation: formData.guardianRelation || 'Father',
-    dateOfBirth: formData.dateOfBirth || undefined,
-    age: finalAge,
-    ageIsEstimated: finalAgeEstimated,
-    gender: formData.gender,
-    cnic: normalizedCnic || undefined,
-    passportNumber: formData.passportNumber?.trim().toUpperCase() || undefined,
-    primaryPhone: normalizePhone(formData.primaryPhone),
-    alternatePhone: normalizePhone(formData.alternatePhone),
-    email: formData.email.trim() || undefined,
-    addressLine1: formData.addressLine1.trim() || undefined,
-    addressLine2: formData.addressLine2.trim() || undefined,
-    city: formData.city.trim() || 'Lahore',
-    province: formData.province.trim() || 'Punjab',
-    country: formData.country.trim() || 'Pakistan',
-    bloodGroup: formData.bloodGroup || 'Unknown',
-    payerType: formData.payerType,
-    panelId: formData.payerType === 'Corporate / Panel' ? formData.panelId : undefined,
-    panelName: formData.payerType === 'Corporate / Panel' ? panelName : undefined,
-    panelMemberId:
-      formData.payerType === 'Corporate / Panel'
-        ? formData.panelMemberId.trim()
-        : undefined,
-    emergencyContactName: formData.emergencyContactName.trim() || undefined,
-    emergencyContactRelation: formData.emergencyContactRelation.trim() || undefined,
-    emergencyContactPhone: normalizePhone(formData.emergencyContactPhone) || undefined,
-    status: formData.status || 'ACTIVE',
-    registrationDate: todayStr,
-    lastVisitDate: undefined,
-    createdBy: actorName,
-    createdAt: nowIso,
-    updatedBy: actorName,
-    updatedAt: nowIso,
-  };
-
-  const patients = getAllPatients();
-  const updated = [newPatient, ...patients];
-  savePatients(updated);
-
-  return { success: true, patient: newPatient };
 }
 
-// Update existing patient (MR Number is strictly read-only and preserved)
-export function updatePatient(
+/** `PATCH /patients/panel/:id` — self-pay encounters have no update endpoint (per-visit, non-editable by design). */
+export async function updatePatient(
   id: string,
   formData: PatientFormData,
-  currentUser: User | null
-): { success: boolean; patient?: Patient; error?: string; duplicateInfo?: DuplicateCheckResult } {
-  const patients = getAllPatients();
-  const index = patients.findIndex((p) => p.id === id);
-  if (index === -1) {
-    return { success: false, error: 'Patient record not found.' };
+  _currentUser: User | null
+): Promise<{ success: boolean; patient?: Patient; error?: string; duplicateInfo?: DuplicateCheckResult }> {
+  const existing = getPatientById(id);
+  if (!existing) return { success: false, error: 'Patient record not found.' };
+  if (existing.payerType === 'Self Pay') {
+    return { success: false, error: 'Self-pay records are per-visit and managed at Front Desk — they cannot be edited from this registry.' };
   }
 
-  const existing = patients[index];
+  const validationError = validateCommonFields(formData);
+  if (validationError) return { success: false, error: validationError };
 
-  // Validate Required
-  if (!formData.fullName.trim()) {
-    return { success: false, error: 'Full Name is required.' };
-  }
-  if (!formData.gender) {
-    return { success: false, error: 'Gender is required.' };
-  }
-  if (!formData.primaryPhone.trim()) {
-    return { success: false, error: 'Primary Phone is required.' };
-  }
-  if (!isValidPhone(formData.primaryPhone)) {
-    return {
-      success: false,
-      error: 'Please provide a valid phone number (at least 10 digits).',
-    };
-  }
-
-  // CNIC validation
-  const normalizedCnic = normalizeCnic(formData.cnic);
-  if (normalizedCnic && !isValidCnic(normalizedCnic)) {
-    return {
-      success: false,
-      error: 'CNIC must follow the Pakistani format: XXXXX-XXXXXXX-X (13 digits).',
-    };
-  }
-
-  // Payer Type Validation
-  if (!formData.payerType) {
-    return { success: false, error: 'Payer Type is required.' };
-  }
-  if (formData.payerType === 'Corporate / Panel') {
-    if (!formData.panelId) {
-      return { success: false, error: 'Please select a Corporate Panel.' };
-    }
-    if (!formData.panelMemberId.trim()) {
-      return {
-        success: false,
-        error: 'Panel Member ID / Card Number is required for Corporate / Panel payer.',
-      };
-    }
-  }
-
-  // Duplicate check excluding this patient
   const dupCheck = checkDuplicates(
     {
-      cnic: normalizedCnic,
+      cnic: normalizeCnic(formData.cnic),
       passportNumber: formData.passportNumber,
       primaryPhone: formData.primaryPhone,
       fullName: formData.fullName,
@@ -982,109 +419,42 @@ export function updatePatient(
     },
     id
   );
-
   if (dupCheck.isExactCnic || dupCheck.isExactPassport) {
-    return {
-      success: false,
-      error: dupCheck.reason,
-      duplicateInfo: dupCheck,
-    };
+    return { success: false, error: dupCheck.reason, duplicateInfo: dupCheck };
   }
 
-  // Age calculation
-  let finalAge = Number(formData.age) || 0;
-  let finalAgeEstimated = formData.ageIsEstimated;
-  if (formData.dateOfBirth) {
-    finalAge = calculateAgeFromDob(formData.dateOfBirth);
-    finalAgeEstimated = false;
-  } else {
-    finalAgeEstimated = true;
+  try {
+    await apiClient.patch(`/patients/panel/${id}`, toBackendPanelPayload(formData));
+    await fetchPatients();
+    return { success: true, patient: getPatientById(id) };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to update patient.' };
   }
-
-  let panelName = '';
-  if (formData.payerType === 'Corporate / Panel' && formData.panelId) {
-    const p = getPanelById(formData.panelId);
-    panelName = p ? p.name : formData.panelName;
-  }
-
-  const actorName = resolveActorName(currentUser);
-  const nowIso = new Date().toISOString();
-
-  const updatedPatient: Patient = {
-    ...existing,
-    // Permanent MR number is NEVER overwritten:
-    mrNumber: existing.mrNumber,
-    fullName: formData.fullName.trim(),
-    fatherGuardianName: formData.fatherGuardianName.trim(),
-    guardianRelation: formData.guardianRelation || 'Father',
-    dateOfBirth: formData.dateOfBirth || undefined,
-    age: finalAge,
-    ageIsEstimated: finalAgeEstimated,
-    gender: formData.gender,
-    cnic: normalizedCnic || undefined,
-    passportNumber: formData.passportNumber?.trim().toUpperCase() || undefined,
-    primaryPhone: normalizePhone(formData.primaryPhone),
-    alternatePhone: normalizePhone(formData.alternatePhone),
-    email: formData.email.trim() || undefined,
-    addressLine1: formData.addressLine1.trim() || undefined,
-    addressLine2: formData.addressLine2.trim() || undefined,
-    city: formData.city.trim() || 'Lahore',
-    province: formData.province.trim() || 'Punjab',
-    country: formData.country.trim() || 'Pakistan',
-    bloodGroup: formData.bloodGroup || 'Unknown',
-    payerType: formData.payerType,
-    panelId: formData.payerType === 'Corporate / Panel' ? formData.panelId : undefined,
-    panelName: formData.payerType === 'Corporate / Panel' ? panelName : undefined,
-    panelMemberId:
-      formData.payerType === 'Corporate / Panel'
-        ? formData.panelMemberId.trim()
-        : undefined,
-    emergencyContactName: formData.emergencyContactName.trim() || undefined,
-    emergencyContactRelation: formData.emergencyContactRelation.trim() || undefined,
-    emergencyContactPhone: normalizePhone(formData.emergencyContactPhone) || undefined,
-    status: formData.status,
-    updatedBy: actorName,
-    updatedAt: nowIso,
-  };
-
-  patients[index] = updatedPatient;
-  savePatients(patients);
-
-  return { success: true, patient: updatedPatient };
 }
 
-// Update patient status (ACTIVE, INACTIVE, DECEASED)
-export function updatePatientStatus(
+/** `PATCH /patients/panel/:id` (status field) */
+export async function updatePatientStatus(
   id: string,
   newStatus: PatientStatus,
-  currentUser: User | null
-): { success: boolean; patient?: Patient; error?: string } {
-  const patients = getAllPatients();
-  const index = patients.findIndex((p) => p.id === id);
-  if (index === -1) {
-    return { success: false, error: 'Patient not found.' };
+  _currentUser: User | null
+): Promise<{ success: boolean; patient?: Patient; error?: string }> {
+  const existing = getPatientById(id);
+  if (!existing) return { success: false, error: 'Patient not found.' };
+  if (existing.payerType === 'Self Pay') {
+    return { success: false, error: 'Self-pay records have no status to change — they are per-visit and managed at Front Desk.' };
   }
 
-  const existing = patients[index];
-  const actorName = resolveActorName(currentUser);
-
-  existing.status = newStatus;
-  existing.updatedBy = actorName;
-  existing.updatedAt = new Date().toISOString();
-
-  patients[index] = existing;
-  savePatients(patients);
-
-  return { success: true, patient: existing };
+  try {
+    await apiClient.patch(`/patients/panel/${id}`, { status: newStatus });
+    await fetchPatients();
+    return { success: true, patient: getPatientById(id) };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to update status.' };
+  }
 }
 
-// Filter and search engine (Logical AND across all active parameters)
-export function filterPatients(
-  patients: Patient[],
-  filters: PatientFilterState
-): Patient[] {
+export function filterPatients(patients: Patient[], filters: PatientFilterState): Patient[] {
   return patients.filter((patient) => {
-    // 1. Search across MR Number, Patient Name, CNIC, Phone, Panel Member ID
     if (filters.searchTerm.trim()) {
       const q = filters.searchTerm.trim().toLowerCase();
       const matchMr = patient.mrNumber.toLowerCase().includes(q);
@@ -1092,61 +462,31 @@ export function filterPatients(
       const matchCnic = patient.cnic ? patient.cnic.replace(/\D/g, '').includes(q.replace(/\D/g, '')) || patient.cnic.toLowerCase().includes(q) : false;
       const matchPhone = patient.primaryPhone ? patient.primaryPhone.replace(/\D/g, '').includes(q.replace(/\D/g, '')) || patient.primaryPhone.toLowerCase().includes(q) : false;
       const matchPanelMember = patient.panelMemberId ? patient.panelMemberId.toLowerCase().includes(q) : false;
-
-      if (!matchMr && !matchName && !matchCnic && !matchPhone && !matchPanelMember) {
-        return false;
-      }
+      if (!matchMr && !matchName && !matchCnic && !matchPhone && !matchPanelMember) return false;
     }
-
-    // 2. Gender Filter
-    if (filters.gender !== 'ALL' && patient.gender !== filters.gender) {
-      return false;
-    }
-
-    // 3. Payer Type Filter
-    if (filters.payerType !== 'ALL' && patient.payerType !== filters.payerType) {
-      return false;
-    }
-
-    // 4. Panel Filter
+    if (filters.gender !== 'ALL' && patient.gender !== filters.gender) return false;
+    if (filters.payerType !== 'ALL' && patient.payerType !== filters.payerType) return false;
     if (filters.panelId !== 'ALL') {
-      if (patient.payerType !== 'Corporate / Panel' || patient.panelId !== filters.panelId) {
-        return false;
-      }
+      if (patient.payerType !== 'Corporate / Panel' || patient.panelId !== filters.panelId) return false;
     }
-
-    // 5. Status Filter
-    if (filters.status !== 'ALL' && patient.status !== filters.status) {
-      return false;
-    }
-
+    if (filters.status !== 'ALL' && patient.status !== filters.status) return false;
     return true;
   });
 }
 
-// Calculate KPI Cards summary from a single dataset
 export function getPatientRegistryKpis(patients: Patient[]) {
   const total = patients.length;
   const active = patients.filter((p) => p.status === 'ACTIVE').length;
   const selfPay = patients.filter((p) => p.payerType === 'Self Pay').length;
   const panel = patients.filter((p) => p.payerType === 'Corporate / Panel').length;
 
-  // New registrations this month (e.g., in 2026-09)
-  const currentMonthPrefix = '2026-09';
-  const newThisMonth = patients.filter(
-    (p) => p.registrationDate && p.registrationDate.startsWith(currentMonthPrefix)
-  ).length;
+  const now = new Date();
+  const currentMonthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const newThisMonth = patients.filter((p) => p.registrationDate && p.registrationDate.startsWith(currentMonthPrefix)).length;
 
-  return {
-    total,
-    active,
-    selfPay,
-    panel,
-    newThisMonth,
-  };
+  return { total, active, selfPay, panel, newThisMonth };
 }
 
-// Validate single row for Excel Import
 export function validateImportRow(
   row: Record<string, any>,
   rowNumber: number,
@@ -1169,8 +509,8 @@ export function validateImportRow(
   const email = String(row['email'] || '').trim();
   const addressLine1 = String(row['address_line_1'] || '').trim();
   const addressLine2 = String(row['address_line_2'] || '').trim();
-  const city = String(row['city'] || 'Lahore').trim();
-  const province = String(row['province'] || 'Punjab').trim();
+  const city = String(row['city'] || '').trim();
+  const province = String(row['province'] || '').trim();
   const country = String(row['country'] || 'Pakistan').trim();
   const rawBlood = String(row['blood_group'] || 'Unknown').trim();
   const rawPayer = String(row['payer_type'] || 'Self Pay').trim();
@@ -1181,12 +521,8 @@ export function validateImportRow(
   const emergencyPhone = String(row['emergency_contact_phone'] || '').trim();
   const rawStatus = String(row['status'] || 'ACTIVE').trim().toUpperCase();
 
-  // 1. Name
-  if (!fullName) {
-    errors.push('Missing patient full_name');
-  }
+  if (!fullName) errors.push('Missing patient full_name');
 
-  // 2. Gender
   let gender: PatientGender = 'Other / Not Specified';
   const normGender = rawGender.toLowerCase();
   if (normGender === 'male' || normGender === 'm') {
@@ -1201,20 +537,17 @@ export function validateImportRow(
     errors.push(`Invalid gender "${rawGender}". Allowed: Male, Female, Other / Not Specified`);
   }
 
-  // 3. Phone
   if (!rawPhone) {
     errors.push('Missing primary_phone');
   } else if (!isValidPhone(rawPhone)) {
     errors.push(`Invalid primary_phone "${rawPhone}"`);
   }
 
-  // 4. CNIC
   const normalizedCnic = normalizeCnic(rawCnic);
   if (normalizedCnic && !isValidCnic(normalizedCnic)) {
     errors.push(`Invalid CNIC "${rawCnic}". Format must be 5-7-1 digits (e.g. 35202-1234567-1)`);
   }
 
-  // 5. DOB / Age
   let age = 0;
   let ageIsEstimated = true;
   if (dobStr) {
@@ -1234,12 +567,9 @@ export function validateImportRow(
     }
   }
 
-  // 6. Blood Group
   let bloodGroup: BloodGroup = 'Unknown';
   if (rawBlood) {
-    const matchBlood = BLOOD_GROUPS.find(
-      (b) => b.toUpperCase() === rawBlood.toUpperCase()
-    );
+    const matchBlood = BLOOD_GROUPS.find((b) => b.toUpperCase() === rawBlood.toUpperCase());
     if (matchBlood) {
       bloodGroup = matchBlood;
     } else {
@@ -1247,7 +577,6 @@ export function validateImportRow(
     }
   }
 
-  // 7. Payer Type
   let payerType: PayerType = 'Self Pay';
   const normPayer = rawPayer.toLowerCase();
   if (normPayer.includes('panel') || normPayer.includes('corporate')) {
@@ -1272,12 +601,9 @@ export function validateImportRow(
         resolvedPanelName = p.name;
       }
     }
-    if (!rawPanelMemberId) {
-      errors.push('panel_member_id is required when payer_type is Corporate / Panel');
-    }
+    if (!rawPanelMemberId) errors.push('panel_member_id is required when payer_type is Corporate / Panel');
   }
 
-  // 8. Status
   let status: PatientStatus = 'ACTIVE';
   if (rawStatus === 'ACTIVE' || rawStatus === 'INACTIVE' || rawStatus === 'DECEASED') {
     status = rawStatus as PatientStatus;
@@ -1285,21 +611,16 @@ export function validateImportRow(
     errors.push(`Invalid status "${rawStatus}". Allowed: ACTIVE, INACTIVE, DECEASED`);
   }
 
-  // 9. Email
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     errors.push(`Invalid email format "${email}"`);
   }
 
-  // Duplicate Check against allKnown
   let existingMr: string | undefined;
   let isExactDup = false;
   let isPossibleDup = false;
 
-  // Exact CNIC duplicate
   if (normalizedCnic && isValidCnic(normalizedCnic)) {
-    const cnicMatch = allKnown.find(
-      (p) => p.cnic && normalizeCnic(p.cnic) === normalizedCnic
-    );
+    const cnicMatch = allKnown.find((p) => p.cnic && normalizeCnic(p.cnic) === normalizedCnic);
     if (cnicMatch) {
       isExactDup = true;
       existingMr = cnicMatch.mrNumber;
@@ -1307,13 +628,8 @@ export function validateImportRow(
     }
   }
 
-  // Exact Passport duplicate
   if (!isExactDup && rawPassport) {
-    const passMatch = allKnown.find(
-      (p) =>
-        p.passportNumber &&
-        p.passportNumber.toUpperCase() === rawPassport.toUpperCase()
-    );
+    const passMatch = allKnown.find((p) => p.passportNumber && p.passportNumber.toUpperCase() === rawPassport.toUpperCase());
     if (passMatch) {
       isExactDup = true;
       existingMr = passMatch.mrNumber;
@@ -1321,12 +637,9 @@ export function validateImportRow(
     }
   }
 
-  // Possible duplicate (phone or name + father)
   if (!isExactDup) {
     const normPhone = rawPhone.replace(/\D/g, '');
-    const phoneMatch = allKnown.find(
-      (p) => p.primaryPhone && p.primaryPhone.replace(/\D/g, '') === normPhone
-    );
+    const phoneMatch = allKnown.find((p) => p.primaryPhone && p.primaryPhone.replace(/\D/g, '') === normPhone);
     if (phoneMatch) {
       isPossibleDup = true;
       existingMr = phoneMatch.mrNumber;
@@ -1349,9 +662,10 @@ export function validateImportRow(
 
   let patientObj: Patient | undefined;
   if (errors.length === 0 && !isExactDup) {
+    const nowIso = new Date().toISOString();
     patientObj = {
       id: `PAT-IMP-${rowNumber}-${Date.now().toString().slice(-4)}`,
-      mrNumber: '', // will be assigned on commit
+      mrNumber: '', // assigned by the backend on commit
       fullName,
       fatherGuardianName,
       guardianRelation,
@@ -1378,39 +692,24 @@ export function validateImportRow(
       emergencyContactRelation: emergencyRelation || undefined,
       emergencyContactPhone: normalizePhone(emergencyPhone) || undefined,
       status,
-      registrationDate: '2026-09-09',
+      registrationDate: nowIso.slice(0, 10),
       lastVisitDate: undefined,
-      createdBy: 'Prof. Dr. Tariq Saeed',
-      createdAt: new Date().toISOString(),
-      updatedBy: 'Prof. Dr. Tariq Saeed',
-      updatedAt: new Date().toISOString(),
+      createdBy: '',
+      createdAt: nowIso,
+      updatedBy: '',
+      updatedAt: nowIso,
     };
   }
 
-  return {
-    rowNumber,
-    data: row,
-    patient: patientObj,
-    status: rowStatus,
-    existingMrNumber: existingMr,
-    errors,
-  };
+  return { rowNumber, data: row, patient: patientObj, status: rowStatus, existingMrNumber: existingMr, errors };
 }
 
-// Commit batch imported patients
-export function commitBatchPatients(
-  validResults: ImportPatientRowResult[],
-  currentUser: User | null
-): ImportSummary {
-  const currentPatients = getAllPatients();
-  const actorName = resolveActorName(currentUser);
-  const nowIso = new Date().toISOString();
-
-  let createdCount = 0;
+/** Persists each validated row via real `POST /patients/panel` or `/patients/encounters` calls, one row at a time. */
+export async function commitBatchPatients(validResults: ImportPatientRowResult[], currentUser: User | null): Promise<ImportSummary> {
+  let patientsCreated = 0;
   let duplicatesSkipped = 0;
   let rowsFailed = 0;
   const errorRows: ImportPatientRowResult[] = [];
-  const newlyCreatedPatients: Patient[] = [];
 
   for (const r of validResults) {
     if (r.status === 'EXACT_DUPLICATE') {
@@ -1424,30 +723,43 @@ export function commitBatchPatients(
       continue;
     }
 
-    // Allocate safe permanent MR Number
-    const nextMr = generateNextMrNumber();
-    const patientWithMr: Patient = {
-      ...r.patient,
-      mrNumber: nextMr,
-      createdBy: actorName,
-      createdAt: nowIso,
-      updatedBy: actorName,
-      updatedAt: nowIso,
+    const formData: PatientFormData = {
+      fullName: r.patient.fullName,
+      fatherGuardianName: r.patient.fatherGuardianName,
+      guardianRelation: r.patient.guardianRelation,
+      dateOfBirth: r.patient.dateOfBirth || '',
+      age: r.patient.age,
+      ageIsEstimated: r.patient.ageIsEstimated,
+      gender: r.patient.gender,
+      cnic: r.patient.cnic || '',
+      passportNumber: r.patient.passportNumber || '',
+      primaryPhone: r.patient.primaryPhone,
+      alternatePhone: r.patient.alternatePhone || '',
+      email: r.patient.email || '',
+      addressLine1: r.patient.addressLine1 || '',
+      addressLine2: r.patient.addressLine2 || '',
+      city: r.patient.city,
+      province: r.patient.province,
+      country: r.patient.country,
+      bloodGroup: r.patient.bloodGroup,
+      payerType: r.patient.payerType,
+      panelId: r.patient.panelId || '',
+      panelName: r.patient.panelName || '',
+      panelMemberId: r.patient.panelMemberId || '',
+      emergencyContactName: r.patient.emergencyContactName || '',
+      emergencyContactRelation: r.patient.emergencyContactRelation || '',
+      emergencyContactPhone: r.patient.emergencyContactPhone || '',
+      status: r.patient.status,
     };
 
-    newlyCreatedPatients.push(patientWithMr);
-    // Add to current set so subsequent records in this batch won't get colliding MR
-    currentPatients.unshift(patientWithMr);
-    createdCount++;
+    const result = await createPatient(formData, currentUser);
+    if (result.success) {
+      patientsCreated++;
+    } else {
+      rowsFailed++;
+      errorRows.push({ ...r, errors: [result.error || 'Failed to import'], status: 'INVALID' });
+    }
   }
 
-  savePatients(currentPatients);
-
-  return {
-    rowsProcessed: validResults.length,
-    patientsCreated: createdCount,
-    duplicatesSkipped,
-    rowsFailed,
-    errorRows,
-  };
+  return { rowsProcessed: validResults.length, patientsCreated, duplicatesSkipped, rowsFailed, errorRows };
 }

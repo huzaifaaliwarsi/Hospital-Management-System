@@ -31,17 +31,39 @@ export type CheckDuplicateQuery = z.infer<typeof checkDuplicateQuerySchema>;
 export const createPanelPatientSchema = z.object({
   fullName: z.string().min(1).max(150),
   guardianName: z.string().optional(),
+  guardianRelation: z.string().optional(),
   gender: z.string().optional(),
   dob: z.coerce.date().optional(),
   cnicOrPassport: cnicSchema.optional(),
   phone: phoneSchema.optional(),
+  alternatePhone: z.string().optional(),
+  email: z.string().email().optional().or(z.literal('')),
   address: z.string().optional(),
+  addressLine1: z.string().optional(),
+  addressLine2: z.string().optional(),
+  city: z.string().optional(),
+  province: z.string().optional(),
+  country: z.string().optional(),
+  bloodGroup: z.string().optional(),
+  emergencyContactName: z.string().optional(),
+  emergencyContactRelation: z.string().optional(),
+  emergencyContactPhone: z.string().optional(),
+  status: z.enum(['ACTIVE', 'INACTIVE', 'DECEASED']).optional(),
   corporatePanelId: z.string().uuid(),
   panelMemberId: z.string().optional(),
 });
 export type CreatePanelPatientBody = z.infer<typeof createPanelPatientSchema>;
 export const updatePanelPatientSchema = createPanelPatientSchema.partial();
 export type UpdatePanelPatientBody = z.infer<typeof updatePanelPatientSchema>;
+
+export const listPanelPatientsQuerySchema = z.object({
+  search: z.string().optional(),
+  status: z.enum(['ACTIVE', 'INACTIVE', 'DECEASED']).optional(),
+  corporatePanelId: z.string().uuid().optional(),
+  page: z.coerce.number().int().positive().default(1),
+  pageSize: z.coerce.number().int().positive().max(200).default(50),
+});
+export type ListPanelPatientsQuery = z.infer<typeof listPanelPatientsQuerySchema>;
 
 /** Temporary, per-visit identity — never reused for future visits (D16 p.7). */
 export const createSelfPayEncounterSchema = z.object({

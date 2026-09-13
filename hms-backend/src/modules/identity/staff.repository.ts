@@ -2,6 +2,23 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
 import type { ListStaffQuery } from './staff.schemas';
 
+const staffWithPortalInclude = {
+  department: { select: { id: true, name: true, code: true } },
+  portalUser: {
+    select: {
+      id: true,
+      username: true,
+      email: true,
+      role: true,
+      status: true,
+      mustResetPassword: true,
+      lastLoginAt: true,
+      passwordResetAt: true,
+      passwordResetBy: true,
+    },
+  },
+} satisfies Prisma.StaffInclude;
+
 function buildWhere(query: ListStaffQuery): Prisma.StaffWhereInput {
   const where: Prisma.StaffWhereInput = {};
   if (query.departmentId) where.departmentId = query.departmentId;
@@ -26,7 +43,7 @@ export const staffRepository = {
     const [rows, totalItems] = await prisma.$transaction([
       prisma.staff.findMany({
         where,
-        include: { department: { select: { id: true, name: true, code: true } } },
+        include: staffWithPortalInclude,
         orderBy: { createdAt: 'desc' },
         skip: (query.page - 1) * query.pageSize,
         take: query.pageSize,
@@ -41,17 +58,18 @@ export const staffRepository = {
   },
 
   create(data: Prisma.StaffCreateInput) {
-    return prisma.staff.create({ data });
+    return prisma.staff.create({ data, include: staffWithPortalInclude });
   },
 
   update(id: string, data: Prisma.StaffUpdateInput) {
-    return prisma.staff.update({ where: { id }, data });
+    return prisma.staff.update({ where: { id }, data, include: staffWithPortalInclude });
   },
 
   deactivate(id: string) {
     return prisma.staff.update({
       where: { id },
       data: { isActive: false, employmentStatus: 'INACTIVE' },
+      include: staffWithPortalInclude,
     });
   },
 

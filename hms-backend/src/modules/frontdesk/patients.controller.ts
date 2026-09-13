@@ -1,7 +1,13 @@
 import type { Request, Response } from 'express';
 import { patientsService } from './patients.service';
 import { AuthenticationError } from '@/shared/errors/AppError';
-import type { CheckDuplicateQuery, CreatePanelPatientBody, UpdatePanelPatientBody, CreateSelfPayEncounterBody } from './patients.schemas';
+import type {
+  CheckDuplicateQuery,
+  CreatePanelPatientBody,
+  UpdatePanelPatientBody,
+  CreateSelfPayEncounterBody,
+  ListPanelPatientsQuery,
+} from './patients.schemas';
 
 function actorId(req: Request): string {
   if (!req.user) throw new AuthenticationError();
@@ -14,13 +20,14 @@ export const patientsController = {
   },
 
   listPanelPatients: async (req: Request, res: Response) => {
-    res.json({ data: await patientsService.listPanelPatients(req.query.search as string | undefined) });
+    const { rows, meta } = await patientsService.listPanelPatients(req.query as unknown as ListPanelPatientsQuery);
+    res.json({ data: rows, meta: { pagination: meta } });
   },
   createPanelPatient: async (req: Request, res: Response) => {
     res.status(201).json({ data: await patientsService.createPanelPatient(req.body as CreatePanelPatientBody, actorId(req)) });
   },
   updatePanelPatient: async (req: Request, res: Response) => {
-    res.json({ data: await patientsService.updatePanelPatient(req.params.id as string, req.body as UpdatePanelPatientBody) });
+    res.json({ data: await patientsService.updatePanelPatient(req.params.id as string, req.body as UpdatePanelPatientBody, actorId(req)) });
   },
 
   listSelfPayEncounters: async (req: Request, res: Response) => {

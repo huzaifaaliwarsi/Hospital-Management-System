@@ -1,3 +1,4 @@
+import apiClient from './apiClient';
 import {
   HospitalService,
   ServiceCategory,
@@ -8,10 +9,17 @@ import {
   ServiceImportValidationResult,
 } from '../types/serviceRates';
 import { User } from '../types';
-import { DepartmentService, formatAuditUser, formatAuditTimestamp } from './departmentService';
+import { DepartmentService } from './departmentService';
 import { getHospitalProfile } from './hospitalProfileService';
+import { formatDisplayDate } from '../utils/dateConstants';
 
-const STORAGE_KEY = 'css_hms_services_catalog_v1';
+/**
+ * Live Services & Rates service — every read/write round-trips through
+ * `/api/v1/setup/services-rates*`. Same in-memory-cache pattern as
+ * `departmentService.ts`: `cachedServices` mirrors the last real fetch
+ * (never localStorage) so synchronous readers (`getServices`, `getKPIs`,
+ * `filterServices`) keep working for the KPI bar / filter bar.
+ */
 
 export const VALID_SERVICE_CATEGORIES: ServiceCategory[] = [
   'Consultation',
@@ -42,619 +50,145 @@ export const VALID_BILLING_UNITS: BillingUnit[] = [
   'Other',
 ];
 
-export const INITIAL_SERVICES: HospitalService[] = [
-  {
-    id: 'srv_001',
-    code: 'SRV-OPD-001',
-    name: 'General OPD Consultation',
-    description: 'Outpatient specialist initial consultation and assessment',
-    departmentId: 'DEP-03',
-    departmentName: 'Cardiology',
-    category: 'Consultation',
-    standardRate: 2500,
-    currency: 'PKR',
-    billingUnit: 'Per Consultation',
-    panelEligible: true,
-    manualRateOverrideAllowed: false,
-    discountAllowed: true,
-    status: 'Active',
-    linkedInvoiceCount: 142,
-    linkedPanelRuleCount: 6,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '01 Jan 2026, 09:00 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '15 Aug 2026, 11:30 AM',
-  },
-  {
-    id: 'srv_002',
-    code: 'SRV-EMG-001',
-    name: 'Emergency Triage & Consultation',
-    description: 'Immediate 24/7 emergency medical examination and resuscitation initiation',
-    departmentId: 'DEP-07',
-    departmentName: 'Emergency',
-    category: 'Emergency',
-    standardRate: 2000,
-    currency: 'PKR',
-    billingUnit: 'Per Visit',
-    panelEligible: true,
-    manualRateOverrideAllowed: true,
-    discountAllowed: false,
-    status: 'Active',
-    linkedInvoiceCount: 388,
-    linkedPanelRuleCount: 8,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '01 Jan 2026, 09:00 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '02 Aug 2026, 03:15 PM',
-  },
-  {
-    id: 'srv_003',
-    code: 'SRV-OBS-001',
-    name: 'Emergency Observation (Up to 4 Hours)',
-    description: 'Short-stay clinical monitoring, vital signs tracking and immediate therapy',
-    departmentId: 'DEP-07',
-    departmentName: 'Emergency',
-    category: 'Observation',
-    standardRate: 3500,
-    currency: 'PKR',
-    billingUnit: 'Per Session',
-    panelEligible: true,
-    manualRateOverrideAllowed: false,
-    discountAllowed: true,
-    status: 'Active',
-    linkedInvoiceCount: 95,
-    linkedPanelRuleCount: 4,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '05 Jan 2026, 10:00 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '12 Jul 2026, 02:00 PM',
-  },
-  {
-    id: 'srv_004',
-    code: 'SRV-ADM-001',
-    name: 'Inpatient Admission Processing Fee',
-    description: 'Registration, digital bed allocation file opening and initial nursing dossier',
-    departmentId: 'DEP-09',
-    departmentName: 'Administration',
-    category: 'Admission',
-    standardRate: 1500,
-    currency: 'PKR',
-    billingUnit: 'One-Time',
-    panelEligible: true,
-    manualRateOverrideAllowed: false,
-    discountAllowed: false,
-    status: 'Active',
-    linkedInvoiceCount: 210,
-    linkedPanelRuleCount: 5,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '05 Jan 2026, 10:30 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '10 Jun 2026, 04:20 PM',
-  },
-  {
-    id: 'srv_005',
-    code: 'SRV-BED-GEN',
-    name: 'General Ward Bed Accommodation',
-    description: 'Daily inpatient accommodation with routine round-the-clock nursing supervision',
-    departmentId: 'DEP-01',
-    departmentName: 'General Medicine',
-    category: 'Room / Bed',
-    standardRate: 3000,
-    currency: 'PKR',
-    billingUnit: 'Per Day',
-    panelEligible: true,
-    manualRateOverrideAllowed: false,
-    discountAllowed: true,
-    status: 'Active',
-    linkedInvoiceCount: 312,
-    linkedPanelRuleCount: 6,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '08 Jan 2026, 11:00 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '18 Jul 2026, 01:10 PM',
-  },
-  {
-    id: 'srv_006',
-    code: 'SRV-BED-ICU',
-    name: 'Intensive Care Unit (ICU) Bed with Monitor',
-    description: 'Comprehensive hemodynamic monitoring, ventilator support and 1:1 specialized critical nursing',
-    departmentId: 'DEP-07',
-    departmentName: 'Emergency',
-    category: 'Room / Bed',
-    standardRate: 15000,
-    currency: 'PKR',
-    billingUnit: 'Per Day',
-    panelEligible: true,
-    manualRateOverrideAllowed: false,
-    discountAllowed: false,
-    status: 'Active',
-    linkedInvoiceCount: 84,
-    linkedPanelRuleCount: 5,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '08 Jan 2026, 11:15 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '22 Aug 2026, 05:45 PM',
-  },
-  {
-    id: 'srv_007',
-    code: 'SRV-RAD-XRAY',
-    name: 'Digital Chest X-Ray (PA View)',
-    description: 'Single exposure digital radiograph with immediate PACS archive and radiologist reporting',
-    departmentId: 'DEP-05',
-    departmentName: 'Radiology',
-    category: 'Radiology',
-    standardRate: 1800,
-    currency: 'PKR',
-    billingUnit: 'Per Test',
-    panelEligible: true,
-    manualRateOverrideAllowed: false,
-    discountAllowed: true,
-    status: 'Active',
-    linkedInvoiceCount: 520,
-    linkedPanelRuleCount: 7,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '10 Jan 2026, 09:30 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '28 Aug 2026, 10:15 AM',
-  },
-  {
-    id: 'srv_008',
-    code: 'SRV-RAD-USG',
-    name: 'Ultrasound Whole Abdomen & Pelvis',
-    description: 'High-resolution abdominal color Doppler and morphological sonography',
-    departmentId: 'DEP-05',
-    departmentName: 'Radiology',
-    category: 'Radiology',
-    standardRate: 3500,
-    currency: 'PKR',
-    billingUnit: 'Per Test',
-    panelEligible: true,
-    manualRateOverrideAllowed: false,
-    discountAllowed: true,
-    status: 'Active',
-    linkedInvoiceCount: 340,
-    linkedPanelRuleCount: 6,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '10 Jan 2026, 09:45 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '14 Jul 2026, 03:30 PM',
-  },
-  {
-    id: 'srv_009',
-    code: 'SRV-LAB-CBC',
-    name: 'Complete Blood Count (CBC) with ESR',
-    description: 'Automated 5-part hematology differential analyzer with peripheral smear review',
-    departmentId: 'DEP-06',
-    departmentName: 'Pathology',
-    category: 'Laboratory',
-    standardRate: 950,
-    currency: 'PKR',
-    billingUnit: 'Per Test',
-    panelEligible: true,
-    manualRateOverrideAllowed: false,
-    discountAllowed: true,
-    status: 'Active',
-    linkedInvoiceCount: 890,
-    linkedPanelRuleCount: 8,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '12 Jan 2026, 10:00 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '01 Sep 2026, 11:20 AM',
-  },
-  {
-    id: 'srv_010',
-    code: 'SRV-LAB-LFT',
-    name: 'Liver Function Tests (LFTs)',
-    description: 'Serum Bilirubin, ALT/SGPT, AST/SGOT, Alkaline Phosphatase, Total Protein, Albumin',
-    departmentId: 'DEP-06',
-    departmentName: 'Pathology',
-    category: 'Laboratory',
-    standardRate: 1800,
-    currency: 'PKR',
-    billingUnit: 'Per Test',
-    panelEligible: true,
-    manualRateOverrideAllowed: false,
-    discountAllowed: true,
-    status: 'Active',
-    linkedInvoiceCount: 460,
-    linkedPanelRuleCount: 7,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '12 Jan 2026, 10:30 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '19 Aug 2026, 04:00 PM',
-  },
-  {
-    id: 'srv_011',
-    code: 'SRV-PROC-ECG',
-    name: '12-Lead Electrocardiogram (ECG)',
-    description: 'Diagnostic computerized 12-channel rhythm strip with cardiologist interpretation',
-    departmentId: 'DEP-03',
-    departmentName: 'Cardiology',
-    category: 'Diagnostic',
-    standardRate: 1200,
-    currency: 'PKR',
-    billingUnit: 'Per Test',
-    panelEligible: true,
-    manualRateOverrideAllowed: false,
-    discountAllowed: true,
-    status: 'Active',
-    linkedInvoiceCount: 375,
-    linkedPanelRuleCount: 6,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '15 Jan 2026, 02:00 PM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '03 Aug 2026, 09:10 AM',
-  },
-  {
-    id: 'srv_012',
-    code: 'SRV-PROC-NEB',
-    name: 'Nebulization Therapy',
-    description: 'Aerosolized bronchodilator inhalation with disposable kit and oxygen assist',
-    departmentId: 'DEP-07',
-    departmentName: 'Emergency',
-    category: 'Procedure',
-    standardRate: 600,
-    currency: 'PKR',
-    billingUnit: 'Per Session',
-    panelEligible: true,
-    manualRateOverrideAllowed: false,
-    discountAllowed: true,
-    status: 'Active',
-    linkedInvoiceCount: 215,
-    linkedPanelRuleCount: 5,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '15 Jan 2026, 02:30 PM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '16 Jul 2026, 12:45 PM',
-  },
-  {
-    id: 'srv_013',
-    code: 'SRV-NUR-DRS',
-    name: 'Surgical Wound Dressing (Medium)',
-    description: 'Aseptic cleansing, antiseptic application and sterile post-operative dressing',
-    departmentId: 'DEP-02',
-    departmentName: 'General Surgery',
-    category: 'Nursing',
-    standardRate: 1000,
-    currency: 'PKR',
-    billingUnit: 'Per Procedure',
-    panelEligible: true,
-    manualRateOverrideAllowed: false,
-    discountAllowed: true,
-    status: 'Active',
-    linkedInvoiceCount: 160,
-    linkedPanelRuleCount: 4,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '18 Jan 2026, 11:00 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '24 Jul 2026, 02:20 PM',
-  },
-  {
-    id: 'srv_014',
-    code: 'SRV-SURG-OTM',
-    name: 'Major Operation Theatre Facility Charges (Hour 1)',
-    description: 'Sterile surgical suite usage, laparoscopy tower, scrub nurse and OT technician support',
-    departmentId: 'DEP-02',
-    departmentName: 'General Surgery',
-    category: 'Surgery',
-    standardRate: 25000,
-    currency: 'PKR',
-    billingUnit: 'Per Hour',
-    panelEligible: true,
-    manualRateOverrideAllowed: true,
-    discountAllowed: false,
-    status: 'Active',
-    linkedInvoiceCount: 78,
-    linkedPanelRuleCount: 5,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '20 Jan 2026, 03:00 PM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '30 Aug 2026, 04:15 PM',
-  },
-  {
-    id: 'srv_015',
-    code: 'SRV-MISC-AMB',
-    name: 'Basic Life Support Ambulance Transport (Local)',
-    description: 'Within city radius patient transfer with emergency EMT on board',
-    departmentId: 'DEP-07',
-    departmentName: 'Emergency',
-    category: 'Miscellaneous',
-    standardRate: 4000,
-    currency: 'PKR',
-    billingUnit: 'Per Visit',
-    panelEligible: false,
-    manualRateOverrideAllowed: true,
-    discountAllowed: false,
-    status: 'Active',
-    linkedInvoiceCount: 45,
-    linkedPanelRuleCount: 0,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '22 Jan 2026, 01:30 PM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '11 Jul 2026, 05:00 PM',
-  },
-  {
-    id: 'srv_016',
-    code: 'SRV-PROC-OLD',
-    name: 'Legacy Manual Blood Glucose Dipstick',
-    description: 'Older manual dipstick protocol replaced by automated laboratory glucometer analyzer',
-    departmentId: 'DEP-06',
-    departmentName: 'Pathology',
-    category: 'Diagnostic',
-    standardRate: 250,
-    currency: 'PKR',
-    billingUnit: 'Per Test',
-    panelEligible: false,
-    manualRateOverrideAllowed: false,
-    discountAllowed: false,
-    status: 'Inactive',
-    linkedInvoiceCount: 0,
-    linkedPanelRuleCount: 0,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '02 Jan 2026, 10:00 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '05 Mar 2026, 02:00 PM',
-    statusChangedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    statusChangedAt: '05 Mar 2026, 02:00 PM',
-  },
-];
+function formatTimestamp(iso?: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const dateStr = formatDisplayDate(d);
+  const timeStr = d.toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' });
+  return `${dateStr}, ${timeStr}`;
+}
+
+/** Maps a backend service-rate row (as returned by `setup.service.ts`) onto the frontend `HospitalService` shape. */
+function toHospitalService(raw: Record<string, any>): HospitalService {
+  return {
+    id: raw.id,
+    code: raw.code,
+    name: raw.name,
+    description: raw.description || '',
+    departmentId: raw.departmentId,
+    departmentName: raw.department?.name || '',
+    category: (raw.category as ServiceCategory) || 'Other',
+    standardRate: Number(raw.standardRate ?? 0),
+    currency: getHospitalProfile().currency || 'PKR',
+    billingUnit: (raw.billingUnit as BillingUnit) || 'Other',
+    panelEligible: !!raw.panelEligible,
+    manualRateOverrideAllowed: !!raw.manualRateOverrideAllowed,
+    discountAllowed: !!raw.discountAllowed,
+    status: raw.isActive ? 'Active' : 'Inactive',
+    linkedInvoiceCount: raw.linkedInvoiceCount ?? 0,
+    linkedPanelRuleCount: raw.linkedPanelRuleCount ?? 0,
+    createdBy: raw.createdByLabel || 'System',
+    createdAt: formatTimestamp(raw.createdAt),
+    updatedBy: raw.updatedByLabel || 'System',
+    updatedAt: formatTimestamp(raw.updatedAt),
+    statusChangedBy: raw.statusChangedBy || undefined,
+    statusChangedAt: raw.statusChangedAt ? formatTimestamp(raw.statusChangedAt) : undefined,
+  };
+}
+
+function toBackendPayload(values: ServiceFormValues): Record<string, unknown> {
+  return {
+    code: values.code.trim().toUpperCase(),
+    name: values.name.trim(),
+    description: values.description?.trim() || undefined,
+    departmentId: values.departmentId,
+    category: values.category,
+    billingUnit: values.billingUnit,
+    standardRate: Number(values.standardRate) || 0,
+    panelEligible: values.panelEligible,
+    discountAllowed: values.discountAllowed,
+    manualRateOverrideAllowed: values.manualRateOverrideAllowed,
+    isActive: values.status === 'Active',
+  };
+}
+
+let cachedServices: HospitalService[] = [];
+
+export async function fetchServices(): Promise<HospitalService[]> {
+  const res = await apiClient.get<{ data: Record<string, any>[] }>('/setup/services-rates');
+  cachedServices = res.data.data.map(toHospitalService);
+  return cachedServices;
+}
+
+/** Async warm-up — call once at app startup so sync readers below have real data. */
+export async function primeServicesCache(): Promise<void> {
+  try {
+    await fetchServices();
+  } catch {
+    // Leave cache empty; the Services & Rates page itself will surface the real error on its own fetch.
+  }
+}
 
 export class ServiceRatesService {
+  /** Synchronous read of the last real fetch — never localStorage. */
   static getServices(): HospitalService[] {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      const departments = DepartmentService.getDepartments();
-
-      let rawList: HospitalService[];
-      if (!stored) {
-        rawList = INITIAL_SERVICES;
-      } else {
-        rawList = JSON.parse(stored);
-      }
-
-      let modified = false;
-      const normalized = rawList.map((s: any) => {
-        const canonical = DepartmentService.resolveCanonicalDepartment(
-          s.departmentId || s.departmentCode || s.department,
-          s.departmentName || s.department,
-          departments
-        );
-        const rate = Number(s.standardRate ?? 0);
-        if (
-          s.departmentId !== canonical.id ||
-          s.departmentName !== canonical.name ||
-          s.standardRate !== rate
-        ) {
-          modified = true;
-          return {
-            ...s,
-            departmentId: canonical.id,
-            departmentName: canonical.name,
-            standardRate: rate,
-          };
-        }
-        return s;
-      });
-
-      if (!stored || modified) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
-      }
-      return normalized;
-    } catch (err) {
-      console.error('Failed to load services from localStorage:', err);
-      return INITIAL_SERVICES;
-    }
+    return cachedServices;
   }
 
-  static saveServices(services: HospitalService[]): void {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(services));
-    } catch (err) {
-      console.error('Failed to persist services to localStorage:', err);
-    }
+  /** No-op kept for interface stability: persistence now happens per-mutation against the real backend. */
+  static saveServices(_services: HospitalService[]): void {
+    // Intentionally empty.
   }
 
   static getServiceById(id: string): HospitalService | undefined {
-    return this.getServices().find((s) => s.id === id);
+    return cachedServices.find((s) => s.id === id);
   }
 
   static validateServiceCode(code: string, currentId?: string): { isValid: boolean; message?: string } {
     const trimmed = code.trim().toUpperCase();
-    if (!trimmed) {
-      return { isValid: false, message: 'Service code is required.' };
-    }
-    // Uppercase, alphanumeric and hyphen only
+    if (!trimmed) return { isValid: false, message: 'Service code is required.' };
     const validPattern = /^[A-Z0-9-]+$/;
     if (!validPattern.test(trimmed)) {
       return { isValid: false, message: 'Code must contain uppercase letters, numbers, and hyphens only.' };
     }
-
-    const services = this.getServices();
-    const isDuplicate = services.some(
-      (s) => s.code.toUpperCase() === trimmed && s.id !== currentId
-    );
+    const isDuplicate = cachedServices.some((s) => s.code.toUpperCase() === trimmed && s.id !== currentId);
     if (isDuplicate) {
       return { isValid: false, message: `Service code "${trimmed}" already exists in master catalog.` };
     }
-
     return { isValid: true };
   }
 
-  static createService(values: ServiceFormValues, currentUser?: User | null): HospitalService {
-    const codeCheck = this.validateServiceCode(values.code);
-    if (!codeCheck.isValid) {
-      throw new Error(codeCheck.message || 'Invalid service code.');
-    }
-
-    const departments = DepartmentService.getDepartments();
-    const deptInfo = DepartmentService.resolveCanonicalDepartment(
-      values.departmentId,
-      undefined,
-      departments
-    );
-    const dept = departments.find((d) => d.id === deptInfo.id);
-    if (!dept) {
-      throw new Error('Selected department does not exist in master registry.');
-    }
-    if (dept.status !== 'Active') {
+  /** `POST /setup/services-rates` */
+  static async createService(values: ServiceFormValues, _currentUser?: User | null): Promise<HospitalService> {
+    if (values.standardRate < 0) throw new Error('Standard rate cannot be negative.');
+    const dept = DepartmentService.getDepartmentById(values.departmentId);
+    if (dept && dept.status !== 'Active') {
       throw new Error('Cannot create new service under an Inactive department.');
     }
-
-    if (values.standardRate < 0) {
-      throw new Error('Standard rate cannot be negative.');
-    }
-
-    const profile = getHospitalProfile();
-    const currency = profile.currency || 'PKR';
-
-    const auditUser = formatAuditUser(currentUser);
-    const auditTime = formatAuditTimestamp();
-
-    const newService: HospitalService = {
-      id: `srv_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      code: values.code.trim().toUpperCase(),
-      name: values.name.trim(),
-      description: values.description?.trim() || '',
-      departmentId: dept.id,
-      departmentName: dept.name,
-      category: values.category,
-      standardRate: Number(values.standardRate) || 0,
-      currency,
-      billingUnit: values.billingUnit,
-      panelEligible: values.panelEligible,
-      manualRateOverrideAllowed: values.manualRateOverrideAllowed,
-      discountAllowed: values.discountAllowed,
-      status: values.status,
-      linkedInvoiceCount: 0,
-      linkedPanelRuleCount: 0,
-      createdBy: auditUser,
-      createdAt: auditTime,
-      updatedBy: auditUser,
-      updatedAt: auditTime,
-    };
-
-    const services = this.getServices();
-    const updated = [newService, ...services];
-    this.saveServices(updated);
-
-    return newService;
+    const res = await apiClient.post<{ data: Record<string, any> }>('/setup/services-rates', toBackendPayload(values));
+    const created = toHospitalService(res.data.data);
+    cachedServices = [created, ...cachedServices];
+    return created;
   }
 
-  static updateService(id: string, values: ServiceFormValues, currentUser?: User | null): HospitalService {
-    const services = this.getServices();
-    const existingIndex = services.findIndex((s) => s.id === id);
-    if (existingIndex === -1) {
-      throw new Error('Service record not found.');
-    }
-
-    const codeCheck = this.validateServiceCode(values.code, id);
-    if (!codeCheck.isValid) {
-      throw new Error(codeCheck.message || 'Invalid service code.');
-    }
-
-    const departments = DepartmentService.getDepartments();
-    const deptInfo = DepartmentService.resolveCanonicalDepartment(
-      values.departmentId,
-      undefined,
-      departments
-    );
-    const dept = departments.find((d) => d.id === deptInfo.id);
-    if (!dept) {
-      throw new Error('Selected department does not exist in master registry.');
-    }
-
-    if (values.standardRate < 0) {
-      throw new Error('Standard rate cannot be negative.');
-    }
-
-    const auditUser = formatAuditUser(currentUser);
-    const auditTime = formatAuditTimestamp();
-    const existing = services[existingIndex];
-
-    const updatedService: HospitalService = {
-      ...existing,
-      code: values.code.trim().toUpperCase(),
-      name: values.name.trim(),
-      description: values.description?.trim() || '',
-      departmentId: dept.id,
-      departmentName: dept.name,
-      category: values.category,
-      standardRate: Number(values.standardRate) || 0,
-      billingUnit: values.billingUnit,
-      panelEligible: values.panelEligible,
-      manualRateOverrideAllowed: values.manualRateOverrideAllowed,
-      discountAllowed: values.discountAllowed,
-      status: values.status,
-      updatedBy: auditUser,
-      updatedAt: auditTime,
-    };
-
-    if (existing.status !== values.status) {
-      updatedService.statusChangedBy = auditUser;
-      updatedService.statusChangedAt = auditTime;
-    }
-
-    services[existingIndex] = updatedService;
-    this.saveServices(services);
-
-    return updatedService;
+  /** `PATCH /setup/services-rates/:id` */
+  static async updateService(id: string, values: ServiceFormValues, _currentUser?: User | null): Promise<HospitalService> {
+    if (values.standardRate < 0) throw new Error('Standard rate cannot be negative.');
+    const res = await apiClient.patch<{ data: Record<string, any> }>(`/setup/services-rates/${id}`, toBackendPayload(values));
+    const updated = toHospitalService(res.data.data);
+    cachedServices = cachedServices.map((s) => (s.id === id ? updated : s));
+    return updated;
   }
 
-  static changeServiceStatus(
-    id: string,
-    newStatus: 'Active' | 'Inactive',
-    currentUser?: User | null
-  ): HospitalService {
-    const services = this.getServices();
-    const existingIndex = services.findIndex((s) => s.id === id);
-    if (existingIndex === -1) {
-      throw new Error('Service not found.');
-    }
-
-    const auditUser = formatAuditUser(currentUser);
-    const auditTime = formatAuditTimestamp();
-    const existing = services[existingIndex];
-
-    const updatedService: HospitalService = {
-      ...existing,
-      status: newStatus,
-      updatedBy: auditUser,
-      updatedAt: auditTime,
-      statusChangedBy: auditUser,
-      statusChangedAt: auditTime,
-    };
-
-    services[existingIndex] = updatedService;
-    this.saveServices(services);
-    return updatedService;
+  /** `PATCH /setup/services-rates/:id` (isActive:true) or `POST /setup/services-rates/:id/deactivate` */
+  static async changeServiceStatus(id: string, newStatus: 'Active' | 'Inactive', _currentUser?: User | null): Promise<HospitalService> {
+    const res =
+      newStatus === 'Inactive'
+        ? await apiClient.post<{ data: Record<string, any> }>(`/setup/services-rates/${id}/deactivate`)
+        : await apiClient.patch<{ data: Record<string, any> }>(`/setup/services-rates/${id}`, { isActive: true });
+    const updated = toHospitalService(res.data.data);
+    cachedServices = cachedServices.map((s) => (s.id === id ? updated : s));
+    return updated;
   }
 
-  static deleteService(id: string): { success: boolean; message?: string } {
-    const services = this.getServices();
-    const service = services.find((s) => s.id === id);
-    if (!service) {
-      return { success: false, message: 'Service not found.' };
-    }
-
-    // Safeguard check
-    if ((service.linkedInvoiceCount ?? 0) > 0 || (service.linkedPanelRuleCount ?? 0) > 0) {
-      return {
-        success: false,
-        message: 'This service is linked to hospital billing records and cannot be deleted. Deactivate it instead.',
-      };
-    }
-
-    const remaining = services.filter((s) => s.id !== id);
-    this.saveServices(remaining);
-    return { success: true };
+  /** The backend has no hard-delete for service rates (same data-integrity stance as Departments). */
+  static async deleteService(_id: string): Promise<{ success: boolean; message?: string }> {
+    return { success: false, message: 'Services cannot be permanently deleted for billing-history integrity. Deactivate it instead.' };
   }
 
-  static filterServices(
-    services: HospitalService[],
-    filters: ServiceFilterState
-  ): HospitalService[] {
+  static filterServices(services: HospitalService[], filters: ServiceFilterState): HospitalService[] {
     return services.filter((s) => {
-      // 1. Search across Code, Name, Department
       if (filters.searchTerm.trim()) {
         const query = filters.searchTerm.toLowerCase().trim();
         const matchCode = s.code.toLowerCase().includes(query);
@@ -662,28 +196,13 @@ export class ServiceRatesService {
         const matchDept = s.departmentName.toLowerCase().includes(query);
         if (!matchCode && !matchName && !matchDept) return false;
       }
-
-      // 2. Department filter
-      if (filters.departmentId !== 'All') {
-        if (String(s.departmentId) !== String(filters.departmentId)) return false;
-      }
-
-      // 3. Category filter
-      if (filters.category !== 'All') {
-        if (s.category !== filters.category) return false;
-      }
-
-      // 4. Panel Eligible filter
+      if (filters.departmentId !== 'All' && String(s.departmentId) !== String(filters.departmentId)) return false;
+      if (filters.category !== 'All' && s.category !== filters.category) return false;
       if (filters.panelEligible !== 'All') {
         const isEligible = filters.panelEligible === 'Yes';
         if (s.panelEligible !== isEligible) return false;
       }
-
-      // 5. Status filter
-      if (filters.status !== 'All') {
-        if (s.status !== filters.status) return false;
-      }
-
+      if (filters.status !== 'All' && s.status !== filters.status) return false;
       return true;
     });
   }
@@ -699,19 +218,10 @@ export class ServiceRatesService {
     ).length;
     const panelEligibleServices = services.filter((s) => s.panelEligible).length;
 
-    return {
-      totalServices,
-      activeServices,
-      clinicalServices,
-      diagnosticProcedureServices,
-      panelEligibleServices,
-    };
+    return { totalServices, activeServices, clinicalServices, diagnosticProcedureServices, panelEligibleServices };
   }
 
-  static validateImportRows(
-    rawRows: any[],
-    existingServices: HospitalService[]
-  ): ServiceImportValidationResult {
+  static validateImportRows(rawRows: any[], existingServices: HospitalService[]): ServiceImportValidationResult {
     const departments = DepartmentService.getDepartments();
     const deptCodeMap = new Map(departments.map((d) => [d.code.toUpperCase(), d]));
     const existingCodeSet = new Set(existingServices.map((s) => s.code.toUpperCase()));
@@ -736,7 +246,6 @@ export class ServiceRatesService {
       const rawOverride = String(row.manual_rate_override_allowed || '').trim().toLowerCase();
       const rawStatus = String(row.status || 'Active').trim();
 
-      // Validate Service Code
       if (!rawCode) {
         errors.push('Missing service code.');
       } else if (!/^[A-Z0-9-]+$/.test(rawCode)) {
@@ -749,13 +258,9 @@ export class ServiceRatesService {
         seenFileCodes.add(rawCode);
       }
 
-      // Validate Service Name
-      if (!rawName) {
-        errors.push('Missing service name.');
-      }
+      if (!rawName) errors.push('Missing service name.');
 
-      // Validate Department Code
-      let matchedDept = rawDeptCode ? deptCodeMap.get(rawDeptCode) : undefined;
+      const matchedDept = rawDeptCode ? deptCodeMap.get(rawDeptCode) : undefined;
       if (!rawDeptCode) {
         errors.push('Missing department code.');
       } else if (!matchedDept) {
@@ -764,29 +269,21 @@ export class ServiceRatesService {
         errors.push(`Department "${matchedDept.name}" (${rawDeptCode}) is currently Inactive.`);
       }
 
-      // Validate Category
       if (!rawCat) {
         errors.push('Missing service category.');
       } else if (!VALID_SERVICE_CATEGORIES.includes(rawCat as ServiceCategory)) {
         errors.push(`Invalid category "${rawCat}". Valid: ${VALID_SERVICE_CATEGORIES.join(', ')}.`);
       }
 
-      // Validate Billing Unit
       if (!rawUnit) {
         errors.push('Missing billing unit.');
       } else if (!VALID_BILLING_UNITS.includes(rawUnit as BillingUnit)) {
         errors.push(`Invalid billing unit "${rawUnit}". Valid: ${VALID_BILLING_UNITS.join(', ')}.`);
       }
 
-      // Validate Rate
-      if (isNaN(rawRate) || rawRate < 0) {
-        errors.push('Standard rate must be a non-negative number.');
-      }
+      if (isNaN(rawRate) || rawRate < 0) errors.push('Standard rate must be a non-negative number.');
 
-      // Validate Status
-      const normalizedStatus: 'Active' | 'Inactive' =
-        rawStatus.toLowerCase() === 'inactive' ? 'Inactive' : 'Active';
-
+      const normalizedStatus: 'Active' | 'Inactive' = rawStatus.toLowerCase() === 'inactive' ? 'Inactive' : 'Active';
       const panelEligible = ['true', 'yes', '1', 'y'].includes(rawPanel);
       const discountAllowed = ['true', 'yes', '1', 'y'].includes(rawDiscount);
       const manualRateOverrideAllowed = ['true', 'yes', '1', 'y'].includes(rawOverride);
@@ -808,61 +305,53 @@ export class ServiceRatesService {
         errors,
       };
 
-      if (errors.length === 0) {
-        validRows.push(parsedRow);
-      } else {
-        invalidRows.push(parsedRow);
-      }
+      if (errors.length === 0) validRows.push(parsedRow);
+      else invalidRows.push(parsedRow);
     });
 
-    return {
-      totalRows: rawRows.length,
-      validRows,
-      invalidRows,
-    };
+    return { totalRows: rawRows.length, validRows, invalidRows };
   }
 
-  static importServices(
+  /**
+   * Persists each validated import row against the real backend, one
+   * `POST /setup/services-rates` at a time (so a mid-batch failure never
+   * leaves fabricated rows in the UI). Returns { imported, failures }.
+   */
+  static async importServices(
     validRows: ServiceImportRow[],
-    currentUser?: User | null
-  ): number {
+    _currentUser?: User | null
+  ): Promise<{ imported: number; failures: string[] }> {
     const departments = DepartmentService.getDepartments();
     const deptCodeMap = new Map(departments.map((d) => [d.code.toUpperCase(), d]));
-    const profile = getHospitalProfile();
-    const currency = profile.currency || 'PKR';
-    const auditUser = formatAuditUser(currentUser);
-    const auditTime = formatAuditTimestamp();
+    const failures: string[] = [];
+    let imported = 0;
 
-    const services = this.getServices();
+    for (const r of validRows) {
+      const dept = deptCodeMap.get(r.departmentCode.toUpperCase());
+      if (!dept) {
+        failures.push(`${r.serviceCode}: department "${r.departmentCode}" not found`);
+        continue;
+      }
+      try {
+        await ServiceRatesService.createService({
+          code: r.serviceCode,
+          name: r.serviceName,
+          description: r.description || '',
+          departmentId: dept.id,
+          category: r.category as ServiceCategory,
+          standardRate: r.standardRate,
+          billingUnit: r.billingUnit as BillingUnit,
+          panelEligible: r.panelEligible,
+          manualRateOverrideAllowed: r.manualRateOverrideAllowed,
+          discountAllowed: r.discountAllowed,
+          status: r.status,
+        });
+        imported += 1;
+      } catch (err: any) {
+        failures.push(`${r.serviceCode}: ${err?.message || 'Failed to import'}`);
+      }
+    }
 
-    const newServices: HospitalService[] = validRows.map((r, i) => {
-      const dept = deptCodeMap.get(r.departmentCode.toUpperCase())!;
-      return {
-        id: `srv_imp_${Date.now()}_${i}`,
-        code: r.serviceCode,
-        name: r.serviceName,
-        description: r.description || '',
-        departmentId: dept.id,
-        departmentName: dept.name,
-        category: r.category as ServiceCategory,
-        standardRate: r.standardRate,
-        currency,
-        billingUnit: r.billingUnit as BillingUnit,
-        panelEligible: r.panelEligible,
-        manualRateOverrideAllowed: r.manualRateOverrideAllowed,
-        discountAllowed: r.discountAllowed,
-        status: r.status,
-        linkedInvoiceCount: 0,
-        linkedPanelRuleCount: 0,
-        createdBy: auditUser,
-        createdAt: auditTime,
-        updatedBy: auditUser,
-        updatedAt: auditTime,
-      };
-    });
-
-    const combined = [...newServices, ...services];
-    this.saveServices(combined);
-    return newServices.length;
+    return { imported, failures };
   }
 }

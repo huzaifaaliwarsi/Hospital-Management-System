@@ -36,6 +36,12 @@ router.patch('/wards-rooms-beds/rooms/:id', write, validate({ params: s.idParams
 router.post('/wards-rooms-beds/beds', create, validate({ body: s.createBedSchema }), asyncHandler(c.createBed));
 router.patch('/wards-rooms-beds/beds/:id', write, validate({ params: s.idParamsSchema, body: s.updateBedSchema }), asyncHandler(c.updateBed));
 
+// Shifts (Shift Master)
+router.get('/shifts', view, asyncHandler(c.listShifts));
+router.post('/shifts', create, validate({ body: s.createShiftSchema }), asyncHandler(c.createShift));
+router.patch('/shifts/:id', write, validate({ params: s.idParamsSchema, body: s.updateShiftSchema }), asyncHandler(c.updateShift));
+router.post('/shifts/:id/deactivate', write, validate({ params: s.idParamsSchema }), asyncHandler(c.deactivateShift));
+
 // Corporate Panels
 router.get('/corporate-panels', view, asyncHandler(c.listCorporatePanels));
 router.post('/corporate-panels', create, validate({ body: s.createCorporatePanelSchema }), asyncHandler(c.createCorporatePanel));

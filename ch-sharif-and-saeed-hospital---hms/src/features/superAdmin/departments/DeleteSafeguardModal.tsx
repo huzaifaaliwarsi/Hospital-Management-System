@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShieldAlert, AlertTriangle, Trash2, Power, X } from 'lucide-react';
+import { ShieldAlert, AlertTriangle, Power, X } from 'lucide-react';
 import { Department } from '../../../types/department';
 
 interface DeleteSafeguardModalProps {
@@ -19,17 +19,21 @@ export const DeleteSafeguardModal: React.FC<DeleteSafeguardModalProps> = ({
 }) => {
   if (!isOpen || !department) return null;
 
-  const isBlocked =
+  const hasLinkedRecords =
     department.doctorCount > 0 ||
     department.staffCount > 0 ||
     department.serviceCount > 0 ||
     department.wardCount > 0;
 
+  // The backend never permanently deletes a department (same data-integrity
+  // stance as Staff) — always show the safeguarded state, regardless of
+  // linked-record counts, rather than offering a "Delete" action that would
+  // only fail against the real API.
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs animate-in fade-in duration-150">
       <div className="relative w-full max-w-md bg-white rounded-2xl border border-slate-200 shadow-2xl p-6 overflow-hidden">
-        {isBlocked ? (
-          // BLOCKED: Linked records safeguard
+        {(() => {
+          return (
           <div>
             <div className="flex items-start gap-4">
               <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-rose-100 text-rose-600">
@@ -37,14 +41,16 @@ export const DeleteSafeguardModal: React.FC<DeleteSafeguardModalProps> = ({
               </div>
               <div>
                 <h3 className="text-base font-bold text-slate-900">
-                  Deletion Safeguard Blocked
+                  Permanent Deletion Not Available
                 </h3>
                 <p className="mt-1 text-xs text-rose-800 font-medium bg-rose-50 border border-rose-200 p-2.5 rounded-lg leading-relaxed">
-                  This department is linked to hospital records and cannot be deleted. Deactivate it instead.
+                  {hasLinkedRecords
+                    ? 'This department is linked to hospital records and cannot be deleted. Deactivate it instead.'
+                    : 'Departments cannot be permanently deleted for audit-trail and data-integrity reasons. Deactivate it instead.'}
                 </p>
 
                 <p className="mt-2 text-xs text-slate-600">
-                  Permanent deletion of active clinical or administrative departments with operational links is strictly blocked to maintain data integrity.
+                  Permanent deletion of departments is disabled hospital-wide to preserve historical reporting, even once every linked record is removed.
                 </p>
 
                 {/* Linked count breakdown */}
@@ -89,48 +95,8 @@ export const DeleteSafeguardModal: React.FC<DeleteSafeguardModalProps> = ({
               )}
             </div>
           </div>
-        ) : (
-          // ALLOWED: No linked records, standard confirmation required
-          <div>
-            <div className="flex items-start gap-4">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-rose-100 text-rose-600">
-                <Trash2 className="h-6 w-6" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-slate-900">
-                  Delete Department?
-                </h3>
-                <p className="mt-1 text-xs text-slate-600 leading-relaxed">
-                  Are you sure you want to permanently delete{' '}
-                  <span className="font-bold text-slate-800">
-                    "{department.name}" ({department.code})
-                  </span>
-                  ? This action is permanent and cannot be undone.
-                </p>
-                <div className="mt-3 p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-800">
-                  ✓ Verified: No doctors, staff, services, or wards are currently linked to this department.
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-6 flex items-center justify-end gap-3 border-t border-slate-100 pt-4">
-              <button
-                type="button"
-                onClick={onClose}
-                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={onConfirmDelete}
-                className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-700 transition-colors shadow-xs"
-              >
-                Delete Department
-              </button>
-            </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
     </div>
   );

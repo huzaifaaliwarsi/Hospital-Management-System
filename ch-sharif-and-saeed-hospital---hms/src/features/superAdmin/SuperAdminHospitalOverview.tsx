@@ -5,12 +5,12 @@ import {
   ShieldCheck,
   Building2,
   FileCheck2,
+  Loader2,
+  AlertTriangle,
 } from 'lucide-react';
-import { HospitalProfile } from '../../types/hospital';
-import {
-  HOSPITAL_PROFILE_STORAGE_KEY,
-  getHospitalProfile,
-} from '../../services/hospitalProfileService';
+import { HospitalProfile, DEFAULT_HOSPITAL_PROFILE } from '../../types/hospital';
+import { fetchHospitalProfile, saveHospitalProfile } from '../../services/hospitalProfileService';
+import { useToast } from '../../context/ToastContext';
 import { HospitalProfileSummaryCard } from './hospitalOverview/HospitalProfileSummaryCard';
 import { HospitalIdentitySection } from './hospitalOverview/HospitalIdentitySection';
 import { HospitalContactSection } from './hospitalOverview/HospitalContactSection';
@@ -23,24 +23,60 @@ import { EditHospitalProfileModal } from './hospitalOverview/EditHospitalProfile
 import { PrintHospitalProfileModal } from './hospitalOverview/PrintHospitalProfileModal';
 
 export const SuperAdminHospitalOverview: React.FC = () => {
-  // Initialize state with persistence in localStorage if available
-  const [profile, setProfile] = useState<HospitalProfile>(() => getHospitalProfile());
+  const toast = useToast();
+  const [profile, setProfile] = useState<HospitalProfile>(DEFAULT_HOSPITAL_PROFILE);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
 
-  // Save to localStorage whenever profile changes
-  useEffect(() => {
+  const loadProfile = React.useCallback(async () => {
+    setIsLoading(true);
+    setLoadError(null);
     try {
-      localStorage.setItem(HOSPITAL_PROFILE_STORAGE_KEY, JSON.stringify(profile));
-    } catch {
-      // Storage unavailable or quota exceeded
+      const data = await fetchHospitalProfile();
+      setProfile(data);
+    } catch (err: any) {
+      setLoadError(err?.message || 'Failed to load hospital profile from the server.');
+    } finally {
+      setIsLoading(false);
     }
-  }, [profile]);
+  }, []);
 
-  const handleSaveProfile = (updatedProfile: HospitalProfile) => {
-    setProfile(updatedProfile);
+  useEffect(() => {
+    loadProfile();
+  }, [loadProfile]);
+
+  const handleSaveProfile = async (updatedProfile: HospitalProfile) => {
+    const saved = await saveHospitalProfile(updatedProfile);
+    setProfile(saved);
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-24 text-[#52665e] gap-2 text-sm">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        <span>Loading hospital profile…</span>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 gap-3 text-center">
+        <AlertTriangle className="h-8 w-8 text-rose-500" />
+        <p className="text-sm text-rose-700 font-medium">{loadError}</p>
+        <button
+          type="button"
+          onClick={loadProfile}
+          className="px-4 py-2 bg-[#129b70] hover:bg-[#08775A] text-white text-xs font-semibold rounded-lg"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   // Only display accreditation badge if explicitly configured
   const hasAccreditation = Boolean(

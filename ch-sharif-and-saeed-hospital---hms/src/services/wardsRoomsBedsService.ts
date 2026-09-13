@@ -1,3 +1,4 @@
+import apiClient from './apiClient';
 import {
   Ward,
   Room,
@@ -19,11 +20,17 @@ import {
   BedImportRow,
 } from '../types/wardsRoomsBeds';
 import { User } from '../types';
-import { DepartmentService, formatAuditUser, formatAuditTimestamp } from './departmentService';
+import { DepartmentService } from './departmentService';
+import { formatDisplayDate } from '../utils/dateConstants';
 
-const WARDS_STORAGE_KEY = 'css_hms_wards_dataset_v1';
-const ROOMS_STORAGE_KEY = 'css_hms_rooms_dataset_v1';
-const BEDS_STORAGE_KEY = 'css_hms_beds_dataset_v1';
+/**
+ * Live Wards/Rooms/Beds service — a single `GET /setup/wards-rooms-beds`
+ * call returns the full Department→Ward→Room→Bed hierarchy (with computed
+ * counts and resolved actor labels from `setup.service.ts`), which is then
+ * flattened here into the three separate cached arrays the existing
+ * flat-list UI (`Ward[]`, `Room[]`, `Bed[]`) expects. Same in-memory-cache
+ * pattern as Departments/Services — never localStorage.
+ */
 
 export const VALID_WARD_TYPES: WardType[] = [
   'General',
@@ -39,24 +46,9 @@ export const VALID_WARD_TYPES: WardType[] = [
   'Other',
 ];
 
-export const VALID_GENDER_POLICIES: GenderPolicy[] = [
-  'Male',
-  'Female',
-  'Mixed',
-  'Pediatric',
-  'Not Applicable',
-];
+export const VALID_GENDER_POLICIES: GenderPolicy[] = ['Male', 'Female', 'Mixed', 'Pediatric', 'Not Applicable'];
 
-export const VALID_ROOM_TYPES: RoomType[] = [
-  'General',
-  'Private',
-  'Semi-Private',
-  'ICU',
-  'Isolation',
-  'Suite',
-  'Shared',
-  'Other',
-];
+export const VALID_ROOM_TYPES: RoomType[] = ['General', 'Private', 'Semi-Private', 'ICU', 'Isolation', 'Suite', 'Shared', 'Other'];
 
 export const VALID_BED_TYPES: BedType[] = [
   'Standard',
@@ -71,1568 +63,336 @@ export const VALID_BED_TYPES: BedType[] = [
   'Other',
 ];
 
-export const INITIAL_WARDS: Ward[] = [
-  {
-    id: 'wrd_icu',
-    code: 'WRD-ICU-01',
-    name: 'Intensive Care Unit (ICU)',
-    departmentId: 'DEP-07',
-    departmentName: 'Emergency',
-    wardType: 'ICU',
-    genderPolicy: 'Mixed',
-    floor: '2nd Floor',
-    location: 'West Wing, Critical Care Complex',
-    description: 'Advanced adult multi-disciplinary intensive care unit with central invasive telemetry',
-    roomCount: 2,
-    bedCount: 6,
-    availableBeds: 2,
-    status: 'Active',
-    historicalAdmissionCount: 45,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '01 Jan 2026, 10:00 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '12 Aug 2026, 03:00 PM',
-  },
-  {
-    id: 'wrd_ccu',
-    code: 'WRD-CCU-01',
-    name: 'Coronary Care Unit (CCU)',
-    departmentId: 'DEP-03',
-    departmentName: 'Cardiology',
-    wardType: 'ICU',
-    genderPolicy: 'Mixed',
-    floor: '2nd Floor',
-    location: 'North Wing, Heart Institute',
-    description: 'Post-angioplasty and acute coronary syndrome intensive cardiology bay',
-    roomCount: 1,
-    bedCount: 4,
-    availableBeds: 2,
-    status: 'Active',
-    historicalAdmissionCount: 38,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '01 Jan 2026, 10:30 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '15 Jul 2026, 11:20 AM',
-  },
-  {
-    id: 'wrd_gen_male',
-    code: 'WRD-MED-M',
-    name: 'Male Medical Ward',
-    departmentId: 'DEP-01',
-    departmentName: 'General Medicine',
-    wardType: 'General',
-    genderPolicy: 'Male',
-    floor: '3rd Floor',
-    location: 'East Wing, Inpatient Tower',
-    description: 'Inpatient internal medicine male cohort ward with dedicated nursing station',
-    roomCount: 2,
-    bedCount: 8,
-    availableBeds: 4,
-    status: 'Active',
-    historicalAdmissionCount: 112,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '05 Jan 2026, 09:00 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '20 Jul 2026, 02:45 PM',
-  },
-  {
-    id: 'wrd_pvt',
-    code: 'WRD-PVT-01',
-    name: 'Executive Private Ward',
-    departmentId: 'DEP-01',
-    departmentName: 'General Medicine',
-    wardType: 'Private',
-    genderPolicy: 'Mixed',
-    floor: '4th Floor',
-    location: 'South Wing, Premium Inpatient Pavilion',
-    description: 'En-suite executive single rooms with patient attendant lodging accommodation',
-    roomCount: 2,
-    bedCount: 2,
-    availableBeds: 1,
-    status: 'Active',
-    historicalAdmissionCount: 52,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '05 Jan 2026, 09:30 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '05 Aug 2026, 04:10 PM',
-  },
-  {
-    id: 'wrd_nicu',
-    code: 'WRD-NICU-01',
-    name: 'Neonatal Intensive Care Unit (NICU)',
-    departmentId: 'DEP-04',
-    departmentName: 'Pediatrics',
-    wardType: 'NICU',
-    genderPolicy: 'Pediatric',
-    floor: '1st Floor',
-    location: 'Maternal-Child Health Complex',
-    description: 'Level-III neonatal care with phototherapy, radiant warmers and CPAP incubators',
-    roomCount: 1,
-    bedCount: 4,
-    availableBeds: 2,
-    status: 'Active',
-    historicalAdmissionCount: 64,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '10 Jan 2026, 11:00 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '18 Aug 2026, 01:15 PM',
-  },
-];
+const OCCUPANCY_FROM_BACKEND: Record<string, BedOccupancyStatus> = {
+  AVAILABLE: 'Available',
+  RESERVED: 'Reserved',
+  OCCUPIED: 'Occupied',
+  OUT_OF_SERVICE: 'Maintenance',
+};
+const OCCUPANCY_TO_BACKEND: Record<BedOccupancyStatus, string> = {
+  Available: 'AVAILABLE',
+  Reserved: 'RESERVED',
+  Occupied: 'OCCUPIED',
+  Maintenance: 'OUT_OF_SERVICE',
+};
+const OPERATIONAL_FROM_BACKEND: Record<string, BedOperationalStatus> = {
+  ACTIVE: 'Active',
+  CLEANING: 'Cleaning',
+  MAINTENANCE: 'Maintenance',
+  OUT_OF_SERVICE: 'Out of Service',
+  DECOMMISSIONED: 'Decommissioned',
+};
+const OPERATIONAL_TO_BACKEND: Record<BedOperationalStatus, string> = {
+  Active: 'ACTIVE',
+  Cleaning: 'CLEANING',
+  Maintenance: 'MAINTENANCE',
+  'Out of Service': 'OUT_OF_SERVICE',
+  Decommissioned: 'DECOMMISSIONED',
+};
 
-export const INITIAL_ROOMS: Room[] = [
-  {
-    id: 'rm_icu_101',
-    code: 'RM-ICU-101',
-    roomNumber: 'ICU-101',
-    name: 'ICU Main Bay A',
-    wardId: 'wrd_icu',
-    wardName: 'Intensive Care Unit (ICU)',
-    departmentId: 'DEP-07',
-    departmentName: 'Emergency',
-    roomType: 'ICU',
-    floor: '2nd Floor',
-    capacity: 4,
-    bedsConfigured: 4,
-    dailyRoomRate: 15000,
-    status: 'Active',
-    admissionLinkageCount: 30,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '01 Jan 2026, 10:15 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '12 Aug 2026, 03:00 PM',
-  },
-  {
-    id: 'rm_icu_102',
-    code: 'RM-ICU-102',
-    roomNumber: 'ICU-102',
-    name: 'ICU Isolation Suite',
-    wardId: 'wrd_icu',
-    wardName: 'Intensive Care Unit (ICU)',
-    departmentId: 'DEP-07',
-    departmentName: 'Emergency',
-    roomType: 'Isolation',
-    floor: '2nd Floor',
-    capacity: 2,
-    bedsConfigured: 2,
-    dailyRoomRate: 18000,
-    status: 'Active',
-    admissionLinkageCount: 15,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '01 Jan 2026, 10:20 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '12 Aug 2026, 03:00 PM',
-  },
-  {
-    id: 'rm_ccu_201',
-    code: 'RM-CCU-201',
-    roomNumber: 'CCU-201',
-    name: 'CCU Monitoring Bay',
-    wardId: 'wrd_ccu',
-    wardName: 'Coronary Care Unit (CCU)',
-    departmentId: 'DEP-03',
-    departmentName: 'Cardiology',
-    roomType: 'ICU',
-    floor: '2nd Floor',
-    capacity: 4,
-    bedsConfigured: 4,
-    dailyRoomRate: 14000,
-    status: 'Active',
-    admissionLinkageCount: 38,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '01 Jan 2026, 10:35 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '15 Jul 2026, 11:20 AM',
-  },
-  {
-    id: 'rm_med_301',
-    code: 'RM-MED-301',
-    roomNumber: '301',
-    name: 'Male Bay Alpha',
-    wardId: 'wrd_gen_male',
-    wardName: 'Male Medical Ward',
-    departmentId: 'DEP-01',
-    departmentName: 'General Medicine',
-    roomType: 'General',
-    floor: '3rd Floor',
-    capacity: 4,
-    bedsConfigured: 4,
-    dailyRoomRate: 3000,
-    status: 'Active',
-    admissionLinkageCount: 60,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '05 Jan 2026, 09:10 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '20 Jul 2026, 02:45 PM',
-  },
-  {
-    id: 'rm_med_302',
-    code: 'RM-MED-302',
-    roomNumber: '302',
-    name: 'Male Bay Beta',
-    wardId: 'wrd_gen_male',
-    wardName: 'Male Medical Ward',
-    departmentId: 'DEP-01',
-    departmentName: 'General Medicine',
-    roomType: 'General',
-    floor: '3rd Floor',
-    capacity: 4,
-    bedsConfigured: 4,
-    dailyRoomRate: 3000,
-    status: 'Active',
-    admissionLinkageCount: 52,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '05 Jan 2026, 09:15 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '20 Jul 2026, 02:45 PM',
-  },
-  {
-    id: 'rm_pvt_401',
-    code: 'RM-PVT-401',
-    roomNumber: '401',
-    name: 'Executive Deluxe Suite',
-    wardId: 'wrd_pvt',
-    wardName: 'Executive Private Ward',
-    departmentId: 'DEP-01',
-    departmentName: 'General Medicine',
-    roomType: 'Suite',
-    floor: '4th Floor',
-    capacity: 1,
-    bedsConfigured: 1,
-    dailyRoomRate: 12000,
-    status: 'Active',
-    admissionLinkageCount: 28,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '05 Jan 2026, 09:40 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '05 Aug 2026, 04:10 PM',
-  },
-  {
-    id: 'rm_pvt_402',
-    code: 'RM-PVT-402',
-    roomNumber: '402',
-    name: 'Standard Private Room',
-    wardId: 'wrd_pvt',
-    wardName: 'Executive Private Ward',
-    departmentId: 'DEP-01',
-    departmentName: 'General Medicine',
-    roomType: 'Private',
-    floor: '4th Floor',
-    capacity: 1,
-    bedsConfigured: 1,
-    dailyRoomRate: 8500,
-    status: 'Active',
-    admissionLinkageCount: 24,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '05 Jan 2026, 09:45 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '05 Aug 2026, 04:10 PM',
-  },
-  {
-    id: 'rm_nicu_101',
-    code: 'RM-NICU-101',
-    roomNumber: 'NICU-101',
-    name: 'Neonatal Pod Alpha',
-    wardId: 'wrd_nicu',
-    wardName: 'Neonatal Intensive Care Unit (NICU)',
-    departmentId: 'DEP-04',
-    departmentName: 'Pediatrics',
-    roomType: 'ICU',
-    floor: '1st Floor',
-    capacity: 4,
-    bedsConfigured: 4,
-    dailyRoomRate: 10000,
-    status: 'Active',
-    admissionLinkageCount: 64,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '10 Jan 2026, 11:10 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '18 Aug 2026, 01:15 PM',
-  },
-];
+function formatTimestamp(iso?: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const dateStr = formatDisplayDate(d);
+  const timeStr = d.toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' });
+  return `${dateStr}, ${timeStr}`;
+}
 
-const RAW_INITIAL_BEDS: any[] = [
-  // ICU Beds
-  {
-    id: 'bed_icu_01',
-    code: 'BED-ICU-01',
-    bedNumber: 'B-01',
-    roomId: 'rm_icu_101',
-    roomName: 'ICU Main Bay A',
-    wardId: 'wrd_icu',
-    wardName: 'Intensive Care Unit (ICU)',
-    departmentId: 'dept_emergency',
-    departmentName: 'Emergency & Trauma Center',
-    bedType: 'ICU',
-    dailyRate: 15000,
-    occupancyStatus: 'Occupied',
-    operationalStatus: 'Active',
-    currentPatientId: 'pat_demo_01',
-    currentPatientName: 'Demo Patient (ADM-2026-041)',
-    admissionId: 'ADM-2026-041',
-    historicalAdmissionCount: 12,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '01 Jan 2026, 10:20 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '05 Sep 2026, 09:15 AM',
-  },
-  {
-    id: 'bed_icu_02',
-    code: 'BED-ICU-02',
-    bedNumber: 'B-02',
-    roomId: 'rm_icu_101',
-    roomName: 'ICU Main Bay A',
-    wardId: 'wrd_icu',
-    wardName: 'Intensive Care Unit (ICU)',
-    departmentId: 'dept_emergency',
-    departmentName: 'Emergency & Trauma Center',
-    bedType: 'ICU',
-    dailyRate: 15000,
-    occupancyStatus: 'Occupied',
-    operationalStatus: 'Active',
-    currentPatientId: 'pat_demo_02',
-    currentPatientName: 'Demo Patient (ADM-2026-048)',
-    admissionId: 'ADM-2026-048',
-    historicalAdmissionCount: 9,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '01 Jan 2026, 10:20 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '06 Sep 2026, 10:30 AM',
-  },
-  {
-    id: 'bed_icu_03',
-    code: 'BED-ICU-03',
-    bedNumber: 'B-03',
-    roomId: 'rm_icu_101',
-    roomName: 'ICU Main Bay A',
-    wardId: 'wrd_icu',
-    wardName: 'Intensive Care Unit (ICU)',
-    departmentId: 'dept_emergency',
-    departmentName: 'Emergency & Trauma Center',
-    bedType: 'ICU',
-    dailyRate: 15000,
-    occupancyStatus: 'Available',
-    operationalStatus: 'Active',
-    historicalAdmissionCount: 6,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '01 Jan 2026, 10:20 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '01 Sep 2026, 02:00 PM',
-  },
-  {
-    id: 'bed_icu_04',
-    code: 'BED-ICU-04',
-    bedNumber: 'B-04',
-    roomId: 'rm_icu_101',
-    roomName: 'ICU Main Bay A',
-    wardId: 'wrd_icu',
-    wardName: 'Intensive Care Unit (ICU)',
-    departmentId: 'dept_emergency',
-    departmentName: 'Emergency & Trauma Center',
-    bedType: 'ICU',
-    dailyRate: 15000,
-    occupancyStatus: 'Available',
-    operationalStatus: 'Cleaning',
-    historicalAdmissionCount: 3,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '01 Jan 2026, 10:20 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '08 Sep 2026, 08:30 AM',
-  },
-  {
-    id: 'bed_icu_05',
-    code: 'BED-ICU-05',
-    bedNumber: 'B-05',
-    roomId: 'rm_icu_102',
-    roomName: 'ICU Isolation Suite',
-    wardId: 'wrd_icu',
-    wardName: 'Intensive Care Unit (ICU)',
-    departmentId: 'dept_emergency',
-    departmentName: 'Emergency & Trauma Center',
-    bedType: 'Isolation',
-    dailyRate: 18000,
-    occupancyStatus: 'Occupied',
-    operationalStatus: 'Active',
-    currentPatientId: 'pat_demo_03',
-    currentPatientName: 'Demo Patient (ADM-2026-052)',
-    admissionId: 'ADM-2026-052',
-    historicalAdmissionCount: 8,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '01 Jan 2026, 10:25 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '07 Sep 2026, 04:00 PM',
-  },
-  {
-    id: 'bed_icu_06',
-    code: 'BED-ICU-06',
-    bedNumber: 'B-06',
-    roomId: 'rm_icu_102',
-    roomName: 'ICU Isolation Suite',
-    wardId: 'wrd_icu',
-    wardName: 'Intensive Care Unit (ICU)',
-    departmentId: 'dept_emergency',
-    departmentName: 'Emergency & Trauma Center',
-    bedType: 'Isolation',
-    dailyRate: 18000,
-    occupancyStatus: 'Available',
-    operationalStatus: 'Active',
-    historicalAdmissionCount: 7,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '01 Jan 2026, 10:25 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '04 Sep 2026, 01:00 PM',
-  },
-
-  // CCU Beds
-  {
-    id: 'bed_ccu_01',
-    code: 'BED-CCU-01',
-    bedNumber: 'B-01',
-    roomId: 'rm_ccu_201',
-    roomName: 'CCU Monitoring Bay',
-    wardId: 'wrd_ccu',
-    wardName: 'Coronary Care Unit (CCU)',
-    departmentId: 'dept_cardiology',
-    departmentName: 'Cardiology & Cath Lab',
-    bedType: 'ICU',
-    dailyRate: 14000,
-    occupancyStatus: 'Occupied',
-    operationalStatus: 'Active',
-    currentPatientId: 'pat_demo_04',
-    currentPatientName: 'Demo Patient (ADM-2026-055)',
-    admissionId: 'ADM-2026-055',
-    historicalAdmissionCount: 11,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '01 Jan 2026, 10:40 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '06 Sep 2026, 05:20 PM',
-  },
-  {
-    id: 'bed_ccu_02',
-    code: 'BED-CCU-02',
-    bedNumber: 'B-02',
-    roomId: 'rm_ccu_201',
-    roomName: 'CCU Monitoring Bay',
-    wardId: 'wrd_ccu',
-    wardName: 'Coronary Care Unit (CCU)',
-    departmentId: 'dept_cardiology',
-    departmentName: 'Cardiology & Cath Lab',
-    bedType: 'ICU',
-    dailyRate: 14000,
-    occupancyStatus: 'Available',
-    operationalStatus: 'Active',
-    historicalAdmissionCount: 9,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '01 Jan 2026, 10:40 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '02 Sep 2026, 11:15 AM',
-  },
-  {
-    id: 'bed_ccu_03',
-    code: 'BED-CCU-03',
-    bedNumber: 'B-03',
-    roomId: 'rm_ccu_201',
-    roomName: 'CCU Monitoring Bay',
-    wardId: 'wrd_ccu',
-    wardName: 'Coronary Care Unit (CCU)',
-    departmentId: 'dept_cardiology',
-    departmentName: 'Cardiology & Cath Lab',
-    bedType: 'ICU',
-    dailyRate: 14000,
-    occupancyStatus: 'Available',
-    operationalStatus: 'Active',
-    historicalAdmissionCount: 10,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '01 Jan 2026, 10:40 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '03 Sep 2026, 03:40 PM',
-  },
-  {
-    id: 'bed_ccu_04',
-    code: 'BED-CCU-04',
-    bedNumber: 'B-04',
-    roomId: 'rm_ccu_201',
-    roomName: 'CCU Monitoring Bay',
-    wardId: 'wrd_ccu',
-    wardName: 'Coronary Care Unit (CCU)',
-    departmentId: 'dept_cardiology',
-    departmentName: 'Cardiology & Cath Lab',
-    bedType: 'ICU',
-    dailyRate: 14000,
-    occupancyStatus: 'Available',
-    operationalStatus: 'Maintenance',
-    historicalAdmissionCount: 8,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '01 Jan 2026, 10:40 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '07 Sep 2026, 09:00 AM',
-  },
-
-  // General Male Medical Beds
-  {
-    id: 'bed_med_01',
-    code: 'BED-MED-301-A',
-    bedNumber: '301-A',
-    roomId: 'rm_med_301',
-    roomName: 'Male Bay Alpha',
-    wardId: 'wrd_gen_male',
-    wardName: 'Male Medical Ward',
-    departmentId: 'dept_internal_med',
-    departmentName: 'Internal Medicine',
-    bedType: 'Standard',
-    dailyRate: 3000,
-    occupancyStatus: 'Occupied',
-    operationalStatus: 'Active',
-    currentPatientId: 'pat_demo_05',
-    currentPatientName: 'Demo Patient (ADM-2026-061)',
-    admissionId: 'ADM-2026-061',
-    historicalAdmissionCount: 16,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '05 Jan 2026, 09:20 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '04 Sep 2026, 10:00 AM',
-  },
-  {
-    id: 'bed_med_02',
-    code: 'BED-MED-301-B',
-    bedNumber: '301-B',
-    roomId: 'rm_med_301',
-    roomName: 'Male Bay Alpha',
-    wardId: 'wrd_gen_male',
-    wardName: 'Male Medical Ward',
-    departmentId: 'dept_internal_med',
-    departmentName: 'Internal Medicine',
-    bedType: 'Standard',
-    dailyRate: 3000,
-    occupancyStatus: 'Occupied',
-    operationalStatus: 'Active',
-    currentPatientId: 'pat_demo_06',
-    currentPatientName: 'Demo Patient (ADM-2026-063)',
-    admissionId: 'ADM-2026-063',
-    historicalAdmissionCount: 14,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '05 Jan 2026, 09:20 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '05 Sep 2026, 01:10 PM',
-  },
-  {
-    id: 'bed_med_03',
-    code: 'BED-MED-301-C',
-    bedNumber: '301-C',
-    roomId: 'rm_med_301',
-    roomName: 'Male Bay Alpha',
-    wardId: 'wrd_gen_male',
-    wardName: 'Male Medical Ward',
-    departmentId: 'dept_internal_med',
-    departmentName: 'Internal Medicine',
-    bedType: 'Standard',
-    dailyRate: 3000,
-    occupancyStatus: 'Available',
-    operationalStatus: 'Active',
-    historicalAdmissionCount: 15,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '05 Jan 2026, 09:20 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '02 Sep 2026, 04:30 PM',
-  },
-  {
-    id: 'bed_med_04',
-    code: 'BED-MED-301-D',
-    bedNumber: '301-D',
-    roomId: 'rm_med_301',
-    roomName: 'Male Bay Alpha',
-    wardId: 'wrd_gen_male',
-    wardName: 'Male Medical Ward',
-    departmentId: 'dept_internal_med',
-    departmentName: 'Internal Medicine',
-    bedType: 'Standard',
-    dailyRate: 3000,
-    occupancyStatus: 'Available',
-    operationalStatus: 'Active',
-    historicalAdmissionCount: 15,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '05 Jan 2026, 09:20 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '03 Sep 2026, 12:00 PM',
-  },
-  {
-    id: 'bed_med_05',
-    code: 'BED-MED-302-A',
-    bedNumber: '302-A',
-    roomId: 'rm_med_302',
-    roomName: 'Male Bay Beta',
-    wardId: 'wrd_gen_male',
-    wardName: 'Male Medical Ward',
-    departmentId: 'dept_internal_med',
-    departmentName: 'Internal Medicine',
-    bedType: 'Standard',
-    dailyRate: 3000,
-    occupancyStatus: 'Occupied',
-    operationalStatus: 'Active',
-    currentPatientId: 'pat_demo_07',
-    currentPatientName: 'Demo Patient (ADM-2026-069)',
-    admissionId: 'ADM-2026-069',
-    historicalAdmissionCount: 13,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '05 Jan 2026, 09:25 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '06 Sep 2026, 03:00 PM',
-  },
-  {
-    id: 'bed_med_06',
-    code: 'BED-MED-302-B',
-    bedNumber: '302-B',
-    roomId: 'rm_med_302',
-    roomName: 'Male Bay Beta',
-    wardId: 'wrd_gen_male',
-    wardName: 'Male Medical Ward',
-    departmentId: 'dept_internal_med',
-    departmentName: 'Internal Medicine',
-    bedType: 'Standard',
-    dailyRate: 3000,
-    occupancyStatus: 'Available',
-    operationalStatus: 'Active',
-    historicalAdmissionCount: 12,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '05 Jan 2026, 09:25 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '01 Sep 2026, 09:00 AM',
-  },
-  {
-    id: 'bed_med_07',
-    code: 'BED-MED-302-C',
-    bedNumber: '302-C',
-    roomId: 'rm_med_302',
-    roomName: 'Male Bay Beta',
-    wardId: 'wrd_gen_male',
-    wardName: 'Male Medical Ward',
-    departmentId: 'dept_internal_med',
-    departmentName: 'Internal Medicine',
-    bedType: 'Standard',
-    dailyRate: 3000,
-    occupancyStatus: 'Available',
-    operationalStatus: 'Active',
-    historicalAdmissionCount: 14,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '05 Jan 2026, 09:25 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '04 Sep 2026, 02:15 PM',
-  },
-  {
-    id: 'bed_med_08',
-    code: 'BED-MED-302-D',
-    bedNumber: '302-D',
-    roomId: 'rm_med_302',
-    roomName: 'Male Bay Beta',
-    wardId: 'wrd_gen_male',
-    wardName: 'Male Medical Ward',
-    departmentId: 'dept_internal_med',
-    departmentName: 'Internal Medicine',
-    bedType: 'Standard',
-    dailyRate: 3000,
-    occupancyStatus: 'Available',
-    operationalStatus: 'Out of Service',
-    historicalAdmissionCount: 13,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '05 Jan 2026, 09:25 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '08 Sep 2026, 07:00 AM',
-  },
-
-  // Private Ward Beds
-  {
-    id: 'bed_pvt_01',
-    code: 'BED-PVT-401',
-    bedNumber: '401-Bed',
-    roomId: 'rm_pvt_401',
-    roomName: 'Executive Deluxe Suite',
-    wardId: 'wrd_pvt',
-    wardName: 'Executive Private Ward',
-    departmentId: 'dept_internal_med',
-    departmentName: 'Internal Medicine',
-    bedType: 'Private',
-    dailyRate: 12000,
-    occupancyStatus: 'Occupied',
-    operationalStatus: 'Active',
-    currentPatientId: 'pat_demo_08',
-    currentPatientName: 'Demo Patient (ADM-2026-074)',
-    admissionId: 'ADM-2026-074',
-    historicalAdmissionCount: 28,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '05 Jan 2026, 09:50 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '07 Sep 2026, 11:45 AM',
-  },
-  {
-    id: 'bed_pvt_02',
-    code: 'BED-PVT-402',
-    bedNumber: '402-Bed',
-    roomId: 'rm_pvt_402',
-    roomName: 'Standard Private Room',
-    wardId: 'wrd_pvt',
-    wardName: 'Executive Private Ward',
-    departmentId: 'dept_internal_med',
-    departmentName: 'Internal Medicine',
-    bedType: 'Private',
-    dailyRate: 8500,
-    occupancyStatus: 'Available',
-    operationalStatus: 'Active',
-    historicalAdmissionCount: 24,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '05 Jan 2026, 09:50 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '05 Sep 2026, 04:00 PM',
-  },
-
-  // NICU Beds
-  {
-    id: 'bed_nicu_01',
-    code: 'BED-NICU-01',
-    bedNumber: 'Incubator 01',
-    roomId: 'rm_nicu_101',
-    roomName: 'Neonatal Pod Alpha',
-    wardId: 'wrd_nicu',
-    wardName: 'Neonatal Intensive Care Unit (NICU)',
-    departmentId: 'dept_pediatrics',
-    departmentName: 'Pediatrics & Neonatology',
-    bedType: 'NICU',
-    dailyRate: 10000,
-    occupancyStatus: 'Occupied',
-    operationalStatus: 'Active',
-    currentPatientId: 'pat_demo_09',
-    currentPatientName: 'Demo Neonate (ADM-2026-080)',
-    admissionId: 'ADM-2026-080',
-    historicalAdmissionCount: 18,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '10 Jan 2026, 11:15 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '06 Sep 2026, 06:10 PM',
-  },
-  {
-    id: 'bed_nicu_02',
-    code: 'BED-NICU-02',
-    bedNumber: 'Incubator 02',
-    roomId: 'rm_nicu_101',
-    roomName: 'Neonatal Pod Alpha',
-    wardId: 'wrd_nicu',
-    wardName: 'Neonatal Intensive Care Unit (NICU)',
-    departmentId: 'dept_pediatrics',
-    departmentName: 'Pediatrics & Neonatology',
-    bedType: 'NICU',
-    dailyRate: 10000,
-    occupancyStatus: 'Available',
-    operationalStatus: 'Active',
-    historicalAdmissionCount: 16,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '10 Jan 2026, 11:15 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '04 Sep 2026, 08:00 AM',
-  },
-  {
-    id: 'bed_nicu_03',
-    code: 'BED-NICU-03',
-    bedNumber: 'Incubator 03',
-    roomId: 'rm_nicu_101',
-    roomName: 'Neonatal Pod Alpha',
-    wardId: 'wrd_nicu',
-    wardName: 'Neonatal Intensive Care Unit (NICU)',
-    departmentId: 'dept_pediatrics',
-    departmentName: 'Pediatrics & Neonatology',
-    bedType: 'NICU',
-    dailyRate: 10000,
-    occupancyStatus: 'Available',
-    operationalStatus: 'Active',
-    historicalAdmissionCount: 15,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '10 Jan 2026, 11:15 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '03 Sep 2026, 11:00 AM',
-  },
-  {
-    id: 'bed_nicu_04',
-    code: 'BED-NICU-04',
-    bedNumber: 'Incubator 04',
-    roomId: 'rm_nicu_101',
-    roomName: 'Neonatal Pod Alpha',
-    wardId: 'wrd_nicu',
-    wardName: 'Neonatal Intensive Care Unit (NICU)',
-    departmentId: 'dept_pediatrics',
-    departmentName: 'Pediatrics & Neonatology',
-    bedType: 'NICU',
-    dailyRate: 10000,
-    occupancyStatus: 'Available',
-    operationalStatus: 'Cleaning',
-    historicalAdmissionCount: 15,
-    createdBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    createdAt: '10 Jan 2026, 11:15 AM',
-    updatedBy: 'Prof. Dr. Tariq Saeed (Super Admin)',
-    updatedAt: '08 Sep 2026, 09:00 AM',
-  },
-];
-
-export const INITIAL_BEDS: Bed[] = RAW_INITIAL_BEDS.map((b) => {
-  const room = INITIAL_ROOMS.find((r) => r.id === b.roomId);
-  const ward = INITIAL_WARDS.find((w) => w.id === (room?.wardId || b.wardId));
-  const deptId = room?.departmentId || ward?.departmentId || b.departmentId;
-  const deptName = room?.departmentName || ward?.departmentName || b.departmentName;
-  const roomName = room?.name || b.roomName;
-  const wardName = ward?.name || b.wardName;
-  const wardId = ward?.id || b.wardId;
-  const rate = Number(b.dailyBedRate ?? b.dailyRate ?? room?.dailyRoomRate ?? 2000);
+function toWard(raw: Record<string, any>): Ward {
   return {
-    ...b,
-    wardId,
-    wardName,
-    roomId: b.roomId,
-    roomName,
-    departmentId: deptId,
-    departmentName: deptName,
-    dailyBedRate: rate,
-    dailyRate: rate,
+    id: raw.id,
+    code: raw.code || '',
+    name: raw.name,
+    departmentId: raw.departmentId,
+    departmentName: raw.department?.name || '',
+    wardType: (raw.wardType as WardType) || 'Other',
+    genderPolicy: (raw.genderPolicy as GenderPolicy) || undefined,
+    floor: raw.floor || undefined,
+    location: raw.location || undefined,
+    description: raw.description || undefined,
+    roomCount: raw.roomCount ?? 0,
+    bedCount: raw.bedCount ?? 0,
+    availableBeds: raw.availableBeds ?? 0,
+    status: raw.isActive ? 'Active' : 'Inactive',
+    historicalAdmissionCount: 0,
+    createdBy: raw.createdByLabel || 'System',
+    createdAt: formatTimestamp(raw.createdAt),
+    updatedBy: raw.updatedByLabel || 'System',
+    updatedAt: formatTimestamp(raw.updatedAt),
+    statusChangedBy: raw.statusChangedBy || undefined,
+    statusChangedAt: raw.statusChangedAt ? formatTimestamp(raw.statusChangedAt) : undefined,
   };
-});
+}
 
-export class WardsRoomsBedsService {
-  // WARDS
-  // ----------------------------------------------------
-  static getWards(): Ward[] {
-    try {
-      const stored = localStorage.getItem(WARDS_STORAGE_KEY);
-      const departments = DepartmentService.getDepartments();
+function toRoom(raw: Record<string, any>, ward: { name: string; departmentId: string; departmentName: string }): Room {
+  return {
+    id: raw.id,
+    code: raw.code || '',
+    roomNumber: raw.roomNumber || '',
+    name: raw.name,
+    wardId: raw.wardId,
+    wardName: ward.name,
+    departmentId: ward.departmentId,
+    departmentName: ward.departmentName,
+    roomType: (raw.roomType as RoomType) || 'Other',
+    floor: raw.floor || undefined,
+    capacity: raw.capacity ?? 0,
+    bedsConfigured: raw.bedsConfigured ?? 0,
+    dailyRoomRate: Number(raw.dailyRoomRate ?? 0),
+    status: raw.isActive ? 'Active' : 'Inactive',
+    admissionLinkageCount: 0,
+    createdBy: raw.createdByLabel || 'System',
+    createdAt: formatTimestamp(raw.createdAt),
+    updatedBy: raw.updatedByLabel || 'System',
+    updatedAt: formatTimestamp(raw.updatedAt),
+    statusChangedBy: raw.statusChangedBy || undefined,
+    statusChangedAt: raw.statusChangedAt ? formatTimestamp(raw.statusChangedAt) : undefined,
+  };
+}
 
-      let rawWards: Ward[];
-      if (!stored) {
-        rawWards = INITIAL_WARDS;
-      } else {
-        rawWards = JSON.parse(stored);
+function toBed(
+  raw: Record<string, any>,
+  room: { name: string; wardId: string; wardName: string; departmentId: string; departmentName: string }
+): Bed {
+  return {
+    id: raw.id,
+    code: raw.code || '',
+    bedNumber: raw.bedNumber,
+    roomId: raw.roomId,
+    roomName: room.name,
+    wardId: room.wardId,
+    wardName: room.wardName,
+    departmentId: room.departmentId,
+    departmentName: room.departmentName,
+    bedType: (raw.bedType as BedType) || 'Other',
+    dailyRate: Number(raw.dailyRate ?? 0),
+    dailyBedRate: Number(raw.dailyRate ?? 0),
+    occupancyStatus: OCCUPANCY_FROM_BACKEND[raw.status] || 'Available',
+    operationalStatus: OPERATIONAL_FROM_BACKEND[raw.operationalStatus] || 'Active',
+    currentPatientId: raw.currentPatientId || undefined,
+    currentPatientName: raw.currentPatientName || undefined,
+    admissionId: raw.admissionId || undefined,
+    historicalAdmissionCount: 0,
+    createdBy: raw.createdByLabel || 'System',
+    createdAt: formatTimestamp(raw.createdAt),
+    updatedBy: raw.updatedByLabel || 'System',
+    updatedAt: formatTimestamp(raw.updatedAt),
+    statusChangedBy: raw.statusChangedBy || undefined,
+    statusChangedAt: raw.statusChangedAt ? formatTimestamp(raw.statusChangedAt) : undefined,
+  };
+}
+
+let cachedWards: Ward[] = [];
+let cachedRooms: Room[] = [];
+let cachedBeds: Bed[] = [];
+
+export async function fetchWardHierarchy(): Promise<{ wards: Ward[]; rooms: Room[]; beds: Bed[] }> {
+  const res = await apiClient.get<{ data: Record<string, any>[] }>('/setup/wards-rooms-beds');
+  const wards: Ward[] = [];
+  const rooms: Room[] = [];
+  const beds: Bed[] = [];
+
+  for (const rawWard of res.data.data) {
+    const wardInfo = { name: rawWard.name, departmentId: rawWard.departmentId, departmentName: rawWard.department?.name || '' };
+    wards.push(toWard(rawWard));
+    for (const rawRoom of rawWard.rooms || []) {
+      const roomInfo = { name: rawRoom.name, wardId: rawWard.id, wardName: rawWard.name, ...wardInfo };
+      rooms.push(toRoom(rawRoom, wardInfo));
+      for (const rawBed of rawRoom.beds || []) {
+        beds.push(toBed(rawBed, roomInfo));
       }
-
-      let modified = false;
-      const normalized = rawWards.map((w: any) => {
-        const canonical = DepartmentService.resolveCanonicalDepartment(
-          w.departmentId,
-          w.departmentName,
-          departments
-        );
-        if (w.departmentId !== canonical.id || w.departmentName !== canonical.name) {
-          modified = true;
-          return {
-            ...w,
-            departmentId: canonical.id,
-            departmentName: canonical.name,
-          };
-        }
-        return w;
-      });
-
-      if (!stored || modified) {
-        localStorage.setItem(WARDS_STORAGE_KEY, JSON.stringify(normalized));
-      }
-      return normalized;
-    } catch (err) {
-      console.error('Failed to load wards:', err);
-      return INITIAL_WARDS;
     }
   }
 
-  static saveWards(wards: Ward[]): void {
-    try {
-      localStorage.setItem(WARDS_STORAGE_KEY, JSON.stringify(wards));
-    } catch (err) {
-      console.error('Failed to save wards:', err);
-    }
+  cachedWards = wards;
+  cachedRooms = rooms;
+  cachedBeds = beds;
+  return { wards, rooms, beds };
+}
+
+/** Async warm-up — call once at app startup so sync readers below have real data. */
+export async function primeWardsRoomsBedsCache(): Promise<void> {
+  try {
+    await fetchWardHierarchy();
+  } catch {
+    // Leave cache empty; the Wards/Rooms/Beds page itself will surface the real error on its own fetch.
+  }
+}
+
+export class WardsRoomsBedsService {
+  static getWards(): Ward[] {
+    return cachedWards;
+  }
+  static getRooms(): Room[] {
+    return cachedRooms;
+  }
+  static getBeds(): Bed[] {
+    return cachedBeds;
   }
 
   static getWardById(id: string): Ward | undefined {
-    return this.getWards().find((w) => w.id === id);
+    return cachedWards.find((w) => w.id === id);
+  }
+  static getRoomById(id: string): Room | undefined {
+    return cachedRooms.find((r) => r.id === id);
+  }
+  static getBedById(id: string): Bed | undefined {
+    return cachedBeds.find((b) => b.id === id);
   }
 
   static validateWardCode(code: string, currentId?: string): { isValid: boolean; message?: string } {
     const trimmed = code.trim().toUpperCase();
     if (!trimmed) return { isValid: false, message: 'Ward code is required.' };
-    if (!/^[A-Z0-9-]+$/.test(trimmed)) {
-      return { isValid: false, message: 'Ward code must contain uppercase letters, numbers, and hyphens only.' };
+    if (!/^[A-Z0-9-]+$/.test(trimmed)) return { isValid: false, message: 'Code must be uppercase letters, numbers, and hyphens only.' };
+    if (cachedWards.some((w) => w.code.toUpperCase() === trimmed && w.id !== currentId)) {
+      return { isValid: false, message: `Ward code "${trimmed}" already exists.` };
     }
-    const wards = this.getWards();
-    const isDup = wards.some((w) => w.code.toUpperCase() === trimmed && w.id !== currentId);
-    if (isDup) return { isValid: false, message: `Ward code "${trimmed}" already exists.` };
     return { isValid: true };
-  }
-
-  static createWard(values: WardFormValues, currentUser?: User | null): Ward {
-    const codeCheck = this.validateWardCode(values.code);
-    if (!codeCheck.isValid) throw new Error(codeCheck.message);
-
-    const departments = DepartmentService.getDepartments();
-    const deptInfo = DepartmentService.resolveCanonicalDepartment(values.departmentId, undefined, departments);
-    const dept = departments.find((d) => d.id === deptInfo.id);
-    if (!dept) throw new Error('Selected department does not exist.');
-    if (dept.status !== 'Active') throw new Error('Cannot create ward under an inactive department.');
-
-    const auditUser = formatAuditUser(currentUser);
-    const auditTime = formatAuditTimestamp();
-
-    const newWard: Ward = {
-      id: `wrd_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
-      code: values.code.trim().toUpperCase(),
-      name: values.name.trim(),
-      departmentId: dept.id,
-      departmentName: dept.name,
-      wardType: values.wardType,
-      genderPolicy: values.genderPolicy,
-      floor: values.floor.trim(),
-      location: values.location.trim(),
-      description: values.description.trim(),
-      roomCount: 0,
-      bedCount: 0,
-      availableBeds: 0,
-      status: values.status,
-      historicalAdmissionCount: 0,
-      createdBy: auditUser,
-      createdAt: auditTime,
-      updatedBy: auditUser,
-      updatedAt: auditTime,
-    };
-
-    const wards = [newWard, ...this.getWards()];
-    this.saveWards(wards);
-    return newWard;
-  }
-
-  static updateWard(id: string, values: WardFormValues, currentUser?: User | null): Ward {
-    const wards = this.getWards();
-    const idx = wards.findIndex((w) => w.id === id);
-    if (idx === -1) throw new Error('Ward not found.');
-
-    const codeCheck = this.validateWardCode(values.code, id);
-    if (!codeCheck.isValid) throw new Error(codeCheck.message);
-
-    const departments = DepartmentService.getDepartments();
-    const deptInfo = DepartmentService.resolveCanonicalDepartment(values.departmentId, undefined, departments);
-    const dept = departments.find((d) => d.id === deptInfo.id);
-    if (!dept) throw new Error('Selected department does not exist.');
-
-    const auditUser = formatAuditUser(currentUser);
-    const auditTime = formatAuditTimestamp();
-    const existing = wards[idx];
-
-    const updated: Ward = {
-      ...existing,
-      code: values.code.trim().toUpperCase(),
-      name: values.name.trim(),
-      departmentId: dept.id,
-      departmentName: dept.name,
-      wardType: values.wardType,
-      genderPolicy: values.genderPolicy,
-      floor: values.floor.trim(),
-      location: values.location.trim(),
-      description: values.description.trim(),
-      status: values.status,
-      updatedBy: auditUser,
-      updatedAt: auditTime,
-    };
-
-    if (existing.status !== values.status) {
-      updated.statusChangedBy = auditUser;
-      updated.statusChangedAt = auditTime;
-    }
-
-    wards[idx] = updated;
-    this.saveWards(wards);
-
-    // Synchronize rooms and beds departmentName and wardName if ward changed
-    this.syncWardHierarchy(updated);
-
-    return updated;
-  }
-
-  static changeWardStatus(id: string, newStatus: 'Active' | 'Inactive', currentUser?: User | null): Ward {
-    const wards = this.getWards();
-    const idx = wards.findIndex((w) => w.id === id);
-    if (idx === -1) throw new Error('Ward not found.');
-
-    const auditUser = formatAuditUser(currentUser);
-    const auditTime = formatAuditTimestamp();
-    const existing = wards[idx];
-
-    existing.status = newStatus;
-    existing.updatedBy = auditUser;
-    existing.updatedAt = auditTime;
-    existing.statusChangedBy = auditUser;
-    existing.statusChangedAt = auditTime;
-
-    wards[idx] = existing;
-    this.saveWards(wards);
-    return existing;
-  }
-
-  static deleteWard(id: string): { success: boolean; message?: string } {
-    const ward = this.getWardById(id);
-    if (!ward) return { success: false, message: 'Ward not found.' };
-
-    const rooms = this.getRooms().filter((r) => r.wardId === id);
-    const beds = this.getBeds().filter((b) => b.wardId === id);
-
-    if (rooms.length > 0 || beds.length > 0 || (ward.historicalAdmissionCount ?? 0) > 0) {
-      return {
-        success: false,
-        message: `This ward contains ${rooms.length} configured room(s) and ${beds.length} bed(s) or historical admission records. Deactivate it instead.`,
-      };
-    }
-
-    const remaining = this.getWards().filter((w) => w.id !== id);
-    this.saveWards(remaining);
-    return { success: true };
-  }
-
-  // ----------------------------------------------------
-  // ROOMS
-  // ----------------------------------------------------
-  static getRooms(): Room[] {
-    try {
-      const stored = localStorage.getItem(ROOMS_STORAGE_KEY);
-      const wards = this.getWards();
-      const wardMap = new Map(wards.map((w) => [w.id, w]));
-
-      let rawRooms: Room[];
-      if (!stored) {
-        rawRooms = INITIAL_ROOMS;
-      } else {
-        rawRooms = JSON.parse(stored);
-      }
-
-      let modified = false;
-      const normalized = rawRooms.map((r: any) => {
-        const parentWard = wardMap.get(r.wardId);
-        const rate = Number(r.dailyRoomRate ?? 0);
-        const capacity = Number(r.capacity ?? 1);
-        const bedsConfigured = Number(r.bedsConfigured ?? 0);
-        const deptId = parentWard?.departmentId || r.departmentId;
-        const deptName = parentWard?.departmentName || r.departmentName;
-        const wardName = parentWard?.name || r.wardName;
-
-        if (
-          r.departmentId !== deptId ||
-          r.departmentName !== deptName ||
-          r.wardName !== wardName ||
-          r.dailyRoomRate !== rate ||
-          r.capacity !== capacity
-        ) {
-          modified = true;
-          return {
-            ...r,
-            departmentId: deptId,
-            departmentName: deptName,
-            wardName,
-            dailyRoomRate: rate,
-            capacity,
-            bedsConfigured,
-          };
-        }
-        return r;
-      });
-
-      if (!stored || modified) {
-        localStorage.setItem(ROOMS_STORAGE_KEY, JSON.stringify(normalized));
-      }
-      return normalized;
-    } catch (err) {
-      console.error('Failed to load rooms:', err);
-      return INITIAL_ROOMS;
-    }
-  }
-
-  static saveRooms(rooms: Room[]): void {
-    try {
-      localStorage.setItem(ROOMS_STORAGE_KEY, JSON.stringify(rooms));
-    } catch (err) {
-      console.error('Failed to save rooms:', err);
-    }
-  }
-
-  static getRoomById(id: string): Room | undefined {
-    return this.getRooms().find((r) => r.id === id);
   }
 
   static validateRoomCode(code: string, currentId?: string): { isValid: boolean; message?: string } {
     const trimmed = code.trim().toUpperCase();
     if (!trimmed) return { isValid: false, message: 'Room code is required.' };
-    if (!/^[A-Z0-9-]+$/.test(trimmed)) {
-      return { isValid: false, message: 'Room code must contain uppercase letters, numbers, and hyphens only.' };
+    if (!/^[A-Z0-9-]+$/.test(trimmed)) return { isValid: false, message: 'Code must be uppercase letters, numbers, and hyphens only.' };
+    if (cachedRooms.some((r) => r.code.toUpperCase() === trimmed && r.id !== currentId)) {
+      return { isValid: false, message: `Room code "${trimmed}" already exists.` };
     }
-    const rooms = this.getRooms();
-    const isDup = rooms.some((r) => r.code.toUpperCase() === trimmed && r.id !== currentId);
-    if (isDup) return { isValid: false, message: `Room code "${trimmed}" already exists.` };
     return { isValid: true };
-  }
-
-  static createRoom(values: RoomFormValues, currentUser?: User | null): Room {
-    const codeCheck = this.validateRoomCode(values.code);
-    if (!codeCheck.isValid) throw new Error(codeCheck.message);
-
-    const ward = this.getWardById(values.wardId);
-    if (!ward) throw new Error('Selected ward does not exist.');
-    if (ward.status !== 'Active') throw new Error('Cannot create room under an inactive ward.');
-
-    if (values.capacity <= 0) throw new Error('Room capacity must be at least 1.');
-    if (values.dailyRoomRate < 0) throw new Error('Daily room rate cannot be negative.');
-
-    const auditUser = formatAuditUser(currentUser);
-    const auditTime = formatAuditTimestamp();
-
-    const newRoom: Room = {
-      id: `rm_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
-      code: values.code.trim().toUpperCase(),
-      roomNumber: values.roomNumber.trim(),
-      name: values.name.trim() || `Room ${values.roomNumber.trim()}`,
-      wardId: ward.id,
-      wardName: ward.name,
-      departmentId: ward.departmentId,
-      departmentName: ward.departmentName,
-      roomType: values.roomType,
-      floor: values.floor.trim() || ward.floor || '',
-      capacity: Number(values.capacity) || 1,
-      bedsConfigured: 0,
-      dailyRoomRate: Number(values.dailyRoomRate) || 0,
-      status: values.status,
-      admissionLinkageCount: 0,
-      createdBy: auditUser,
-      createdAt: auditTime,
-      updatedBy: auditUser,
-      updatedAt: auditTime,
-    };
-
-    const rooms = [newRoom, ...this.getRooms()];
-    this.saveRooms(rooms);
-    this.refreshWardCounts();
-
-    return newRoom;
-  }
-
-  static updateRoom(id: string, values: RoomFormValues, currentUser?: User | null): Room {
-    const rooms = this.getRooms();
-    const idx = rooms.findIndex((r) => r.id === id);
-    if (idx === -1) throw new Error('Room not found.');
-
-    const codeCheck = this.validateRoomCode(values.code, id);
-    if (!codeCheck.isValid) throw new Error(codeCheck.message);
-
-    const ward = this.getWardById(values.wardId);
-    if (!ward) throw new Error('Selected ward does not exist.');
-
-    if (values.capacity <= 0) throw new Error('Room capacity must be at least 1.');
-    if (values.dailyRoomRate < 0) throw new Error('Daily room rate cannot be negative.');
-
-    const auditUser = formatAuditUser(currentUser);
-    const auditTime = formatAuditTimestamp();
-    const existing = rooms[idx];
-
-    const updated: Room = {
-      ...existing,
-      code: values.code.trim().toUpperCase(),
-      roomNumber: values.roomNumber.trim(),
-      name: values.name.trim() || `Room ${values.roomNumber.trim()}`,
-      wardId: ward.id,
-      wardName: ward.name,
-      departmentId: ward.departmentId,
-      departmentName: ward.departmentName,
-      roomType: values.roomType,
-      floor: values.floor.trim() || ward.floor || '',
-      capacity: Number(values.capacity) || 1,
-      dailyRoomRate: Number(values.dailyRoomRate) || 0,
-      status: values.status,
-      updatedBy: auditUser,
-      updatedAt: auditTime,
-    };
-
-    if (existing.status !== values.status) {
-      updated.statusChangedBy = auditUser;
-      updated.statusChangedAt = auditTime;
-    }
-
-    rooms[idx] = updated;
-    this.saveRooms(rooms);
-    this.refreshWardCounts();
-
-    // Synchronize beds that link to this room
-    this.syncRoomHierarchy(updated);
-
-    return updated;
-  }
-
-  static changeRoomStatus(id: string, newStatus: 'Active' | 'Inactive', currentUser?: User | null): Room {
-    const rooms = this.getRooms();
-    const idx = rooms.findIndex((r) => r.id === id);
-    if (idx === -1) throw new Error('Room not found.');
-
-    const auditUser = formatAuditUser(currentUser);
-    const auditTime = formatAuditTimestamp();
-    const existing = rooms[idx];
-
-    existing.status = newStatus;
-    existing.updatedBy = auditUser;
-    existing.updatedAt = auditTime;
-    existing.statusChangedBy = auditUser;
-    existing.statusChangedAt = auditTime;
-
-    rooms[idx] = existing;
-    this.saveRooms(rooms);
-    return existing;
-  }
-
-  static deleteRoom(id: string): { success: boolean; message?: string } {
-    const room = this.getRoomById(id);
-    if (!room) return { success: false, message: 'Room not found.' };
-
-    const beds = this.getBeds().filter((b) => b.roomId === id);
-    if (beds.length > 0 || (room.admissionLinkageCount ?? 0) > 0) {
-      return {
-        success: false,
-        message: `This room contains ${beds.length} configured bed(s) or historical admission records. Deactivate it instead.`,
-      };
-    }
-
-    const remaining = this.getRooms().filter((r) => r.id !== id);
-    this.saveRooms(remaining);
-    this.refreshWardCounts();
-    return { success: true };
-  }
-
-  // ----------------------------------------------------
-  // BEDS
-  // ----------------------------------------------------
-  static getBeds(): Bed[] {
-    try {
-      const stored = localStorage.getItem(BEDS_STORAGE_KEY);
-      const rooms = this.getRooms();
-      const roomMap = new Map(rooms.map((r) => [r.id, r]));
-
-      let rawBeds: Bed[];
-      if (!stored) {
-        rawBeds = INITIAL_BEDS;
-      } else {
-        rawBeds = JSON.parse(stored);
-      }
-
-      let modified = false;
-      const normalized = rawBeds.map((b: any) => {
-        const parentRoom = roomMap.get(b.roomId);
-        const rate = Number(b.dailyBedRate ?? b.dailyRate ?? parentRoom?.dailyRoomRate ?? 2000);
-        const roomName = parentRoom?.name || b.roomName;
-        const wardId = parentRoom?.wardId || b.wardId;
-        const wardName = parentRoom?.wardName || b.wardName;
-        const deptId = parentRoom?.departmentId || b.departmentId;
-        const deptName = parentRoom?.departmentName || b.departmentName;
-
-        if (
-          b.dailyBedRate !== rate ||
-          b.dailyRate !== rate ||
-          b.departmentId !== deptId ||
-          b.departmentName !== deptName ||
-          b.wardId !== wardId ||
-          b.wardName !== wardName ||
-          b.roomName !== roomName
-        ) {
-          modified = true;
-          return {
-            ...b,
-            dailyBedRate: rate,
-            dailyRate: rate,
-            roomId: b.roomId,
-            roomName,
-            wardId,
-            wardName,
-            departmentId: deptId,
-            departmentName: deptName,
-          };
-        }
-        return b;
-      });
-
-      if (!stored || modified) {
-        localStorage.setItem(BEDS_STORAGE_KEY, JSON.stringify(normalized));
-      }
-      return normalized;
-    } catch (err) {
-      console.error('Failed to load beds:', err);
-      return INITIAL_BEDS;
-    }
-  }
-
-  static saveBeds(beds: Bed[]): void {
-    try {
-      localStorage.setItem(BEDS_STORAGE_KEY, JSON.stringify(beds));
-    } catch (err) {
-      console.error('Failed to save beds:', err);
-    }
-  }
-
-  static getBedById(id: string): Bed | undefined {
-    return this.getBeds().find((b) => b.id === id);
   }
 
   static validateBedCode(code: string, currentId?: string): { isValid: boolean; message?: string } {
     const trimmed = code.trim().toUpperCase();
     if (!trimmed) return { isValid: false, message: 'Bed code is required.' };
-    if (!/^[A-Z0-9-]+$/.test(trimmed)) {
-      return { isValid: false, message: 'Bed code must contain uppercase letters, numbers, and hyphens only.' };
+    if (!/^[A-Z0-9-]+$/.test(trimmed)) return { isValid: false, message: 'Code must be uppercase letters, numbers, and hyphens only.' };
+    if (cachedBeds.some((b) => b.code.toUpperCase() === trimmed && b.id !== currentId)) {
+      return { isValid: false, message: `Bed code "${trimmed}" already exists.` };
     }
-    const beds = this.getBeds();
-    const isDup = beds.some((b) => b.code.toUpperCase() === trimmed && b.id !== currentId);
-    if (isDup) return { isValid: false, message: `Bed code "${trimmed}" already exists.` };
     return { isValid: true };
   }
 
-  static createBed(values: BedFormValues, currentUser?: User | null): Bed {
-    const codeCheck = this.validateBedCode(values.code);
-    if (!codeCheck.isValid) throw new Error(codeCheck.message);
+  // ── Wards ──────────────────────────────────────────────────────────
+  static async createWard(values: WardFormValues, _currentUser?: User | null): Promise<Ward> {
+    const res = await apiClient.post<{ data: { id: string } }>('/setup/wards-rooms-beds/wards', {
+      code: values.code?.trim() || undefined,
+      departmentId: values.departmentId,
+      name: values.name.trim(),
+      wardType: values.wardType,
+      genderPolicy: values.genderPolicy,
+      floor: values.floor?.trim() || undefined,
+      location: values.location?.trim() || undefined,
+      description: values.description?.trim() || undefined,
+      isActive: values.status === 'Active',
+    });
+    await fetchWardHierarchy();
+    return cachedWards.find((w) => w.id === res.data.data.id)!;
+  }
 
-    const room = this.getRoomById(values.roomId);
-    if (!room) throw new Error('Selected room does not exist.');
-    if (room.status !== 'Active') throw new Error('Cannot add bed to an inactive room.');
+  static async updateWard(id: string, values: WardFormValues, _currentUser?: User | null): Promise<Ward> {
+    await apiClient.patch(`/setup/wards-rooms-beds/wards/${id}`, {
+      code: values.code?.trim() || undefined,
+      departmentId: values.departmentId,
+      name: values.name.trim(),
+      wardType: values.wardType,
+      genderPolicy: values.genderPolicy,
+      floor: values.floor?.trim() || undefined,
+      location: values.location?.trim() || undefined,
+      description: values.description?.trim() || undefined,
+      isActive: values.status === 'Active',
+    });
+    await fetchWardHierarchy();
+    return cachedWards.find((w) => w.id === id)!;
+  }
 
-    const bedRate = Number(values.dailyBedRate ?? values.dailyRate ?? 0);
-    if (bedRate < 0) throw new Error('Daily bed rate cannot be negative.');
+  static async changeWardStatus(id: string, newStatus: 'Active' | 'Inactive', _currentUser?: User | null): Promise<Ward> {
+    await apiClient.patch(`/setup/wards-rooms-beds/wards/${id}`, { isActive: newStatus === 'Active' });
+    await fetchWardHierarchy();
+    return cachedWards.find((w) => w.id === id)!;
+  }
 
-    const auditUser = formatAuditUser(currentUser);
-    const auditTime = formatAuditTimestamp();
+  static async deleteWard(_id: string): Promise<{ success: boolean; message?: string }> {
+    return { success: false, message: 'Wards cannot be permanently deleted for data-integrity reasons. Please deactivate it instead.' };
+  }
 
-    // Default occupancy for new bed: Available (B19 rule)
-    const newBed: Bed = {
-      id: `bed_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
-      code: values.code.trim().toUpperCase(),
+  // ── Rooms ──────────────────────────────────────────────────────────
+  static async createRoom(values: RoomFormValues, _currentUser?: User | null): Promise<Room> {
+    const res = await apiClient.post<{ data: { id: string } }>('/setup/wards-rooms-beds/rooms', {
+      code: values.code?.trim() || undefined,
+      wardId: values.wardId,
+      roomNumber: values.roomNumber?.trim() || undefined,
+      name: values.name.trim(),
+      roomType: values.roomType,
+      capacity: values.capacity,
+      dailyRoomRate: values.dailyRoomRate,
+      isActive: values.status === 'Active',
+    });
+    await fetchWardHierarchy();
+    return cachedRooms.find((r) => r.id === res.data.data.id)!;
+  }
+
+  static async updateRoom(id: string, values: RoomFormValues, _currentUser?: User | null): Promise<Room> {
+    await apiClient.patch(`/setup/wards-rooms-beds/rooms/${id}`, {
+      code: values.code?.trim() || undefined,
+      wardId: values.wardId,
+      roomNumber: values.roomNumber?.trim() || undefined,
+      name: values.name.trim(),
+      roomType: values.roomType,
+      capacity: values.capacity,
+      dailyRoomRate: values.dailyRoomRate,
+      isActive: values.status === 'Active',
+    });
+    await fetchWardHierarchy();
+    return cachedRooms.find((r) => r.id === id)!;
+  }
+
+  static async changeRoomStatus(id: string, newStatus: 'Active' | 'Inactive', _currentUser?: User | null): Promise<Room> {
+    await apiClient.patch(`/setup/wards-rooms-beds/rooms/${id}`, { isActive: newStatus === 'Active' });
+    await fetchWardHierarchy();
+    return cachedRooms.find((r) => r.id === id)!;
+  }
+
+  static async deleteRoom(_id: string): Promise<{ success: boolean; message?: string }> {
+    return { success: false, message: 'Rooms cannot be permanently deleted for data-integrity reasons. Please deactivate it instead.' };
+  }
+
+  // ── Beds ───────────────────────────────────────────────────────────
+  static async createBed(values: BedFormValues, _currentUser?: User | null): Promise<Bed> {
+    const res = await apiClient.post<{ data: { id: string } }>('/setup/wards-rooms-beds/beds', {
+      code: values.code?.trim() || undefined,
+      roomId: values.roomId,
       bedNumber: values.bedNumber.trim(),
-      roomId: room.id,
-      roomName: room.name,
-      wardId: room.wardId,
-      wardName: room.wardName,
-      departmentId: room.departmentId,
-      departmentName: room.departmentName,
       bedType: values.bedType,
-      dailyRate: bedRate,
-      dailyBedRate: bedRate,
-      occupancyStatus: 'Available',
-      operationalStatus: values.operationalStatus,
-      historicalAdmissionCount: 0,
-      createdBy: auditUser,
-      createdAt: auditTime,
-      updatedBy: auditUser,
-      updatedAt: auditTime,
-    };
-
-    const beds = [newBed, ...this.getBeds()];
-    this.saveBeds(beds);
-    this.refreshWardCounts();
-
-    return newBed;
+      dailyRate: values.dailyBedRate ?? values.dailyRate ?? 0,
+      operationalStatus: OPERATIONAL_TO_BACKEND[values.operationalStatus],
+    });
+    await fetchWardHierarchy();
+    return cachedBeds.find((b) => b.id === res.data.data.id)!;
   }
 
-  static updateBed(id: string, values: BedFormValues, currentUser?: User | null): Bed {
-    const beds = this.getBeds();
-    const idx = beds.findIndex((b) => b.id === id);
-    if (idx === -1) throw new Error('Bed not found.');
-
-    const codeCheck = this.validateBedCode(values.code, id);
-    if (!codeCheck.isValid) throw new Error(codeCheck.message);
-
-    const room = this.getRoomById(values.roomId);
-    if (!room) throw new Error('Selected room does not exist.');
-
-    const bedRate = Number(values.dailyBedRate ?? values.dailyRate ?? 0);
-    if (bedRate < 0) throw new Error('Daily bed rate cannot be negative.');
-
-    const existing = beds[idx];
-
-    // Safeguard B22: If bed is occupied, cannot take Out of Service / Maintenance
-    if (
-      existing.occupancyStatus === 'Occupied' &&
-      values.operationalStatus !== 'Active'
-    ) {
-      throw new Error(
-        'This bed is currently occupied and cannot be taken out of service until the active admission is transferred or discharged.'
-      );
-    }
-
-    const auditUser = formatAuditUser(currentUser);
-    const auditTime = formatAuditTimestamp();
-
-    const updated: Bed = {
-      ...existing,
-      code: values.code.trim().toUpperCase(),
+  static async updateBed(id: string, values: BedFormValues, _currentUser?: User | null): Promise<Bed> {
+    await apiClient.patch(`/setup/wards-rooms-beds/beds/${id}`, {
+      code: values.code?.trim() || undefined,
       bedNumber: values.bedNumber.trim(),
-      roomId: room.id,
-      roomName: room.name,
-      wardId: room.wardId,
-      wardName: room.wardName,
-      departmentId: room.departmentId,
-      departmentName: room.departmentName,
       bedType: values.bedType,
-      dailyRate: bedRate,
-      dailyBedRate: bedRate,
-      operationalStatus: values.operationalStatus,
-      updatedBy: auditUser,
-      updatedAt: auditTime,
-    };
-
-    if (existing.operationalStatus !== values.operationalStatus) {
-      updated.statusChangedBy = auditUser;
-      updated.statusChangedAt = auditTime;
-    }
-
-    beds[idx] = updated;
-    this.saveBeds(beds);
-    this.refreshWardCounts();
-
-    return updated;
+      dailyRate: values.dailyBedRate ?? values.dailyRate ?? 0,
+      status: OCCUPANCY_TO_BACKEND[values.occupancyStatus],
+      operationalStatus: OPERATIONAL_TO_BACKEND[values.operationalStatus],
+    });
+    await fetchWardHierarchy();
+    return cachedBeds.find((b) => b.id === id)!;
   }
 
-  static changeBedOperationalStatus(
-    id: string,
-    newStatus: BedOperationalStatus,
-    currentUser?: User | null
-  ): Bed {
-    const beds = this.getBeds();
-    const idx = beds.findIndex((b) => b.id === id);
-    if (idx === -1) throw new Error('Bed not found.');
-
-    const existing = beds[idx];
-    // Safeguard: cannot take occupied bed out of service
-    if (existing.occupancyStatus === 'Occupied' && newStatus !== 'Active') {
-      throw new Error(
-        'This bed is currently occupied and cannot be taken out of service until the active admission is transferred or discharged.'
-      );
-    }
-
-    const auditUser = formatAuditUser(currentUser);
-    const auditTime = formatAuditTimestamp();
-
-    existing.operationalStatus = newStatus;
-    existing.updatedBy = auditUser;
-    existing.updatedAt = auditTime;
-    existing.statusChangedBy = auditUser;
-    existing.statusChangedAt = auditTime;
-
-    beds[idx] = existing;
-    this.saveBeds(beds);
-    this.refreshWardCounts();
-    return existing;
+  static async changeBedOperationalStatus(id: string, newStatus: BedOperationalStatus, _currentUser?: User | null): Promise<Bed> {
+    await apiClient.patch(`/setup/wards-rooms-beds/beds/${id}`, { operationalStatus: OPERATIONAL_TO_BACKEND[newStatus] });
+    await fetchWardHierarchy();
+    return cachedBeds.find((b) => b.id === id)!;
   }
 
-  static deleteBed(id: string): { success: boolean; message?: string } {
-    const bed = this.getBedById(id);
-    if (!bed) return { success: false, message: 'Bed not found.' };
-
-    // Safeguard B25: cannot delete if occupied or historical admission exists
-    if (bed.occupancyStatus === 'Occupied' || (bed.historicalAdmissionCount ?? 0) > 0) {
-      return {
-        success: false,
-        message: 'This bed is occupied or linked to historical admission records and cannot be deleted. Change its operational status to Out of Service instead.',
-      };
-    }
-
-    const remaining = this.getBeds().filter((b) => b.id !== id);
-    this.saveBeds(remaining);
-    this.refreshWardCounts();
-    return { success: true };
+  static async deleteBed(_id: string): Promise<{ success: boolean; message?: string }> {
+    return { success: false, message: 'Beds cannot be permanently deleted for data-integrity reasons. Please decommission it instead.' };
   }
 
-  // ----------------------------------------------------
-  // HIERARCHY SYNCHRONIZATION & RECONCILED TOP SUMMARY
-  // ----------------------------------------------------
-  static refreshWardCounts(): void {
-    const wards = this.getWards();
-    const rooms = this.getRooms();
-    const beds = this.getBeds();
-
-    // 1. Update rooms configured count
-    const roomBedMap = new Map<string, number>();
-    beds.forEach((b) => {
-      roomBedMap.set(b.roomId, (roomBedMap.get(b.roomId) || 0) + 1);
-    });
-
-    const updatedRooms = rooms.map((r) => ({
-      ...r,
-      bedsConfigured: roomBedMap.get(r.id) || 0,
-    }));
-    this.saveRooms(updatedRooms);
-
-    // 2. Update wards room & bed count
-    const wardRoomMap = new Map<string, number>();
-    const wardBedMap = new Map<string, number>();
-    const wardAvailBedMap = new Map<string, number>();
-
-    rooms.forEach((r) => {
-      wardRoomMap.set(r.wardId, (wardRoomMap.get(r.wardId) || 0) + 1);
-    });
-
-    beds.forEach((b) => {
-      wardBedMap.set(b.wardId, (wardBedMap.get(b.wardId) || 0) + 1);
-      if (b.occupancyStatus === 'Available' && b.operationalStatus === 'Active') {
-        wardAvailBedMap.set(b.wardId, (wardAvailBedMap.get(b.wardId) || 0) + 1);
-      }
-    });
-
-    const updatedWards = wards.map((w) => ({
-      ...w,
-      roomCount: wardRoomMap.get(w.id) || 0,
-      bedCount: wardBedMap.get(w.id) || 0,
-      availableBeds: wardAvailBedMap.get(w.id) || 0,
-    }));
-    this.saveWards(updatedWards);
-  }
-
-  private static syncWardHierarchy(updatedWard: Ward): void {
-    const rooms = this.getRooms();
-    const beds = this.getBeds();
-
-    const newRooms = rooms.map((r) => {
-      if (r.wardId === updatedWard.id) {
-        return {
-          ...r,
-          wardName: updatedWard.name,
-          departmentId: updatedWard.departmentId,
-          departmentName: updatedWard.departmentName,
-        };
-      }
-      return r;
-    });
-    this.saveRooms(newRooms);
-
-    const newBeds = beds.map((b) => {
-      if (b.wardId === updatedWard.id) {
-        return {
-          ...b,
-          wardName: updatedWard.name,
-          departmentId: updatedWard.departmentId,
-          departmentName: updatedWard.departmentName,
-        };
-      }
-      return b;
-    });
-    this.saveBeds(newBeds);
-  }
-
-  private static syncRoomHierarchy(updatedRoom: Room): void {
-    const beds = this.getBeds();
-    const newBeds = beds.map((b) => {
-      if (b.roomId === updatedRoom.id) {
-        return {
-          ...b,
-          roomName: updatedRoom.name,
-          wardId: updatedRoom.wardId,
-          wardName: updatedRoom.wardName,
-          departmentId: updatedRoom.departmentId,
-          departmentName: updatedRoom.departmentName,
-        };
-      }
-      return b;
-    });
-    this.saveBeds(newBeds);
-  }
-
-  /**
-   * Top Shared Summary - strictly reconciled
-   * Total Beds = Available + Occupied + Out of Service / Reserved
-   */
+  // ── Aggregates ─────────────────────────────────────────────────────
   static getTopSummary() {
     const wards = this.getWards();
     const rooms = this.getRooms();
@@ -1641,31 +401,14 @@ export class WardsRoomsBedsService {
     const totalWards = wards.length;
     const totalRooms = rooms.length;
     const totalBeds = beds.length;
-
-    const availableBeds = beds.filter(
-      (b) => b.occupancyStatus === 'Available' && b.operationalStatus === 'Active'
-    ).length;
-
+    const availableBeds = beds.filter((b) => b.occupancyStatus === 'Available' && b.operationalStatus === 'Active').length;
     const occupiedBeds = beds.filter((b) => b.occupancyStatus === 'Occupied').length;
+    const outOfServiceBeds = beds.filter((b) => b.operationalStatus !== 'Active' || b.occupancyStatus === 'Reserved').length;
 
-    // Reserved or Non-Active (Cleaning, Maintenance, Out of Service)
-    const outOfServiceBeds = beds.filter(
-      (b) => b.operationalStatus !== 'Active' || b.occupancyStatus === 'Reserved'
-    ).length;
-
-    return {
-      totalWards,
-      totalRooms,
-      totalBeds,
-      availableBeds,
-      occupiedBeds,
-      outOfServiceBeds,
-    };
+    return { totalWards, totalRooms, totalBeds, availableBeds, occupiedBeds, outOfServiceBeds };
   }
 
-  // ----------------------------------------------------
-  // BULK IMPORT & VALIDATION
-  // ----------------------------------------------------
+  // ── Bulk Import ────────────────────────────────────────────────────
   static validateWardImportRows(
     rows: any[],
     existingWards: Ward[] = this.getWards()
@@ -1730,40 +473,37 @@ export class WardsRoomsBedsService {
     return { totalRows: rows.length, validRows, invalidRows };
   }
 
-  static importWards(validRows: WardImportRow[], currentUser?: User | null): number {
+  /** Persists each validated row via a real `POST /setup/wards-rooms-beds/wards`, one at a time. */
+  static async importWards(validRows: WardImportRow[]): Promise<{ imported: number; failures: string[] }> {
     const departments = DepartmentService.getDepartments();
     const deptMap = new Map(departments.map((d) => [d.code.toUpperCase(), d]));
-    const auditUser = formatAuditUser(currentUser);
-    const auditTime = formatAuditTimestamp();
+    const failures: string[] = [];
+    let imported = 0;
 
-    const newWards: Ward[] = validRows.map((r) => {
-      const dept = deptMap.get(r.departmentCode.toUpperCase())!;
-      return {
-        id: `wrd_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        code: r.wardCode,
-        name: r.wardName,
-        departmentId: dept.id,
-        departmentName: dept.name,
-        wardType: (r.wardType as WardType) || 'General',
-        genderPolicy: (r.genderPolicy as GenderPolicy) || 'Not Applicable',
-        floor: r.floor || 'Ground Floor',
-        location: r.location || 'Main Building',
-        description: 'Imported via spreadsheet batch',
-        roomCount: 0,
-        bedCount: 0,
-        availableBeds: 0,
-        status: r.status as 'Active' | 'Inactive',
-        historicalAdmissionCount: 0,
-        createdBy: auditUser,
-        createdAt: auditTime,
-        updatedBy: auditUser,
-        updatedAt: auditTime,
-      };
-    });
-
-    const currentWards = this.getWards();
-    this.saveWards([...newWards, ...currentWards]);
-    return newWards.length;
+    for (const r of validRows) {
+      const dept = deptMap.get(r.departmentCode.toUpperCase());
+      if (!dept) {
+        failures.push(`${r.wardCode}: department "${r.departmentCode}" not found`);
+        continue;
+      }
+      try {
+        await WardsRoomsBedsService.createWard({
+          code: r.wardCode,
+          name: r.wardName,
+          departmentId: dept.id,
+          wardType: r.wardType as WardType,
+          genderPolicy: r.genderPolicy as GenderPolicy,
+          floor: r.floor,
+          location: r.location,
+          description: '',
+          status: r.status as 'Active' | 'Inactive',
+        });
+        imported += 1;
+      } catch (err: any) {
+        failures.push(`${r.wardCode}: ${err?.message || 'Failed to import'}`);
+      }
+    }
+    return { imported, failures };
   }
 
   static validateRoomImportRows(
@@ -1834,48 +574,43 @@ export class WardsRoomsBedsService {
     return { totalRows: rows.length, validRows, invalidRows };
   }
 
-  static importRooms(validRows: RoomImportRow[], currentUser?: User | null): number {
+  static async importRooms(validRows: RoomImportRow[]): Promise<{ imported: number; failures: string[] }> {
     const wards = this.getWards();
     const wardMap = new Map(wards.map((w) => [w.code.toUpperCase(), w]));
-    const auditUser = formatAuditUser(currentUser);
-    const auditTime = formatAuditTimestamp();
+    const failures: string[] = [];
+    let imported = 0;
 
-    const newRooms: Room[] = validRows.map((r) => {
-      const ward = wardMap.get(r.wardCode.toUpperCase())!;
-      return {
-        id: `rm_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        code: r.roomCode,
-        roomNumber: r.roomNumber,
-        name: r.roomName,
-        wardId: ward.id,
-        wardName: ward.name,
-        departmentId: ward.departmentId,
-        departmentName: ward.departmentName,
-        roomType: (r.roomType as RoomType) || 'General',
-        floor: ward.floor || 'Ground Floor',
-        capacity: r.capacity,
-        bedsConfigured: 0,
-        dailyRoomRate: r.dailyRoomRate,
-        status: r.status as 'Active' | 'Inactive',
-        admissionLinkageCount: 0,
-        createdBy: auditUser,
-        createdAt: auditTime,
-        updatedBy: auditUser,
-        updatedAt: auditTime,
-      };
-    });
-
-    const currentRooms = this.getRooms();
-    this.saveRooms([...newRooms, ...currentRooms]);
-    this.refreshWardCounts();
-    return newRooms.length;
+    for (const r of validRows) {
+      const ward = wardMap.get(r.wardCode.toUpperCase());
+      if (!ward) {
+        failures.push(`${r.roomCode}: ward "${r.wardCode}" not found`);
+        continue;
+      }
+      try {
+        await WardsRoomsBedsService.createRoom({
+          code: r.roomCode,
+          roomNumber: r.roomNumber,
+          name: r.roomName,
+          wardId: ward.id,
+          roomType: r.roomType as RoomType,
+          floor: ward.floor || '',
+          capacity: r.capacity,
+          dailyRoomRate: r.dailyRoomRate,
+          status: r.status as 'Active' | 'Inactive',
+        });
+        imported += 1;
+      } catch (err: any) {
+        failures.push(`${r.roomCode}: ${err?.message || 'Failed to import'}`);
+      }
+    }
+    return { imported, failures };
   }
 
   static validateBedImportRows(
     rows: any[],
     existingBeds: Bed[] = this.getBeds(),
     existingRooms: Room[] = this.getRooms(),
-    existingWards: Ward[] = this.getWards()
+    _existingWards: Ward[] = this.getWards()
   ): { totalRows: number; validRows: BedImportRow[]; invalidRows: BedImportRow[] } {
     const validRows: BedImportRow[] = [];
     const invalidRows: BedImportRow[] = [];
@@ -1935,55 +670,44 @@ export class WardsRoomsBedsService {
     return { totalRows: rows.length, validRows, invalidRows };
   }
 
-  static importBeds(validRows: BedImportRow[], currentUser?: User | null): number {
+  static async importBeds(validRows: BedImportRow[]): Promise<{ imported: number; failures: string[] }> {
     const rooms = this.getRooms();
     const roomMap = new Map(rooms.map((r) => [r.code.toUpperCase(), r]));
-    const auditUser = formatAuditUser(currentUser);
-    const auditTime = formatAuditTimestamp();
+    const failures: string[] = [];
+    let imported = 0;
 
-    const newBeds: Bed[] = validRows.map((r) => {
-      const room = roomMap.get(r.roomCode.toUpperCase())!;
-      return {
-        id: `bed_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        code: r.bedCode,
-        bedNumber: r.bedNumber,
-        roomId: room.id,
-        roomNumber: room.roomNumber,
-        roomName: room.name,
-        wardId: room.wardId,
-        wardName: room.wardName,
-        departmentId: room.departmentId,
-        departmentName: room.departmentName,
-        bedType: (r.bedType as BedType) || 'Standard',
-        dailyBedRate: r.dailyBedRate,
-        dailyRate: r.dailyBedRate,
-        occupancyStatus: 'Available',
-        operationalStatus: (r.operationalStatus as BedOperationalStatus) || 'Active',
-        historicalAdmissionCount: 0,
-        createdBy: auditUser,
-        createdAt: auditTime,
-        updatedBy: auditUser,
-        updatedAt: auditTime,
-      };
-    });
-
-    const currentBeds = this.getBeds();
-    this.saveBeds([...newBeds, ...currentBeds]);
-    this.refreshWardCounts();
-    return newBeds.length;
+    for (const r of validRows) {
+      const room = roomMap.get(r.roomCode.toUpperCase());
+      if (!room) {
+        failures.push(`${r.bedCode}: room "${r.roomCode}" not found`);
+        continue;
+      }
+      try {
+        await WardsRoomsBedsService.createBed({
+          code: r.bedCode,
+          bedNumber: r.bedNumber,
+          roomId: room.id,
+          bedType: r.bedType as BedType,
+          dailyBedRate: r.dailyBedRate,
+          occupancyStatus: 'Available',
+          operationalStatus: (r.operationalStatus as BedOperationalStatus) || 'Active',
+        });
+        imported += 1;
+      } catch (err: any) {
+        failures.push(`${r.bedCode}: ${err?.message || 'Failed to import'}`);
+      }
+    }
+    return { imported, failures };
   }
 
-  // ----------------------------------------------------
-  // FILTERING
-  // ----------------------------------------------------
+  // ── Filtering ──────────────────────────────────────────────────────
   static filterWards(wards: Ward[], filters: WardFilterState): Ward[] {
     return wards.filter((w) => {
       if (filters.searchTerm.trim()) {
         const q = filters.searchTerm.toLowerCase().trim();
-        const mCode = w.code.toLowerCase().includes(q);
-        const mName = w.name.toLowerCase().includes(q);
-        const mDept = w.departmentName.toLowerCase().includes(q);
-        if (!mCode && !mName && !mDept) return false;
+        if (!w.code.toLowerCase().includes(q) && !w.name.toLowerCase().includes(q) && !w.departmentName.toLowerCase().includes(q)) {
+          return false;
+        }
       }
       if (filters.departmentId !== 'All' && w.departmentId !== filters.departmentId) return false;
       if (filters.wardType !== 'All' && w.wardType !== filters.wardType) return false;
@@ -1996,11 +720,14 @@ export class WardsRoomsBedsService {
     return rooms.filter((r) => {
       if (filters.searchTerm.trim()) {
         const q = filters.searchTerm.toLowerCase().trim();
-        const mCode = r.code.toLowerCase().includes(q);
-        const mNum = r.roomNumber.toLowerCase().includes(q);
-        const mName = r.name.toLowerCase().includes(q);
-        const mWard = r.wardName.toLowerCase().includes(q);
-        if (!mCode && !mNum && !mName && !mWard) return false;
+        if (
+          !r.code.toLowerCase().includes(q) &&
+          !r.roomNumber.toLowerCase().includes(q) &&
+          !r.name.toLowerCase().includes(q) &&
+          !r.wardName.toLowerCase().includes(q)
+        ) {
+          return false;
+        }
       }
       if (filters.wardId !== 'All' && r.wardId !== filters.wardId) return false;
       if (filters.roomType !== 'All' && r.roomType !== filters.roomType) return false;
@@ -2013,11 +740,14 @@ export class WardsRoomsBedsService {
     return beds.filter((b) => {
       if (filters.searchTerm.trim()) {
         const q = filters.searchTerm.toLowerCase().trim();
-        const mCode = b.code.toLowerCase().includes(q);
-        const mNum = b.bedNumber.toLowerCase().includes(q);
-        const mRoom = b.roomName.toLowerCase().includes(q);
-        const mWard = b.wardName.toLowerCase().includes(q);
-        if (!mCode && !mNum && !mRoom && !mWard) return false;
+        if (
+          !b.code.toLowerCase().includes(q) &&
+          !b.bedNumber.toLowerCase().includes(q) &&
+          !b.roomName.toLowerCase().includes(q) &&
+          !b.wardName.toLowerCase().includes(q)
+        ) {
+          return false;
+        }
       }
       if (filters.wardId !== 'All' && b.wardId !== filters.wardId) return false;
       if (filters.roomId !== 'All' && b.roomId !== filters.roomId) return false;

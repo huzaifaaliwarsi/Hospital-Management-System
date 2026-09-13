@@ -12,6 +12,7 @@ import { errorHandler, notFoundHandler } from '@/middleware/errorHandler';
 import healthRoutes from '@/modules/health/health.routes';
 import authRoutes from '@/modules/identity/auth.routes';
 import identityRoutes from '@/modules/identity/identity.routes';
+import portalUserRoutes from '@/modules/identity/portalUser.routes';
 import setupRoutes from '@/modules/setup/setup.routes';
 import patientsRoutes from '@/modules/frontdesk/patients.routes';
 import appointmentsRoutes from '@/modules/frontdesk/appointments.routes';
@@ -54,6 +55,7 @@ export function createApp() {
   app.use('/api/v1', authenticate, auditLog);
 
   app.use('/api/v1/staff', identityRoutes);
+  app.use('/api/v1/portal-users', portalUserRoutes);
   app.use('/api/v1/setup', setupRoutes);
   app.use('/api/v1/patients', patientsRoutes);
   app.use('/api/v1/appointments', appointmentsRoutes);

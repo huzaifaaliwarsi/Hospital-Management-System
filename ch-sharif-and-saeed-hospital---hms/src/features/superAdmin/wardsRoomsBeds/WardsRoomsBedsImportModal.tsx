@@ -99,19 +99,28 @@ export const WardsRoomsBedsImportModal: React.FC<WardsRoomsBedsImportModalProps>
     reader.readAsArrayBuffer(selectedFile);
   };
 
-  const handleCommit = () => {
+  const [isImporting, setIsImporting] = useState(false);
+
+  const handleCommit = async () => {
     if (!validationResult || validationResult.validRows.length === 0) return;
 
-    let count = 0;
-    if (targetEntity === 'wards') {
-      count = WardsRoomsBedsService.importWards(validationResult.validRows, currentUser);
-    } else if (targetEntity === 'rooms') {
-      count = WardsRoomsBedsService.importRooms(validationResult.validRows, currentUser);
-    } else {
-      count = WardsRoomsBedsService.importBeds(validationResult.validRows, currentUser);
+    setIsImporting(true);
+    try {
+      let result: { imported: number; failures: string[] };
+      if (targetEntity === 'wards') {
+        result = await WardsRoomsBedsService.importWards(validationResult.validRows as any);
+      } else if (targetEntity === 'rooms') {
+        result = await WardsRoomsBedsService.importRooms(validationResult.validRows as any);
+      } else {
+        result = await WardsRoomsBedsService.importBeds(validationResult.validRows as any);
+      }
+      if (result.failures.length > 0) {
+        alert(`Imported ${result.imported}. ${result.failures.length} row(s) failed:\n${result.failures.join('\n')}`);
+      }
+      onImportComplete(targetEntity, result.imported);
+    } finally {
+      setIsImporting(false);
     }
-
-    onImportComplete(targetEntity, count);
   };
 
   const allRows = validationResult
@@ -404,15 +413,15 @@ export const WardsRoomsBedsImportModal: React.FC<WardsRoomsBedsImportModalProps>
           {validationResult && (
             <button
               onClick={handleCommit}
-              disabled={validationResult.validRows.length === 0}
+              disabled={validationResult.validRows.length === 0 || isImporting}
               className={`inline-flex items-center gap-2 px-5 py-2 text-xs font-semibold rounded-lg shadow-xs transition-colors ${
-                validationResult.validRows.length > 0
+                validationResult.validRows.length > 0 && !isImporting
                   ? 'bg-[#08775A] hover:bg-[#065f46] text-white'
                   : 'bg-slate-200 text-slate-400 cursor-not-allowed'
               }`}
             >
               <Upload className="w-4 h-4" />
-              Commit Import ({validationResult.validRows.length} Valid Records)
+              {isImporting ? 'Importing…' : `Commit Import (${validationResult.validRows.length} Valid Records)`}
             </button>
           )}
         </div>

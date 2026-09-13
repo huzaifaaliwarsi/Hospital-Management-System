@@ -58,7 +58,20 @@ enum StaffEmploymentStatus {
 
 enum DepartmentType {
   CLINICAL
+  SURGICAL
+  DIAGNOSTIC
+  EMERGENCY
+  PHARMACY
   ADMINISTRATIVE
+  SUPPORT_SERVICE
+  OTHER
+}
+
+enum ShiftType {
+  MORNING
+  EVENING
+  NIGHT
+  CUSTOM
 }
 
 enum BedStatus {
@@ -66,6 +79,16 @@ enum BedStatus {
   RESERVED
   OCCUPIED
   OUT_OF_SERVICE
+}
+
+/// Orthogonal to `Bed.status` (occupancy, owned by the Admission workflow —
+/// never touched here): whether the bed itself is fit for use right now.
+enum BedOperationalStatus {
+  ACTIVE
+  CLEANING
+  MAINTENANCE
+  OUT_OF_SERVICE
+  DECOMMISSIONED
 }
 
 enum AppointmentStatus {
@@ -284,19 +307,22 @@ enum CommissionStatus {
 /// Permanent HR identity (§4.1, §6.4 `staff`). Exists independently of any
 /// login — "No Portal Access" is a valid, fully supported state.
 model Staff {
-  id               String                @id @default(uuid())
-  employeeId       String                @unique @map("employee_id") // system-generated (§16 Q-01)
-  fullName         String                @map("full_name")
-  category         String // Doctor/Nurse/Technician/... — lookup table candidate, kept as string for phase 1
-  departmentId     String                @map("department_id")
-  department       Department            @relation(fields: [departmentId], references: [id])
-  designation      String
-  phone            String
-  email            String?
-  joiningDate      DateTime              @map("joining_date") @db.Date
-  employmentStatus StaffEmploymentStatus @default(ACTIVE) @map("employment_status")
-  notes            String?
-  isActive         Boolean               @default(true) @map("is_active")
+  id                 String                @id @default(uuid())
+  employeeId         String                @unique @map("employee_id") // system-generated (§16 Q-01)
+  fullName           String                @map("full_name")
+  fatherGuardianName String?               @map("father_guardian_name")
+  cnic               String?
+  category           String // Doctor/Nurse/Technician/... — lookup table candidate, kept as string for phase 1
+  departmentId       String                @map("department_id")
+  department         Department            @relation(fields: [departmentId], references: [id])
+  designation        String
+  phone              String
+  alternatePhone     String?               @map("alternate_phone")
+  email              String?
+  joiningDate        DateTime              @map("joining_date") @db.Date
+  employmentStatus   StaffEmploymentStatus @default(ACTIVE) @map("employment_status")
+  notes              String?
+  isActive           Boolean               @default(true) @map("is_active")
 
   portalUser PortalUser?
 
@@ -405,6 +431,12 @@ model PortalUser {
   staff             Staff?           @relation(fields: [staffId], references: [id])
   username          String           @unique
   email             String?          @unique
+  // Denormalized display name — used verbatim for accounts with no linked
+  // Staff record (e.g. the root Super Admin); when `staffId` is set,
+  // `staff.fullName` is the authoritative name and this is kept in sync at
+  // write time for convenience list queries that skip the join.
+  displayName       String?          @map("display_name")
+  phone             String?
   passwordHash      String           @map("password_hash") // bcrypt, never plaintext (§7.8)
   role              PortalRole
   status            PortalUserStatus @default(ACTIVE)
@@ -412,6 +444,8 @@ model PortalUser {
   isCashHandling    Boolean          @default(false) @map("is_cash_handling")
   mustResetPassword Boolean          @default(true) @map("must_reset_password")
   lastLoginAt       DateTime?        @map("last_login_at")
+  passwordResetAt   DateTime?        @map("password_reset_at")
+  passwordResetBy   String?          @map("password_reset_by")
 
   refreshTokens RefreshToken[]
   auditLogs     AuditLog[]
@@ -420,11 +454,19 @@ model PortalUser {
   createdDepartments          Department[]              @relation("DepartmentCreatedBy")
   updatedDepartments          Department[]              @relation("DepartmentUpdatedBy")
   createdServiceRates         ServiceRate[]             @relation("ServiceRateCreatedBy")
+  updatedServiceRates         ServiceRate[]             @relation("ServiceRateUpdatedBy")
   createdWards                Ward[]                    @relation("WardCreatedBy")
+  updatedWards                Ward[]                    @relation("WardUpdatedBy")
   createdRooms                Room[]                    @relation("RoomCreatedBy")
+  updatedRooms                Room[]                    @relation("RoomUpdatedBy")
   createdBeds                 Bed[]                     @relation("BedCreatedBy")
+  updatedBeds                 Bed[]                     @relation("BedUpdatedBy")
+  createdShifts               Shift[]                   @relation("ShiftCreatedBy")
+  updatedShifts               Shift[]                   @relation("ShiftUpdatedBy")
   createdCorporatePanels      CorporatePanel[]          @relation("CorporatePanelCreatedBy")
+  updatedCorporatePanels      CorporatePanel[]          @relation("CorporatePanelUpdatedBy")
   createdPanelPatients        PanelPatient[]            @relation("PanelPatientCreatedBy")
+  updatedPanelPatients        PanelPatient[]            @relation("PanelPatientUpdatedBy")
   createdSelfPayEncounters    SelfPayEncounter[]        @relation("SelfPayEncounterCreatedBy")
   createdAppointments         Appointment[]             @relation("AppointmentCreatedBy")
   createdHospitalInvoices     HospitalInvoice[]         @relation("HospitalInvoiceCreatedBy")
@@ -506,7 +548,17 @@ model HospitalProfile {
   currencyCode         String  @default("PKR") @map("currency_code") @db.VarChar(3)
   roundingMode         String  @default("ROUND_HALF_UP") @map("rounding_mode")
   timezone             String  @default("Asia/Karachi")
+  /// Schema-flexible holder for the remaining Super Admin "Hospital Overview"
+  /// screen fields (short name, hospital type, registration/license/
+  /// accreditation, alternate/emergency contacts, structured address parts,
+  /// per-day working hours, invoice/tax settings) — deliberately kept as one
+  /// JSON blob rather than dozens of columns, consistent with
+  /// `billingLegalMetadata`/`printHeaderConfig` above; every value inside it
+  /// is still real, persisted, and edited only through `PUT /setup/hospital-profile`.
+  extendedProfile      Json?   @map("extended_profile")
 
+  createdAt DateTime @default(now()) @map("created_at")
+  createdBy String?  @map("created_by")
   updatedAt DateTime @updatedAt @map("updated_at")
   updatedBy String?  @map("updated_by")
 
@@ -514,19 +566,31 @@ model HospitalProfile {
 }
 
 model Department {
-  id                String         @id @default(uuid())
-  code              String         @unique
-  name              String
-  headStaffId       String?        @map("head_staff_id")
-  headStaff         Staff?         @relation("DepartmentHead", fields: [headStaffId], references: [id])
-  departmentType    DepartmentType @map("department_type")
-  supportsOpd       Boolean        @default(false) @map("supports_opd")
-  supportsAdmission Boolean        @default(false) @map("supports_admission")
-  isActive          Boolean        @default(true) @map("is_active")
+  id                  String         @id @default(uuid())
+  code                String         @unique
+  name                String
+  description         String?
+  headStaffId         String?        @map("head_staff_id")
+  headStaff           Staff?         @relation("DepartmentHead", fields: [headStaffId], references: [id])
+  departmentType      DepartmentType @map("department_type")
+  contactExtension    String?        @map("contact_extension")
+  location            String?
+  supportsOpd         Boolean        @default(false) @map("supports_opd")
+  supportsObservation Boolean        @default(false) @map("supports_observation")
+  supportsEmergency   Boolean        @default(false) @map("supports_emergency")
+  supportsAdmission   Boolean        @default(false) @map("supports_admission")
+  pharmacyRelated     Boolean        @default(false) @map("pharmacy_related")
+  isActive            Boolean        @default(true) @map("is_active")
+  statusChangedAt     DateTime?      @map("status_changed_at")
+  // Readable "Name (Role)" label, not a relation — mirrors HospitalProfile's
+  // plain audit strings; the FK-backed createdById/updatedById below remain
+  // the relational source of truth for who created/last edited the row.
+  statusChangedBy     String?        @map("status_changed_by")
 
   staff        Staff[]
   wards        Ward[]
   serviceRates ServiceRate[]
+  shifts       Shift[]
 
   createdAt              DateTime                 @default(now()) @map("created_at")
   createdById            String?                  @map("created_by")
@@ -547,6 +611,7 @@ model ServiceRate {
   id                        String     @id @default(uuid())
   code                      String     @unique
   name                      String
+  description               String?
   departmentId              String     @map("department_id")
   department                Department @relation(fields: [departmentId], references: [id])
   category                  String?
@@ -556,6 +621,8 @@ model ServiceRate {
   discountAllowed           Boolean    @default(true) @map("discount_allowed")
   manualRateOverrideAllowed Boolean    @default(false) @map("manual_rate_override_allowed")
   isActive                  Boolean    @default(true) @map("is_active")
+  statusChangedAt           DateTime?  @map("status_changed_at")
+  statusChangedBy           String?    @map("status_changed_by")
 
   invoiceLines       InvoiceLineItem[]
   panelDiscountRules PanelDiscountRule[]
@@ -565,6 +632,8 @@ model ServiceRate {
   createdById   String?       @map("created_by")
   createdByUser PortalUser?   @relation("ServiceRateCreatedBy", fields: [createdById], references: [id])
   updatedAt     DateTime      @updatedAt @map("updated_at")
+  updatedById   String?       @map("updated_by")
+  updatedByUser PortalUser?   @relation("ServiceRateUpdatedBy", fields: [updatedById], references: [id])
   Appointment   Appointment[]
 
   @@map("service_rates")
@@ -572,46 +641,71 @@ model ServiceRate {
 
 /// Hierarchy Department → Ward → Room → Bed (§4.2, D16 p.6).
 model Ward {
-  id           String     @id @default(uuid())
-  departmentId String     @map("department_id")
-  department   Department @relation(fields: [departmentId], references: [id])
-  name         String
-  wardType     String?    @map("ward_type")
-  isActive     Boolean    @default(true) @map("is_active")
+  id              String     @id @default(uuid())
+  code            String?    @unique
+  departmentId    String     @map("department_id")
+  department      Department @relation(fields: [departmentId], references: [id])
+  name            String
+  wardType        String?    @map("ward_type")
+  genderPolicy    String?    @map("gender_policy")
+  floor           String?
+  location        String?
+  description     String?
+  isActive        Boolean    @default(true) @map("is_active")
+  statusChangedAt DateTime?  @map("status_changed_at")
+  statusChangedBy String?    @map("status_changed_by")
 
   rooms Room[]
 
   createdAt     DateTime    @default(now()) @map("created_at")
   createdById   String?     @map("created_by")
   createdByUser PortalUser? @relation("WardCreatedBy", fields: [createdById], references: [id])
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+  updatedById   String?     @map("updated_by")
+  updatedByUser PortalUser? @relation("WardUpdatedBy", fields: [updatedById], references: [id])
 
   @@map("wards")
 }
 
 model Room {
-  id       String  @id @default(uuid())
-  wardId   String  @map("ward_id")
-  ward     Ward    @relation(fields: [wardId], references: [id])
-  name     String
-  roomType String? @map("room_type")
-  isActive Boolean @default(true) @map("is_active")
+  id              String    @id @default(uuid())
+  code            String?   @unique
+  wardId          String    @map("ward_id")
+  ward            Ward      @relation(fields: [wardId], references: [id])
+  roomNumber      String?   @map("room_number")
+  name            String
+  roomType        String?   @map("room_type")
+  floor           String?
+  capacity        Int?
+  dailyRoomRate   Decimal?  @map("daily_room_rate") @db.Decimal(14, 2)
+  isActive        Boolean   @default(true) @map("is_active")
+  statusChangedAt DateTime? @map("status_changed_at")
+  statusChangedBy String?   @map("status_changed_by")
 
   beds Bed[]
 
   createdAt     DateTime    @default(now()) @map("created_at")
   createdById   String?     @map("created_by")
   createdByUser PortalUser? @relation("RoomCreatedBy", fields: [createdById], references: [id])
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+  updatedById   String?     @map("updated_by")
+  updatedByUser PortalUser? @relation("RoomUpdatedBy", fields: [updatedById], references: [id])
 
   @@map("rooms")
 }
 
 model Bed {
-  id        String    @id @default(uuid())
-  roomId    String    @map("room_id")
-  room      Room      @relation(fields: [roomId], references: [id])
-  bedNumber String    @map("bed_number")
-  dailyRate Decimal   @default(0) @map("daily_rate") @db.Decimal(14, 2)
-  status    BedStatus @default(AVAILABLE)
+  id                String               @id @default(uuid())
+  code              String?              @unique
+  roomId            String               @map("room_id")
+  room              Room                 @relation(fields: [roomId], references: [id])
+  bedNumber         String               @map("bed_number")
+  bedType           String?              @map("bed_type")
+  dailyRate         Decimal              @default(0) @map("daily_rate") @db.Decimal(14, 2)
+  status            BedStatus            @default(AVAILABLE)
+  operationalStatus BedOperationalStatus @default(ACTIVE) @map("operational_status")
+  statusChangedAt   DateTime?            @map("status_changed_at")
+  statusChangedBy   String?              @map("status_changed_by")
 
   admissions       AdmissionRecord[]
   bedTransfersFrom BedTransferHistory[] @relation("BedTransferFrom")
@@ -621,20 +715,62 @@ model Bed {
   createdById   String?     @map("created_by")
   createdByUser PortalUser? @relation("BedCreatedBy", fields: [createdById], references: [id])
   updatedAt     DateTime    @updatedAt @map("updated_at")
+  updatedById   String?     @map("updated_by")
+  updatedByUser PortalUser? @relation("BedUpdatedBy", fields: [updatedById], references: [id])
 
   @@unique([roomId, bedNumber])
   @@map("beds")
 }
 
+/// Shift Master (Super Admin "Shift Management" screen) — named duty-roster
+/// templates with timing/tolerance defaults. Attendance/payroll consume
+/// these by reference; a staff member's *current* shift assignment is
+/// still recorded as a new row on `StaffEmploymentHistory` (its
+/// `shiftName`/`shiftStart`/`shiftEnd` are copied from here at assignment
+/// time so history stays a frozen snapshot even if the shift template
+/// later changes). Duration/overnight-ness are intentionally NOT stored —
+/// they are pure derivations of `startTime`/`endTime`/`breakMinutes`,
+/// computed on read to avoid drift.
+model Shift {
+  id                               String     @id @default(uuid())
+  code                             String     @unique
+  name                             String
+  departmentId                     String     @map("department_id")
+  department                       Department @relation(fields: [departmentId], references: [id])
+  shiftType                        ShiftType  @default(CUSTOM) @map("shift_type")
+  startTime                        String     @map("start_time") // HH:mm, 24h
+  endTime                          String     @map("end_time") // HH:mm, 24h
+  breakMinutes                     Int        @default(0) @map("break_minutes")
+  defaultArrivalGraceMinutes       Int        @default(0) @map("default_arrival_grace_minutes")
+  defaultEarlyExitToleranceMinutes Int        @default(0) @map("default_early_exit_tolerance_minutes")
+  defaultWeeklyOffDays             String[]   @default([]) @map("default_weekly_off_days")
+  notes                            String?
+  isActive                         Boolean    @default(true) @map("is_active")
+  statusChangedAt                  DateTime?  @map("status_changed_at")
+  statusChangedBy                  String?    @map("status_changed_by")
+
+  createdAt     DateTime    @default(now()) @map("created_at")
+  createdById   String?     @map("created_by")
+  createdByUser PortalUser? @relation("ShiftCreatedBy", fields: [createdById], references: [id])
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+  updatedById   String?     @map("updated_by")
+  updatedByUser PortalUser? @relation("ShiftUpdatedBy", fields: [updatedById], references: [id])
+
+  @@map("shifts")
+}
+
 /// Corporate/insurer panel master (§4.2 "Corporate Panels"; = §6.5 `panels`).
 model CorporatePanel {
-  id               String   @id @default(uuid())
-  organizationName String   @map("organization_name")
-  contact          String?
-  address          String?
-  notes            String?
-  creditLimit      Decimal? @map("credit_limit") @db.Decimal(14, 2)
-  isActive         Boolean  @default(true) @map("is_active")
+  id                String   @id @default(uuid())
+  code              String?  @unique
+  organizationName  String   @map("organization_name")
+  category          String? // e.g. Govt Health Insurance / Private Insurance / Armed Forces Welfare / Corporate Enterprise
+  discountAgreement String?  @map("discount_agreement")
+  contact           String?
+  address           String?
+  notes             String?
+  creditLimit       Decimal? @map("credit_limit") @db.Decimal(14, 2)
+  isActive          Boolean  @default(true) @map("is_active")
 
   discountRules PanelDiscountRule[]
   panelPatients PanelPatient[]
@@ -642,6 +778,9 @@ model CorporatePanel {
   createdAt     DateTime    @default(now()) @map("created_at")
   createdById   String?     @map("created_by")
   createdByUser PortalUser? @relation("CorporatePanelCreatedBy", fields: [createdById], references: [id])
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+  updatedById   String?     @map("updated_by")
+  updatedByUser PortalUser? @relation("CorporatePanelUpdatedBy", fields: [updatedById], references: [id])
 
   @@map("corporate_panels")
 }
@@ -675,19 +814,32 @@ model PanelDiscountRule {
 /// Permanent, reusable patient master — always linked to a CorporatePanel
 /// (D16 p.7: "Panel Patient (permanent, reusable)").
 model PanelPatient {
-  id               String         @id @default(uuid())
-  mrNumber         String         @unique @map("mr_number") // assigned only for panel patients
-  fullName         String         @map("full_name")
-  guardianName     String?        @map("guardian_name")
-  gender           String?
-  dob              DateTime?      @db.Date
-  cnicOrPassport   String?        @map("cnic_or_passport")
-  phone            String?
-  address          String?
-  corporatePanelId String         @map("corporate_panel_id")
-  corporatePanel   CorporatePanel @relation(fields: [corporatePanelId], references: [id])
-  panelMemberId    String?        @map("panel_member_id")
-  isActive         Boolean        @default(true) @map("is_active")
+  id                       String         @id @default(uuid())
+  mrNumber                 String         @unique @map("mr_number") // assigned only for panel patients
+  fullName                 String         @map("full_name")
+  guardianName             String?        @map("guardian_name")
+  guardianRelation         String?        @map("guardian_relation")
+  gender                   String?
+  dob                      DateTime?      @db.Date
+  cnicOrPassport           String?        @map("cnic_or_passport")
+  phone                    String?
+  alternatePhone           String?        @map("alternate_phone")
+  email                    String?
+  address                  String?
+  addressLine1             String?        @map("address_line1")
+  addressLine2             String?        @map("address_line2")
+  city                     String?
+  province                 String?
+  country                  String?
+  bloodGroup               String?        @map("blood_group")
+  emergencyContactName     String?        @map("emergency_contact_name")
+  emergencyContactRelation String?        @map("emergency_contact_relation")
+  emergencyContactPhone    String?        @map("emergency_contact_phone")
+  status                   String         @default("ACTIVE") // ACTIVE / INACTIVE / DECEASED
+  corporatePanelId         String         @map("corporate_panel_id")
+  corporatePanel           CorporatePanel @relation(fields: [corporatePanelId], references: [id])
+  panelMemberId            String?        @map("panel_member_id")
+  isActive                 Boolean        @default(true) @map("is_active")
 
   appointments      Appointment[]
   hospitalInvoices  HospitalInvoice[]
@@ -697,6 +849,9 @@ model PanelPatient {
   createdAt     DateTime    @default(now()) @map("created_at")
   createdById   String?     @map("created_by")
   createdByUser PortalUser? @relation("PanelPatientCreatedBy", fields: [createdById], references: [id])
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+  updatedById   String?     @map("updated_by")
+  updatedByUser PortalUser? @relation("PanelPatientUpdatedBy", fields: [updatedById], references: [id])
 
   @@map("panel_patients")
 }

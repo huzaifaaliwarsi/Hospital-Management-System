@@ -87,7 +87,7 @@ export const StaffUserImportModal: React.FC<StaffUserImportModalProps> = ({
     }
   };
 
-  const handleCommitImport = () => {
+  const handleCommitImport = async () => {
     if (!validationResult) return;
     const validRows = validationResult.rows.filter((r) => r.isValid);
     if (validRows.length === 0) {
@@ -95,7 +95,10 @@ export const StaffUserImportModal: React.FC<StaffUserImportModalProps> = ({
       return;
     }
 
-    const result = StaffUserService.commitImport(validRows, currentUser);
+    const result = await StaffUserService.commitImport(validRows, currentUser);
+    if (result.failures.length > 0) {
+      setError(`${result.failures.length} row(s) failed to import:\n${result.failures.join('\n')}`);
+    }
     setImportResult(result);
     onSuccess();
   };

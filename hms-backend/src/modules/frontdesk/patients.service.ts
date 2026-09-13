@@ -1,12 +1,43 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
-import { NotFoundError } from '@/shared/errors/AppError';
+import { NotFoundError, ConflictError } from '@/shared/errors/AppError';
 import { normalizeCnic, normalizePhone } from '@/shared/validators';
+import { actorSelect, formatActorFromRelation, type ActorRelation } from '@/shared/actorLabel';
 import type {
   CheckDuplicateQuery,
   CreatePanelPatientBody,
   UpdatePanelPatientBody,
   CreateSelfPayEncounterBody,
+  ListPanelPatientsQuery,
 } from './patients.schemas';
+
+const panelPatientInclude = {
+  corporatePanel: { select: { id: true, organizationName: true } },
+  createdByUser: actorSelect,
+  updatedByUser: actorSelect,
+} satisfies Prisma.PanelPatientInclude;
+
+function decoratePanelPatient(
+  row: Record<string, unknown> & { createdByUser: ActorRelation | null; updatedByUser: ActorRelation | null },
+) {
+  return {
+    ...row,
+    createdByLabel: formatActorFromRelation(row.createdByUser),
+    updatedByLabel: formatActorFromRelation(row.updatedByUser),
+  };
+}
+
+async function nextMrNumber(): Promise<string> {
+  const year = new Date().getFullYear();
+  const count = await prisma.panelPatient.count();
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const candidate = `MR-${year}-${String(count + 1 + attempt).padStart(6, '0')}`;
+    const exists = await prisma.panelPatient.findUnique({ where: { mrNumber: candidate }, select: { id: true } });
+    if (!exists) return candidate;
+  }
+  // Extremely unlikely fallback if the sequential slot keeps colliding under concurrency.
+  return `MR-${year}-${Date.now().toString().slice(-8)}`;
+}
 
 /**
  * §4.6 Patient identity model — Panel Patient (permanent master) vs.
@@ -35,26 +66,74 @@ export const patientsService = {
     return { panelPatients, selfPayEncounters, isDuplicate: panelPatients.length > 0 || selfPayEncounters.length > 0 };
   },
 
-  listPanelPatients(search?: string) {
-    return prisma.panelPatient.findMany({
-      where: search
-        ? { OR: [{ fullName: { contains: search, mode: 'insensitive' } }, { mrNumber: { contains: search, mode: 'insensitive' } }] }
-        : undefined,
-      include: { corporatePanel: { select: { id: true, organizationName: true } } },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-    });
+  async listPanelPatients(query: ListPanelPatientsQuery) {
+    const where: Prisma.PanelPatientWhereInput = {};
+    if (query.search) {
+      where.OR = [
+        { fullName: { contains: query.search, mode: 'insensitive' } },
+        { mrNumber: { contains: query.search, mode: 'insensitive' } },
+        { cnicOrPassport: { contains: query.search, mode: 'insensitive' } },
+        { phone: { contains: query.search, mode: 'insensitive' } },
+      ];
+    }
+    if (query.status) where.status = query.status;
+    if (query.corporatePanelId) where.corporatePanelId = query.corporatePanelId;
+
+    const [rows, totalItems] = await prisma.$transaction([
+      prisma.panelPatient.findMany({
+        where,
+        include: panelPatientInclude,
+        orderBy: { createdAt: 'desc' },
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      prisma.panelPatient.count({ where }),
+    ]);
+
+    return {
+      rows: rows.map((r) => decoratePanelPatient(r as any)),
+      meta: {
+        page: query.page,
+        pageSize: query.pageSize,
+        totalItems,
+        totalPages: Math.max(1, Math.ceil(totalItems / query.pageSize)),
+      },
+    };
   },
 
   async createPanelPatient(body: CreatePanelPatientBody, createdById: string) {
-    const mrNumber = `MR-${Date.now().toString(36).toUpperCase()}`;
-    return prisma.panelPatient.create({ data: { ...body, mrNumber, createdById } });
+    const mrNumber = await nextMrNumber();
+    try {
+      const created = await prisma.panelPatient.create({
+        data: {
+          ...body,
+          mrNumber,
+          isActive: body.status !== 'INACTIVE' && body.status !== 'DECEASED',
+          createdById,
+          updatedById: createdById,
+        } as Prisma.PanelPatientUncheckedCreateInput,
+        include: panelPatientInclude,
+      });
+      return decoratePanelPatient(created as any);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictError('A panel patient with this MR number already exists — please retry.');
+      }
+      throw error;
+    }
   },
 
-  async updatePanelPatient(id: string, body: UpdatePanelPatientBody) {
+  async updatePanelPatient(id: string, body: UpdatePanelPatientBody, updatedById: string) {
     const existing = await prisma.panelPatient.findUnique({ where: { id } });
     if (!existing) throw new NotFoundError('Panel patient not found');
-    return prisma.panelPatient.update({ where: { id }, data: body });
+
+    const data: Prisma.PanelPatientUncheckedUpdateInput = { ...body, updatedById };
+    if (body.status !== undefined) {
+      data.isActive = body.status === 'ACTIVE';
+    }
+
+    const updated = await prisma.panelPatient.update({ where: { id }, data, include: panelPatientInclude });
+    return decoratePanelPatient(updated as any);
   },
 
   listSelfPayEncounters(search?: string) {

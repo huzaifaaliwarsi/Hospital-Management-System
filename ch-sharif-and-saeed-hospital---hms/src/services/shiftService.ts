@@ -1,19 +1,14 @@
-import { Shift, ShiftFilterState, ShiftFormData, ShiftKPIs, ShiftType } from '../types/shift';
+import apiClient from './apiClient';
+import { Shift, ShiftFilterState, ShiftFormData, ShiftKPIs, ShiftType, Weekday } from '../types/shift';
 import { User } from '../types';
 import { DepartmentService } from './departmentService';
 import { formatDisplayDate } from '../utils/dateConstants';
 
-export const SHIFT_STORAGE_KEY = 'css_hms_shifts_dataset_v1';
-
-export const formatAuditTimestamp = (): string => {
-  const d = new Date();
-  const dateStr = formatDisplayDate(d);
-  const timeStr = d.toLocaleTimeString('en-PK', {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-  return `${dateStr}, ${timeStr}`;
-};
+/**
+ * Live Shift Master service — every read/write round-trips through
+ * `/api/v1/setup/shifts*`. Same in-memory-cache pattern as the other
+ * rewired Super Admin services — never localStorage.
+ */
 
 /**
  * Format 24-hour HH:mm string to 12-hour AM/PM format (e.g., "08:00" -> "08:00 AM", "20:30" -> "08:30 PM")
@@ -65,281 +60,187 @@ const TIME_FORMAT_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
 /**
  * Mathematical calculation of shift duration, overnight derivation, and net working minutes
  */
-export function calculateShiftTiming(
-  startTime: string,
-  endTime: string,
-  breakMinutes: number = 0
-): ShiftTimingCalculation {
+export function calculateShiftTiming(startTime: string, endTime: string, breakMinutes: number = 0): ShiftTimingCalculation {
   if (!startTime || !endTime) {
-    return {
-      valid: false,
-      error: 'Start time and end time are required.',
-      isOvernight: false,
-      grossDurationMinutes: 0,
-      breakMinutes: breakMinutes ?? 0,
-      netWorkingMinutes: 0,
-    };
+    return { valid: false, error: 'Start time and end time are required.', isOvernight: false, grossDurationMinutes: 0, breakMinutes: breakMinutes ?? 0, netWorkingMinutes: 0 };
   }
-
-  // Strict HH:mm validation: 00 through 23 hours, 00 through 59 minutes
   if (!TIME_FORMAT_REGEX.test(startTime) || !TIME_FORMAT_REGEX.test(endTime)) {
-    return {
-      valid: false,
-      error: 'Invalid time format. Please provide valid HH:mm times (00:00 to 23:59).',
-      isOvernight: false,
-      grossDurationMinutes: 0,
-      breakMinutes: breakMinutes ?? 0,
-      netWorkingMinutes: 0,
-    };
+    return { valid: false, error: 'Invalid time format. Please provide valid HH:mm times (00:00 to 23:59).', isOvernight: false, grossDurationMinutes: 0, breakMinutes: breakMinutes ?? 0, netWorkingMinutes: 0 };
   }
-
-  // Negative break duration is strictly prohibited (0 is valid)
   if (breakMinutes < 0) {
-    return {
-      valid: false,
-      error: 'Break duration cannot be negative.',
-      isOvernight: false,
-      grossDurationMinutes: 0,
-      breakMinutes,
-      netWorkingMinutes: 0,
-    };
+    return { valid: false, error: 'Break duration cannot be negative.', isOvernight: false, grossDurationMinutes: 0, breakMinutes, netWorkingMinutes: 0 };
   }
 
   const [startH, startM] = startTime.split(':').map((v) => parseInt(v, 10));
   const [endH, endM] = endTime.split(':').map((v) => parseInt(v, 10));
-
   const startTotal = startH * 60 + startM;
   const endTotal = endH * 60 + endM;
 
   if (startTotal === endTotal) {
-    return {
-      valid: false,
-      error: 'Start Time and End Time cannot be identical. 24-hour single continuous shifts are invalid.',
-      isOvernight: false,
-      grossDurationMinutes: 0,
-      breakMinutes,
-      netWorkingMinutes: 0,
-    };
+    return { valid: false, error: 'Start Time and End Time cannot be identical. 24-hour single continuous shifts are invalid.', isOvernight: false, grossDurationMinutes: 0, breakMinutes, netWorkingMinutes: 0 };
   }
 
-  let grossDurationMinutes: number;
-  let isOvernight = false;
+  const isOvernight = endTotal <= startTotal;
+  const grossDurationMinutes = isOvernight ? 24 * 60 - startTotal + endTotal : endTotal - startTotal;
+  const netWorkingMinutes = Math.max(0, grossDurationMinutes - (breakMinutes || 0));
 
-  if (endTotal > startTotal) {
-    grossDurationMinutes = endTotal - startTotal;
-    isOvernight = false;
-  } else {
-    // Crosses midnight
-    grossDurationMinutes = 24 * 60 - startTotal + endTotal;
-    isOvernight = true;
-  }
+  return { valid: true, isOvernight, grossDurationMinutes, breakMinutes: breakMinutes || 0, netWorkingMinutes };
+}
 
-  const normalizedBreak = isNaN(breakMinutes) ? 0 : breakMinutes;
+function formatRoleLabel(role?: string | null): string {
+  if (!role) return '';
+  return role.split('_').map((w) => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
+}
 
-  if (normalizedBreak >= grossDurationMinutes) {
-    return {
-      valid: false,
-      error: `Break duration (${normalizedBreak} mins) cannot equal or exceed gross shift duration (${grossDurationMinutes} mins).`,
-      isOvernight,
-      grossDurationMinutes,
-      breakMinutes: normalizedBreak,
-      netWorkingMinutes: 0,
-    };
-  }
+function formatTimestamp(iso?: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const dateStr = formatDisplayDate(d);
+  const timeStr = d.toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' });
+  return `${dateStr}, ${timeStr}`;
+}
 
-  const netWorkingMinutes = grossDurationMinutes - normalizedBreak;
-
-  if (netWorkingMinutes <= 0) {
-    return {
-      valid: false,
-      error: 'Net working duration must be greater than zero minutes.',
-      isOvernight,
-      grossDurationMinutes,
-      breakMinutes: normalizedBreak,
-      netWorkingMinutes: 0,
-    };
-  }
-
+/** Maps a backend Shift row onto the frontend `Shift` shape. */
+function toShift(raw: Record<string, any>): Shift {
+  const timing = calculateShiftTiming(raw.startTime, raw.endTime, raw.breakMinutes ?? 0);
   return {
-    valid: true,
-    isOvernight,
-    grossDurationMinutes,
-    breakMinutes: normalizedBreak,
-    netWorkingMinutes,
+    id: raw.id,
+    code: raw.code,
+    name: raw.name,
+    departmentId: raw.departmentId,
+    departmentName: raw.department?.name || '',
+    shiftType: raw.shiftType as ShiftType,
+    startTime: raw.startTime,
+    endTime: raw.endTime,
+    isOvernight: timing.isOvernight,
+    grossDurationMinutes: timing.grossDurationMinutes,
+    breakMinutes: raw.breakMinutes ?? 0,
+    netWorkingMinutes: timing.netWorkingMinutes,
+    defaultArrivalGraceMinutes: raw.defaultArrivalGraceMinutes ?? 0,
+    defaultEarlyExitToleranceMinutes: raw.defaultEarlyExitToleranceMinutes ?? 0,
+    defaultWeeklyOffDays: (raw.defaultWeeklyOffDays as Weekday[]) || [],
+    status: raw.isActive ? 'ACTIVE' : 'INACTIVE',
+    notes: raw.notes || '',
+    createdByUserId: raw.createdById || '',
+    createdByName: raw.createdByUser?.staff?.fullName || raw.createdByUser?.username || 'System',
+    createdByRole: formatRoleLabel(raw.createdByUser?.role),
+    createdAt: formatTimestamp(raw.createdAt),
+    updatedByUserId: raw.updatedById || '',
+    updatedByName: raw.updatedByUser?.staff?.fullName || raw.updatedByUser?.username || 'System',
+    updatedByRole: formatRoleLabel(raw.updatedByUser?.role),
+    updatedAt: formatTimestamp(raw.updatedAt),
+    statusChangedByUserId: undefined,
+    statusChangedByName: raw.statusChangedBy || undefined,
+    statusChangedAt: raw.statusChangedAt ? formatTimestamp(raw.statusChangedAt) : undefined,
   };
 }
 
+function toBackendPayload(data: ShiftFormData) {
+  return {
+    code: data.code.trim().toUpperCase(),
+    name: data.name.trim(),
+    departmentId: data.departmentId,
+    shiftType: data.shiftType,
+    startTime: data.startTime,
+    endTime: data.endTime,
+    breakMinutes: data.breakMinutes,
+    defaultArrivalGraceMinutes: data.defaultArrivalGraceMinutes,
+    defaultEarlyExitToleranceMinutes: data.defaultEarlyExitToleranceMinutes,
+    defaultWeeklyOffDays: data.defaultWeeklyOffDays || [],
+    notes: data.notes?.trim() || undefined,
+    isActive: data.status === 'ACTIVE',
+  };
+}
+
+let cachedShifts: Shift[] = [];
+
+export async function fetchShifts(): Promise<Shift[]> {
+  const res = await apiClient.get<{ data: Record<string, any>[] }>('/setup/shifts');
+  cachedShifts = res.data.data.map(toShift);
+  return cachedShifts;
+}
+
+export async function primeShiftsCache(): Promise<void> {
+  try {
+    await fetchShifts();
+  } catch {
+    // Leave cache empty; the Shift Management page itself will surface the real error on its own fetch.
+  }
+}
+
 export class ShiftService {
-  /**
-   * Load shifts from localStorage. Starts empty by default.
-   */
+  /** Synchronous read of the last real fetch — never localStorage. */
   static loadShifts(): Shift[] {
-    try {
-      if (typeof window === 'undefined') return [];
-      const stored = localStorage.getItem(SHIFT_STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) {
-          return parsed;
-        }
-      }
-    } catch (e) {
-      console.warn('Failed to load shifts from localStorage', e);
-    }
-    return [];
+    return cachedShifts;
   }
 
-  /**
-   * Persist shifts array to localStorage
-   */
-  static saveShifts(shifts: Shift[]): void {
-    try {
-      if (typeof window === 'undefined') return;
-      localStorage.setItem(SHIFT_STORAGE_KEY, JSON.stringify(shifts));
-    } catch (e) {
-      console.warn('Failed to save shifts to localStorage', e);
-    }
-  }
-
-  /**
-   * Query shifts with multi-criteria logical AND filtering
-   */
   static getShifts(filters?: ShiftFilterState): Shift[] {
     const list = ShiftService.loadShifts();
     if (!filters) return list;
 
     return list.filter((shift) => {
-      // 1. Search filter: Code, Name, or Department
       if (filters.searchTerm && filters.searchTerm.trim()) {
         const term = filters.searchTerm.trim().toLowerCase();
-        const matchesCode = shift.code.toLowerCase().includes(term);
-        const matchesName = shift.name.toLowerCase().includes(term);
-        const matchesDept = shift.departmentName.toLowerCase().includes(term);
-        if (!matchesCode && !matchesName && !matchesDept) {
+        if (!shift.code.toLowerCase().includes(term) && !shift.name.toLowerCase().includes(term) && !shift.departmentName.toLowerCase().includes(term)) {
           return false;
         }
       }
-
-      // 2. Department filter
-      if (filters.departmentId && filters.departmentId !== 'ALL') {
-        if (shift.departmentId !== filters.departmentId) {
-          return false;
-        }
-      }
-
-      // 3. Shift Type filter
-      if (filters.shiftType && filters.shiftType !== 'ALL') {
-        if (shift.shiftType !== filters.shiftType) {
-          return false;
-        }
-      }
-
-      // 4. Schedule filter (Day vs Overnight)
+      if (filters.departmentId && filters.departmentId !== 'ALL' && shift.departmentId !== filters.departmentId) return false;
+      if (filters.shiftType && filters.shiftType !== 'ALL' && shift.shiftType !== filters.shiftType) return false;
       if (filters.schedule && filters.schedule !== 'ALL') {
-        if (filters.schedule === 'DAY' && shift.isOvernight) {
-          return false;
-        }
-        if (filters.schedule === 'OVERNIGHT' && !shift.isOvernight) {
-          return false;
-        }
+        if (filters.schedule === 'DAY' && shift.isOvernight) return false;
+        if (filters.schedule === 'OVERNIGHT' && !shift.isOvernight) return false;
       }
-
-      // 5. Status filter
-      if (filters.status && filters.status !== 'ALL') {
-        if (shift.status !== filters.status) {
-          return false;
-        }
-      }
-
+      if (filters.status && filters.status !== 'ALL' && shift.status !== filters.status) return false;
       return true;
     });
   }
 
-  /**
-   * Get single shift by ID
-   */
   static getShiftById(id: string): Shift | undefined {
-    const list = ShiftService.loadShifts();
-    return list.find((s) => s.id === id);
+    return ShiftService.loadShifts().find((s) => s.id === id);
   }
 
-  /**
-   * Calculate live KPI metrics across the shift dataset
-   */
   static getKPIs(shifts?: Shift[]): ShiftKPIs {
     const dataset = shifts || ShiftService.loadShifts();
     const totalShifts = dataset.length;
     const activeShifts = dataset.filter((s) => s.status === 'ACTIVE').length;
     const overnightShifts = dataset.filter((s) => s.isOvernight).length;
-
-    // Distinct department IDs covered
-    const departmentIds = new Set(dataset.map((s) => s.departmentId).filter(Boolean));
-    const departmentsCovered = departmentIds.size;
-
-    return {
-      totalShifts,
-      activeShifts,
-      overnightShifts,
-      departmentsCovered,
-    };
+    const departmentsCovered = new Set(dataset.map((s) => s.departmentId).filter(Boolean)).size;
+    return { totalShifts, activeShifts, overnightShifts, departmentsCovered };
   }
 
-  /**
-   * Validate shift form data against business rules
-   */
-  static validateShift(
-    data: ShiftFormData,
-    existingShiftId?: string
-  ): { valid: boolean; errors: Record<string, string> } {
+  static validateShift(data: ShiftFormData, existingShiftId?: string): { valid: boolean; errors: Record<string, string> } {
     const errors: Record<string, string> = {};
     const shifts = ShiftService.loadShifts();
 
-    // 1. Shift Code
     const cleanCode = (data.code || '').trim().toUpperCase();
     if (!cleanCode) {
       errors.code = 'Shift Code is required.';
-    } else {
-      const codeExists = shifts.some(
-        (s) => s.code.toUpperCase() === cleanCode && s.id !== existingShiftId
-      );
-      if (codeExists) {
-        errors.code = `Shift Code "${cleanCode}" already exists. Shift codes must be globally unique.`;
-      }
+    } else if (shifts.some((s) => s.code.toUpperCase() === cleanCode && s.id !== existingShiftId)) {
+      errors.code = `Shift Code "${cleanCode}" already exists. Shift codes must be globally unique.`;
     }
 
-    // 2. Shift Name
     const cleanName = (data.name || '').trim();
-    if (!cleanName) {
-      errors.name = 'Shift Name is required.';
-    }
+    if (!cleanName) errors.name = 'Shift Name is required.';
 
-    // 3. Canonical Department
     if (!data.departmentId) {
       errors.departmentId = 'Department selection is required.';
     } else {
-      const departments = DepartmentService.getDepartments();
-      const matchedDept = departments.find((d) => d.id === data.departmentId);
+      const matchedDept = DepartmentService.getDepartmentById(data.departmentId);
       if (!matchedDept) {
         errors.departmentId = 'Selected department is invalid or does not exist.';
       } else if (!existingShiftId && matchedDept.status !== 'Active') {
-        // Only active departments may be selected for new shift
         errors.departmentId = `Department "${matchedDept.name}" is Inactive. Only Active departments may be assigned for new shifts.`;
       }
     }
 
-    // 4. Shift Type
     const validTypes: ShiftType[] = ['MORNING', 'EVENING', 'NIGHT', 'CUSTOM'];
     if (!data.shiftType || !validTypes.includes(data.shiftType)) {
       errors.shiftType = 'Valid Shift Type is required (Morning, Evening, Night, or Custom).';
     }
 
-    // 5. Timing & Duration Calculation
-    const timingCalc = calculateShiftTiming(
-      data.startTime,
-      data.endTime,
-      data.breakMinutes
-    );
-
+    const timingCalc = calculateShiftTiming(data.startTime, data.endTime, data.breakMinutes);
     if (!timingCalc.valid) {
       if (timingCalc.error?.includes('Break duration')) {
         errors.breakMinutes = timingCalc.error;
@@ -348,7 +249,6 @@ export class ShiftService {
       }
     }
 
-    // 6. Name duplicate in same department with identical timing & type
     if (cleanName && data.departmentId && timingCalc.valid) {
       const duplicateFound = shifts.some(
         (s) =>
@@ -364,195 +264,48 @@ export class ShiftService {
       }
     }
 
-    // 7. Arrival Grace & Early Exit Tolerance
-    if (data.defaultArrivalGraceMinutes < 0) {
-      errors.defaultArrivalGraceMinutes = 'Arrival grace cannot be negative.';
-    }
-    if (data.defaultEarlyExitToleranceMinutes < 0) {
-      errors.defaultEarlyExitToleranceMinutes = 'Early exit tolerance cannot be negative.';
-    }
+    if (data.defaultArrivalGraceMinutes < 0) errors.defaultArrivalGraceMinutes = 'Arrival grace cannot be negative.';
+    if (data.defaultEarlyExitToleranceMinutes < 0) errors.defaultEarlyExitToleranceMinutes = 'Early exit tolerance cannot be negative.';
 
-    return {
-      valid: Object.keys(errors).length === 0,
-      errors,
-    };
+    return { valid: Object.keys(errors).length === 0, errors };
   }
 
-  /**
-   * Create a new shift record. Strictly enforces human accountability via currentUser.
-   */
-  static createShift(data: ShiftFormData, currentUser: User | null): Shift {
-    if (!currentUser || !currentUser.id || !currentUser.name) {
-      throw new Error('Authenticated management user required.');
-    }
-
+  /** `POST /setup/shifts` */
+  static async createShift(data: ShiftFormData, currentUser: User | null): Promise<Shift> {
+    if (!currentUser) throw new Error('Authenticated management user required.');
     const validation = ShiftService.validateShift(data);
-    if (!validation.valid) {
-      const firstError = Object.values(validation.errors)[0];
-      throw new Error(firstError || 'Validation failed for shift creation.');
-    }
+    if (!validation.valid) throw new Error(Object.values(validation.errors)[0] || 'Validation failed for shift creation.');
 
-    const departments = DepartmentService.getDepartments();
-    const dept = departments.find((d) => d.id === data.departmentId);
-    const departmentName = dept ? dept.name : 'Unknown Department';
-
-    const timingCalc = calculateShiftTiming(
-      data.startTime,
-      data.endTime,
-      data.breakMinutes
-    );
-
-    const now = formatAuditTimestamp();
-    const id = `SHF-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-
-    const newShift: Shift = {
-      id,
-      code: data.code.trim().toUpperCase(),
-      name: data.name.trim(),
-      departmentId: data.departmentId,
-      departmentName,
-      shiftType: data.shiftType,
-      startTime: data.startTime,
-      endTime: data.endTime,
-      isOvernight: timingCalc.isOvernight,
-      grossDurationMinutes: timingCalc.grossDurationMinutes,
-      breakMinutes: timingCalc.breakMinutes,
-      netWorkingMinutes: timingCalc.netWorkingMinutes,
-      defaultArrivalGraceMinutes: Math.max(0, data.defaultArrivalGraceMinutes || 0),
-      defaultEarlyExitToleranceMinutes: Math.max(0, data.defaultEarlyExitToleranceMinutes || 0),
-      defaultWeeklyOffDays: data.defaultWeeklyOffDays || [],
-      status: data.status || 'ACTIVE',
-      notes: data.notes?.trim() || '',
-
-      createdByUserId: currentUser.id,
-      createdByName: currentUser.name,
-      createdByRole: currentUser.role,
-      createdAt: now,
-
-      updatedByUserId: currentUser.id,
-      updatedByName: currentUser.name,
-      updatedByRole: currentUser.role,
-      updatedAt: now,
-    };
-
-    const shifts = ShiftService.loadShifts();
-    shifts.unshift(newShift);
-    ShiftService.saveShifts(shifts);
-
-    return newShift;
+    const res = await apiClient.post<{ data: Record<string, any> }>('/setup/shifts', toBackendPayload(data));
+    const created = toShift(res.data.data);
+    cachedShifts = [created, ...cachedShifts];
+    return created;
   }
 
-  /**
-   * Update an existing shift record. Strictly enforces human accountability.
-   */
-  static updateShift(
-    id: string,
-    data: ShiftFormData,
-    currentUser: User | null
-  ): Shift {
-    if (!currentUser || !currentUser.id || !currentUser.name) {
-      throw new Error('Authenticated management user required.');
-    }
-
-    const shifts = ShiftService.loadShifts();
-    const existingIndex = shifts.findIndex((s) => s.id === id);
-    if (existingIndex === -1) {
-      throw new Error(`Shift record with ID "${id}" was not found.`);
-    }
-
+  /** `PATCH /setup/shifts/:id` */
+  static async updateShift(id: string, data: ShiftFormData, currentUser: User | null): Promise<Shift> {
+    if (!currentUser) throw new Error('Authenticated management user required.');
     const validation = ShiftService.validateShift(data, id);
-    if (!validation.valid) {
-      const firstError = Object.values(validation.errors)[0];
-      throw new Error(firstError || 'Validation failed for shift update.');
-    }
+    if (!validation.valid) throw new Error(Object.values(validation.errors)[0] || 'Validation failed for shift update.');
 
-    const existing = shifts[existingIndex];
-    const departments = DepartmentService.getDepartments();
-    const dept = departments.find((d) => d.id === data.departmentId);
-    // If department exists, update name; otherwise preserve historical departmentName
-    const departmentName = dept ? dept.name : existing.departmentName;
-
-    const timingCalc = calculateShiftTiming(
-      data.startTime,
-      data.endTime,
-      data.breakMinutes
-    );
-
-    const now = formatAuditTimestamp();
-    const statusChanged = data.status !== existing.status;
-
-    const updatedShift: Shift = {
-      ...existing,
-      code: data.code.trim().toUpperCase(),
-      name: data.name.trim(),
-      departmentId: data.departmentId,
-      departmentName,
-      shiftType: data.shiftType,
-      startTime: data.startTime,
-      endTime: data.endTime,
-      isOvernight: timingCalc.isOvernight,
-      grossDurationMinutes: timingCalc.grossDurationMinutes,
-      breakMinutes: timingCalc.breakMinutes,
-      netWorkingMinutes: timingCalc.netWorkingMinutes,
-      defaultArrivalGraceMinutes: Math.max(0, data.defaultArrivalGraceMinutes || 0),
-      defaultEarlyExitToleranceMinutes: Math.max(0, data.defaultEarlyExitToleranceMinutes || 0),
-      defaultWeeklyOffDays: data.defaultWeeklyOffDays || [],
-      status: data.status,
-      notes: data.notes?.trim() || '',
-
-      updatedByUserId: currentUser.id,
-      updatedByName: currentUser.name,
-      updatedByRole: currentUser.role,
-      updatedAt: now,
-
-      ...(statusChanged
-        ? {
-            statusChangedByUserId: currentUser.id,
-            statusChangedByName: currentUser.name,
-            statusChangedAt: now,
-          }
-        : {}),
-    };
-
-    shifts[existingIndex] = updatedShift;
-    ShiftService.saveShifts(shifts);
-
-    return updatedShift;
+    const res = await apiClient.patch<{ data: Record<string, any> }>(`/setup/shifts/${id}`, toBackendPayload(data));
+    const updated = toShift(res.data.data);
+    cachedShifts = cachedShifts.map((s) => (s.id === id ? updated : s));
+    return updated;
   }
 
-  /**
-   * Toggle shift status between ACTIVE and INACTIVE (No hard delete).
-   */
-  static toggleShiftStatus(id: string, currentUser: User | null): Shift {
-    if (!currentUser || !currentUser.id || !currentUser.name) {
-      throw new Error('Authenticated management user required.');
-    }
+  /** `PATCH /setup/shifts/:id` (isActive:true) or `POST /setup/shifts/:id/deactivate` */
+  static async toggleShiftStatus(id: string, currentUser: User | null): Promise<Shift> {
+    if (!currentUser) throw new Error('Authenticated management user required.');
+    const existing = ShiftService.getShiftById(id);
+    if (!existing) throw new Error(`Shift record with ID "${id}" was not found.`);
 
-    const shifts = ShiftService.loadShifts();
-    const existingIndex = shifts.findIndex((s) => s.id === id);
-    if (existingIndex === -1) {
-      throw new Error(`Shift record with ID "${id}" was not found.`);
-    }
-
-    const existing = shifts[existingIndex];
-    const newStatus = existing.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
-    const now = formatAuditTimestamp();
-
-    const updatedShift: Shift = {
-      ...existing,
-      status: newStatus,
-      updatedByUserId: currentUser.id,
-      updatedByName: currentUser.name,
-      updatedByRole: currentUser.role,
-      updatedAt: now,
-      statusChangedByUserId: currentUser.id,
-      statusChangedByName: currentUser.name,
-      statusChangedAt: now,
-    };
-
-    shifts[existingIndex] = updatedShift;
-    ShiftService.saveShifts(shifts);
-
-    return updatedShift;
+    const res =
+      existing.status === 'ACTIVE'
+        ? await apiClient.post<{ data: Record<string, any> }>(`/setup/shifts/${id}/deactivate`)
+        : await apiClient.patch<{ data: Record<string, any> }>(`/setup/shifts/${id}`, { isActive: true });
+    const updated = toShift(res.data.data);
+    cachedShifts = cachedShifts.map((s) => (s.id === id ? updated : s));
+    return updated;
   }
 }

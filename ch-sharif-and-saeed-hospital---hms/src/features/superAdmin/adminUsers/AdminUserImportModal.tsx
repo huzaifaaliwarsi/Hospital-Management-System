@@ -181,15 +181,18 @@ export const AdminUserImportModal: React.FC<AdminUserImportModalProps> = ({
     reader.readAsBinaryString(file);
   };
 
-  const handleExecuteImport = () => {
+  const handleExecuteImport = async () => {
     const valid = stagedRows.filter((r) => r.isValid);
     if (valid.length === 0) return;
 
     try {
-      const result = AdminUserService.executeAdminImport(valid, currentUser);
+      const result = await AdminUserService.executeAdminImport(valid, currentUser);
+      if (result.failures.length > 0) {
+        setUploadError(`${result.failures.length} row(s) failed to import:\n${result.failures.join('\n')}`);
+      }
       setGeneratedCredentials(result.credentials);
       setImportStep('credentials');
-      onImportComplete();
+      await onImportComplete();
     } catch (err: unknown) {
       if (err instanceof Error) {
         setUploadError(err.message);
