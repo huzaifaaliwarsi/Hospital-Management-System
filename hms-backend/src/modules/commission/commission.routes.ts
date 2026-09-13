@@ -1,15 +1,33 @@
 import { Router } from 'express';
+import { authorize } from '@/middleware/authorize';
+import { validate } from '@/middleware/validate';
+import { asyncHandler } from '@/shared/asyncHandler';
+import { commissionController as c } from './commission.controller';
+import * as s from './commission.schemas';
 
-/**
- * commission module — scaffold only. Business endpoints are implemented in a
- * later phase; see PROJECT_MASTER_SPEC.md §4 (module breakdown) and §8
- * (REST API specification) for the full endpoint inventory this module
- * will eventually carry.
- */
 const router = Router();
+const view = authorize('commission', 'view');
+const create = authorize('commission', 'create');
 
-router.get('/_scaffold', (_req, res) => {
-  res.json({ data: { module: 'commission', status: 'scaffolded' } });
-});
+router.get(
+  '/rules',
+  view,
+  validate({ query: s.listCommissionRulesQuerySchema }),
+  asyncHandler(c.listRules),
+);
+
+router.post(
+  '/rules',
+  create,
+  validate({ body: s.createCommissionRuleSchema }),
+  asyncHandler(c.createRule),
+);
+
+router.get(
+  '/accruals',
+  view,
+  validate({ query: s.listAccrualsQuerySchema }),
+  asyncHandler(c.listAccruals),
+);
 
 export default router;

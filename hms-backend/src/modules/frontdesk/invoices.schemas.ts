@@ -1,0 +1,95 @@
+import { z } from 'zod';
+
+export const invoiceIdParamsSchema = z.object({
+  id: z.string().uuid(),
+});
+
+export const encounterIdParamsSchema = z.object({
+  id: z.string().uuid(),
+});
+
+export const createEncounterSchema = z.object({
+  encounterType: z.enum(['OPD', 'OBSERVATION', 'EMERGENCY']).default('OPD'),
+  panelPatientId: z.string().uuid().optional(),
+  selfPayEncounterId: z.string().uuid().optional(),
+  // Inline temporary patient creation if neither ID is passed
+  newSelfPayPatient: z
+    .object({
+      fullName: z.string().min(1).max(150),
+      guardianName: z.string().max(150).optional(),
+      gender: z.string().optional(),
+      dob: z.coerce.date().optional(),
+      cnicOrPassport: z.string().optional(),
+      phone: z.string().optional(),
+      address: z.string().optional(),
+    })
+    .optional(),
+  departmentId: z.string().uuid().optional(),
+  doctorStaffId: z.string().uuid().optional(),
+  notes: z.string().optional(),
+}).refine(
+  (data) => data.panelPatientId || data.selfPayEncounterId || data.newSelfPayPatient,
+  { message: 'Either panelPatientId, selfPayEncounterId, or newSelfPayPatient is required' },
+);
+
+export type CreateEncounterBody = z.infer<typeof createEncounterSchema>;
+
+export const addServiceLineSchema = z.object({
+  serviceRateId: z.string().uuid(),
+  quantity: z.coerce.number().positive().default(1),
+  manualRateOverride: z.coerce.number().positive().optional(),
+  overrideReason: z.string().optional(),
+  discountPercent: z.coerce.number().min(0).max(100).optional(),
+  discountAmount: z.coerce.number().min(0).optional(),
+  discountReason: z.string().optional(),
+  performedByStaffId: z.string().uuid().optional(), // Doctor performing the service
+});
+
+export type AddServiceLineBody = z.infer<typeof addServiceLineSchema>;
+
+export const applyDiscountSchema = z.object({
+  lineItemId: z.string().uuid().optional(), // If targeting a specific line item
+  discountPercent: z.coerce.number().min(0).max(100).optional(),
+  discountAmount: z.coerce.number().min(0).optional(),
+  discountReason: z.string().min(1, 'Reason for discount is required'),
+}).refine(
+  (data) => (data.discountPercent !== undefined && data.discountPercent > 0) || (data.discountAmount !== undefined && data.discountAmount > 0),
+  { message: 'Either discountPercent or discountAmount must be greater than zero' },
+);
+
+export type ApplyDiscountBody = z.infer<typeof applyDiscountSchema>;
+
+export const approveDiscountSchema = z.object({
+  discountApprovalNotes: z.string().optional(),
+});
+
+export type ApproveDiscountBody = z.infer<typeof approveDiscountSchema>;
+
+export const collectPaymentSchema = z.object({
+  amount: z.coerce.number().positive('Payment amount must be greater than zero'),
+  paymentMethod: z.enum(['CASH', 'CARD', 'BANK', 'ONLINE']).default('CASH'),
+  reference: z.string().optional(),
+});
+
+export type CollectPaymentBody = z.infer<typeof collectPaymentSchema>;
+
+export const refundPaymentSchema = z.object({
+  paymentReceiptId: z.string().uuid().optional(),
+  amount: z.coerce.number().positive('Refund amount must be greater than zero'),
+  refundMethod: z.enum(['CASH', 'CARD', 'BANK', 'ONLINE']).default('CASH'),
+  reason: z.string().min(1, 'Refund reason is mandatory'),
+});
+
+export type RefundPaymentBody = z.infer<typeof refundPaymentSchema>;
+
+export const listInvoicesQuerySchema = z.object({
+  sourceType: z.enum(['APPOINTMENT', 'WALK_IN', 'ADMISSION']).optional(),
+  encounterType: z.enum(['OPD', 'OBSERVATION', 'EMERGENCY']).optional(),
+  status: z.enum(['UNPAID', 'PARTIALLY_PAID', 'PAID', 'VOID']).optional(),
+  panelPatientId: z.string().uuid().optional(),
+  selfPayEncounterId: z.string().uuid().optional(),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  search: z.string().optional(),
+});
+
+export type ListInvoicesQuery = z.infer<typeof listInvoicesQuerySchema>;

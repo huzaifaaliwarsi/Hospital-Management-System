@@ -26,22 +26,61 @@ const policy: Policy = {
     identity: new Set(fullAccess),
     setup: new Set(fullAccess),
     frontdesk: new Set(fullAccess),
+    commission: new Set(fullAccess),
+    cash: new Set(fullAccess),
+    admission: new Set(fullAccess),
+    inventory: new Set(fullAccess),
+    pharmacy: new Set(fullAccess),
+    'pharmacy-bridge': new Set(fullAccess),
   },
   ADMIN: {
     identity: new Set(fullAccess),
     setup: new Set(fullAccess),
     frontdesk: new Set(fullAccess),
+    commission: new Set(fullAccess),
+    cash: new Set(fullAccess),
+    admission: new Set(fullAccess),
+    inventory: new Set(fullAccess),
+    pharmacy: new Set(fullAccess),
+    'pharmacy-bridge': new Set(fullAccess),
   },
   // Read-only oversight of Hospital Setup (§3.3 matrix: Admission = "V (read-only)").
   ADMISSION: {
     setup: new Set<Action>(['view']),
     frontdesk: new Set<Action>(['view']),
+    admission: new Set(fullAccess),
+    'pharmacy-bridge': new Set<Action>(['view']),
   },
   // Front Desk/Billing: full patient-registry CRUD (§3.3), read-only Setup
   // (services/wards/panels are read in the billing flow, §8.4/§8.7).
   FRONT_DESK_BILLING: {
     setup: new Set<Action>(['view']),
     frontdesk: new Set(fullAccess),
+    cash: new Set<Action>(['view', 'create']),
+    commission: new Set<Action>(['view']),
+    admission: new Set<Action>(['view', 'edit']),
+  },
+  INVENTORY_MANAGEMENT: {
+    setup: new Set<Action>(['view']),
+    inventory: new Set(fullAccess),
+    cash: new Set<Action>(['view', 'create']),
+  },
+  PHARMACY_SUPER_ADMIN: {
+    setup: new Set<Action>(['view']),
+    pharmacy: new Set(fullAccess),
+    'pharmacy-bridge': new Set(fullAccess),
+    cash: new Set<Action>(['view', 'create']),
+  },
+  PHARMACY_MANAGER: {
+    setup: new Set<Action>(['view']),
+    pharmacy: new Set(fullAccess),
+    'pharmacy-bridge': new Set(fullAccess),
+    cash: new Set<Action>(['view', 'create']),
+  },
+  PHARMACY_SALES_DISPENSING: {
+    setup: new Set<Action>(['view']),
+    pharmacy: new Set<Action>(['view', 'create']),
+    'pharmacy-bridge': new Set<Action>(['view', 'create']),
   },
 };
 

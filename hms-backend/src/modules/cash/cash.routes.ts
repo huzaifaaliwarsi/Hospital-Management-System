@@ -1,15 +1,13 @@
 import { Router } from 'express';
+import { authorize } from '@/middleware/authorize';
+import { asyncHandler } from '@/shared/asyncHandler';
+import { cashController as c } from './cash.controller';
 
-/**
- * cash module — scaffold only. Business endpoints are implemented in a
- * later phase; see PROJECT_MASTER_SPEC.md §4 (module breakdown) and §8
- * (REST API specification) for the full endpoint inventory this module
- * will eventually carry.
- */
 const router = Router();
+const view = authorize('cash', 'view');
 
-router.get('/_scaffold', (_req, res) => {
-  res.json({ data: { module: 'cash', status: 'scaffolded' } });
-});
+// Cashier's own balance sheet (§8.12)
+router.get('/balance-sheet', view, asyncHandler(c.getMyBalanceSheet));
+router.get('/balance-sheet/:userId', view, asyncHandler(c.getUserBalanceSheet));
 
 export default router;

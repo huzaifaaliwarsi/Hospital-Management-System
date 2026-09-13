@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
 import { NotFoundError } from '@/shared/errors/AppError';
 import type {
@@ -35,7 +36,7 @@ export const setupService = {
     const existing = await this.getHospitalProfile();
     return prisma.hospitalProfile.update({
       where: { id: existing.id },
-      data: { ...body, updatedBy },
+      data: { ...body, updatedBy } as unknown as Prisma.HospitalProfileUpdateInput,
     });
   },
 
@@ -153,7 +154,7 @@ export const setupService = {
 
   // ── shared existence guard ───────────────────────────────────────────
   async assertExists(model: 'department' | 'serviceRate' | 'ward' | 'room' | 'bed' | 'corporatePanel', id: string) {
-    const record = await (prisma[model] as { findUnique: (args: { where: { id: string } }) => Promise<unknown> })
+    const record = await (prisma[model] as unknown as { findUnique: (args: { where: { id: string } }) => Promise<unknown> })
       .findUnique({ where: { id } });
     if (!record) throw new NotFoundError(`${model} not found`);
     return record;

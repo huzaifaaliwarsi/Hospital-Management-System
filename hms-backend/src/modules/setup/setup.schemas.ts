@@ -56,6 +56,7 @@ export const createWardSchema = z.object({
 });
 export type CreateWardBody = z.infer<typeof createWardSchema>;
 export const updateWardSchema = createWardSchema.partial();
+export type UpdateWardBody = z.infer<typeof updateWardSchema>;
 
 export const createRoomSchema = z.object({
   wardId: z.string().uuid(),
@@ -64,6 +65,7 @@ export const createRoomSchema = z.object({
 });
 export type CreateRoomBody = z.infer<typeof createRoomSchema>;
 export const updateRoomSchema = createRoomSchema.partial();
+export type UpdateRoomBody = z.infer<typeof updateRoomSchema>;
 
 export const createBedSchema = z.object({
   roomId: z.string().uuid(),

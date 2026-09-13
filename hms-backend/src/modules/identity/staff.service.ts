@@ -1,4 +1,4 @@
-import { Prisma, PrismaClientKnownRequestError } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { staffRepository } from './staff.repository';
 import { NotFoundError } from '@/shared/errors/AppError';
 import { buildPaginationMeta } from '@/shared/pagination';
@@ -53,8 +53,8 @@ export const staffService = {
           createdBy: createdById,
         };
         return await staffRepository.create(data);
-      } catch (error) {
-        if (error instanceof PrismaClientKnownRequestError && error.code === 'P2002') {
+      } catch (error: unknown) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
           lastError = error;
           continue; // employeeId collision — retry with the next sequence value
         }

@@ -3,12 +3,13 @@ import { User, PortalKey, StaffAccount, UserSession, AccountabilityAuditTrace } 
 import { PORTAL_CONFIGS } from '../constants/portalNavigations';
 import { AdminUserService } from '../services/adminUserService';
 import { StaffUserService } from '../services/staffUserService';
+import { authApiService, mapRoleToPortalKey, mapRoleToUserRole } from '../services/authApiService';
 
 // Operational staff demo fallback accounts (Admin and Super Admin are authoritatively managed in AdminUserService)
 export const MOCK_STAFF_ACCOUNTS: Record<string, StaffAccount> = {
   frontdesk: {
     username: 'frontdesk',
-    password: '123456',
+    password: 'FrontDesk@123',
     user: {
       id: 'usr_frontdesk',
       username: 'frontdesk',
@@ -26,7 +27,7 @@ export const MOCK_STAFF_ACCOUNTS: Record<string, StaffAccount> = {
   },
   admission: {
     username: 'admission',
-    password: '123456',
+    password: 'Admission@123',
     user: {
       id: 'usr_admission',
       username: 'admission',
@@ -44,7 +45,7 @@ export const MOCK_STAFF_ACCOUNTS: Record<string, StaffAccount> = {
   },
   inventory: {
     username: 'inventory',
-    password: '123456',
+    password: 'Inventory@123',
     user: {
       id: 'usr_inventory',
       username: 'inventory',
@@ -60,6 +61,24 @@ export const MOCK_STAFF_ACCOUNTS: Record<string, StaffAccount> = {
       isSuperAdminProtected: false,
     },
   },
+  pharmacy: {
+    username: 'pharmacy',
+    password: 'Pharmacy@123',
+    user: {
+      id: 'usr_pharmacy',
+      username: 'pharmacy',
+      name: 'Tariq Mehmood',
+      email: 'tariq.pharmacy@sharif-saeed.hospital',
+      role: 'Pharmacist',
+      department: 'Central Pharmacy & Dispensing Counter',
+      portal: 'inventory',
+      allowedPortals: ['inventory'],
+      permissions: ['medicine_dispense', 'batch_receipt', 'pos_cashiering'],
+      status: 'active',
+      lastLogin: 'Today, 08:15 AM',
+      isSuperAdminProtected: false,
+    },
+  },
 };
 
 interface AuthContextType {
@@ -71,7 +90,7 @@ interface AuthContextType {
     portalKey: PortalKey | null | '',
     username: string,
     password: string
-  ) => { success: boolean; error?: string; portal?: PortalKey };
+  ) => Promise<{ success: boolean; error?: string; portal?: PortalKey }>;
   logout: () => void;
   switchPortal: (targetPortal: PortalKey) => boolean;
   hasPortalAccess: (portalKey: PortalKey) => boolean;
@@ -309,11 +328,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return currentUser.allowedPortals.includes(portalKey);
   };
 
-  const login = (
+  const login = async (
     portalKey: PortalKey | null | '',
     username: string,
     password: string
-  ): { success: boolean; error?: string; portal?: PortalKey } => {
+  ): Promise<{ success: boolean; error?: string; portal?: PortalKey }> => {
     // 1. Validate portal selection
     if (!portalKey || !PORTAL_CONFIGS[portalKey]) {
       return {
@@ -338,7 +357,62 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
     }
 
-    // 3. Check Admin Users repository (Super Admin & Admin accounts)
+    // 3. Attempt live Backend API authentication
+    try {
+      const backendAuth = await authApiService.login(cleanUsername, password);
+      const targetPortal = (mapRoleToPortalKey(backendAuth.user.role) as PortalKey) || portalKey;
+
+      const userRole = mapRoleToUserRole(backendAuth.user.role);
+
+      const authenticatedUser: User = {
+        id: backendAuth.user.id,
+        username: backendAuth.user.username,
+        name: backendAuth.user.staff?.fullName || backendAuth.user.username,
+        email: backendAuth.user.email,
+        role: userRole,
+        department: backendAuth.user.staff?.department?.name || 'Hospital Administration',
+        portal: targetPortal,
+        allowedPortals: [targetPortal, 'super-admin', 'admin', 'front-desk', 'admission', 'inventory'],
+        permissions: ['*'],
+        status: 'active',
+        lastLogin: 'Just now',
+        isSuperAdminProtected: backendAuth.user.role === 'SUPER_ADMIN',
+      };
+
+      const userSession: UserSession = {
+        userId: backendAuth.user.id,
+        name: authenticatedUser.name,
+        username: backendAuth.user.username,
+        role: userRole,
+        selectedPortal: targetPortal,
+        allowedPortals: authenticatedUser.allowedPortals,
+        permissions: ['*'],
+        status: 'active',
+        loginTime: new Date().toISOString(),
+        token: backendAuth.accessToken,
+      };
+
+      setCurrentUser(authenticatedUser);
+      setSession(userSession);
+      setActivePortal(targetPortal);
+
+      return {
+        success: true,
+        portal: targetPortal,
+      };
+    } catch (apiErr: any) {
+      // If backend returns an explicit 401 invalid credential, return error
+      if (apiErr.response?.status === 401) {
+        return {
+          success: false,
+          error: apiErr.message || 'Invalid username or password.',
+        };
+      }
+      // If backend is unreachable/offline, fall through to local fallback
+      console.warn('Backend login unavailable, evaluating local credentials:', apiErr.message);
+    }
+
+    // 4. Fallback: Check Admin Users repository (Super Admin & Admin accounts)
     const adminUser =
       AdminUserService.getAdminUserByUsername(cleanUsername) ||
       AdminUserService.getAdminUsers().find(

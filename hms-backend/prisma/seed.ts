@@ -149,12 +149,61 @@ async function seedAdmin() {
   console.log(`Bootstrap Admin created: ${user.email} (must reset password on first login).`);
 }
 
+async function seedStaffAccounts() {
+  const staffSeeds = [
+    {
+      username: 'frontdesk',
+      email: 'frontdesk@chss.example',
+      password: 'FrontDesk@123',
+      role: 'FRONT_DESK_BILLING' as const,
+    },
+    {
+      username: 'admission',
+      email: 'admission@chss.example',
+      password: 'Admission@123',
+      role: 'ADMISSION' as const,
+    },
+    {
+      username: 'inventory',
+      email: 'inventory@chss.example',
+      password: 'Inventory@123',
+      role: 'INVENTORY_MANAGEMENT' as const,
+    },
+    {
+      username: 'pharmacy',
+      email: 'pharmacy@chss.example',
+      password: 'Pharmacy@123',
+      role: 'PHARMACY_SALES_DISPENSING' as const,
+    },
+  ];
+
+  for (const s of staffSeeds) {
+    const existing = await prisma.portalUser.findFirst({
+      where: { OR: [{ username: s.username }, { email: s.email }] },
+    });
+    if (!existing) {
+      const passwordHash = await bcrypt.hash(s.password, 12);
+      await prisma.portalUser.create({
+        data: {
+          username: s.username,
+          email: s.email,
+          passwordHash,
+          role: s.role,
+          status: 'ACTIVE',
+        },
+      });
+      console.log(`Created portal account: ${s.username} (${s.role})`);
+    }
+  }
+}
+
 async function main() {
   await seedHospitalProfile();
   const departments = await seedDepartments();
   await seedWardsRoomsBeds(departments.GMED.id);
   await seedSuperAdmin();
   await seedAdmin();
+  await seedStaffAccounts();
 }
 
 main()

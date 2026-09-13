@@ -75,7 +75,7 @@ export const CentralHospitalLoginScreen: React.FC<CentralHospitalLoginScreenProp
     }
   };
 
-  const handleSignIn = (e: React.FormEvent) => {
+  const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
 
@@ -102,9 +102,9 @@ export const CentralHospitalLoginScreen: React.FC<CentralHospitalLoginScreenProp
 
     setIsLoading(true);
 
-    setTimeout(() => {
+    try {
+      const res = await login(selectedPortal, username, password);
       setIsLoading(false);
-      const res = login(selectedPortal, username, password);
 
       if (res.success && res.portal) {
         const portalConfig = PORTAL_CONFIGS[res.portal];
@@ -122,14 +122,19 @@ export const CentralHospitalLoginScreen: React.FC<CentralHospitalLoginScreenProp
         setErrorMessage(msg);
         toast.error(msg, 'Access Denied');
       }
-    }, 400);
+    } catch (err: any) {
+      setIsLoading(false);
+      const msg = err.message || 'Authentication failed. Please verify credentials.';
+      setErrorMessage(msg);
+      toast.error(msg, 'Access Denied');
+    }
   };
 
   const handleAutofill = (accountKey: string, portalKey: PortalKey) => {
     if (accountKey === 'superadmin') {
       setSelectedPortal('super-admin');
       setUsername('superadmin');
-      setPassword('123456');
+      setPassword('SuperAdmin@123');
       setErrorMessage(null);
       toast.info('Selected Super Administrator Workstation (superadmin)');
       return;
@@ -137,9 +142,41 @@ export const CentralHospitalLoginScreen: React.FC<CentralHospitalLoginScreenProp
     if (accountKey === 'admin') {
       setSelectedPortal('admin');
       setUsername('admin');
-      setPassword('123456');
+      setPassword('Admin@123');
       setErrorMessage(null);
       toast.info('Selected Hospital Administrator Workstation (admin)');
+      return;
+    }
+    if (accountKey === 'frontdesk') {
+      setSelectedPortal('front-desk');
+      setUsername('frontdesk');
+      setPassword('FrontDesk@123');
+      setErrorMessage(null);
+      toast.info('Selected Front Desk & Cashiering Workstation (frontdesk)');
+      return;
+    }
+    if (accountKey === 'admission') {
+      setSelectedPortal('admission');
+      setUsername('admission');
+      setPassword('Admission@123');
+      setErrorMessage(null);
+      toast.info('Selected Inpatient Admission Workstation (admission)');
+      return;
+    }
+    if (accountKey === 'inventory') {
+      setSelectedPortal('inventory');
+      setUsername('inventory');
+      setPassword('Inventory@123');
+      setErrorMessage(null);
+      toast.info('Selected Inventory & Procurement Workstation (inventory)');
+      return;
+    }
+    if (accountKey === 'pharmacy') {
+      setSelectedPortal('inventory');
+      setUsername('pharmacy');
+      setPassword('Pharmacy@123');
+      setErrorMessage(null);
+      toast.info('Selected Pharmacy Sales Workstation (pharmacy)');
       return;
     }
     const acc = MOCK_STAFF_ACCOUNTS[accountKey];
@@ -489,6 +526,15 @@ export const CentralHospitalLoginScreen: React.FC<CentralHospitalLoginScreenProp
                   >
                     <div className="font-semibold text-[#111827] text-xs">Inventory</div>
                     <div className="text-[10px] text-[#8b9e95]">User: inventory</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleAutofill('pharmacy', 'inventory')}
+                    className="p-1.5 text-left rounded-md bg-white hover:bg-[#e7f6f1] border border-[#e2eae5] hover:border-[#c2e7db] transition-colors cursor-pointer"
+                  >
+                    <div className="font-semibold text-[#111827] text-xs">Pharmacy</div>
+                    <div className="text-[10px] text-[#8b9e95]">User: pharmacy</div>
                   </button>
                 </div>
               </div>

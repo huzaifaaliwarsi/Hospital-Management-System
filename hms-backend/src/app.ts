@@ -14,6 +14,8 @@ import authRoutes from '@/modules/identity/auth.routes';
 import identityRoutes from '@/modules/identity/identity.routes';
 import setupRoutes from '@/modules/setup/setup.routes';
 import patientsRoutes from '@/modules/frontdesk/patients.routes';
+import appointmentsRoutes from '@/modules/frontdesk/appointments.routes';
+import { encountersRouter, invoicesRouter } from '@/modules/frontdesk/invoices.routes';
 import attendanceRoutes from '@/modules/attendance/attendance.routes';
 import payrollRoutes from '@/modules/payroll/payroll.routes';
 import commissionRoutes from '@/modules/commission/commission.routes';
@@ -54,6 +56,9 @@ export function createApp() {
   app.use('/api/v1/staff', identityRoutes);
   app.use('/api/v1/setup', setupRoutes);
   app.use('/api/v1/patients', patientsRoutes);
+  app.use('/api/v1/appointments', appointmentsRoutes);
+  app.use('/api/v1/encounters', encountersRouter);
+  app.use('/api/v1/invoices', invoicesRouter);
   app.use('/api/v1/attendance', attendanceRoutes);
   app.use('/api/v1/payroll', payrollRoutes);
   app.use('/api/v1/commission', commissionRoutes);
