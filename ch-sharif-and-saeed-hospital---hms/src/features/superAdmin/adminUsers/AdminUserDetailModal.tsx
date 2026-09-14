@@ -132,10 +132,13 @@ export const AdminUserDetailModal: React.FC<AdminUserDetailModalProps> = ({
 
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
               <span className="text-[10.5px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
-                User ID
+                Admin Code / ID
               </span>
-              <span className="font-mono text-xs font-bold text-slate-800">
-                {user.id}
+              <span className="font-mono text-xs font-bold text-[#08775A] bg-[#effaf5] px-2 py-0.5 rounded border border-[#c2e7db] inline-block">
+                {user.employeeCode || `ADM-${user.id.slice(0, 8).toUpperCase()}`}
+              </span>
+              <span className="text-[10px] text-slate-400 font-mono block mt-1 truncate" title={user.id}>
+                UUID: {user.id}
               </span>
             </div>
 

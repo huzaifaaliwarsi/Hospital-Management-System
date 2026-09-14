@@ -188,15 +188,17 @@ export const AdminUsersTable: React.FC<AdminUsersTableProps> = ({
                     className="hover:bg-slate-50/80 transition-colors group"
                   >
                     {/* User ID */}
-                    <td className="py-2.5 px-3.5 font-mono font-bold text-slate-900 whitespace-nowrap">
-                      {u.id}
+                    <td className="py-2.5 px-3.5 whitespace-nowrap">
+                      <span className="font-mono font-bold text-xs text-[#08775A] bg-[#effaf5] px-2.5 py-1 rounded-md border border-[#c2e7db]">
+                        {u.employeeCode || `ADM-${u.id.slice(0, 8).toUpperCase()}`}
+                      </span>
                     </td>
 
-                    {/* Admin Name & Code */}
+                    {/* Admin Name */}
                     <td className="py-2.5 px-3.5 whitespace-nowrap">
                       <div className="flex items-center gap-2">
                         <div className="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center font-bold text-[10px] text-slate-700 shrink-0 border border-slate-200">
-                          {u.fullName.charAt(0)}
+                          {u.fullName.charAt(0).toUpperCase()}
                         </div>
                         <div>
                           <div className="font-bold text-slate-900 flex items-center gap-1.5">
@@ -216,11 +218,6 @@ export const AdminUsersTable: React.FC<AdminUsersTableProps> = ({
                               </span>
                             )}
                           </div>
-                          {u.employeeCode && (
-                            <div className="text-[10px] text-slate-400 font-mono">
-                              {u.employeeCode}
-                            </div>
-                          )}
                         </div>
                       </div>
                     </td>

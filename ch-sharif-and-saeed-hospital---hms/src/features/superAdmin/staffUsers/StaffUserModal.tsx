@@ -49,7 +49,7 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
   // Form state
   const [formData, setFormData] = useState<StaffUserFormValues>({
     fullName: '',
-    employeeCode: '',
+    employeeCode: StaffUserService.getNextNumericEmployeeCode(),
     fatherGuardianName: '',
     cnic: '',
     phone: '',
@@ -67,6 +67,7 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
     password: '',
     confirmPassword: '',
     requirePasswordChange: false,
+    doctorSponsoredDiscountTrackingEnabled: false,
   });
 
   const [showPassword, setShowPassword] = useState(false);
@@ -101,12 +102,13 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
         password: '',
         confirmPassword: '',
         requirePasswordChange: editingStaff.requirePasswordChange || false,
+        doctorSponsoredDiscountTrackingEnabled: editingStaff.doctorSponsoredDiscountTrackingEnabled || false,
       });
     } else {
       const defaultDept = activeDepartments[0] || departments[0];
       setFormData({
         fullName: '',
-        employeeCode: '',
+        employeeCode: StaffUserService.getNextNumericEmployeeCode(),
         fatherGuardianName: '',
         cnic: '',
         phone: '',
@@ -124,6 +126,7 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
         password: '',
         confirmPassword: '',
         requirePasswordChange: true,
+        doctorSponsoredDiscountTrackingEnabled: false,
       });
     }
     setErrors({});
@@ -183,17 +186,17 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
       newErrors.fullName = 'Full Name is required.';
     }
 
-    if (!formData.employeeCode.trim()) {
-      newErrors.employeeCode = 'Employee Code is required.';
-    } else if (StaffUserService.isEmployeeCodeDuplicate(formData.employeeCode, editingStaff?.id)) {
-      newErrors.employeeCode = 'This Employee Code is already in use.';
-    }
-
     if (!formData.phone.trim()) {
       newErrors.phone = 'Phone number is required.';
+    } else if (!StaffUserService.isValidPhone(formData.phone)) {
+      newErrors.phone = 'Phone must be an 11-digit Pakistani mobile number (e.g. 0300-1234567 or 03133940940).';
     }
 
-    if (formData.cnic.trim() && !StaffUserService.isValidCNIC(formData.cnic)) {
+    if (formData.email?.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email.trim())) {
+      newErrors.email = 'Please enter a valid email address.';
+    }
+
+    if (formData.cnic?.trim() && !StaffUserService.isValidCNIC(formData.cnic)) {
       newErrors.cnic = 'CNIC must follow format xxxxx-xxxxxxx-x.';
     }
 
@@ -355,21 +358,23 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
 
               {/* Employee Code */}
               <div>
-                <label className="block text-xs font-semibold text-[#52665e] mb-1">
-                  Employee Code <span className="text-red-500">*</span>
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-[#52665e]">
+                    Employee Code
+                  </label>
+                  <span className="text-[10px] font-bold text-[#08775A] bg-[#effaf5] px-1.5 py-0.5 rounded border border-[#c2e7db]">
+                    Auto-Generated (Numbers Only)
+                  </span>
+                </div>
                 <input
                   type="text"
+                  readOnly
                   value={formData.employeeCode}
-                  onChange={(e) => setFormData({ ...formData, employeeCode: e.target.value })}
-                  placeholder="e.g. EMP-FD-05"
-                  className={`w-full px-3 py-2 bg-[#f6f8f7] border rounded-lg text-xs font-mono uppercase text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#129b70]/20 ${
-                    errors.employeeCode ? 'border-red-500' : 'border-[#e2eae5] focus:border-[#129b70]'
-                  }`}
+                  className="w-full px-3 py-2 bg-slate-100 border border-[#e2eae5] rounded-lg text-xs font-mono font-bold text-[#08775A] cursor-not-allowed select-none"
                 />
-                {errors.employeeCode && (
-                  <p className="text-[10px] text-red-500 mt-1">{errors.employeeCode}</p>
-                )}
+                <p className="text-[10px] text-[#8b9e95] mt-1">
+                  System auto-assigns purely numeric sequential IDs (e.g. 1001, 1002).
+                </p>
               </div>
 
               {/* Father / Guardian Name */}
@@ -522,6 +527,28 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
                   ))}
                 </select>
               </div>
+
+              {/* v7.2 Doctor-Sponsored Discount Tracking (HMS_V7.2_NEW_REQUIREMENTS.md §2.3/§3.1) */}
+              {formData.staffCategory === 'Doctor' && (
+                <div className="sm:col-span-2 flex items-start gap-2.5 p-3 bg-[#f6f8f7] border border-[#e2eae5] rounded-lg">
+                  <input
+                    type="checkbox"
+                    id="doctorSponsoredDiscountTrackingEnabled"
+                    checked={formData.doctorSponsoredDiscountTrackingEnabled}
+                    onChange={(e) =>
+                      setFormData({ ...formData, doctorSponsoredDiscountTrackingEnabled: e.target.checked })
+                    }
+                    className="mt-0.5 h-3.5 w-3.5 rounded text-[#08775A] focus:ring-[#08775A] cursor-pointer"
+                  />
+                  <label htmlFor="doctorSponsoredDiscountTrackingEnabled" className="text-xs cursor-pointer">
+                    <span className="font-semibold text-[#111827] block">Doctor-Sponsored Discount Tracking</span>
+                    <span className="text-[11px] text-[#52665e]">
+                      When this doctor gives a patient a discount, it's tracked as Doctor-Sponsored and deducted from this
+                      doctor's own commission payable — not treated as a generic hospital discount.
+                    </span>
+                  </label>
+                </div>
+              )}
 
               {/* Status */}
               <div>

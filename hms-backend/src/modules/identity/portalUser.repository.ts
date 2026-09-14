@@ -100,7 +100,10 @@ export const portalUserRepository = {
     });
   },
 
-  delete(id: string) {
-    return prisma.portalUser.delete({ where: { id } });
+  async delete(id: string) {
+    return prisma.$transaction(async (tx) => {
+      await tx.refreshToken.deleteMany({ where: { portalUserId: id } });
+      return tx.portalUser.delete({ where: { id } });
+    });
   },
 };

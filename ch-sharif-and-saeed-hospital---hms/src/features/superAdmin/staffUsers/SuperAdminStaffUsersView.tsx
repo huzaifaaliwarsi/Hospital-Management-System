@@ -18,7 +18,7 @@ import {
   StaffStatus,
 } from '../../../types/staffUser';
 import { StaffUserService, fetchStaffUsers } from '../../../services/staffUserService';
-import { DepartmentService } from '../../../services/departmentService';
+import { DepartmentService, fetchDepartments } from '../../../services/departmentService';
 import { Department } from '../../../types/department';
 import { useAuth } from '../../../context/AuthContext';
 import { StaffUsersKPIBar } from './StaffUsersKPIBar';
@@ -27,6 +27,8 @@ import { StaffUsersTable } from './StaffUsersTable';
 import { StaffUserModal } from './StaffUserModal';
 import { StaffUserDetailModal } from './StaffUserDetailModal';
 import { StaffUserResetPasswordModal } from './StaffUserResetPasswordModal';
+import { ClinicalAuthModal } from './ClinicalAuthModal';
+import { SalaryProfileModal } from './SalaryProfileModal';
 import { StaffUserStatusModal } from './StaffUserStatusModal';
 import { StaffUserDeleteModal } from './StaffUserDeleteModal';
 import { StaffUserImportModal } from './StaffUserImportModal';
@@ -54,6 +56,8 @@ export const SuperAdminStaffUsersView: React.FC = () => {
   const [editingStaff, setEditingStaff] = useState<StaffUser | null>(null);
   const [viewingStaff, setViewingStaff] = useState<StaffUser | null>(null);
   const [resetPasswordStaff, setResetPasswordStaff] = useState<StaffUser | null>(null);
+  const [clinicalAuthStaff, setClinicalAuthStaff] = useState<StaffUser | null>(null);
+  const [salaryProfileStaff, setSalaryProfileStaff] = useState<StaffUser | null>(null);
   const [statusTarget, setStatusTarget] = useState<{
     staff: StaffUser;
     status: StaffStatus;
@@ -84,9 +88,11 @@ export const SuperAdminStaffUsersView: React.FC = () => {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const list = await fetchStaffUsers();
+      const [list, depts] = await Promise.all([
+        fetchStaffUsers(),
+        fetchDepartments(),
+      ]);
       setStaffList(list);
-      const depts = DepartmentService.getDepartments();
       setDepartments(depts);
     } catch (err: any) {
       setLoadError(err?.message || 'Failed to load staff users from the server.');
@@ -260,6 +266,8 @@ export const SuperAdminStaffUsersView: React.FC = () => {
         onView={(staff) => setViewingStaff(staff)}
         onEdit={(staff) => setEditingStaff(staff)}
         onResetPassword={(staff) => setResetPasswordStaff(staff)}
+        onClinicalAuth={(staff) => setClinicalAuthStaff(staff)}
+        onSalaryProfile={(staff) => setSalaryProfileStaff(staff)}
         onOpenStatusModal={(staff, targetStatus) =>
           setStatusTarget({ staff, status: targetStatus })
         }
@@ -309,6 +317,27 @@ export const SuperAdminStaffUsersView: React.FC = () => {
           }}
         />
       )}
+
+      {/* MODAL 3b: Clinical Discharge Authorization Modal (v7.2 §2.4) */}
+      <ClinicalAuthModal
+        isOpen={Boolean(clinicalAuthStaff)}
+        onClose={() => setClinicalAuthStaff(null)}
+        staff={clinicalAuthStaff}
+        onSuccess={() => {
+          showToast(`Clinical discharge authorization updated for ${clinicalAuthStaff?.fullName}.`);
+          refreshData();
+        }}
+      />
+
+      {/* MODAL 3c: Salary Profile Modal (v7.2 §2.7) */}
+      <SalaryProfileModal
+        isOpen={Boolean(salaryProfileStaff)}
+        onClose={() => setSalaryProfileStaff(null)}
+        staff={salaryProfileStaff}
+        onSuccess={() => {
+          showToast(`Salary profile saved for ${salaryProfileStaff?.fullName}.`);
+        }}
+      />
 
       {/* MODAL 4: Status Update Modal */}
       {statusTarget && (

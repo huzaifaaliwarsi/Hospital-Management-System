@@ -146,6 +146,8 @@ export const commissionService = {
         basis: body.basis,
         effectiveFrom: body.effectiveFrom,
         effectiveTo: body.effectiveTo ?? null,
+        commissionTaxMethod: body.commissionTaxMethod ?? null,
+        commissionTaxValue: body.commissionTaxValue != null ? new Decimal(body.commissionTaxValue) : null,
         createdById: actorId,
       },
       include: {

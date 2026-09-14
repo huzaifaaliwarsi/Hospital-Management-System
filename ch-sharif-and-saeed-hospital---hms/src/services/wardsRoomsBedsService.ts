@@ -243,7 +243,8 @@ export class WardsRoomsBedsService {
 
   static validateWardCode(code: string, currentId?: string): { isValid: boolean; message?: string } {
     const trimmed = code.trim().toUpperCase();
-    if (!trimmed) return { isValid: false, message: 'Ward code is required.' };
+    // Optional — left blank, the backend auto-generates a unique code.
+    if (!trimmed) return { isValid: true };
     if (!/^[A-Z0-9-]+$/.test(trimmed)) return { isValid: false, message: 'Code must be uppercase letters, numbers, and hyphens only.' };
     if (cachedWards.some((w) => w.code.toUpperCase() === trimmed && w.id !== currentId)) {
       return { isValid: false, message: `Ward code "${trimmed}" already exists.` };
@@ -253,7 +254,8 @@ export class WardsRoomsBedsService {
 
   static validateRoomCode(code: string, currentId?: string): { isValid: boolean; message?: string } {
     const trimmed = code.trim().toUpperCase();
-    if (!trimmed) return { isValid: false, message: 'Room code is required.' };
+    // Optional — left blank, the backend auto-generates a unique code.
+    if (!trimmed) return { isValid: true };
     if (!/^[A-Z0-9-]+$/.test(trimmed)) return { isValid: false, message: 'Code must be uppercase letters, numbers, and hyphens only.' };
     if (cachedRooms.some((r) => r.code.toUpperCase() === trimmed && r.id !== currentId)) {
       return { isValid: false, message: `Room code "${trimmed}" already exists.` };
@@ -263,7 +265,8 @@ export class WardsRoomsBedsService {
 
   static validateBedCode(code: string, currentId?: string): { isValid: boolean; message?: string } {
     const trimmed = code.trim().toUpperCase();
-    if (!trimmed) return { isValid: false, message: 'Bed code is required.' };
+    // Optional — left blank, the backend auto-generates a unique code.
+    if (!trimmed) return { isValid: true };
     if (!/^[A-Z0-9-]+$/.test(trimmed)) return { isValid: false, message: 'Code must be uppercase letters, numbers, and hyphens only.' };
     if (cachedBeds.some((b) => b.code.toUpperCase() === trimmed && b.id !== currentId)) {
       return { isValid: false, message: `Bed code "${trimmed}" already exists.` };
@@ -310,8 +313,14 @@ export class WardsRoomsBedsService {
     return cachedWards.find((w) => w.id === id)!;
   }
 
-  static async deleteWard(_id: string): Promise<{ success: boolean; message?: string }> {
-    return { success: false, message: 'Wards cannot be permanently deleted for data-integrity reasons. Please deactivate it instead.' };
+  static async deleteWard(id: string): Promise<{ success: boolean; message?: string }> {
+    try {
+      await apiClient.delete(`/setup/wards-rooms-beds/wards/${id}`);
+      await fetchWardHierarchy();
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, message: err?.message || 'Failed to delete ward.' };
+    }
   }
 
   // ── Rooms ──────────────────────────────────────────────────────────
@@ -351,8 +360,14 @@ export class WardsRoomsBedsService {
     return cachedRooms.find((r) => r.id === id)!;
   }
 
-  static async deleteRoom(_id: string): Promise<{ success: boolean; message?: string }> {
-    return { success: false, message: 'Rooms cannot be permanently deleted for data-integrity reasons. Please deactivate it instead.' };
+  static async deleteRoom(id: string): Promise<{ success: boolean; message?: string }> {
+    try {
+      await apiClient.delete(`/setup/wards-rooms-beds/rooms/${id}`);
+      await fetchWardHierarchy();
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, message: err?.message || 'Failed to delete room.' };
+    }
   }
 
   // ── Beds ───────────────────────────────────────────────────────────
@@ -388,8 +403,14 @@ export class WardsRoomsBedsService {
     return cachedBeds.find((b) => b.id === id)!;
   }
 
-  static async deleteBed(_id: string): Promise<{ success: boolean; message?: string }> {
-    return { success: false, message: 'Beds cannot be permanently deleted for data-integrity reasons. Please decommission it instead.' };
+  static async deleteBed(id: string): Promise<{ success: boolean; message?: string }> {
+    try {
+      await apiClient.delete(`/setup/wards-rooms-beds/beds/${id}`);
+      await fetchWardHierarchy();
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, message: err?.message || 'Failed to delete bed.' };
+    }
   }
 
   // ── Aggregates ─────────────────────────────────────────────────────
@@ -433,16 +454,17 @@ export class WardsRoomsBedsService {
       const location = String(r['Location'] || r['location'] || '').trim();
       const status = String(r['Status'] || r['status'] || 'Active').trim();
 
-      if (!wardCode) {
-        errors.push('Ward Code is required.');
-      } else if (!/^[A-Z0-9-]+$/.test(wardCode)) {
-        errors.push('Ward Code must contain uppercase alphanumeric and hyphens only.');
-      } else if (existingCodes.has(wardCode)) {
-        errors.push(`Ward Code "${wardCode}" already exists.`);
-      } else if (batchCodes.has(wardCode)) {
-        errors.push(`Duplicate Ward Code "${wardCode}" within import file.`);
-      } else {
-        batchCodes.add(wardCode);
+      // Ward Code is optional — left blank, the backend auto-generates a unique one.
+      if (wardCode) {
+        if (!/^[A-Z0-9-]+$/.test(wardCode)) {
+          errors.push('Ward Code must contain uppercase alphanumeric and hyphens only.');
+        } else if (existingCodes.has(wardCode)) {
+          errors.push(`Ward Code "${wardCode}" already exists.`);
+        } else if (batchCodes.has(wardCode)) {
+          errors.push(`Duplicate Ward Code "${wardCode}" within import file.`);
+        } else {
+          batchCodes.add(wardCode);
+        }
       }
 
       if (!wardName) errors.push('Ward Name is required.');
@@ -530,16 +552,17 @@ export class WardsRoomsBedsService {
       const dailyRoomRate = parseFloat(r['Daily Room Rate (PKR)'] || r['dailyRoomRate'] || '3500');
       const status = String(r['Status'] || r['status'] || 'Active').trim();
 
-      if (!roomCode) {
-        errors.push('Room Code is required.');
-      } else if (!/^[A-Z0-9-]+$/.test(roomCode)) {
-        errors.push('Room Code must contain uppercase alphanumeric and hyphens only.');
-      } else if (existingCodes.has(roomCode)) {
-        errors.push(`Room Code "${roomCode}" already exists.`);
-      } else if (batchCodes.has(roomCode)) {
-        errors.push(`Duplicate Room Code "${roomCode}" in import.`);
-      } else {
-        batchCodes.add(roomCode);
+      // Room Code is optional — left blank, the backend auto-generates a unique one.
+      if (roomCode) {
+        if (!/^[A-Z0-9-]+$/.test(roomCode)) {
+          errors.push('Room Code must contain uppercase alphanumeric and hyphens only.');
+        } else if (existingCodes.has(roomCode)) {
+          errors.push(`Room Code "${roomCode}" already exists.`);
+        } else if (batchCodes.has(roomCode)) {
+          errors.push(`Duplicate Room Code "${roomCode}" in import.`);
+        } else {
+          batchCodes.add(roomCode);
+        }
       }
 
       if (!roomNumber) errors.push('Room Number is required.');
@@ -629,16 +652,17 @@ export class WardsRoomsBedsService {
       const dailyBedRate = parseFloat(r['Daily Bed Rate (PKR)'] || r['dailyBedRate'] || '2000');
       const operationalStatus = String(r['Operational Status'] || r['operationalStatus'] || 'Active').trim();
 
-      if (!bedCode) {
-        errors.push('Bed Code is required.');
-      } else if (!/^[A-Z0-9-]+$/.test(bedCode)) {
-        errors.push('Bed Code must contain uppercase alphanumeric and hyphens only.');
-      } else if (existingCodes.has(bedCode)) {
-        errors.push(`Bed Code "${bedCode}" already exists.`);
-      } else if (batchCodes.has(bedCode)) {
-        errors.push(`Duplicate Bed Code "${bedCode}" in import.`);
-      } else {
-        batchCodes.add(bedCode);
+      // Bed Code is optional — left blank, the backend auto-generates a unique one.
+      if (bedCode) {
+        if (!/^[A-Z0-9-]+$/.test(bedCode)) {
+          errors.push('Bed Code must contain uppercase alphanumeric and hyphens only.');
+        } else if (existingCodes.has(bedCode)) {
+          errors.push(`Bed Code "${bedCode}" already exists.`);
+        } else if (batchCodes.has(bedCode)) {
+          errors.push(`Duplicate Bed Code "${bedCode}" in import.`);
+        } else {
+          batchCodes.add(bedCode);
+        }
       }
 
       if (!bedNumber) errors.push('Bed Number is required.');

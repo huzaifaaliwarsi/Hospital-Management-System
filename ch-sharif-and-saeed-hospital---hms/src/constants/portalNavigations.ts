@@ -100,6 +100,8 @@ export const CANONICAL_HOSPITAL_MANAGEMENT_NAV_GROUPS: NavGroup[] = [
       { id: 'departments', label: 'Departments', icon: 'Building' },
       { id: 'services_rates', label: 'Services & Rates', icon: 'Stethoscope' },
       { id: 'wards_rooms_beds', label: 'Wards / Rooms / Beds', icon: 'Bed' },
+      { id: 'outsourced_providers', label: 'Outsourced Providers', icon: 'Truck' },
+      { id: 'high_cost_medicine_policy', label: 'High-Cost Medicine Policy', icon: 'ShieldAlert' },
     ],
   },
   {
@@ -141,6 +143,7 @@ export const CANONICAL_HOSPITAL_MANAGEMENT_NAV_GROUPS: NavGroup[] = [
       { id: 'outstanding_balances', label: 'Outstanding Balances', icon: 'AlertCircle' },
       { id: 'expenses', label: 'Expenses', icon: 'TrendingDown' },
       { id: 'petty_cash_advances', label: 'Petty Cash / Advances', icon: 'Wallet' },
+      { id: 'provider_settlements', label: 'Department Payables / Provider Settlements', icon: 'Landmark' },
       { id: 'balance_sheets', label: 'Balance Sheets', icon: 'FileSpreadsheet' },
       { id: 'account_settlements', label: 'Account Settlements', icon: 'CheckSquare' },
     ],
@@ -210,6 +213,7 @@ export const FRONT_DESK_NAV_GROUPS: NavGroup[] = [
     id: 'fd_patient_flow',
     title: 'PATIENT FLOW',
     items: [
+      { id: 'new_admission', label: 'New Admission', icon: 'BedDouble', badge: 'v7.2', badgeVariant: 'success' },
       { id: 'appointments', label: 'Appointments', icon: 'Clock' },
       { id: 'walk_in_intake', label: 'Walk-In / Encounter Intake', icon: 'Users' },
       { id: 'opd', label: 'OPD', icon: 'Stethoscope', badge: 'Active' },
@@ -222,6 +226,7 @@ export const FRONT_DESK_NAV_GROUPS: NavGroup[] = [
     title: 'BILLING',
     items: [
       { id: 'hospital_invoices', label: 'Hospital Invoices', icon: 'FileSpreadsheet' },
+      { id: 'billing_pending_discharges', label: 'Billing Pending Discharges', icon: 'ClipboardCheck', badge: 'v7.2', badgeVariant: 'success' },
       { id: 'admission_payment_requests', label: 'Admission Payment Requests', icon: 'CreditCard' },
       { id: 'payments_receipts', label: 'Payments / Receipts', icon: 'Receipt' },
       { id: 'discounts', label: 'Discounts', icon: 'Tag' },

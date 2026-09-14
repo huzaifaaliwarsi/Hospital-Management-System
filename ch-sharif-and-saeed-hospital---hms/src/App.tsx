@@ -11,6 +11,7 @@ import { FrontDeskDashboard } from './features/dashboard/FrontDeskDashboard';
 import { AdmissionDashboard } from './features/dashboard/AdmissionDashboard';
 import { InventoryDashboard } from './features/dashboard/InventoryDashboard';
 import { SuperAdminModuleView } from './features/superAdmin/SuperAdminModuleView';
+import { FrontDeskModuleView } from './features/frontDesk/FrontDeskModuleView';
 import { ModulePlaceholderView } from './features/shared/ModulePlaceholderView';
 import { PortalArchitectureShowcase } from './features/shared/PortalArchitectureShowcase';
 import { DesignSystemShowcase } from './features/shared/DesignSystemShowcase';
@@ -162,6 +163,13 @@ const MainPortalRouter: React.FC = () => {
       ) : currentPortal === 'super-admin' || currentPortal === 'admin' ? (
         // Dedicated Super Admin & Admin shared hospital management views
         <SuperAdminModuleView
+          moduleId={currentModule}
+          moduleName={currentModuleName}
+          groupTitle={currentGroupTitle}
+        />
+      ) : currentPortal === 'front-desk' ? (
+        // Front Desk — real pages added incrementally (v7.2 §3.3), placeholder for the rest
+        <FrontDeskModuleView
           moduleId={currentModule}
           moduleName={currentModuleName}
           groupTitle={currentGroupTitle}

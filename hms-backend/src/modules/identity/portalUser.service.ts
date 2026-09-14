@@ -120,8 +120,18 @@ export const portalUserService = {
     await this.assertNotProtected(id, 'deleted');
     try {
       await portalUserRepository.delete(id);
-    } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') {
+    } catch (error: any) {
+      const msg = String(error?.message || '');
+      const code = String(error?.code || '');
+      const isFkError =
+        (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') ||
+        code === 'P2003' ||
+        code === '23001' ||
+        code === '23503' ||
+        msg.includes('foreign key constraint') ||
+        msg.includes('violates RESTRICT');
+
+      if (isFkError) {
         throw new ConflictError(
           'This account has linked activity (invoices, approvals, audit history) and cannot be deleted. Suspend it instead.',
         );

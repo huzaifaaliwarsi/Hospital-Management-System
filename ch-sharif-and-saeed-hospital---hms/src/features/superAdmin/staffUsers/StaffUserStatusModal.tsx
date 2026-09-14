@@ -79,7 +79,7 @@ export const StaffUserStatusModal: React.FC<StaffUserStatusModalProps> = ({
       return;
     }
 
-    const res = await StaffUserService.updateStaffStatus(staff.id, targetStatus, currentUser);
+    const res = await StaffUserService.updateStaffStatus(staff.id, targetStatus, currentUser, reason.trim());
     if (!res.success) {
       setError(res.error || 'Failed to update status.');
       return;

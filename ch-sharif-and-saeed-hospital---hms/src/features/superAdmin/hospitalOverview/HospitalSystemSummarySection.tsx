@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Layers,
   Users,
@@ -8,10 +8,12 @@ import {
   DoorOpen,
   Briefcase,
   ArrowRight,
+  RefreshCw,
 } from 'lucide-react';
 import { useRouter } from '../../../context/RouterContext';
 import {
-  MOCK_HOSPITAL_SYSTEM_AGGREGATES,
+  getHospitalSystemSummaryAggregates,
+  DEFAULT_HOSPITAL_SYSTEM_AGGREGATES,
 } from '../../../mocks/hospitalSummaryMock';
 import { HospitalSystemAggregateCounts } from '../../../types/hospital';
 
@@ -20,15 +22,39 @@ interface HospitalSystemSummarySectionProps {
 }
 
 export const HospitalSystemSummarySection: React.FC<HospitalSystemSummarySectionProps> = ({
-  aggregates = MOCK_HOSPITAL_SYSTEM_AGGREGATES,
+  aggregates: propAggregates,
 }) => {
   const { navigate } = useRouter();
+  const [data, setData] = useState<HospitalSystemAggregateCounts>(
+    propAggregates || DEFAULT_HOSPITAL_SYSTEM_AGGREGATES
+  );
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const loadAggregates = async () => {
+    setIsRefreshing(true);
+    try {
+      const live = await getHospitalSystemSummaryAggregates();
+      setData(live);
+    } catch (err) {
+      console.error('Failed to load live aggregates:', err);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    if (propAggregates) {
+      setData(propAggregates);
+    } else {
+      loadAggregates();
+    }
+  }, [propAggregates]);
 
   const summaryMetrics = [
     {
       id: 'departments',
       label: 'Departments',
-      count: aggregates.departments,
+      count: data.departments,
       subtext: 'Clinical & Diagnostics',
       icon: Layers,
       actionLabel: 'View Departments',
@@ -37,16 +63,16 @@ export const HospitalSystemSummarySection: React.FC<HospitalSystemSummarySection
     {
       id: 'doctors',
       label: 'Doctors',
-      count: aggregates.doctors,
+      count: data.doctors,
       subtext: 'Consultants & MOs',
       icon: Users,
       actionLabel: 'View Doctors',
-      route: '/super-admin/doctors',
+      route: '/super-admin/staff_users',
     },
     {
       id: 'staff',
       label: 'Staff Users',
-      count: aggregates.staffUsers,
+      count: data.staffUsers,
       subtext: 'Nursing, Pharmacy & Admin',
       icon: UserCheck,
       actionLabel: 'View Staff',
@@ -55,7 +81,7 @@ export const HospitalSystemSummarySection: React.FC<HospitalSystemSummarySection
     {
       id: 'wards',
       label: 'Inpatient Wards',
-      count: aggregates.inpatientWards,
+      count: data.inpatientWards,
       subtext: 'ICU, CCU, General & Private',
       icon: Building,
       actionLabel: 'View Wards & Beds',
@@ -64,7 +90,7 @@ export const HospitalSystemSummarySection: React.FC<HospitalSystemSummarySection
     {
       id: 'rooms',
       label: 'Hospital Rooms',
-      count: aggregates.hospitalRooms,
+      count: data.hospitalRooms,
       subtext: 'Single & Deluxe Suites',
       icon: DoorOpen,
       actionLabel: 'View Wards & Beds',
@@ -73,7 +99,7 @@ export const HospitalSystemSummarySection: React.FC<HospitalSystemSummarySection
     {
       id: 'beds',
       label: 'Total Beds',
-      count: aggregates.totalBeds,
+      count: data.totalBeds,
       subtext: 'Sanctioned Operating Beds',
       icon: Bed,
       actionLabel: 'View Wards & Beds',
@@ -82,7 +108,7 @@ export const HospitalSystemSummarySection: React.FC<HospitalSystemSummarySection
     {
       id: 'panels',
       label: 'Active Panels',
-      count: aggregates.activePanels,
+      count: data.activePanels,
       subtext: 'Insurance & Corporate TPA',
       icon: Briefcase,
       actionLabel: 'View Panels',
@@ -101,13 +127,26 @@ export const HospitalSystemSummarySection: React.FC<HospitalSystemSummarySection
           <div>
             <h3 className="text-sm font-bold text-[#111827]">Hospital System Summary</h3>
             <p className="text-[11px] text-[#52665e]">
-              System-generated operational aggregate counts. Read-only profile overview.
+              Real-time live operational aggregate counts from the database.
             </p>
           </div>
         </div>
-        <span className="text-[11px] font-semibold text-[#52665e] bg-[#f6faf8] px-2.5 py-1 rounded-md border border-[#e2eae5] self-start sm:self-auto">
-          Read-Only Aggregates
-        </span>
+
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <button
+            type="button"
+            onClick={loadAggregates}
+            disabled={isRefreshing}
+            className="p-1 text-[#52665e] hover:text-[#08775A] rounded hover:bg-[#f6faf8] transition-colors disabled:opacity-50 cursor-pointer"
+            title="Refresh Live Aggregates"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin text-[#08775A]' : ''}`} />
+          </button>
+          <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#08775A] bg-[#effaf5] px-2.5 py-1 rounded-md border border-[#c2e7db]">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#10b981] animate-pulse" />
+            Live Database Aggregates
+          </span>
+        </div>
       </div>
 
       {/* Grid of System Summary Cards */}
@@ -117,7 +156,7 @@ export const HospitalSystemSummarySection: React.FC<HospitalSystemSummarySection
           return (
             <div
               key={item.id}
-              className="p-3.5 rounded-xl bg-[#f6faf8] border border-[#e2eae5] flex flex-col justify-between hover:border-[#c2e7db] transition-colors group"
+              className="p-3.5 rounded-xl bg-[#f6faf8] border border-[#e2eae5] flex flex-col justify-between hover:border-[#c2e7db] hover:shadow-2xs transition-all group"
             >
               <div>
                 <div className="flex items-center justify-between text-[#8b9e95] mb-2">
@@ -126,7 +165,7 @@ export const HospitalSystemSummarySection: React.FC<HospitalSystemSummarySection
                   </span>
                   <Icon className="h-4 w-4 text-[#08775A] shrink-0" />
                 </div>
-                <div className="text-2xl font-bold text-[#111827] font-mono">
+                <div className="text-2xl font-bold text-[#111827] font-mono tracking-tight">
                   {item.count}
                 </div>
                 <span className="text-[10px] text-[#8b9e95] line-clamp-1 mt-0.5">

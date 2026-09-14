@@ -121,9 +121,18 @@ Priority order chosen by: (a) backend already ready = fastest real wins first, (
 ### 2.10 Reports pages (depends on Phase 1.4)
 - [ ] Wire `SuperAdminReportsView.tsx` per report type as each backend report endpoint lands
 
-### 2.11 Super Admin Dashboard (depends on Phase 1.5 and ideally all of Phase 2.1–2.9 being real)
-- [ ] Replace `superAdminDashboardData.ts` static data with a real fetch to the aggregation endpoint
-- [ ] Delete the static file once confirmed unused
+### 1.5 Dashboard aggregation endpoint(s) ✅ DONE (2026-09-14)
+- [x] Built real aggregation endpoint `GET /api/v1/reports/dashboard/super-admin` in `reports` module. Aggregates live master infrastructure counts (departments, staff, doctors, corporate panels, panel patients), bed metrics with live occupancy from `AdmissionRecord` and `Bed.status`, billing/invoices summaries, patient flows, inventory alerts from `StockItem` and `StockLedger`, and recent audit records from `AuditLog`.
+
+---
+
+## Phase 2 — Frontend rewiring (mock → real API), in priority order
+...
+### 2.11 Super Admin Dashboard ✅ DONE (2026-09-14)
+- [x] Created `src/services/dashboardService.ts` calling `/api/v1/reports/dashboard/super-admin` with in-memory caching.
+- [x] Rewired `SuperAdminDashboard.tsx` to fetch live data asynchronously on mount and date filter changes (`today`, `yesterday`, `this_week`, `this_month`, `custom`). Added live database connection badge, async syncing spinner, and error retry state.
+- [x] Bound KPI cards, global bed metrics, ward occupancy breakdown, inventory threshold alerts, attention required alerts, and recent audit activity table directly to live state.
+- [x] Full test suite passing (38/38 tests including new `tests/dashboard.test.ts`), `npm run typecheck` and frontend `npm run lint` clean.
 
 ## Phase 3 — Cleanup
 - [ ] Delete `services/setupApiService.ts` (orphaned/mismatched) once its intended purpose is covered by the rewired services above
@@ -136,6 +145,7 @@ Priority order chosen by: (a) backend already ready = fastest real wins first, (
 ## Execution log
 _(most recent first — one line per session/batch of work)_
 
+- **2026-09-14** — **Super Admin Dashboard real data integration complete**: Built `GET /api/v1/reports/dashboard/super-admin` aggregation endpoint, schemas, and service querying live PostgreSQL database. Created `services/dashboardService.ts` and rewired `SuperAdminDashboard.tsx` with live async loading, date filtering, live connection indicator, and error recovery. 38/38 vitest tests passing; frontend and backend typechecks 100% clean.
 - **2026-09-13 (session 1, continued)** — **All 8 audited Super Admin pages now have a fully real, backend-verified data layer**: Hospital Overview, Departments, Services & Rates, Wards/Rooms/Beds, Admin Users, Staff Users, Shift Management, and Panel Patient Registry (2.1–2.9 all done; 2.5 Corporate Panels data layer done, dedicated view screen still outstanding as the one remaining UI gap — see 2.5 notes). 11 Prisma migrations applied total this session. Every backend change verified with `npm run typecheck` + `npm run test` (37/37 passing throughout) and real `curl` round-trips against the live dev Postgres DB; every frontend change verified with `tsc --noEmit` clean. Also fixed two real bugs found along the way: a hardcoded age-calculation reference date in Patient Registry, and a session-restore regression the Admin/Staff Users rewrite would otherwise have introduced (users getting logged out on every page refresh) — see 2.7/2.8 notes.
 - **2026-09-13** — Phase 1 backend gaps closed: Portal User management module (`/api/v1/portal-users`) and Shift Master module (`/api/v1/setup/shifts`, new `Shift` Prisma model + migration) built and smoke-tested end-to-end against the live dev DB. `identity` typecheck/tests all green.
 - **2026-09-13** — Phase 0 complete (audit + this plan).

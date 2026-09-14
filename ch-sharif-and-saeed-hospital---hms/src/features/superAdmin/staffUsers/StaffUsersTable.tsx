@@ -12,6 +12,8 @@ import {
   ShieldAlert,
   ArrowUpDown,
   UserCheck,
+  Stethoscope,
+  Wallet,
 } from 'lucide-react';
 import { StaffUser } from '../../../types/staffUser';
 
@@ -20,6 +22,8 @@ interface StaffUsersTableProps {
   onView: (staff: StaffUser) => void;
   onEdit: (staff: StaffUser) => void;
   onResetPassword: (staff: StaffUser) => void;
+  onClinicalAuth: (staff: StaffUser) => void;
+  onSalaryProfile: (staff: StaffUser) => void;
   onOpenStatusModal: (staff: StaffUser, targetStatus: 'ACTIVE' | 'INACTIVE' | 'SUSPENDED') => void;
   onDelete: (staff: StaffUser) => void;
 }
@@ -29,6 +33,8 @@ export const StaffUsersTable: React.FC<StaffUsersTableProps> = ({
   onView,
   onEdit,
   onResetPassword,
+  onClinicalAuth,
+  onSalaryProfile,
   onOpenStatusModal,
   onDelete,
 }) => {
@@ -147,35 +153,29 @@ export const StaffUsersTable: React.FC<StaffUsersTableProps> = ({
                 </div>
               </th>
               <th
-                onClick={() => handleSort('employeeCode')}
+                onClick={() => handleSort('cnic')}
                 className="py-3 px-3 cursor-pointer hover:text-[#111827] transition-colors whitespace-nowrap"
               >
                 <div className="flex items-center gap-1">
-                  <span>Emp Code</span>
+                  <span>CNIC</span>
                   <ArrowUpDown className="h-3 w-3 text-[#8b9e95]" />
                 </div>
               </th>
               <th className="py-3 px-3 whitespace-nowrap">Designation</th>
               <th className="py-3 px-3 whitespace-nowrap">Department</th>
               <th className="py-3 px-3 whitespace-nowrap">Portal / Access</th>
-              <th className="py-3 px-3 whitespace-nowrap">Role</th>
-              <th className="py-3 px-3 whitespace-nowrap">Username</th>
               <th className="py-3 px-3 text-center whitespace-nowrap">Status</th>
-              <th className="py-3 px-3 whitespace-nowrap">Last Login</th>
-              <th className="py-3 px-3 whitespace-nowrap">Updated By</th>
               <th className="py-3 px-3 text-right whitespace-nowrap">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-[#e2eae5]/70 text-[#111827]">
+          <tbody className="divide-y divide-[#e2eae5] text-[#111827]">
             {paginatedList.length === 0 ? (
               <tr>
-                <td colSpan={12} className="py-12 text-center text-[#8b9e95]">
+                <td colSpan={8} className="py-12 text-center text-[#8b9e95]">
                   <div className="flex flex-col items-center justify-center gap-2">
                     <ShieldAlert className="h-8 w-8 text-[#8b9e95]" />
-                    <p className="font-semibold text-sm text-[#52665e]">No staff records found</p>
-                    <p className="text-xs text-[#8b9e95]">
-                      Try adjusting your search query or active filter settings.
-                    </p>
+                    <span className="font-medium text-sm text-[#52665e]">No staff records found</span>
+                    <span className="text-xs text-[#8b9e95]">Try adjusting your search or filters</span>
                   </div>
                 </td>
               </tr>
@@ -188,9 +188,11 @@ export const StaffUsersTable: React.FC<StaffUsersTableProps> = ({
                     key={staff.id}
                     className="hover:bg-[#fbfcfb] transition-colors group"
                   >
-                    {/* 1. Staff ID */}
-                    <td className="py-3 px-3.5 font-mono text-[11px] font-semibold text-[#0e7d5a]">
-                      {staff.id}
+                    {/* 1. Employee Code */}
+                    <td className="py-3 px-3.5 whitespace-nowrap">
+                      <span className="font-mono text-[11px] font-bold text-[#08775A] bg-[#effaf5] px-2 py-0.5 rounded border border-[#c2e7db]">
+                        {staff.employeeCode || `STF-${staff.id.slice(0, 8).toUpperCase()}`}
+                      </span>
                     </td>
 
                     {/* 2. Staff Name */}
@@ -199,9 +201,9 @@ export const StaffUsersTable: React.FC<StaffUsersTableProps> = ({
                       <div className="text-[11px] text-[#8b9e95]">{staff.phone}</div>
                     </td>
 
-                    {/* 3. Employee Code */}
-                    <td className="py-3 px-3 font-mono font-medium text-slate-700">
-                      {staff.employeeCode}
+                    {/* 3. CNIC */}
+                    <td className="py-3 px-3 font-mono text-slate-700 whitespace-nowrap">
+                      {staff.cnic || '—'}
                     </td>
 
                     {/* 4. Designation */}
@@ -274,6 +276,34 @@ export const StaffUsersTable: React.FC<StaffUsersTableProps> = ({
                             <KeyRound className="h-3.5 w-3.5" />
                           </button>
                         )}
+
+                        {/* v7.2 Clinical Discharge Authorization (doctors only) */}
+                        {staff.staffCategory === 'Doctor' && (
+                          <button
+                            onClick={() => onClinicalAuth(staff)}
+                            className={`p-1.5 rounded-md transition-colors cursor-pointer ${
+                              staff.clinicalAuthActive
+                                ? 'text-[#08775A] hover:bg-[#e7f6f1]'
+                                : 'text-[#52665e] hover:text-[#08775A] hover:bg-[#e7f6f1]'
+                            }`}
+                            title={
+                              staff.clinicalAuthUsername
+                                ? `Clinical Discharge Authorization — ${staff.clinicalAuthActive ? 'Active' : 'Inactive'}`
+                                : 'Set Up Clinical Discharge Authorization'
+                            }
+                          >
+                            <Stethoscope className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+
+                        {/* v7.2 Salary Profile */}
+                        <button
+                          onClick={() => onSalaryProfile(staff)}
+                          className="p-1.5 rounded-md text-[#52665e] hover:text-teal-700 hover:bg-teal-50 transition-colors cursor-pointer"
+                          title="Salary Profile"
+                        >
+                          <Wallet className="h-3.5 w-3.5" />
+                        </button>
 
                         {/* Status Toggles */}
                         {staff.status === 'ACTIVE' ? (

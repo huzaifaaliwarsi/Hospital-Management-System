@@ -115,4 +115,21 @@ export const staffRepository = {
       },
     });
   },
+
+  async delete(id: string) {
+    return prisma.$transaction(async (tx) => {
+      const portal = await tx.portalUser.findUnique({ where: { staffId: id } });
+      if (portal) {
+        await tx.refreshToken.deleteMany({ where: { portalUserId: portal.id } });
+        await tx.portalUser.delete({ where: { id: portal.id } });
+      }
+      await tx.department.updateMany({
+        where: { headStaffId: id },
+        data: { headStaffId: null },
+      });
+      await tx.staffEmploymentHistory.deleteMany({ where: { staffId: id } });
+      await tx.staffSalaryProfile.deleteMany({ where: { staffId: id } });
+      return tx.staff.delete({ where: { id } });
+    });
+  },
 };

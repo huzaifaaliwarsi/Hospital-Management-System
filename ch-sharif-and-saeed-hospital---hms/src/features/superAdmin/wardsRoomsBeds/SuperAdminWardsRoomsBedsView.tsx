@@ -171,14 +171,12 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
   };
 
   const handleDeleteWardPrompt = (w: Ward) => {
-    const hasRooms = (w.roomCount ?? 0) > 0;
-    const hasBeds = (w.bedCount ?? 0) > 0;
     const hasHistory = (w.historicalAdmissionCount ?? 0) > 0;
 
-    if (hasRooms || hasBeds || hasHistory) {
+    if (hasHistory) {
       showToast(
         'warning',
-        `Cannot delete Ward "${w.name}": Contains ${w.roomCount} room(s), ${w.bedCount} bed(s), or historical admissions. Deactivate it instead.`
+        `Cannot delete Ward "${w.name}": Contains historical admissions. Deactivate it instead.`
       );
       return;
     }
@@ -215,13 +213,12 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
   };
 
   const handleDeleteRoomPrompt = (r: Room) => {
-    const hasBeds = (r.bedsConfigured ?? 0) > 0;
     const hasHistory = (r.admissionLinkageCount ?? 0) > 0;
 
-    if (hasBeds || hasHistory) {
+    if (hasHistory) {
       showToast(
         'warning',
-        `Cannot delete Room "${r.name}": Contains ${r.bedsConfigured} configured bed(s) or historical admissions. Deactivate it instead.`
+        `Cannot delete Room "${r.name}": Contains historical admissions. Deactivate it instead.`
       );
       return;
     }
@@ -702,7 +699,7 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
               </p>
             </div>
             <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
-              This action cannot be undone. Only unlinked records with zero child items and zero admission records can be deleted.
+              This action cannot be undone. Records with active or historical patient admissions cannot be deleted. Deleting a ward or room will also remove its unassigned child beds.
             </div>
             <div className="flex items-center justify-end gap-2 pt-2">
               <button

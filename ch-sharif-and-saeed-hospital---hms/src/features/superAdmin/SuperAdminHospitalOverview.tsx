@@ -8,8 +8,9 @@ import {
   Loader2,
   AlertTriangle,
 } from 'lucide-react';
-import { HospitalProfile, DEFAULT_HOSPITAL_PROFILE } from '../../types/hospital';
+import { HospitalProfile, DEFAULT_HOSPITAL_PROFILE, HospitalSystemAggregateCounts } from '../../types/hospital';
 import { fetchHospitalProfile, saveHospitalProfile } from '../../services/hospitalProfileService';
+import { getHospitalSystemSummaryAggregates } from '../../mocks/hospitalSummaryMock';
 import { useToast } from '../../context/ToastContext';
 import { HospitalProfileSummaryCard } from './hospitalOverview/HospitalProfileSummaryCard';
 import { HospitalIdentitySection } from './hospitalOverview/HospitalIdentitySection';
@@ -25,6 +26,7 @@ import { PrintHospitalProfileModal } from './hospitalOverview/PrintHospitalProfi
 export const SuperAdminHospitalOverview: React.FC = () => {
   const toast = useToast();
   const [profile, setProfile] = useState<HospitalProfile>(DEFAULT_HOSPITAL_PROFILE);
+  const [aggregates, setAggregates] = useState<HospitalSystemAggregateCounts | undefined>(undefined);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -35,8 +37,12 @@ export const SuperAdminHospitalOverview: React.FC = () => {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const data = await fetchHospitalProfile();
-      setProfile(data);
+      const [profileData, aggregatesData] = await Promise.all([
+        fetchHospitalProfile(),
+        getHospitalSystemSummaryAggregates(),
+      ]);
+      setProfile(profileData);
+      setAggregates(aggregatesData);
     } catch (err: any) {
       setLoadError(err?.message || 'Failed to load hospital profile from the server.');
     } finally {
@@ -145,7 +151,7 @@ export const SuperAdminHospitalOverview: React.FC = () => {
       <HospitalBillingSection profile={profile} />
 
       {/* Section 6: Hospital System Summary */}
-      <HospitalSystemSummarySection />
+      <HospitalSystemSummarySection aggregates={aggregates} />
 
       {/* Section 7: Profile Information & Audit Trace */}
       <ProfileAuditSection profile={profile} />

@@ -34,6 +34,12 @@ export interface Department {
   admissionEnabled: boolean;
   pharmacyRelated: boolean;
 
+  // v7.2 department billing config (HMS_V7.2_NEW_REQUIREMENTS.md §2.1) —
+  // optional so pre-v7.2 mock/legacy fixtures don't need updating; absent = Internal.
+  fulfillmentOwnership?: 'Internal' | 'Outsourced';
+  outsourcedProviderId?: string;
+  outsourcedProviderName?: string;
+
   doctorCount: number;
   staffCount: number;
   serviceCount: number;
@@ -78,6 +84,8 @@ export interface DepartmentFormValues {
   emergencyEnabled: boolean;
   admissionEnabled: boolean;
   pharmacyRelated: boolean;
+  fulfillmentOwnership: 'Internal' | 'Outsourced';
+  outsourcedProviderId: string;
   status: 'Active' | 'Inactive';
 }
 

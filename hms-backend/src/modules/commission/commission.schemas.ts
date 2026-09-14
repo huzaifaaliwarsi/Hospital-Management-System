@@ -12,6 +12,10 @@ export const createCommissionRuleSchema = z.object({
   basis: z.enum(['GROSS', 'NET']).default('NET'),
   effectiveFrom: z.coerce.date(),
   effectiveTo: z.coerce.date().optional().nullable(),
+  // v7.2 Doctor Commission Tax (HMS_V7.2_NEW_REQUIREMENTS.md §2.7) —
+  // independent of any salary tax; effective-dated via this same rule.
+  commissionTaxMethod: z.enum(['PERCENTAGE', 'FIXED']).optional().nullable(),
+  commissionTaxValue: z.coerce.number().nonnegative().optional().nullable(),
 });
 
 export type CreateCommissionRuleBody = z.infer<typeof createCommissionRuleSchema>;

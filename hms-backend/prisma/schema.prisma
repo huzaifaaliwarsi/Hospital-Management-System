@@ -21,7 +21,8 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["omitApi"]
 }
 
 datasource db {
@@ -324,7 +325,24 @@ model Staff {
   notes              String?
   isActive           Boolean               @default(true) @map("is_active")
 
-  portalUser PortalUser?
+  // v7.2 Doctor Clinical Discharge Authorization (HMS_V7.2_NEW_REQUIREMENTS.md
+  // §2.4) — deliberately separate from `PortalUser` login: a doctor can be
+  // "Staff Record Only" (no portal account) and still hold discharge
+  // authorization. Password is never returned/printed/exported.
+  clinicalAuthUsername      String?      @unique @map("clinical_auth_username")
+  clinicalAuthPasswordHash  String?      @map("clinical_auth_password_hash")
+  clinicalAuthActive        Boolean      @default(false) @map("clinical_auth_active")
+  clinicalAuthUpdatedAt     DateTime?    @map("clinical_auth_updated_at")
+  clinicalAuthUpdatedById   String?      @map("clinical_auth_updated_by")
+  clinicalAuthUpdatedByUser PortalUser?  @relation("ClinicalAuthUpdatedBy", fields: [clinicalAuthUpdatedById], references: [id])
+
+  // v7.2 Doctor Staff Master "Discount rule" field (HMS_V7.2_NEW_REQUIREMENTS.md
+  // §3.1) — whether this doctor's patient discounts are tracked as
+  // Doctor-Sponsored (deducted from their commission payable) vs a generic
+  // hospital discount. Only meaningful for Doctor-category staff.
+  doctorSponsoredDiscountTrackingEnabled Boolean @default(false) @map("doctor_sponsored_discount_tracking_enabled")
+
+  portalUser PortalUser? @relation("StaffPortalUser")
 
   // reverse relations — actor attribution on other domains
   headOfDepartments     Department[]              @relation("DepartmentHead")
@@ -410,6 +428,12 @@ model StaffSalaryProfile {
   payrollDivisor   Int             @default(30) @map("payroll_divisor")
   deductionRules   Json            @default("{}") @map("deduction_rules") // {late:{...}, early_exit:{...}, absence:{...}}
   allowanceRules   Json            @default("{}") @map("allowance_rules")
+  // v7.2 Doctor Salary Tax (HMS_V7.2_NEW_REQUIREMENTS.md §2.7) — a stream
+  // fully independent of Commission Tax on `DoctorCommissionRule` below;
+  // NULL = no salary tax configured.
+  salaryTaxMethod       String?   @map("salary_tax_method") // PERCENTAGE | FIXED
+  salaryTaxValue        Decimal?  @map("salary_tax_value") @db.Decimal(14, 2)
+  salaryTaxEffectiveFrom DateTime? @map("salary_tax_effective_from") @db.Date
   effectiveFrom    DateTime        @map("effective_from") @db.Date
   effectiveTo      DateTime?       @map("effective_to") @db.Date // NULL = current
 
@@ -428,7 +452,7 @@ model StaffSalaryProfile {
 model PortalUser {
   id                String           @id @default(uuid())
   staffId           String?          @unique @map("staff_id")
-  staff             Staff?           @relation(fields: [staffId], references: [id])
+  staff             Staff?           @relation("StaffPortalUser", fields: [staffId], references: [id])
   username          String           @unique
   email             String?          @unique
   // Denormalized display name — used verbatim for accounts with no linked
@@ -502,6 +526,13 @@ model PortalUser {
   createdCommissionRules      DoctorCommissionRule[]    @relation("CommissionRuleCreatedBy")
   approvedCommissionAccruals  DoctorCommissionAccrual[] @relation("CommissionAccrualApprovedBy")
   paidCommissionPayouts       CommissionPayout[]        @relation("CommissionPayoutPaidBy")
+
+  // ── v7.2 additions (HMS_V7.2_NEW_REQUIREMENTS.md §2.1/§2.4/§2.6/§2.8) ──
+  createdOutsourcedProviders  OutsourcedProvider[]      @relation("OutsourcedProviderCreatedBy")
+  updatedOutsourcedProviders  OutsourcedProvider[]      @relation("OutsourcedProviderUpdatedBy")
+  settledProviderSettlements  ProviderSettlement[]      @relation("ProviderSettlementSettledBy")
+  updatedHighCostPolicies     HighCostMedicinePolicy[]  @relation("HighCostPolicyUpdatedBy")
+  clinicalAuthUpdatesForStaff Staff[]                   @relation("ClinicalAuthUpdatedBy")
 
   createdAt DateTime @default(now()) @map("created_at")
   createdBy String?  @map("created_by")
@@ -580,6 +611,13 @@ model Department {
   supportsEmergency   Boolean        @default(false) @map("supports_emergency")
   supportsAdmission   Boolean        @default(false) @map("supports_admission")
   pharmacyRelated     Boolean        @default(false) @map("pharmacy_related")
+  // v7.2 department billing config (HMS_V7.2_NEW_REQUIREMENTS.md §2.1) —
+  // whether this department's services are fulfilled in-house or by an
+  // external Outsourced Provider (Lab/Neurology etc.); drives §2.2's
+  // department sub-invoice ownership and §2.8's provider settlement.
+  fulfillmentOwnership DepartmentFulfillmentOwnership @default(INTERNAL) @map("fulfillment_ownership")
+  outsourcedProviderId String?             @map("outsourced_provider_id")
+  outsourcedProvider   OutsourcedProvider? @relation(fields: [outsourcedProviderId], references: [id])
   isActive            Boolean        @default(true) @map("is_active")
   statusChangedAt     DateTime?      @map("status_changed_at")
   // Readable "Name (Role)" label, not a relation — mirrors HospitalProfile's
@@ -602,8 +640,117 @@ model Department {
   AdmissionRecord        AdmissionRecord[]
   DepartmentRequisition  DepartmentRequisition[]
   StaffEmploymentHistory StaffEmploymentHistory[]
+  providerSettlements    ProviderSettlement[]
 
   @@map("departments")
+}
+
+enum DepartmentFulfillmentOwnership {
+  INTERNAL
+  OUTSOURCED
+}
+
+/// v7.2 Outsourced Provider Master (HMS_V7.2_NEW_REQUIREMENTS.md §2.1) —
+/// external Lab/Neurology/etc. providers a Department can be linked to
+/// when `fulfillmentOwnership = OUTSOURCED`. Settlement against this
+/// provider is tracked in `ProviderSettlement` (§2.8), against realized
+/// collections only — never merely billed amounts.
+model OutsourcedProvider {
+  id                        String   @id @default(uuid())
+  code                      String?  @unique
+  name                      String
+  representativeName        String?  @map("representative_name")
+  representativeDesignation String?  @map("representative_designation")
+  phone                     String?
+  email                     String?
+  address                   String?
+  paymentTermsNotes         String?  @map("payment_terms_notes")
+  settlementCycle           String?  @map("settlement_cycle") // e.g. Weekly / Monthly / On-Demand — hospital-configured, not enum-locked
+  allowedPaymentMethods     String[] @map("allowed_payment_methods") // subset of Cash / Bank Transfer / Cheque / Online
+  bankName                  String?  @map("bank_name")
+  bankAccountTitle          String?  @map("bank_account_title")
+  bankAccountNumber         String?  @map("bank_account_number")
+  chequePayeeName           String?  @map("cheque_payee_name")
+  withholdingTaxPercent     Decimal? @map("withholding_tax_percent") @db.Decimal(5, 2)
+  withholdingEffectiveFrom  DateTime? @map("withholding_effective_from") @db.Date
+  isActive                  Boolean  @default(true) @map("is_active")
+
+  departments Department[]
+  settlements ProviderSettlement[]
+
+  createdAt     DateTime    @default(now()) @map("created_at")
+  createdById   String?     @map("created_by")
+  createdByUser PortalUser? @relation("OutsourcedProviderCreatedBy", fields: [createdById], references: [id])
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+  updatedById   String?     @map("updated_by")
+  updatedByUser PortalUser? @relation("OutsourcedProviderUpdatedBy", fields: [updatedById], references: [id])
+
+  @@map("outsourced_providers")
+}
+
+enum ProviderSettlementStatus {
+  FULL
+  PARTIAL
+}
+
+/// v7.2 Provider Settlement ledger/voucher (HMS_V7.2_NEW_REQUIREMENTS.md
+/// §2.8). `eligibleRealizedAmount` is recorded by the settling user for now
+/// (Front Desk's department sub-invoice split — §2.2 — that would compute
+/// it automatically is future work; see the doc's Phase A/B split) —
+/// settlement amount can never exceed what's recorded as eligible.
+model ProviderSettlement {
+  id                         String                    @id @default(uuid())
+  outsourcedProviderId       String                    @map("outsourced_provider_id")
+  outsourcedProvider         OutsourcedProvider        @relation(fields: [outsourcedProviderId], references: [id])
+  departmentId               String?                   @map("department_id")
+  department                 Department?               @relation(fields: [departmentId], references: [id])
+  periodLabel                String?                   @map("period_label")
+  eligibleRealizedAmount     Decimal                   @map("eligible_realized_amount") @db.Decimal(14, 2)
+  alreadySettledAmount       Decimal                   @default(0) @map("already_settled_amount") @db.Decimal(14, 2)
+  settlementAmount           Decimal                   @map("settlement_amount") @db.Decimal(14, 2)
+  status                     ProviderSettlementStatus
+  paymentMethod              String                    @map("payment_method")
+  paymentReference           String?                   @map("payment_reference")
+  representativeName         String?                   @map("representative_name")
+  representativeDesignation  String?                   @map("representative_designation")
+  remarks                    String?
+
+  settledAt     DateTime    @default(now()) @map("settled_at")
+  settledById   String?     @map("settled_by")
+  settledByUser PortalUser? @relation("ProviderSettlementSettledBy", fields: [settledById], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([outsourcedProviderId])
+  @@index([departmentId])
+  @@map("provider_settlements")
+}
+
+enum HighCostAuthLogic {
+  ATTENDANT_ONLY
+  MANAGEMENT_ONLY
+  EITHER
+  BOTH
+}
+
+/// v7.2 High-Cost Medicine Authorization policy (HMS_V7.2_NEW_REQUIREMENTS.md
+/// §2.6) — singleton config, same pattern as `HospitalProfile`. Threshold is
+/// always management-configured, never hard-coded in application logic.
+model HighCostMedicinePolicy {
+  id                             String            @id @default(uuid())
+  enabled                        Boolean           @default(false)
+  thresholdAmount                Decimal           @default(0) @map("threshold_amount") @db.Decimal(14, 2)
+  thresholdBasis                 String            @default("LINE_TOTAL") @map("threshold_basis") // LINE_TOTAL | PER_UNIT
+  attendantConfirmationRequired  Boolean           @default(true) @map("attendant_confirmation_required")
+  managementApprovalRequired     Boolean           @default(true) @map("management_approval_required")
+  combinedLogic                  HighCostAuthLogic @default(BOTH) @map("combined_logic")
+  panelPreauthRequired           Boolean           @default(false) @map("panel_preauth_required")
+
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+  updatedById   String?     @map("updated_by")
+  updatedByUser PortalUser? @relation("HighCostPolicyUpdatedBy", fields: [updatedById], references: [id])
+
+  @@map("high_cost_medicine_policy")
 }
 
 /// §4.2 "Services & Rates" (renamed `ServiceRate` for this phase; = §6.5 `services`).
@@ -794,6 +941,14 @@ model PanelDiscountRule {
   serviceRateId    String         @map("service_rate_id")
   serviceRate      ServiceRate    @relation(fields: [serviceRateId], references: [id])
   discountPercent  Decimal        @map("discount_percent") @db.Decimal(5, 2)
+  // v7.2 Panel Management enhancements (HMS_V7.2_NEW_REQUIREMENTS.md §2.5) —
+  // `discountPercent` above stays as the legacy simple knock-off; these are
+  // additive and optional so existing rules keep working unchanged.
+  // coveragePercent is what the panel actually pays; the complement is the
+  // patient's co-pay share (Patient Share + Panel Receivable = Contract Amount).
+  coveragePercent          Decimal? @map("coverage_percent") @db.Decimal(5, 2)
+  preauthorizationRequired Boolean  @default(false) @map("preauthorization_required")
+  capAmount                Decimal? @map("cap_amount") @db.Decimal(14, 2)
   effectiveFrom    DateTime       @map("effective_from") @db.Date
   effectiveTo      DateTime?      @map("effective_to") @db.Date
 
@@ -1596,6 +1751,11 @@ model DoctorCommissionRule {
   ruleType      CommissionRuleType @map("rule_type")
   rate          Decimal            @db.Decimal(14, 2) // percentage (0-100) or fixed amount, per ruleType
   basis         CommissionBasis    @default(NET)
+  // v7.2 Doctor Commission Tax (HMS_V7.2_NEW_REQUIREMENTS.md §2.7) —
+  // deducted from commission payable, independent of `StaffSalaryProfile`'s
+  // salary tax above; effective-dated via this rule's own effectiveFrom/To.
+  commissionTaxMethod String?  @map("commission_tax_method") // PERCENTAGE | FIXED
+  commissionTaxValue  Decimal? @map("commission_tax_value") @db.Decimal(14, 2)
   effectiveFrom DateTime           @map("effective_from") @db.Date
   effectiveTo   DateTime?          @map("effective_to") @db.Date
 

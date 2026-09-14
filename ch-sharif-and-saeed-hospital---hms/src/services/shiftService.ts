@@ -138,7 +138,8 @@ function toShift(raw: Record<string, any>): Shift {
 
 function toBackendPayload(data: ShiftFormData) {
   return {
-    code: data.code.trim().toUpperCase(),
+    // Left blank, the backend auto-generates a unique code.
+    code: data.code.trim() ? data.code.trim().toUpperCase() : undefined,
     name: data.name.trim(),
     departmentId: data.departmentId,
     shiftType: data.shiftType,
@@ -214,10 +215,9 @@ export class ShiftService {
     const errors: Record<string, string> = {};
     const shifts = ShiftService.loadShifts();
 
+    // Code is optional — left blank, the backend auto-generates a unique one.
     const cleanCode = (data.code || '').trim().toUpperCase();
-    if (!cleanCode) {
-      errors.code = 'Shift Code is required.';
-    } else if (shifts.some((s) => s.code.toUpperCase() === cleanCode && s.id !== existingShiftId)) {
+    if (cleanCode && shifts.some((s) => s.code.toUpperCase() === cleanCode && s.id !== existingShiftId)) {
       errors.code = `Shift Code "${cleanCode}" already exists. Shift codes must be globally unique.`;
     }
 

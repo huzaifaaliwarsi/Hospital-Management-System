@@ -89,7 +89,7 @@ function toHospitalService(raw: Record<string, any>): HospitalService {
 
 function toBackendPayload(values: ServiceFormValues): Record<string, unknown> {
   return {
-    code: values.code.trim().toUpperCase(),
+    code: values.code.trim() ? values.code.trim().toUpperCase() : undefined,
     name: values.name.trim(),
     description: values.description?.trim() || undefined,
     departmentId: values.departmentId,
@@ -137,7 +137,8 @@ export class ServiceRatesService {
 
   static validateServiceCode(code: string, currentId?: string): { isValid: boolean; message?: string } {
     const trimmed = code.trim().toUpperCase();
-    if (!trimmed) return { isValid: false, message: 'Service code is required.' };
+    // Optional — left blank, the backend auto-generates a unique code.
+    if (!trimmed) return { isValid: true };
     const validPattern = /^[A-Z0-9-]+$/;
     if (!validPattern.test(trimmed)) {
       return { isValid: false, message: 'Code must contain uppercase letters, numbers, and hyphens only.' };
@@ -246,16 +247,17 @@ export class ServiceRatesService {
       const rawOverride = String(row.manual_rate_override_allowed || '').trim().toLowerCase();
       const rawStatus = String(row.status || 'Active').trim();
 
-      if (!rawCode) {
-        errors.push('Missing service code.');
-      } else if (!/^[A-Z0-9-]+$/.test(rawCode)) {
-        errors.push('Code must contain uppercase letters, numbers, and hyphens only.');
-      } else if (existingCodeSet.has(rawCode)) {
-        errors.push(`Service code "${rawCode}" already exists in master catalog.`);
-      } else if (seenFileCodes.has(rawCode)) {
-        errors.push(`Duplicate code "${rawCode}" found within uploaded file.`);
-      } else {
-        seenFileCodes.add(rawCode);
+      // Code is optional — left blank, the backend auto-generates a unique one.
+      if (rawCode) {
+        if (!/^[A-Z0-9-]+$/.test(rawCode)) {
+          errors.push('Code must contain uppercase letters, numbers, and hyphens only.');
+        } else if (existingCodeSet.has(rawCode)) {
+          errors.push(`Service code "${rawCode}" already exists in master catalog.`);
+        } else if (seenFileCodes.has(rawCode)) {
+          errors.push(`Duplicate code "${rawCode}" found within uploaded file.`);
+        } else {
+          seenFileCodes.add(rawCode);
+        }
       }
 
       if (!rawName) errors.push('Missing service name.');

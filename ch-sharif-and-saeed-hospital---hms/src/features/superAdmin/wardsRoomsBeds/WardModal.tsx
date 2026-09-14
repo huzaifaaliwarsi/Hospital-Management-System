@@ -74,8 +74,9 @@ export const WardModal: React.FC<WardModalProps> = ({
     const upper = val.toUpperCase().replace(/\s+/g, '-');
     setFormValues((prev) => ({ ...prev, code: upper }));
 
+    // Code is optional — left blank, the backend auto-generates a unique one.
     if (!upper) {
-      setCodeError('Ward code is required.');
+      setCodeError(null);
       return;
     }
     const check = WardsRoomsBedsService.validateWardCode(upper, ward?.id);
@@ -90,9 +91,7 @@ export const WardModal: React.FC<WardModalProps> = ({
     e.preventDefault();
     const newErrors: Record<string, string> = {};
 
-    if (!formValues.code.trim()) {
-      newErrors.code = 'Ward code is required.';
-    } else {
+    if (formValues.code.trim()) {
       const check = WardsRoomsBedsService.validateWardCode(formValues.code, ward?.id);
       if (!check.isValid) {
         newErrors.code = check.message || 'Duplicate or invalid code.';
@@ -146,14 +145,14 @@ export const WardModal: React.FC<WardModalProps> = ({
             {/* Ward Code */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Ward Code <span className="text-rose-500">*</span>
+                Ward Code
               </label>
               <input
                 id="ward-form-code"
                 type="text"
                 value={formValues.code}
                 onChange={(e) => handleCodeChange(e.target.value)}
-                placeholder="e.g. WRD-MED-01"
+                placeholder="e.g. WRD-MED-01 (optional — auto-generated if blank)"
                 className={`w-full px-3 py-2 text-xs font-mono font-medium rounded-lg border bg-white focus:outline-hidden focus:ring-2 transition-colors ${
                   codeError || errors.code
                     ? 'border-rose-300 focus:ring-rose-200 focus:border-rose-500'

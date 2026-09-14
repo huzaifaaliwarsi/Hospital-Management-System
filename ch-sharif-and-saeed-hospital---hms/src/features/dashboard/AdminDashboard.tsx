@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Users,
   UserCheck,
@@ -6,83 +6,107 @@ import {
   CreditCard,
   AlertCircle,
   Clock,
-  Building2,
-  Calendar,
-  DollarSign,
   TrendingUp,
   Stethoscope,
   ShieldAlert,
-  ArrowUpRight,
-  Pill,
-  Boxes,
   FileSpreadsheet,
 } from 'lucide-react';
-import { StatusBadge } from '../../components/common/StatusBadge';
-import { formatPKR } from '../../utils/formatters';
-import { HOSPITAL_INFO } from '../../constants';
 import { useRouter } from '../../context/RouterContext';
+import { dashboardService, ResolvedDashboardState } from '../../services/dashboardService';
+import { formatPKR } from '../../utils/formatters';
 
+/**
+ * Same screen/layout as before — every figure is now read from the live
+ * `GET /api/v1/reports/dashboard/super-admin` aggregation (the ADMIN role
+ * already has full `reports` access, see `authorize.ts`). Nothing here is
+ * hardcoded: doctor roster, ward occupancy, revenue, and stock alerts all
+ * come straight from the database.
+ */
 export const AdminDashboard: React.FC = () => {
   const { navigate } = useRouter();
+
+  const [data, setData] = useState<ResolvedDashboardState | null>(() => dashboardService.getCachedDashboard());
+  const [isLoading, setIsLoading] = useState<boolean>(!dashboardService.getCachedDashboard());
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const loadDashboard = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const result = await dashboardService.fetchSuperAdminDashboard('today');
+      setData(result);
+    } catch (err: any) {
+      setLoadError(err?.message || 'Failed to load live dashboard data from server.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadDashboard();
+  }, [loadDashboard]);
+
+  const infrastructure = data?.infrastructure;
+  const bedMetrics = data?.bedMetrics;
+  const billingSummary = data?.billingSummary;
+  const inventorySummary = data?.inventorySummary;
+  const patientFlow = data?.patientFlow || [];
+  const doctorsOnDuty = data?.doctorsOnDuty || [];
+  const flaggedStockItems = data?.flaggedStockItems || [];
+
+  const opdTotal = patientFlow.find((f) => f.category === 'OPD')?.total ?? 0;
+  const admissionTotal = patientFlow.find((f) => f.category === 'Admission')?.total ?? 0;
+  const emergencyTotal = patientFlow.find((f) => f.category === 'Emergency')?.total ?? 0;
+  const totalPatients = patientFlow.reduce((sum, f) => sum + (f.total || 0), 0);
+  const collectionsPercent =
+    billingSummary && billingSummary.netBilling > 0
+      ? Math.round((billingSummary.paidAmount / billingSummary.netBilling) * 100)
+      : 0;
+  const doctorsOnDutyCount = doctorsOnDuty.filter((d) => d.status === 'On Duty').length;
 
   const adminKpis = [
     {
       title: 'Doctors On Duty',
-      value: '14 Active',
-      sub: '4 on call',
+      value: `${infrastructure?.doctorsCount ?? 0} Active`,
+      sub: `${doctorsOnDutyCount} on duty today`,
       icon: UserCheck,
       color: 'text-[#08775A] bg-[#effaf5] border-[#c2e7db]',
     },
     {
       title: 'Hospital Patients',
-      value: '284 Total',
-      sub: '192 OPD • 54 IPD • 38 ER',
+      value: `${totalPatients} Total`,
+      sub: `${opdTotal} OPD • ${admissionTotal} IPD • ${emergencyTotal} ER`,
       icon: Users,
       color: 'text-[#08775A] bg-[#dff5ea] border-[#c2e7db]',
     },
     {
       title: 'Bed Occupancy',
-      value: '82%',
-      sub: '54 / 68 Beds Occupied',
+      value: `${bedMetrics?.occupancyPercent ?? 0}%`,
+      sub: `${bedMetrics?.occupiedBeds ?? 0} / ${bedMetrics?.totalBeds ?? 0} Beds Occupied`,
       icon: Bed,
       color: 'text-[#08775A] bg-[#effaf5] border-[#c2e7db]',
     },
     {
       title: "Today's Realized Revenue",
-      value: 'PKR 1,280,000',
-      sub: 'Collections: 90.1%',
+      value: formatPKR(billingSummary?.paidAmount ?? 0),
+      sub: `Collections: ${collectionsPercent}%`,
       icon: CreditCard,
       color: 'text-emerald-700 bg-emerald-50 border-emerald-200',
     },
     {
-      title: 'Staff On Shift',
-      value: '42 Members',
-      sub: 'Full operational coverage',
+      title: 'Active Hospital Staff',
+      value: `${infrastructure?.totalStaffCount ?? 0} Members`,
+      sub: `${infrastructure?.activeDepartmentsCount ?? 0} active departments`,
       icon: Clock,
       color: 'text-teal-700 bg-teal-50 border-teal-200',
     },
     {
       title: 'Stock & Expiry Alerts',
-      value: '7 Items',
-      sub: '4 low stock • 3 near expiry',
+      value: `${(inventorySummary?.lowStockItemsCount ?? 0) + (inventorySummary?.outOfStockItemsCount ?? 0)} Items`,
+      sub: `${inventorySummary?.lowStockItemsCount ?? 0} low stock • ${inventorySummary?.outOfStockItemsCount ?? 0} out of stock`,
       icon: AlertCircle,
       color: 'text-amber-700 bg-amber-50 border-amber-200',
     },
-  ];
-
-  const doctorsList = [
-    { name: 'Prof. Dr. Tariq Saeed', department: 'Cardiology', timing: '09:00 AM - 02:00 PM', patients: 24, status: 'Active' as const },
-    { name: 'Dr. Farhana Yasmeen', department: 'Gynaecology & Obs', timing: '10:00 AM - 04:00 PM', patients: 32, status: 'Active' as const },
-    { name: 'Dr. M. Sharif Chaudhary', department: 'Orthopedics', timing: '08:30 AM - 01:30 PM', patients: 19, status: 'Active' as const },
-    { name: 'Dr. Salman Haider', department: 'Internal Medicine', timing: '11:00 AM - 05:00 PM', patients: 28, status: 'Active' as const },
-    { name: 'Dr. Kamran Akram', department: 'General Surgery', timing: 'In OT (Surgeries)', patients: 12, status: 'In OT' as const },
-  ];
-
-  const wardOccupancies = [
-    { ward: 'ICU / CCU', total: 12, occupied: 10, rate: 83, color: 'bg-rose-500' },
-    { ward: 'Private Rooms', total: 16, occupied: 14, rate: 87, color: 'bg-[#149E75]' },
-    { ward: 'Semi-Private Ward', total: 20, occupied: 16, rate: 80, color: 'bg-[#08775A]' },
-    { ward: 'General Male & Female', total: 20, occupied: 14, rate: 70, color: 'bg-[#149E75]' },
   ];
 
   return (
@@ -107,8 +131,24 @@ export const AdminDashboard: React.FC = () => {
         </div>
       </div>
 
+      {loadError && (
+        <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-700 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
+            <span>{loadError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={loadDashboard}
+            className="px-2.5 py-1 bg-rose-100 hover:bg-rose-200 text-rose-800 rounded font-semibold transition-colors shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* KPI Cards Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className={`grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 transition-opacity ${isLoading && !data ? 'opacity-50' : ''}`}>
         {adminKpis.map((kpi, idx) => {
           const Icon = kpi.icon;
           return (
@@ -171,27 +211,35 @@ export const AdminDashboard: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {doctorsList.map((doc, i) => (
-                    <tr key={i} className="hover:bg-slate-50/70 transition-colors">
-                      <td className="py-2 px-3 font-medium text-slate-900">{doc.name}</td>
-                      <td className="py-2 px-3 text-slate-600">{doc.department}</td>
-                      <td className="py-2 px-3 text-slate-500 font-mono text-[11px]">{doc.timing}</td>
-                      <td className="py-2 px-3 text-center font-semibold text-slate-800">
-                        {doc.patients}
-                      </td>
-                      <td className="py-2 px-3 text-center">
-                        <span
-                          className={`inline-flex px-2 py-0.5 rounded text-[10px] font-semibold ${
-                            doc.status === 'In OT'
-                              ? 'bg-amber-100 text-amber-800'
-                              : 'bg-[#effaf5] text-[#08775A] border border-[#c2e7db]'
-                          }`}
-                        >
-                          {doc.status}
-                        </span>
+                  {doctorsOnDuty.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="py-6 px-3 text-center text-slate-400">
+                        {isLoading ? 'Loading live roster…' : 'No active doctor records found.'}
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    doctorsOnDuty.map((doc) => (
+                      <tr key={doc.id} className="hover:bg-slate-50/70 transition-colors">
+                        <td className="py-2 px-3 font-medium text-slate-900">{doc.name}</td>
+                        <td className="py-2 px-3 text-slate-600">{doc.department}</td>
+                        <td className="py-2 px-3 text-slate-500 font-mono text-[11px]">{doc.shiftLabel}</td>
+                        <td className="py-2 px-3 text-center font-semibold text-slate-800">
+                          {doc.patientsBooked}
+                        </td>
+                        <td className="py-2 px-3 text-center">
+                          <span
+                            className={`inline-flex px-2 py-0.5 rounded text-[10px] font-semibold ${
+                              doc.status === 'On Duty'
+                                ? 'bg-[#effaf5] text-[#08775A] border border-[#c2e7db]'
+                                : 'bg-slate-100 text-slate-600'
+                            }`}
+                          >
+                            {doc.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -254,27 +302,39 @@ export const AdminDashboard: React.FC = () => {
               Ward Bed Capacity Overview
             </h2>
             <div className="space-y-3">
-              {wardOccupancies.map((w, idx) => (
-                <div key={idx} className="space-y-1">
-                  <div className="flex justify-between text-xs font-medium text-slate-700">
-                    <span>{w.ward}</span>
-                    <span className="font-semibold text-slate-900">
-                      {w.occupied}/{w.total} ({w.rate}%)
-                    </span>
+              {(bedMetrics?.wards || []).length === 0 ? (
+                <p className="text-[11px] text-slate-400">
+                  {isLoading ? 'Loading live ward data…' : 'No wards configured yet.'}
+                </p>
+              ) : (
+                (bedMetrics?.wards || []).map((w) => (
+                  <div key={w.wardName} className="space-y-1">
+                    <div className="flex justify-between text-xs font-medium text-slate-700">
+                      <span>{w.wardName}</span>
+                      <span className="font-semibold text-slate-900">
+                        {w.occupiedBeds}/{w.totalBeds} ({w.occupancyPercent}%)
+                      </span>
+                    </div>
+                    <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${
+                          w.occupancyPercent >= 85
+                            ? 'bg-rose-500'
+                            : w.occupancyPercent >= 70
+                            ? 'bg-[#149E75]'
+                            : 'bg-[#08775A]'
+                        }`}
+                        style={{ width: `${w.occupancyPercent}%` }}
+                      />
+                    </div>
                   </div>
-                  <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full ${w.color} rounded-full transition-all`}
-                      style={{ width: `${w.rate}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
 
             <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
               <span className="text-slate-500">Available Vacant Beds:</span>
-              <span className="font-bold text-emerald-700">14 Beds Free</span>
+              <span className="font-bold text-emerald-700">{bedMetrics?.availableBeds ?? 0} Beds Free</span>
             </div>
           </div>
 
@@ -285,26 +345,29 @@ export const AdminDashboard: React.FC = () => {
               <span>Stock & Pharmacy Alerts</span>
             </h2>
             <div className="space-y-2 text-xs">
-              <div className="p-2.5 rounded bg-rose-50 border border-rose-200 text-rose-800 leading-snug">
-                <div className="font-bold text-[11px]">Surgical Gloves 7.5 Latex</div>
-                <div className="text-[10px] text-rose-700 mt-0.5">
-                  Out of Stock in OT • Central store requisition pending
-                </div>
-              </div>
-
-              <div className="p-2.5 rounded bg-amber-50 border border-amber-200 text-amber-800 leading-snug">
-                <div className="font-bold text-[11px]">Inj. Ceftriaxone 1g IV</div>
-                <div className="text-[10px] text-amber-700 mt-0.5">
-                  Low Stock (24 vials remaining) • Reorder trigger: 100
-                </div>
-              </div>
-
-              <div className="p-2.5 rounded bg-amber-50 border border-amber-200 text-amber-800 leading-snug">
-                <div className="font-bold text-[11px]">Humalog Mix 25 KwikPen</div>
-                <div className="text-[10px] text-amber-700 mt-0.5">
-                  Near Expiry (18 days remaining, Batch HM-2024-B9)
-                </div>
-              </div>
+              {flaggedStockItems.length === 0 ? (
+                <p className="text-[11px] text-slate-400">
+                  {isLoading ? 'Loading live stock alerts…' : 'No active stock alerts — all items above reorder threshold.'}
+                </p>
+              ) : (
+                flaggedStockItems.map((item) => (
+                  <div
+                    key={item.id}
+                    className={`p-2.5 rounded border leading-snug ${
+                      item.status === 'OUT_OF_STOCK'
+                        ? 'bg-rose-50 border-rose-200 text-rose-800'
+                        : 'bg-amber-50 border-amber-200 text-amber-800'
+                    }`}
+                  >
+                    <div className="font-bold text-[11px]">{item.name}</div>
+                    <div className={`text-[10px] mt-0.5 ${item.status === 'OUT_OF_STOCK' ? 'text-rose-700' : 'text-amber-700'}`}>
+                      {item.status === 'OUT_OF_STOCK'
+                        ? 'Out of Stock in Central Store'
+                        : `Low Stock (${item.currentStock} ${item.unit} remaining) • Reorder trigger: ${item.reorderLevel}`}
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   Users,
   Stethoscope,
@@ -45,20 +45,83 @@ import {
 } from 'recharts';
 import {
   DateFilterPreset,
-  PERIOD_DATASETS,
-  CURRENT_STATE_BED_METRICS,
-  CURRENT_STATE_INVENTORY_ALERTS,
-  RECENT_IMPORTANT_ACTIVITY,
-  ATTENTION_REQUIRED_ALERTS,
-  RECENT_TRANSACTIONS_DATA,
   AttentionAlertItem,
 } from './superAdminDashboardData';
+import { dashboardService, ResolvedDashboardState } from '../../services/dashboardService';
 import { formatPKR, formatNumber } from '../../utils/formatters';
 import {
   formatDateISO,
   getStartOfMonth,
   getHospitalCurrentDate,
 } from '../../utils/dateConstants';
+
+const EMPTY_DASHBOARD: ResolvedDashboardState = {
+  periodLabel: 'Today',
+  infrastructure: {
+    activeDepartmentsCount: 0,
+    totalStaffCount: 0,
+    doctorsCount: 0,
+    activePanelsCount: 0,
+    activePanelPatientsCount: 0,
+    activeAdminsCount: 0,
+  },
+  kpis: [],
+  patientFlow: [],
+  patientHourlyTrend: [],
+  billingSummary: {
+    totalInvoices: 0,
+    grossBilling: 0,
+    discounts: 0,
+    netBilling: 0,
+    paidAmount: 0,
+    partiallyPaidAmount: 0,
+    partiallyPaidInvoicesCount: 0,
+    outstandingAmount: 0,
+    refundsAmount: 0,
+  },
+  revenueChart: [],
+  revenueChannels: { cash: 0, onlineBank: 0, panelCorporate: 0, outstanding: 0 },
+  paymentMethods: [],
+  departmentActivity: [],
+  doctorsOnDuty: [],
+  pharmacySummary: {
+    salesAmount: 0,
+    invoicesCount: 0,
+    medicinesDispensedCount: 0,
+    pendingRequestsCount: 0,
+    returnsCount: 0,
+    returnsAmount: 0,
+    nearExpiryAlertsCount: 0,
+  },
+  expenses: { todayAmount: 0, monthAmount: 0, topCategories: [] },
+  corporatePanels: {
+    activePanelsCount: 0,
+    panelPatientsCount: 0,
+    panelBillingAmount: 0,
+    panelOutstandingAmount: 0,
+    topPanels: [],
+  },
+  bedMetrics: {
+    totalBeds: 0,
+    occupiedBeds: 0,
+    availableBeds: 0,
+    occupancyPercent: 0,
+    totalWards: 0,
+    totalRooms: 0,
+    wards: [],
+  },
+  inventorySummary: {
+    lowStockItemsCount: 0,
+    outOfStockItemsCount: 0,
+    nearExpiryItemsCount: 0,
+    expiredItemsCount: 0,
+    pendingStockRequestsCount: 0,
+  },
+  flaggedStockItems: [],
+  attentionAlerts: [],
+  recentActivity: [],
+  recentTransactions: [],
+};
 
 interface SuperAdminDashboardProps {
   onNavigateToModule?: (moduleId: string) => void;
@@ -77,10 +140,41 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   // Selected Alert for modal inspection
   const [activeAlertModal, setActiveAlertModal] = useState<AttentionAlertItem | null>(null);
 
-  // Active dataset derived from selectedPreset
-  const currentDataset = useMemo(() => {
-    return PERIOD_DATASETS[selectedPreset] || PERIOD_DATASETS.today;
-  }, [selectedPreset]);
+  // Live backend dashboard data
+  const [dashboardData, setDashboardData] = useState<ResolvedDashboardState | null>(() =>
+    dashboardService.getCachedDashboard(),
+  );
+  const [isLoading, setIsLoading] = useState<boolean>(!dashboardService.getCachedDashboard());
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const loadDashboardData = useCallback(
+    async (preset: DateFilterPreset, from?: string, to?: string) => {
+      setIsLoading(true);
+      setLoadError(null);
+      try {
+        const data = await dashboardService.fetchSuperAdminDashboard(preset, from, to);
+        setDashboardData(data);
+      } catch (err: any) {
+        setLoadError(err.message || 'Failed to load live dashboard data from server.');
+      } finally {
+        setIsLoading(false);
+        setIsApplying(false);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    loadDashboardData(selectedPreset, fromDate, toDate);
+  }, [selectedPreset, loadDashboardData]);
+
+  // Active dataset derived exclusively from live backend data
+  const currentDataset = dashboardData || EMPTY_DASHBOARD;
+  const bedMetrics = dashboardData?.bedMetrics || EMPTY_DASHBOARD.bedMetrics;
+  const inventoryAlerts = dashboardData?.inventorySummary || EMPTY_DASHBOARD.inventorySummary;
+  const attentionAlerts = dashboardData?.attentionAlerts || [];
+  const recentActivity = dashboardData?.recentActivity || [];
+  const recentTransactions = dashboardData?.recentTransactions || [];
 
   // Period-aware KPI title mapping to strictly reflect the selected timeframe
   const displayKpis = useMemo(() => {
@@ -135,9 +229,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     setIsApplying(true);
     setSelectedPreset(preset);
     setDateValidationError(null);
-    setTimeout(() => {
-      setIsApplying(false);
-    }, 180);
+    loadDashboardData(preset, fromDate, toDate);
   };
 
   // Handle Custom Range Apply
@@ -155,21 +247,19 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     setDateValidationError(null);
     setIsApplying(true);
     setSelectedPreset('custom');
-    setTimeout(() => {
-      setIsApplying(false);
-    }, 200);
+    loadDashboardData('custom', fromDate, toDate);
   };
 
   // Handle Reset to Today
   const handleResetFilter = () => {
     setIsApplying(true);
     setSelectedPreset('today');
-    setFromDate(formatDateISO(getStartOfMonth()));
-    setToDate(formatDateISO(getHospitalCurrentDate()));
+    const startM = formatDateISO(getStartOfMonth());
+    const curD = formatDateISO(getHospitalCurrentDate());
+    setFromDate(startM);
+    setToDate(curD);
     setDateValidationError(null);
-    setTimeout(() => {
-      setIsApplying(false);
-    }, 150);
+    loadDashboardData('today', startM, curD);
   };
 
   // Map icon names to Lucide icons
@@ -227,10 +317,17 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           </div>
 
           <div className="flex items-center gap-2 text-xs text-slate-500">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
-              <span className="h-2 w-2 rounded-full bg-emerald-600" />
-              Hospital Operations Status
-            </span>
+            {isLoading ? (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 text-[#08775A] border border-[#c2e7db] font-semibold">
+                <RefreshCw className="h-3.5 w-3.5 animate-spin text-[#129b70]" />
+                Syncing Live Data...
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
+                <span className="h-2 w-2 rounded-full bg-emerald-600 animate-pulse" />
+                Live Database Connected
+              </span>
+            )}
             <span className="px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 font-medium">
               Period: <strong className="text-slate-900">{displayPeriodLabel}</strong>
             </span>
@@ -308,7 +405,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
               className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-xs font-medium flex items-center gap-1.5 transition-colors"
               title="Reset filter to Today"
             >
-              <RefreshCw className={`h-3 w-3 ${isApplying ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`h-3 w-3 ${isLoading || isApplying ? 'animate-spin' : ''}`} />
               Reset
             </button>
           </div>
@@ -318,6 +415,22 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           <div className="mt-3 p-2 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-700 flex items-center gap-2">
             <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
             <span>{dateValidationError}</span>
+          </div>
+        )}
+
+        {loadError && (
+          <div className="mt-3 p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-700 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
+              <span>{loadError}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => loadDashboardData(selectedPreset, fromDate, toDate)}
+              className="px-2.5 py-1 bg-rose-100 hover:bg-rose-200 text-rose-800 rounded font-semibold transition-colors"
+            >
+              Retry
+            </button>
           </div>
         )}
       </div>
@@ -760,7 +873,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50">
             <span className="text-xs text-slate-500 font-medium block">Total Beds</span>
             <span className="text-2xl font-bold text-slate-900 font-mono mt-1 block">
-              {CURRENT_STATE_BED_METRICS.totalBeds}
+              {bedMetrics.totalBeds}
             </span>
             <span className="text-[11px] text-slate-400">Institutional capacity</span>
           </div>
@@ -768,7 +881,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           <div className="p-3.5 rounded-xl border border-[#c2e7db] bg-[#effaf5]">
             <span className="text-xs text-[#0e7d5a] font-medium block">Occupied Beds</span>
             <span className="text-2xl font-bold text-[#0e7d5a] font-mono mt-1 block">
-              {CURRENT_STATE_BED_METRICS.occupiedBeds}
+              {bedMetrics.occupiedBeds}
             </span>
             <span className="text-[11px] text-[#129b70] font-medium">Currently admitted</span>
           </div>
@@ -776,7 +889,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           <div className="p-3.5 rounded-xl border border-emerald-200 bg-emerald-50/50">
             <span className="text-xs text-emerald-800 font-medium block">Available Beds</span>
             <span className="text-2xl font-bold text-emerald-900 font-mono mt-1 block">
-              {CURRENT_STATE_BED_METRICS.availableBeds}
+              {bedMetrics.availableBeds}
             </span>
             <span className="text-[11px] text-emerald-600 font-medium">Ready for admissions</span>
           </div>
@@ -784,7 +897,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           <div className="p-3.5 rounded-xl border border-teal-200 bg-teal-50/50">
             <span className="text-xs text-teal-800 font-medium block">Overall Occupancy Rate</span>
             <span className="text-2xl font-bold text-teal-900 font-mono mt-1 block">
-              {CURRENT_STATE_BED_METRICS.occupancyPercent}%
+              {bedMetrics.occupancyPercent}%
             </span>
             <span className="text-[11px] text-teal-700 font-medium">Target optimal range</span>
           </div>
@@ -797,7 +910,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           </span>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {CURRENT_STATE_BED_METRICS.wards.map((ward) => (
+            {bedMetrics.wards.map((ward) => (
               <div
                 key={ward.wardName}
                 className="p-4 rounded-xl border border-slate-200 bg-white shadow-2xs flex flex-col justify-between"
@@ -1119,7 +1232,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             <div className="p-3 bg-amber-50/60 rounded-lg border border-amber-200">
               <span className="text-[11px] text-amber-800 font-medium block">Low Stock Items</span>
               <span className="text-lg font-bold text-amber-900 font-mono mt-0.5 block">
-                {CURRENT_STATE_INVENTORY_ALERTS.lowStockItemsCount} Items
+                {inventoryAlerts.lowStockItemsCount} Items
               </span>
               <span className="text-[10px] text-amber-700 font-semibold">Below min-threshold</span>
             </div>
@@ -1127,7 +1240,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             <div className="p-3 bg-rose-50/60 rounded-lg border border-rose-200">
               <span className="text-[11px] text-rose-800 font-medium block">Out of Stock Items</span>
               <span className="text-lg font-bold text-rose-900 font-mono mt-0.5 block">
-                {CURRENT_STATE_INVENTORY_ALERTS.outOfStockItemsCount} Items
+                {inventoryAlerts.outOfStockItemsCount} Items
               </span>
               <span className="text-[10px] text-rose-700 font-semibold">Zero balance</span>
             </div>
@@ -1135,7 +1248,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             <div className="p-3 bg-orange-50/60 rounded-lg border border-orange-200">
               <span className="text-[11px] text-orange-800 font-medium block">Near Expiry Items</span>
               <span className="text-lg font-bold text-orange-900 font-mono mt-0.5 block">
-                {CURRENT_STATE_INVENTORY_ALERTS.nearExpiryItemsCount} Batches
+                {inventoryAlerts.nearExpiryItemsCount} Batches
               </span>
               <span className="text-[10px] text-orange-700">&lt; 30 days remaining</span>
             </div>
@@ -1143,7 +1256,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             <div className="p-3 bg-rose-100/60 rounded-lg border border-rose-300">
               <span className="text-[11px] text-rose-900 font-medium block">Expired Items</span>
               <span className="text-lg font-bold text-rose-950 font-mono mt-0.5 block">
-                {CURRENT_STATE_INVENTORY_ALERTS.expiredItemsCount} Batches
+                {inventoryAlerts.expiredItemsCount} Batches
               </span>
               <span className="text-[10px] text-rose-800 font-semibold">Quarantine required</span>
             </div>
@@ -1151,7 +1264,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             <div className="p-3 bg-[#effaf5] rounded-lg border border-[#c2e7db] sm:col-span-2">
               <span className="text-[11px] text-[#0e7d5a] font-medium block">Pending Stock Requests</span>
               <span className="text-lg font-bold text-[#0e7d5a] font-mono mt-0.5 block">
-                {CURRENT_STATE_INVENTORY_ALERTS.pendingStockRequestsCount} Purchase Requisitions
+                {inventoryAlerts.pendingStockRequestsCount} Purchase Requisitions
               </span>
               <span className="text-[10px] text-[#129b70] font-semibold">Awaiting store manager approval</span>
             </div>
@@ -1313,66 +1426,74 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             </div>
           </div>
           <span className="text-xs font-bold px-2.5 py-1 rounded-md bg-amber-50 text-amber-800 border border-amber-200">
-            {ATTENTION_REQUIRED_ALERTS.length} Alerts Active
+            {attentionAlerts.length} Alerts Active
           </span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {ATTENTION_REQUIRED_ALERTS.map((alert) => (
-            <div
-              key={alert.id}
-              className={`p-4 rounded-xl border flex flex-col justify-between transition-all ${
-                alert.severity === 'Critical'
-                  ? 'bg-rose-50/40 border-rose-200'
-                  : alert.severity === 'Warning'
-                  ? 'bg-amber-50/40 border-amber-200'
-                  : 'bg-[#effaf5] border-[#c2e7db]'
-              }`}
-            >
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span
-                    className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                      alert.severity === 'Critical'
-                        ? 'bg-rose-100 text-rose-800'
-                        : alert.severity === 'Warning'
-                        ? 'bg-amber-100 text-amber-800'
-                        : 'bg-[#effaf5] text-[#0e7d5a] border border-[#c2e7db]'
-                    }`}
-                  >
-                    {alert.severity}
-                  </span>
-                  <span className="text-xs font-bold text-slate-800 font-mono">
-                    {alert.relevantMetric}
-                  </span>
+        {attentionAlerts.length === 0 ? (
+          <div className="p-6 bg-slate-50 border border-slate-200 rounded-xl text-center space-y-1">
+            <CheckCircle2 className="h-6 w-6 text-emerald-600 mx-auto" />
+            <p className="text-xs font-semibold text-slate-800">All Operations Within Normal Limits</p>
+            <p className="text-[11px] text-slate-500">No critical anomalies or threshold breaches reported across departments.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {attentionAlerts.map((alert) => (
+              <div
+                key={alert.id}
+                className={`p-4 rounded-xl border flex flex-col justify-between transition-all ${
+                  alert.severity === 'Critical'
+                    ? 'bg-rose-50/40 border-rose-200'
+                    : alert.severity === 'Warning'
+                    ? 'bg-amber-50/40 border-amber-200'
+                    : 'bg-[#effaf5] border-[#c2e7db]'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span
+                      className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                        alert.severity === 'Critical'
+                          ? 'bg-rose-100 text-rose-800'
+                          : alert.severity === 'Warning'
+                          ? 'bg-amber-100 text-amber-800'
+                          : 'bg-[#effaf5] text-[#0e7d5a] border border-[#c2e7db]'
+                      }`}
+                    >
+                      {alert.severity}
+                    </span>
+                    <span className="text-xs font-bold text-slate-800 font-mono">
+                      {alert.relevantMetric}
+                    </span>
+                  </div>
+
+                  <h4 className="text-xs font-bold text-slate-900 leading-snug">{alert.title}</h4>
+                  <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">{alert.description}</p>
                 </div>
 
-                <h4 className="text-xs font-bold text-slate-900 leading-snug">{alert.title}</h4>
-                <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">{alert.description}</p>
-              </div>
-
-              <div className="mt-3 pt-2.5 border-t border-slate-200/60 flex items-center justify-between">
-                <button
-                  type="button"
-                  onClick={() => setActiveAlertModal(alert)}
-                  className="text-[11px] font-bold text-[#0e7d5a] hover:underline flex items-center gap-1"
-                >
-                  <span>View Details</span>
-                  <ExternalLink className="h-3 w-3" />
-                </button>
-                {alert.navModule && (
+                <div className="mt-3 pt-2.5 border-t border-slate-200/60 flex items-center justify-between">
                   <button
                     type="button"
-                    onClick={() => onNavigateToModule?.(alert.navModule!)}
-                    className="text-[10px] text-slate-500 hover:text-slate-800 hover:underline"
+                    onClick={() => setActiveAlertModal(alert)}
+                    className="text-[11px] font-bold text-[#0e7d5a] hover:underline flex items-center gap-1"
                   >
-                    Go to Module &rarr;
+                    <span>View Details</span>
+                    <ExternalLink className="h-3 w-3" />
                   </button>
-                )}
+                  {alert.navModule && (
+                    <button
+                      type="button"
+                      onClick={() => onNavigateToModule?.(alert.navModule!)}
+                      className="text-[10px] text-slate-500 hover:text-slate-800 hover:underline"
+                    >
+                      Go to Module &rarr;
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* =========================================================================
@@ -1404,24 +1525,32 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {RECENT_IMPORTANT_ACTIVITY.map((act) => (
-                <tr key={act.id} className="hover:bg-slate-50/80 transition-colors">
-                  <td className="py-3 px-5 text-slate-500 whitespace-nowrap">{act.timestamp}</td>
-                  <td className="py-3 px-4 font-semibold text-slate-900">{act.user}</td>
-                  <td className="py-3 px-4 text-slate-600">
-                    <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-medium">
-                      {act.role}
-                    </span>
+              {recentActivity.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-6 text-center text-slate-500 text-xs">
+                    No recent system activities or audit records found.
                   </td>
-                  <td className="py-3 px-4 text-slate-800 font-medium">{act.action}</td>
-                  <td className="py-3 px-4 text-slate-600">
-                    <span className="px-2 py-0.5 rounded bg-[#effaf5] text-[#0e7d5a] border border-[#c2e7db] text-[10px] font-medium">
-                      {act.module}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4 font-mono text-slate-600 font-semibold">{act.reference}</td>
                 </tr>
-              ))}
+              ) : (
+                recentActivity.map((act) => (
+                  <tr key={act.id} className="hover:bg-slate-50/80 transition-colors">
+                    <td className="py-3 px-5 text-slate-500 whitespace-nowrap">{act.timestamp}</td>
+                    <td className="py-3 px-4 font-semibold text-slate-900">{act.user}</td>
+                    <td className="py-3 px-4 text-slate-600">
+                      <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-medium">
+                        {act.role}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-slate-800 font-medium">{act.action}</td>
+                    <td className="py-3 px-4 text-slate-600">
+                      <span className="px-2 py-0.5 rounded bg-[#effaf5] text-[#0e7d5a] border border-[#c2e7db] text-[10px] font-medium">
+                        {act.module}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 font-mono text-slate-600 font-semibold">{act.reference}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -1462,54 +1591,68 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {RECENT_TRANSACTIONS_DATA.map((tx) => (
-                <tr key={tx.reference} className="hover:bg-slate-50/80 transition-colors">
-                  <td className="py-3 px-5 font-mono font-semibold text-slate-700">
-                    {tx.reference}
-                  </td>
-                  <td className="py-3 px-4 font-semibold text-slate-900">{tx.patientName}</td>
-                  <td className="py-3 px-4">
-                    <span
-                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                        tx.transactionType === 'Invoice'
-                          ? 'bg-[#effaf5] text-[#0e7d5a] border border-[#c2e7db]'
-                          : tx.transactionType === 'Payment'
-                          ? 'bg-emerald-50 text-emerald-800'
-                          : tx.transactionType === 'Pharmacy Sale'
-                          ? 'bg-[#effaf5] text-[#129b70]'
-                          : 'bg-rose-50 text-rose-800'
-                      }`}
-                    >
-                      {tx.transactionType}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4 text-right font-bold text-slate-900 font-mono">
-                    {formatPKR(tx.amount)}
-                  </td>
-                  <td className="py-3 px-4 text-center">
-                    <span
-                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                        tx.paymentStatus === 'Paid'
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : tx.paymentStatus === 'Partially Paid'
-                          ? 'bg-[#effaf5] text-[#0e7d5a] border border-[#c2e7db]'
-                          : tx.paymentStatus === 'Refunded'
-                          ? 'bg-slate-100 text-slate-800'
-                          : 'bg-amber-100 text-amber-800'
-                      }`}
-                    >
-                      {tx.paymentStatus}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4">
-                    <div className="font-medium text-slate-800">{tx.user}</div>
-                    <div className="text-[10px] text-slate-400">{tx.userRole}</div>
-                  </td>
-                  <td className="py-3 px-4 text-right text-slate-500 whitespace-nowrap">
-                    {tx.timestamp}
+              {recentTransactions.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-8 text-center text-slate-500 text-xs">
+                    <div className="flex flex-col items-center justify-center gap-1.5 py-4">
+                      <Receipt className="h-8 w-8 text-slate-300" />
+                      <span className="font-semibold text-slate-700">No Transactions Recorded Yet</span>
+                      <span className="text-slate-400 text-[11px] max-w-sm">
+                        Invoices, payments, dispensary sales, and refunds created in the system will appear here in real-time.
+                      </span>
+                    </div>
                   </td>
                 </tr>
-              ))}
+              ) : (
+                recentTransactions.map((tx) => (
+                  <tr key={tx.reference} className="hover:bg-slate-50/80 transition-colors">
+                    <td className="py-3 px-5 font-mono font-semibold text-slate-700">
+                      {tx.reference}
+                    </td>
+                    <td className="py-3 px-4 font-semibold text-slate-900">{tx.patientName}</td>
+                    <td className="py-3 px-4">
+                      <span
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          tx.transactionType === 'Invoice'
+                            ? 'bg-[#effaf5] text-[#0e7d5a] border border-[#c2e7db]'
+                            : tx.transactionType === 'Payment'
+                            ? 'bg-emerald-50 text-emerald-800'
+                            : tx.transactionType === 'Pharmacy Sale'
+                            ? 'bg-[#effaf5] text-[#129b70]'
+                            : 'bg-rose-50 text-rose-800'
+                        }`}
+                      >
+                        {tx.transactionType}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-right font-bold text-slate-900 font-mono">
+                      {formatPKR(tx.amount)}
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      <span
+                        className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                          tx.paymentStatus === 'Paid'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : tx.paymentStatus === 'Partially Paid'
+                            ? 'bg-[#effaf5] text-[#0e7d5a] border border-[#c2e7db]'
+                            : tx.paymentStatus === 'Refunded'
+                            ? 'bg-slate-100 text-slate-800'
+                            : 'bg-amber-100 text-amber-800'
+                        }`}
+                      >
+                        {tx.paymentStatus}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="font-medium text-slate-800">{tx.user}</div>
+                      <div className="text-[10px] text-slate-400">{tx.userRole}</div>
+                    </td>
+                    <td className="py-3 px-4 text-right text-slate-500 whitespace-nowrap">
+                      {tx.timestamp}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

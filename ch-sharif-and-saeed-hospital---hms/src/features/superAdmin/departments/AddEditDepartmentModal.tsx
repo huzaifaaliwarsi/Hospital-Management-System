@@ -17,6 +17,7 @@ import {
   DepartmentType,
 } from '../../../types/department';
 import { VALID_DEPARTMENT_TYPES } from '../../../services/departmentService';
+import { getActiveOutsourcedProviders } from '../../../services/outsourcedProviderService';
 
 interface AddEditDepartmentModalProps {
   isOpen: boolean;
@@ -51,9 +52,12 @@ export const AddEditDepartmentModal: React.FC<AddEditDepartmentModalProps> = ({
     emergencyEnabled: false,
     admissionEnabled: true,
     pharmacyRelated: false,
+    fulfillmentOwnership: 'Internal',
+    outsourcedProviderId: '',
     status: 'Active',
   });
 
+  const outsourcedProviders = useMemo(() => getActiveOutsourcedProviders(), [isOpen]);
   const [headSearch, setHeadSearch] = useState('');
   const [isHeadDropdownOpen, setIsHeadDropdownOpen] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -74,6 +78,8 @@ export const AddEditDepartmentModal: React.FC<AddEditDepartmentModalProps> = ({
         emergencyEnabled: departmentToEdit.emergencyEnabled,
         admissionEnabled: departmentToEdit.admissionEnabled,
         pharmacyRelated: departmentToEdit.pharmacyRelated,
+        fulfillmentOwnership: departmentToEdit.fulfillmentOwnership || 'Internal',
+        outsourcedProviderId: departmentToEdit.outsourcedProviderId || '',
         status: departmentToEdit.status,
       });
     } else {
@@ -91,6 +97,8 @@ export const AddEditDepartmentModal: React.FC<AddEditDepartmentModalProps> = ({
         emergencyEnabled: false,
         admissionEnabled: true,
         pharmacyRelated: false,
+        fulfillmentOwnership: 'Internal',
+        outsourcedProviderId: '',
         status: 'Active',
       });
     }
@@ -116,10 +124,9 @@ export const AddEditDepartmentModal: React.FC<AddEditDepartmentModalProps> = ({
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {};
 
+    // Code is optional — left blank, the backend auto-generates a unique one.
     const trimmedCode = formData.code.trim().toUpperCase();
-    if (!trimmedCode) {
-      newErrors.code = 'Department Code is required.';
-    } else {
+    if (trimmedCode) {
       const codeRegex = /^[A-Z0-9-]+$/;
       if (!codeRegex.test(trimmedCode)) {
         newErrors.code = 'Department Code must contain only uppercase letters, numbers, and hyphens (e.g. DEP-MED).';
@@ -142,6 +149,10 @@ export const AddEditDepartmentModal: React.FC<AddEditDepartmentModalProps> = ({
 
     if (!formData.type) {
       newErrors.type = 'Department Type is required.';
+    }
+
+    if (formData.fulfillmentOwnership === 'Outsourced' && !formData.outsourcedProviderId) {
+      newErrors.outsourcedProviderId = 'An Outsourced department must be linked to an Outsourced Provider.';
     }
 
     setErrors(newErrors);
@@ -204,7 +215,7 @@ export const AddEditDepartmentModal: React.FC<AddEditDepartmentModalProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
-                Department Code <span className="text-rose-600">*</span>
+                Department Code
               </label>
               <input
                 type="text"
@@ -213,7 +224,7 @@ export const AddEditDepartmentModal: React.FC<AddEditDepartmentModalProps> = ({
                   setFormData({ ...formData, code: e.target.value.toUpperCase() });
                   if (errors.code) setErrors({ ...errors, code: '' });
                 }}
-                placeholder="e.g. DEP-MED"
+                placeholder="e.g. DEP-MED (optional — leave blank to auto-generate)"
                 className={`w-full rounded-lg border px-3 py-2 text-xs font-mono font-bold uppercase transition-colors focus:outline-hidden focus:ring-2 ${
                   errors.code
                     ? 'border-rose-300 bg-rose-50/30 text-rose-900 focus:ring-rose-200'
@@ -223,7 +234,7 @@ export const AddEditDepartmentModal: React.FC<AddEditDepartmentModalProps> = ({
               {errors.code ? (
                 <p className="mt-1 text-[11px] font-medium text-rose-600">{errors.code}</p>
               ) : (
-                <p className="mt-1 text-[10px] text-slate-400">Unique uppercase code (e.g. DEP-MED, DEP-SURG)</p>
+                <p className="mt-1 text-[10px] text-slate-400">Unique uppercase code — leave blank to auto-generate</p>
               )}
             </div>
 
@@ -295,6 +306,76 @@ export const AddEditDepartmentModal: React.FC<AddEditDepartmentModalProps> = ({
                   <span>Inactive</span>
                 </label>
               </div>
+            </div>
+          </div>
+
+          {/* v7.2 Department Billing Config (HMS_V7.2_NEW_REQUIREMENTS.md §2.1) */}
+          <div className="border-t border-slate-200 pt-4">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-[#08775A] mb-3">
+              Fulfillment Ownership
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Fulfillment Mode
+                </label>
+                <div className="flex items-center gap-3 pt-1">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-slate-700">
+                    <input
+                      type="radio"
+                      name="fulfillmentOwnership"
+                      value="Internal"
+                      checked={formData.fulfillmentOwnership === 'Internal'}
+                      onChange={() => setFormData({ ...formData, fulfillmentOwnership: 'Internal', outsourcedProviderId: '' })}
+                      className="h-4 w-4 text-[#08775A] focus:ring-[#08775A]"
+                    />
+                    <span>Internal</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-slate-700">
+                    <input
+                      type="radio"
+                      name="fulfillmentOwnership"
+                      value="Outsourced"
+                      checked={formData.fulfillmentOwnership === 'Outsourced'}
+                      onChange={() => setFormData({ ...formData, fulfillmentOwnership: 'Outsourced' })}
+                      className="h-4 w-4 text-[#08775A] focus:ring-[#08775A]"
+                    />
+                    <span>Outsourced</span>
+                  </label>
+                </div>
+              </div>
+
+              {formData.fulfillmentOwnership === 'Outsourced' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Outsourced Provider <span className="text-rose-600">*</span>
+                  </label>
+                  <select
+                    value={formData.outsourcedProviderId}
+                    onChange={(e) => {
+                      setFormData({ ...formData, outsourcedProviderId: e.target.value });
+                      if (errors.outsourcedProviderId) setErrors({ ...errors, outsourcedProviderId: '' });
+                    }}
+                    className={`w-full rounded-lg border px-3 py-2 text-xs transition-colors focus:outline-hidden focus:ring-2 ${
+                      errors.outsourcedProviderId
+                        ? 'border-rose-300 bg-rose-50/30 text-rose-900 focus:ring-rose-200'
+                        : 'border-slate-300 bg-white text-slate-900 focus:border-[#08775A] focus:ring-[#08775A]/20'
+                    }`}
+                  >
+                    <option value="">— Select Provider —</option>
+                    {outsourcedProviders.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} ({p.code})
+                      </option>
+                    ))}
+                  </select>
+                  {errors.outsourcedProviderId ? (
+                    <p className="mt-1 text-[11px] font-medium text-rose-600">{errors.outsourcedProviderId}</p>
+                  ) : outsourcedProviders.length === 0 ? (
+                    <p className="mt-1 text-[10px] text-amber-600">No active providers yet — add one under Outsourced Providers first.</p>
+                  ) : null}
+                </div>
+              )}
             </div>
           </div>
 

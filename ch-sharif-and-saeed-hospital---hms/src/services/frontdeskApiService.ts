@@ -48,35 +48,11 @@ export interface BackendInvoice {
 }
 
 export const frontdeskApiService = {
-  // Patients
-  async getPatients(search?: string) {
-    const res = await apiClient.get<{ data: BackendPatient[] }>('/patients', {
-      params: { search },
-    });
-    return res.data.data;
-  },
-
-  async createPatient(data: {
-    fullName: string;
-    phone: string;
-    cnic?: string;
-    gender: string;
-    dob?: string;
-    address?: string;
-    guardianName?: string;
-    guardianRelation?: string;
-    bloodGroup?: string;
-    corporatePanelId?: string;
-    panelMemberId?: string;
-  }) {
-    const res = await apiClient.post<{ data: BackendPatient }>('/patients', data);
-    return res.data.data;
-  },
-
-  async getPatientById(id: string) {
-    const res = await apiClient.get<{ data: BackendPatient }>(`/patients/${id}`);
-    return res.data.data;
-  },
+  // Patients — use `services/patientRegistryService.ts` instead (this file
+  // never had patient methods that matched the real split endpoints —
+  // `/patients/panel` for Corporate/Panel and `/patients/encounters` for
+  // Self-Pay, never a bare `/patients` — patientRegistryService.ts already
+  // implements that correctly and is what NewAdmissionView.tsx uses).
 
   // Appointments
   async getAppointments(date?: string, doctorStaffId?: string) {
@@ -86,6 +62,12 @@ export const frontdeskApiService = {
     return res.data.data;
   },
 
+  // NOTE: `createAppointment`/`updateAppointmentStatus` below have not been
+  // verified against the real `bookAppointmentSchema`/route shapes (no
+  // `PATCH /appointments/:id/status` route exists — status changes go
+  // through `/:id/cancel` or `/:id/check-in` instead) and are unused so
+  // far. Verify against `admission.schemas.ts`/`appointments.routes.ts`
+  // before wiring a real Appointments page to them.
   async createAppointment(data: {
     patientId: string;
     doctorStaffId: string;
@@ -118,6 +100,10 @@ export const frontdeskApiService = {
     return res.data.data;
   },
 
+  // NOTE: there is no `POST /invoices` create route on the real backend —
+  // invoices come from the encounter/admission billing flow instead
+  // (`POST /encounters`, `/encounters/:id/services`, admission services).
+  // Unused so far; verify before wiring a real "New Invoice" page to it.
   async createInvoice(data: {
     patientId: string;
     appointmentId?: string;
@@ -146,8 +132,9 @@ export const frontdeskApiService = {
     return res.data.data;
   },
 
+  /** `GET /cash/balance-sheet` — the logged-in cashier's own unsettled collections (§4.9). */
   async getCashBalance() {
-    const res = await apiClient.get<{ data: any }>('/cash/balance');
+    const res = await apiClient.get<{ data: any }>('/cash/balance-sheet');
     return res.data.data;
   },
 };

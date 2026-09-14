@@ -13,6 +13,7 @@ import { primeAdminUsersCache } from '../services/adminUserService';
 import { primeStaffUsersCache } from '../services/staffUserService';
 import { primeShiftsCache } from '../services/shiftService';
 import { primeCorporatePanelsCache } from '../services/panelService';
+import { primeOutsourcedProvidersCache } from '../services/outsourcedProviderService';
 import { AUTH_TOKEN_REFRESHED_EVENT, AUTH_SESSION_EXPIRED_EVENT } from '../services/apiClient';
 import { primePatientRegistryCache } from '../services/patientRegistryService';
 
@@ -325,6 +326,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       primeStaffUsersCache();
       primeShiftsCache();
       primeCorporatePanelsCache();
+      primeOutsourcedProvidersCache();
       primePatientRegistryCache();
     }
   }, [currentUser?.id]);

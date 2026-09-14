@@ -153,9 +153,16 @@ apiClient.interceptors.response.use(
     }
 
     if (error.response) {
-      const backendMessage = error.response.data?.error?.message || error.response.data?.message;
+      const errorPayload = error.response.data as any;
+      const errorObj = errorPayload?.error;
+      let backendMessage = errorObj?.message || errorPayload?.message;
+      if (Array.isArray(errorObj?.details) && errorObj.details.length > 0) {
+        const detailStr = errorObj.details
+          .map((d: any) => `${d.field ? d.field + ': ' : ''}${d.issue || d.message}`)
+          .join('; ');
+        backendMessage = backendMessage ? `${backendMessage} (${detailStr})` : detailStr;
+      }
       if (backendMessage) {
-        // Enhance error with the clean backend message
         error.message = backendMessage;
       }
     }

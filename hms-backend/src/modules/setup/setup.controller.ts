@@ -8,9 +8,12 @@ function actorId(req: Request): string {
 }
 
 export const setupController = {
-  // Hospital Profile
+  // Hospital Profile & System Summary
   getHospitalProfile: async (_req: Request, res: Response) => {
     res.json({ data: await setupService.getHospitalProfile() });
+  },
+  getHospitalSummary: async (_req: Request, res: Response) => {
+    res.json({ data: await setupService.getHospitalSummary() });
   },
   updateHospitalProfile: async (req: Request, res: Response) => {
     res.json({ data: await setupService.updateHospitalProfile(req.body, actorId(req)) });
@@ -66,6 +69,18 @@ export const setupController = {
   updateBed: async (req: Request, res: Response) => {
     res.json({ data: await setupService.updateBed(req.params.id as string, req.body, actorId(req)) });
   },
+  deleteWard: async (req: Request, res: Response) => {
+    await setupService.deleteWard(req.params.id as string);
+    res.status(204).send();
+  },
+  deleteRoom: async (req: Request, res: Response) => {
+    await setupService.deleteRoom(req.params.id as string);
+    res.status(204).send();
+  },
+  deleteBed: async (req: Request, res: Response) => {
+    await setupService.deleteBed(req.params.id as string);
+    res.status(204).send();
+  },
 
   // Corporate Panels
   listCorporatePanels: async (req: Request, res: Response) => {
@@ -79,6 +94,10 @@ export const setupController = {
   },
   replaceDiscountRules: async (req: Request, res: Response) => {
     res.json({ data: await setupService.replaceDiscountRules(req.params.id as string, req.body) });
+  },
+  deleteCorporatePanel: async (req: Request, res: Response) => {
+    await setupService.deleteCorporatePanel(req.params.id as string);
+    res.status(204).send();
   },
 
   // Shifts
@@ -101,5 +120,35 @@ export const setupController = {
   },
   deactivateShift: async (req: Request, res: Response) => {
     res.json({ data: await setupService.deactivateShift(req.params.id as string, actorId(req)) });
+  },
+
+  // Outsourced Providers
+  listOutsourcedProviders: async (req: Request, res: Response) => {
+    res.json({ data: await setupService.listOutsourcedProviders(req.query.activeOnly === 'true') });
+  },
+  createOutsourcedProvider: async (req: Request, res: Response) => {
+    res.status(201).json({ data: await setupService.createOutsourcedProvider(req.body, actorId(req)) });
+  },
+  updateOutsourcedProvider: async (req: Request, res: Response) => {
+    res.json({ data: await setupService.updateOutsourcedProvider(req.params.id as string, req.body, actorId(req)) });
+  },
+  deactivateOutsourcedProvider: async (req: Request, res: Response) => {
+    res.json({ data: await setupService.deactivateOutsourcedProvider(req.params.id as string, actorId(req)) });
+  },
+
+  // High-Cost Medicine Policy
+  getHighCostMedicinePolicy: async (_req: Request, res: Response) => {
+    res.json({ data: await setupService.getHighCostMedicinePolicy() });
+  },
+  updateHighCostMedicinePolicy: async (req: Request, res: Response) => {
+    res.json({ data: await setupService.updateHighCostMedicinePolicy(req.body, actorId(req)) });
+  },
+
+  // Provider Settlements
+  listProviderSettlements: async (req: Request, res: Response) => {
+    res.json({ data: await setupService.listProviderSettlements(req.query as any) });
+  },
+  createProviderSettlement: async (req: Request, res: Response) => {
+    res.status(201).json({ data: await setupService.createProviderSettlement(req.body, actorId(req)) });
   },
 };

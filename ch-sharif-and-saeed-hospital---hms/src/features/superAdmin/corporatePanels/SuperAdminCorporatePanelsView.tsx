@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   AlertCircle,
   X,
+  Trash2,
 } from 'lucide-react';
 import { useAuth } from '../../../context/AuthContext';
 import { formatPKR } from '../../../utils/formatters';
@@ -21,6 +22,7 @@ import {
   fetchCorporatePanels,
   createCorporatePanel,
   updateCorporatePanel,
+  deleteCorporatePanel,
   toggleCorporatePanelStatus,
   replaceDiscountRules,
 } from '../../../services/panelService';
@@ -60,6 +62,8 @@ export const SuperAdminCorporatePanelsView: React.FC = () => {
 
   const [statusTarget, setStatusTarget] = useState<CorporatePanel | null>(null);
   const [discountPanel, setDiscountPanel] = useState<CorporatePanel | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<CorporatePanel | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -163,6 +167,22 @@ export const SuperAdminCorporatePanelsView: React.FC = () => {
     } catch (err: any) {
       showToast(err?.message || 'Failed to update panel status.', 'error');
       setStatusTarget(null);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    setIsDeleting(true);
+    try {
+      await deleteCorporatePanel(deleteTarget.id);
+      showToast(`Corporate panel "${deleteTarget.name}" deleted successfully.`);
+      setDeleteTarget(null);
+      await loadPanels();
+    } catch (err: any) {
+      const msg = err?.response?.data?.error?.message || err?.message || 'Failed to delete corporate panel.';
+      showToast(msg, 'error');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -345,6 +365,14 @@ export const SuperAdminCorporatePanelsView: React.FC = () => {
                       >
                         <Power className="h-3.5 w-3.5" />
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => setDeleteTarget(panel)}
+                        className="p-1 hover:bg-rose-50 rounded text-slate-400 hover:text-rose-600 transition-colors"
+                        title="Delete Panel"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -364,7 +392,13 @@ export const SuperAdminCorporatePanelsView: React.FC = () => {
       </div>
 
       {/* Add / Edit Modal */}
-      <Modal isOpen={isFormOpen} onClose={() => setIsFormOpen(false)} title={editingPanel ? 'Edit Corporate Panel' : 'Register Corporate Panel'} maxWidth="md">
+      <Modal
+        isOpen={isFormOpen}
+        onClose={() => setIsFormOpen(false)}
+        title={editingPanel ? 'Edit Corporate Panel' : 'Register Corporate Panel'}
+        maxWidth="md"
+        closeOnBackdropClick={false}
+      >
         <form onSubmit={handleSave} className="space-y-4">
           {formError && (
             <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700 font-medium">{formError}</div>
@@ -451,6 +485,22 @@ export const SuperAdminCorporatePanelsView: React.FC = () => {
         variant={statusTarget?.status === 'Active' ? 'danger' : 'primary'}
       />
 
+      {/* Delete Confirm Modal */}
+      <ConfirmModal
+        isOpen={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleConfirmDelete}
+        title="Delete Corporate Panel"
+        message={
+          deleteTarget
+            ? `Are you sure you want to permanently delete "${deleteTarget.name}" (${deleteTarget.code})? This will also remove its configured discount rules. This action cannot be undone.`
+            : ''
+        }
+        confirmLabel="Delete Panel"
+        variant="danger"
+        isLoading={isDeleting}
+      />
+
       {/* Discount Rules Modal */}
       {discountPanel && (
         <DiscountRulesModal
@@ -481,7 +531,20 @@ const DiscountRulesModal: React.FC<DiscountRulesModalProps> = ({ panel, onClose,
   const [error, setError] = useState<string | null>(null);
 
   const addRow = () => {
-    setRows([...rows, { key: `new-${Date.now()}`, id: '', serviceRateId: services[0]?.id || '', discountPercent: 0, effectiveFrom: new Date().toISOString().slice(0, 10), effectiveTo: undefined }]);
+    setRows([
+      ...rows,
+      {
+        key: `new-${Date.now()}`,
+        id: '',
+        serviceRateId: services[0]?.id || '',
+        discountPercent: 0,
+        coveragePercent: undefined,
+        preauthorizationRequired: false,
+        capAmount: undefined,
+        effectiveFrom: new Date().toISOString().slice(0, 10),
+        effectiveTo: undefined,
+      },
+    ]);
   };
 
   const removeRow = (key: string) => setRows(rows.filter((r) => r.key !== key));
@@ -496,7 +559,15 @@ const DiscountRulesModal: React.FC<DiscountRulesModalProps> = ({ panel, onClose,
     try {
       await replaceDiscountRules(
         panel.id,
-        rows.map((r) => ({ serviceRateId: r.serviceRateId, discountPercent: r.discountPercent, effectiveFrom: r.effectiveFrom, effectiveTo: r.effectiveTo }))
+        rows.map((r) => ({
+          serviceRateId: r.serviceRateId,
+          discountPercent: r.discountPercent,
+          coveragePercent: r.coveragePercent,
+          preauthorizationRequired: r.preauthorizationRequired,
+          capAmount: r.capAmount,
+          effectiveFrom: r.effectiveFrom,
+          effectiveTo: r.effectiveTo,
+        }))
       );
       onSaved();
     } catch (err: any) {
@@ -507,7 +578,7 @@ const DiscountRulesModal: React.FC<DiscountRulesModalProps> = ({ panel, onClose,
   };
 
   return (
-    <Modal isOpen onClose={onClose} title={`Discount Rules — ${panel.name}`} maxWidth="lg">
+    <Modal isOpen onClose={onClose} title={`Discount Rules — ${panel.name}`} maxWidth="lg" closeOnBackdropClick={false}>
       <div className="space-y-3">
         {error && <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700 font-medium">{error}</div>}
         {services.length === 0 && (
@@ -517,43 +588,87 @@ const DiscountRulesModal: React.FC<DiscountRulesModalProps> = ({ panel, onClose,
         )}
         <div className="space-y-2 max-h-96 overflow-y-auto">
           {rows.map((row) => (
-            <div key={row.key} className="grid grid-cols-12 gap-2 items-center bg-slate-50 p-2 rounded-lg border border-slate-200">
-              <select
-                className="col-span-5 text-xs px-2 py-1.5 border border-slate-200 rounded-lg bg-white"
-                value={row.serviceRateId}
-                onChange={(e) => setRows(rows.map((r) => (r.key === row.key ? { ...r, serviceRateId: e.target.value } : r)))}
-              >
-                <option value="">Select a service…</option>
-                {services.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.code} — {s.name}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="number"
-                min={0}
-                max={100}
-                className="col-span-2 text-xs px-2 py-1.5 border border-slate-200 rounded-lg"
-                value={row.discountPercent}
-                onChange={(e) => setRows(rows.map((r) => (r.key === row.key ? { ...r, discountPercent: Number(e.target.value) || 0 } : r)))}
-                placeholder="%"
-              />
-              <input
-                type="date"
-                className="col-span-2 text-xs px-2 py-1.5 border border-slate-200 rounded-lg"
-                value={row.effectiveFrom}
-                onChange={(e) => setRows(rows.map((r) => (r.key === row.key ? { ...r, effectiveFrom: e.target.value } : r)))}
-              />
-              <input
-                type="date"
-                className="col-span-2 text-xs px-2 py-1.5 border border-slate-200 rounded-lg"
-                value={row.effectiveTo || ''}
-                onChange={(e) => setRows(rows.map((r) => (r.key === row.key ? { ...r, effectiveTo: e.target.value || undefined } : r)))}
-              />
-              <button type="button" onClick={() => removeRow(row.key)} className="col-span-1 p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg flex justify-center">
-                <X className="h-3.5 w-3.5" />
-              </button>
+            <div key={row.key} className="space-y-1.5 bg-slate-50 p-2 rounded-lg border border-slate-200">
+              <div className="grid grid-cols-12 gap-2 items-center">
+                <select
+                  className="col-span-5 text-xs px-2 py-1.5 border border-slate-200 rounded-lg bg-white"
+                  value={row.serviceRateId}
+                  onChange={(e) => setRows(rows.map((r) => (r.key === row.key ? { ...r, serviceRateId: e.target.value } : r)))}
+                >
+                  <option value="">Select a service…</option>
+                  {services.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.code} — {s.name}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  className="col-span-2 text-xs px-2 py-1.5 border border-slate-200 rounded-lg"
+                  value={row.discountPercent}
+                  onChange={(e) => setRows(rows.map((r) => (r.key === row.key ? { ...r, discountPercent: Number(e.target.value) || 0 } : r)))}
+                  placeholder="%"
+                />
+                <input
+                  type="date"
+                  className="col-span-2 text-xs px-2 py-1.5 border border-slate-200 rounded-lg"
+                  value={row.effectiveFrom}
+                  onChange={(e) => setRows(rows.map((r) => (r.key === row.key ? { ...r, effectiveFrom: e.target.value } : r)))}
+                />
+                <input
+                  type="date"
+                  className="col-span-2 text-xs px-2 py-1.5 border border-slate-200 rounded-lg"
+                  value={row.effectiveTo || ''}
+                  onChange={(e) => setRows(rows.map((r) => (r.key === row.key ? { ...r, effectiveTo: e.target.value || undefined } : r)))}
+                />
+                <button type="button" onClick={() => removeRow(row.key)} className="col-span-1 p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg flex justify-center">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              {/* v7.2 Panel Management enhancements (HMS_V7.2_NEW_REQUIREMENTS.md §2.5) */}
+              <div className="grid grid-cols-12 gap-2 items-center pl-0.5">
+                <div className="col-span-4 flex items-center gap-1">
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    placeholder="Coverage %"
+                    className="w-full text-[11px] px-2 py-1 border border-slate-200 rounded-lg bg-white"
+                    value={row.coveragePercent ?? ''}
+                    onChange={(e) =>
+                      setRows(
+                        rows.map((r) =>
+                          r.key === row.key ? { ...r, coveragePercent: e.target.value === '' ? undefined : Number(e.target.value) } : r
+                        )
+                      )
+                    }
+                    title="Panel Coverage % — the covered portion; the complement is the patient's co-pay share"
+                  />
+                </div>
+                <div className="col-span-4">
+                  <input
+                    type="number"
+                    min={0}
+                    placeholder="Cap Amount (PKR)"
+                    className="w-full text-[11px] px-2 py-1 border border-slate-200 rounded-lg bg-white"
+                    value={row.capAmount ?? ''}
+                    onChange={(e) =>
+                      setRows(rows.map((r) => (r.key === row.key ? { ...r, capAmount: e.target.value === '' ? undefined : Number(e.target.value) } : r)))
+                    }
+                  />
+                </div>
+                <label className="col-span-4 flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!!row.preauthorizationRequired}
+                    onChange={(e) => setRows(rows.map((r) => (r.key === row.key ? { ...r, preauthorizationRequired: e.target.checked } : r)))}
+                    className="rounded text-[#08775A] focus:ring-[#08775A]"
+                  />
+                  Preauthorization Required
+                </label>
+              </div>
             </div>
           ))}
         </div>

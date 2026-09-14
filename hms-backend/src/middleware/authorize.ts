@@ -32,6 +32,7 @@ const policy: Policy = {
     inventory: new Set(fullAccess),
     pharmacy: new Set(fullAccess),
     'pharmacy-bridge': new Set(fullAccess),
+    reports: new Set(fullAccess),
   },
   ADMIN: {
     identity: new Set(fullAccess),
@@ -43,6 +44,7 @@ const policy: Policy = {
     inventory: new Set(fullAccess),
     pharmacy: new Set(fullAccess),
     'pharmacy-bridge': new Set(fullAccess),
+    reports: new Set(fullAccess),
   },
   // Read-only oversight of Hospital Setup (§3.3 matrix: Admission = "V (read-only)").
   ADMISSION: {
@@ -58,7 +60,12 @@ const policy: Policy = {
     frontdesk: new Set(fullAccess),
     cash: new Set<Action>(['view', 'create']),
     commission: new Set<Action>(['view']),
-    admission: new Set<Action>(['view', 'edit']),
+    // v7.2 §2.9 (HMS_V7.2_NEW_REQUIREMENTS.md) — "Admission begins at Front
+    // Desk" is the spec's #1 non-negotiable rule. Front Desk now creates the
+    // admission file; Admission Portal receives it and manages the stay
+    // (still no `create` intentionally revoked there — see the doc's §3.4
+    // follow-up note on fully closing out the relocation).
+    admission: new Set<Action>(['view', 'edit', 'create']),
   },
   INVENTORY_MANAGEMENT: {
     setup: new Set<Action>(['view']),

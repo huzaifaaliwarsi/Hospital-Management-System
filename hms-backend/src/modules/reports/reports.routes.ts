@@ -1,15 +1,24 @@
 import { Router } from 'express';
+import { authorize } from '@/middleware/authorize';
+import { validate } from '@/middleware/validate';
+import { asyncHandler } from '@/shared/asyncHandler';
+import { dashboardController } from './dashboard.controller';
+import { getSuperAdminDashboardQuerySchema } from './dashboard.schemas';
 
-/**
- * reports module — scaffold only. Business endpoints are implemented in a
- * later phase; see PROJECT_MASTER_SPEC.md §4 (module breakdown) and §8
- * (REST API specification) for the full endpoint inventory this module
- * will eventually carry.
- */
 const router = Router();
+const view = authorize('reports', 'view');
+
+// Super Admin executive overview dashboard aggregation
+router.get(
+  '/dashboard/super-admin',
+  view,
+  validate({ query: getSuperAdminDashboardQuerySchema }),
+  asyncHandler(dashboardController.getSuperAdminDashboard),
+);
 
 router.get('/_scaffold', (_req, res) => {
   res.json({ data: { module: 'reports', status: 'scaffolded' } });
 });
 
 export default router;
+

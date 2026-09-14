@@ -56,7 +56,8 @@ function formatTimestamp(iso?: string | null): string {
 function toStaffUser(raw: Record<string, any>): StaffUser {
   const pu = raw.portalUser;
   const assignedPortal = pu ? PORTAL_ROLE_TO_KEY[pu.role] ?? null : null;
-  const status: StaffStatus = !raw.isActive ? 'INACTIVE' : pu?.status === 'SUSPENDED' ? 'SUSPENDED' : 'ACTIVE';
+  const isSuspended = pu?.status === 'SUSPENDED' || (raw.notes && String(raw.notes).startsWith('[SUSPENDED]'));
+  const status: StaffStatus = isSuspended ? 'SUSPENDED' : !raw.isActive ? 'INACTIVE' : 'ACTIVE';
 
   return {
     id: raw.id,
@@ -84,7 +85,12 @@ function toStaffUser(raw: Record<string, any>): StaffUser {
     updatedAt: formatTimestamp(raw.updatedAt),
     passwordResetBy: pu?.passwordResetBy || undefined,
     passwordResetAt: pu?.passwordResetAt ? formatTimestamp(pu.passwordResetAt) : undefined,
+    clinicalAuthUsername: raw.clinicalAuthUsername ?? null,
+    clinicalAuthActive: !!raw.clinicalAuthActive,
+    clinicalAuthUpdatedAt: raw.clinicalAuthUpdatedAt ? formatTimestamp(raw.clinicalAuthUpdatedAt) : undefined,
+    doctorSponsoredDiscountTrackingEnabled: !!raw.doctorSponsoredDiscountTrackingEnabled,
     linkedActivityCount: 0,
+    notes: raw.notes || undefined,
     // Internal, not part of the public StaffUser type but read back by this module below.
     // @ts-expect-error - stash the linked portal user id for update/status/reset calls.
     __portalUserId: pu?.id,
@@ -154,11 +160,30 @@ export class StaffUserService {
     return /^\d{5}-\d{7}-\d{1}$/.test(cnic.trim());
   }
 
+  static isValidPhone(phone?: string | null): boolean {
+    if (!phone || !phone.trim()) return false;
+    let digits = phone.replace(/\D/g, '');
+    if (digits.startsWith('92') && digits.length === 12) digits = `0${digits.slice(2)}`;
+    else if (digits.length === 10 && digits.startsWith('3')) digits = `0${digits}`;
+    return digits.length === 11 && digits.startsWith('03');
+  }
+
   static isValidPassword(password: string): { valid: boolean; message?: string } {
     if (password.length < 8) return { valid: false, message: 'Password must be at least 8 characters long.' };
     if (!/[A-Za-z]/.test(password)) return { valid: false, message: 'Password must contain at least one letter.' };
     if (!/[0-9]/.test(password)) return { valid: false, message: 'Password must contain at least one number.' };
     return { valid: true };
+  }
+
+  static getNextNumericEmployeeCode(): string {
+    let maxNum = 1000;
+    for (const s of cachedStaffUsers) {
+      const num = parseInt(s.employeeCode, 10);
+      if (!Number.isNaN(num) && num > maxNum) {
+        maxNum = num;
+      }
+    }
+    return String(maxNum + 1);
   }
 
   static isEmployeeCodeDuplicate(code: string, currentId?: string): boolean {
@@ -208,6 +233,7 @@ export class StaffUserService {
         alternatePhone: values.alternatePhone?.trim() || undefined,
         email: values.email?.trim() || undefined,
         joiningDate: new Date().toISOString().slice(0, 10), // not yet collected by this form — defaults to today
+        doctorSponsoredDiscountTrackingEnabled: values.doctorSponsoredDiscountTrackingEnabled,
       });
       const staffId = staffRes.data.data.id;
 
@@ -271,6 +297,7 @@ export class StaffUserService {
         alternatePhone: values.alternatePhone?.trim() || undefined,
         email: values.email?.trim() || undefined,
         isActive: values.status !== 'INACTIVE',
+        doctorSponsoredDiscountTrackingEnabled: values.doctorSponsoredDiscountTrackingEnabled,
       });
 
       const portalUserId = getPortalUserId(existing);
@@ -320,20 +347,46 @@ export class StaffUserService {
   }
 
   /** `POST /staff/:id/deactivate` or `PATCH /staff/:id` (reactivate), plus `/portal-users/:id/status` when applicable */
-  static async updateStaffStatus(id: string, newStatus: StaffStatus, _currentUser: User | null): Promise<{ success: boolean; error?: string }> {
+  static async updateStaffStatus(
+    id: string,
+    newStatus: StaffStatus,
+    _currentUser: User | null,
+    reason?: string,
+  ): Promise<{ success: boolean; error?: string }> {
     const existing = this.getStaffUserById(id);
     if (!existing) return { success: false, error: 'Staff user not found.' };
 
     try {
-      if (newStatus === 'INACTIVE') {
-        await apiClient.post(`/staff/${id}/deactivate`);
-      } else if (!existing.status || existing.status === 'INACTIVE') {
-        await apiClient.patch(`/staff/${id}`, { isActive: true });
-      }
-
       const portalUserId = getPortalUserId(existing);
-      if (portalUserId && newStatus !== 'INACTIVE') {
-        await apiClient.post(`/portal-users/${portalUserId}/status`, { status: newStatus === 'SUSPENDED' ? 'SUSPENDED' : 'ACTIVE' });
+
+      if (newStatus === 'INACTIVE') {
+        await apiClient.post(`/staff/${id}/deactivate`, { reason: reason || 'Administrative deactivation' });
+      } else if (newStatus === 'SUSPENDED') {
+        if (portalUserId) {
+          await apiClient.post(`/portal-users/${portalUserId}/status`, {
+            status: 'SUSPENDED',
+            reason: reason || 'Administrative suspension',
+          });
+        }
+        const existingNotes = existing.notes || '';
+        const cleanNotes = existingNotes.replace(/^\[SUSPENDED\]\s*/, '');
+        const newNotes = `[SUSPENDED] ${reason || 'Suspended by administrator'}${cleanNotes ? ' | ' + cleanNotes : ''}`;
+        await apiClient.patch(`/staff/${id}`, { notes: newNotes });
+      } else if (newStatus === 'ACTIVE') {
+        const existingNotes = existing.notes || '';
+        const cleanNotes = existingNotes.replace(/^\[SUSPENDED\]\s*/, '');
+        await apiClient.patch(`/staff/${id}`, {
+          isActive: true,
+          employmentStatus: 'ACTIVE',
+          notes: cleanNotes || undefined,
+        });
+
+        if (portalUserId) {
+          await apiClient.post(`/portal-users/${portalUserId}/status`, {
+            status: 'ACTIVE',
+            reason: reason || 'Reactivated by administrator',
+          });
+        }
       }
 
       await fetchStaffUsers();
@@ -362,9 +415,89 @@ export class StaffUserService {
     }
   }
 
-  /** The backend has no hard-delete for Staff/PortalUser (same data-integrity stance as elsewhere). */
-  static async deleteStaffUser(_id: string, _currentUser: User | null): Promise<{ success: boolean; error?: string }> {
-    return { success: false, error: 'Staff accounts cannot be permanently deleted for data-integrity reasons. Deactivate it instead.' };
+  // ── v7.2 Salary Profile (HMS_V7.2_NEW_REQUIREMENTS.md §2.7) ─────────────
+  // Creating a new profile server-side closes out whichever row was
+  // previously current — this is a "set current profile" action, not a
+  // patch, matching StaffEmploymentHistory/DoctorCommissionRule's
+  // effective-dated-history pattern.
+  static async saveSalaryProfile(
+    id: string,
+    values: {
+      salaryBasis: 'MONTHLY' | 'PER_DAY';
+      baseAmount: number;
+      payrollDivisor?: number;
+      salaryTaxMethod?: 'PERCENTAGE' | 'FIXED' | '';
+      salaryTaxValue?: number | '';
+      effectiveFrom: string;
+    },
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      await apiClient.post(`/staff/${id}/salary-profile`, {
+        salaryBasis: values.salaryBasis,
+        baseAmount: values.baseAmount,
+        payrollDivisor: values.payrollDivisor,
+        salaryTaxMethod: values.salaryTaxMethod || undefined,
+        salaryTaxValue: values.salaryTaxValue === '' ? undefined : values.salaryTaxValue,
+        effectiveFrom: values.effectiveFrom,
+      });
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.response?.data?.error?.message || err?.message || 'Failed to save salary profile.' };
+    }
+  }
+
+  /** Staff 360° read — current salary profile + commission rules, used by the Salary Profile modal to prefill. */
+  static async fetchFullProfile(id: string): Promise<Record<string, any>> {
+    const res = await apiClient.get<{ data: Record<string, any> }>(`/staff/${id}/360`);
+    return res.data.data;
+  }
+
+  // ── v7.2 Doctor Clinical Discharge Authorization (HMS_V7.2_NEW_REQUIREMENTS.md
+  // §2.4) — a credential separate from the portal login above; usable even
+  // for a Staff Record Only doctor. Consumed later by the Admission
+  // Portal's discharge re-authentication popup (not built in this phase).
+
+  /** Creates or replaces a doctor's clinical discharge credential (also (re)activates it). */
+  static async setClinicalAuth(id: string, username: string, password: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      await apiClient.post(`/staff/${id}/clinical-auth`, { username, password });
+      await fetchStaffUsers();
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.response?.data?.error?.message || err?.message || 'Failed to set clinical discharge credential.' };
+    }
+  }
+
+  /** Rotates the password on an existing clinical discharge credential without changing the username. */
+  static async resetClinicalAuthPassword(id: string, password: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      await apiClient.post(`/staff/${id}/clinical-auth/reset-password`, { password });
+      await fetchStaffUsers();
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.response?.data?.error?.message || err?.message || 'Failed to reset clinical discharge password.' };
+    }
+  }
+
+  static async setClinicalAuthActive(id: string, active: boolean): Promise<{ success: boolean; error?: string }> {
+    try {
+      await apiClient.post(`/staff/${id}/clinical-auth/${active ? 'activate' : 'deactivate'}`);
+      await fetchStaffUsers();
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.response?.data?.error?.message || err?.message || 'Failed to update clinical discharge authorization status.' };
+    }
+  }
+
+  /** Permanently delete staff user (or guides to deactivation if hospital activity is recorded). */
+  static async deleteStaffUser(id: string, _currentUser: User | null): Promise<{ success: boolean; error?: string }> {
+    try {
+      await apiClient.delete(`/staff/${id}`);
+      await fetchStaffUsers();
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to delete staff account.' };
+    }
   }
 
   static filterStaffUsers(users: StaffUser[], filters: StaffUserFilterState): StaffUser[] {
@@ -663,6 +796,7 @@ export class StaffUserService {
             password: tempPassword,
             confirmPassword: tempPassword,
             requirePasswordChange: true,
+            doctorSponsoredDiscountTrackingEnabled: false,
           },
           currentUser
         );

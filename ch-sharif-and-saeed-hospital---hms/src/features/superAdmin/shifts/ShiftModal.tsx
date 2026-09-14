@@ -59,9 +59,10 @@ export const ShiftModal: React.FC<ShiftModalProps> = ({
       if (initialShift) {
         if (isDuplicate) {
           // DUPLICATE MODE:
-          // Prefill all settings, but require a brand new unique Shift Code and suggest name - Copy
+          // Prefill all settings, but blank the Shift Code (optional — a new
+          // unique code is auto-generated unless the user enters one) and suggest name - Copy
           setFormData({
-            code: '', // Require user to input new unique code
+            code: '', // Left blank; auto-generated on save unless the user types a new one
             name: `${initialShift.name} - Copy`,
             departmentId: initialShift.departmentId,
             shiftType: initialShift.shiftType,
@@ -208,7 +209,7 @@ export const ShiftModal: React.FC<ShiftModalProps> = ({
               {/* Shift Code */}
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">
-                  Shift Code <span className="text-rose-500">*</span>
+                  Shift Code
                 </label>
                 <input
                   type="text"
@@ -217,7 +218,7 @@ export const ShiftModal: React.FC<ShiftModalProps> = ({
                     setFormData({ ...formData, code: e.target.value.toUpperCase() });
                     if (errors.code) setErrors({ ...errors, code: '' });
                   }}
-                  placeholder="e.g. SHF-MOR-01"
+                  placeholder="e.g. SHF-MOR-01 (optional — auto-generated if blank)"
                   className={`w-full px-3 py-1.5 font-mono text-xs uppercase bg-white border rounded-lg focus:outline-hidden focus:ring-1 transition-colors ${
                     errors.code
                       ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500 bg-rose-50/20'
@@ -228,7 +229,7 @@ export const ShiftModal: React.FC<ShiftModalProps> = ({
                   <p className="text-[11px] text-rose-500 mt-1">{errors.code}</p>
                 ) : (
                   <p className="text-[10.5px] text-slate-400 mt-0.5">
-                    Unique uppercase identification code
+                    Unique uppercase code — leave blank to auto-generate
                   </p>
                 )}
               </div>

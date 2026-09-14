@@ -12,6 +12,13 @@ export interface PanelDiscountRule {
   serviceCode?: string;
   serviceName?: string;
   discountPercent: number;
+  // v7.2 Panel Management enhancements (HMS_V7.2_NEW_REQUIREMENTS.md §2.5) —
+  // additive/optional; `discountPercent` above stays the legacy simple
+  // knock-off. `coveragePercent` is what the panel actually pays — the
+  // complement is the patient's co-pay share.
+  coveragePercent?: number;
+  preauthorizationRequired?: boolean;
+  capAmount?: number;
   effectiveFrom: string;
   effectiveTo?: string;
 }
@@ -162,16 +169,33 @@ export async function toggleCorporatePanelStatus(id: string, isActive: boolean):
 /** `PUT /setup/corporate-panels/:id/discount-rules` — replaces the full rule set for the panel. */
 export async function replaceDiscountRules(
   id: string,
-  rules: { serviceRateId: string; discountPercent: number; effectiveFrom: string; effectiveTo?: string }[]
+  rules: {
+    serviceRateId: string;
+    discountPercent: number;
+    coveragePercent?: number;
+    preauthorizationRequired?: boolean;
+    capAmount?: number;
+    effectiveFrom: string;
+    effectiveTo?: string;
+  }[]
 ): Promise<PanelDiscountRule[]> {
   const res = await apiClient.put<{ data: Record<string, any>[] }>(`/setup/corporate-panels/${id}/discount-rules`, { rules });
   const discountRules = res.data.data.map((r) => ({
     id: r.id,
     serviceRateId: r.serviceRateId,
     discountPercent: Number(r.discountPercent),
+    coveragePercent: r.coveragePercent != null ? Number(r.coveragePercent) : undefined,
+    preauthorizationRequired: !!r.preauthorizationRequired,
+    capAmount: r.capAmount != null ? Number(r.capAmount) : undefined,
     effectiveFrom: String(r.effectiveFrom).slice(0, 10),
     effectiveTo: r.effectiveTo ? String(r.effectiveTo).slice(0, 10) : undefined,
   }));
   cachedPanels = cachedPanels.map((p) => (p.id === id ? { ...p, discountRules } : p));
   return discountRules;
+}
+
+/** `DELETE /setup/corporate-panels/:id` */
+export async function deleteCorporatePanel(id: string): Promise<void> {
+  await apiClient.delete(`/setup/corporate-panels/${id}`);
+  cachedPanels = cachedPanels.filter((p) => p.id !== id);
 }

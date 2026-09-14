@@ -45,6 +45,10 @@ import { ShiftManagementView } from './shifts/ShiftManagementView';
 import { SuperAdminReportsView } from './SuperAdminReportsView';
 import { PatientRegistryView } from './patientRegistry/PatientRegistryView';
 import { SuperAdminCorporatePanelsView } from './corporatePanels/SuperAdminCorporatePanelsView';
+import { SuperAdminOutsourcedProvidersView } from './outsourcedProviders/SuperAdminOutsourcedProvidersView';
+import { HighCostMedicinePolicyView } from './highCostMedicine/HighCostMedicinePolicyView';
+import { ProviderSettlementsView } from './providerSettlements/ProviderSettlementsView';
+import { DoctorCommissionView } from './doctorCommission/DoctorCommissionView';
 import {
   MOCK_DEPARTMENTS,
   DepartmentRecord,
@@ -224,6 +228,26 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
   // 1h. Check if this is Corporate Panels Page
   if (activeModuleId === 'corporate_panels') {
     return <SuperAdminCorporatePanelsView />;
+  }
+
+  // 1i. v7.2 — Outsourced Providers (HMS_V7.2_NEW_REQUIREMENTS.md §2.1)
+  if (activeModuleId === 'outsourced_providers') {
+    return <SuperAdminOutsourcedProvidersView />;
+  }
+
+  // 1j. v7.2 — High-Cost Medicine Authorization Policy (§2.6)
+  if (activeModuleId === 'high_cost_medicine_policy') {
+    return <HighCostMedicinePolicyView />;
+  }
+
+  // 1k. v7.2 — Department Payables / Provider Settlements (§2.8)
+  if (activeModuleId === 'provider_settlements') {
+    return <ProviderSettlementsView />;
+  }
+
+  // 1l. v7.2 — Doctor Commission (§2.7)
+  if (activeModuleId === 'doctor_commission') {
+    return <DoctorCommissionView />;
   }
 
   // 2. Check if this is a Report Page (Global Reporting Standard)

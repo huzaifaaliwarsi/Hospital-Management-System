@@ -68,7 +68,10 @@ export type UpdateHospitalProfileBody = z.infer<typeof updateHospitalProfileSche
 
 // ── Departments ──────────────────────────────────────────────────────
 export const createDepartmentSchema = z.object({
-  code: z.string().min(1).max(20),
+  // Optional: left blank, the backend auto-generates a unique code
+  // (see `generateUniqueCode` in setup.service.ts). A manually entered
+  // code is still accepted and normalized (trimmed + uppercased).
+  code: z.string().max(20).optional(),
   name: z.string().min(1).max(150),
   description: z.string().max(2000).optional(),
   headStaffId: z.string().uuid().optional(),
@@ -89,6 +92,12 @@ export const createDepartmentSchema = z.object({
   supportsEmergency: z.boolean().optional(),
   supportsAdmission: z.boolean().optional(),
   pharmacyRelated: z.boolean().optional(),
+  // v7.2 department billing config (HMS_V7.2_NEW_REQUIREMENTS.md §2.1) —
+  // whether this department is fulfilled in-house or by a linked Outsourced
+  // Provider. `outsourcedProviderId` is required when OUTSOURCED at the
+  // service layer (not here, so the two fields can still be set in either order).
+  fulfillmentOwnership: z.enum(['INTERNAL', 'OUTSOURCED']).optional(),
+  outsourcedProviderId: z.string().uuid().optional().nullable(),
   isActive: z.boolean().optional(),
 });
 export type CreateDepartmentBody = z.infer<typeof createDepartmentSchema>;
@@ -97,7 +106,8 @@ export type UpdateDepartmentBody = z.infer<typeof updateDepartmentSchema>;
 
 // ── Service Rates ────────────────────────────────────────────────────
 export const createServiceRateSchema = z.object({
-  code: z.string().min(1).max(20),
+  // Optional: auto-generated when left blank (see Departments note above).
+  code: z.string().max(20).optional(),
   name: z.string().min(1).max(150),
   description: z.string().max(2000).optional(),
   departmentId: z.string().uuid(),
@@ -186,6 +196,12 @@ export const discountRuleSchema = z.object({
   discountPercent: z.coerce.number().min(0).max(100),
   effectiveFrom: z.coerce.date(),
   effectiveTo: z.coerce.date().optional(),
+  // v7.2 Panel Management enhancements (HMS_V7.2_NEW_REQUIREMENTS.md §2.5) —
+  // additive/optional so existing rules built against `discountPercent`
+  // alone keep working unchanged.
+  coveragePercent: z.coerce.number().min(0).max(100).optional(),
+  preauthorizationRequired: z.boolean().optional(),
+  capAmount: z.coerce.number().nonnegative().optional(),
 });
 export const replaceDiscountRulesSchema = z.object({
   rules: z.array(discountRuleSchema),
@@ -197,8 +213,73 @@ const TIME_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
 const timeSchema = z.string().regex(TIME_REGEX, 'Time must be in HH:mm 24-hour format');
 export const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] as const;
 
+// ── Outsourced Providers (HMS_V7.2_NEW_REQUIREMENTS.md §2.1) ────────────
+export const createOutsourcedProviderSchema = z.object({
+  code: z.string().max(20).optional(),
+  name: z.string().min(1).max(200),
+  representativeName: z.string().max(150).optional(),
+  representativeDesignation: z.string().max(100).optional(),
+  phone: z.string().max(30).optional(),
+  email: z.string().email().optional().or(z.literal('')),
+  address: z.string().max(300).optional(),
+  paymentTermsNotes: z.string().max(1000).optional(),
+  settlementCycle: z.string().max(50).optional(),
+  allowedPaymentMethods: z.array(z.enum(['CASH', 'BANK_TRANSFER', 'CHEQUE', 'ONLINE'])).optional(),
+  bankName: z.string().max(150).optional(),
+  bankAccountTitle: z.string().max(150).optional(),
+  bankAccountNumber: z.string().max(50).optional(),
+  chequePayeeName: z.string().max(150).optional(),
+  withholdingTaxPercent: z.coerce.number().min(0).max(100).optional(),
+  withholdingEffectiveFrom: z.coerce.date().optional(),
+  isActive: z.boolean().optional(),
+});
+export type CreateOutsourcedProviderBody = z.infer<typeof createOutsourcedProviderSchema>;
+export const updateOutsourcedProviderSchema = createOutsourcedProviderSchema.partial();
+export type UpdateOutsourcedProviderBody = z.infer<typeof updateOutsourcedProviderSchema>;
+
+// ── High-Cost Medicine Policy (HMS_V7.2_NEW_REQUIREMENTS.md §2.6) ───────
+// Singleton config, same pattern as Hospital Profile — GET auto-creates
+// defaults, PUT patches whichever fields are supplied.
+export const updateHighCostMedicinePolicySchema = z.object({
+  enabled: z.boolean().optional(),
+  thresholdAmount: z.coerce.number().nonnegative().optional(),
+  thresholdBasis: z.enum(['LINE_TOTAL', 'PER_UNIT']).optional(),
+  attendantConfirmationRequired: z.boolean().optional(),
+  managementApprovalRequired: z.boolean().optional(),
+  combinedLogic: z.enum(['ATTENDANT_ONLY', 'MANAGEMENT_ONLY', 'EITHER', 'BOTH']).optional(),
+  panelPreauthRequired: z.boolean().optional(),
+});
+export type UpdateHighCostMedicinePolicyBody = z.infer<typeof updateHighCostMedicinePolicySchema>;
+
+// ── Provider Settlements (HMS_V7.2_NEW_REQUIREMENTS.md §2.8) ────────────
+// `eligibleRealizedAmount` is recorded by the settling user for now — the
+// Front Desk department sub-invoice split (§2.2) that would compute it
+// automatically from realized collections is future/out-of-phase work; see
+// the doc's Phase A/B split and this schema's service-layer validation.
+export const createProviderSettlementSchema = z.object({
+  outsourcedProviderId: z.string().uuid(),
+  departmentId: z.string().uuid().optional(),
+  periodLabel: z.string().max(100).optional(),
+  eligibleRealizedAmount: z.coerce.number().positive(),
+  settlementAmount: z.coerce.number().positive(),
+  status: z.enum(['FULL', 'PARTIAL']),
+  paymentMethod: z.enum(['CASH', 'BANK_TRANSFER', 'CHEQUE', 'ONLINE']),
+  paymentReference: z.string().max(100).optional(),
+  representativeName: z.string().max(150).optional(),
+  representativeDesignation: z.string().max(100).optional(),
+  remarks: z.string().max(1000).optional(),
+});
+export type CreateProviderSettlementBody = z.infer<typeof createProviderSettlementSchema>;
+
+export const listProviderSettlementsQuerySchema = z.object({
+  outsourcedProviderId: z.string().uuid().optional(),
+  departmentId: z.string().uuid().optional(),
+});
+export type ListProviderSettlementsQuery = z.infer<typeof listProviderSettlementsQuerySchema>;
+
 export const createShiftSchema = z.object({
-  code: z.string().min(1).max(20),
+  // Optional: auto-generated when left blank (see Departments note above).
+  code: z.string().max(20).optional(),
   name: z.string().min(1).max(100),
   departmentId: z.string().uuid(),
   shiftType: z.enum(['MORNING', 'EVENING', 'NIGHT', 'CUSTOM']).default('CUSTOM'),

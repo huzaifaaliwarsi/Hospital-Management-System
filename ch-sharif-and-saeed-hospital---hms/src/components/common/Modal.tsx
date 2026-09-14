@@ -11,6 +11,7 @@ export interface ModalProps {
   footer?: React.ReactNode;
   maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '3xl' | '4xl' | '5xl';
   showCloseButton?: boolean;
+  closeOnBackdropClick?: boolean;
 }
 
 export const Modal: React.FC<ModalProps> = ({
@@ -22,7 +23,10 @@ export const Modal: React.FC<ModalProps> = ({
   footer,
   maxWidth = 'lg',
   showCloseButton = true,
+  closeOnBackdropClick = false,
 }) => {
+  const mouseDownTargetRef = React.useRef<EventTarget | null>(null);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isOpen) {
@@ -57,8 +61,17 @@ export const Modal: React.FC<ModalProps> = ({
       role="dialog"
       aria-modal="true"
       className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4"
+      onMouseDown={(e) => {
+        mouseDownTargetRef.current = e.target;
+      }}
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (
+          closeOnBackdropClick &&
+          e.target === e.currentTarget &&
+          mouseDownTargetRef.current === e.currentTarget
+        ) {
+          onClose();
+        }
       }}
     >
       <div

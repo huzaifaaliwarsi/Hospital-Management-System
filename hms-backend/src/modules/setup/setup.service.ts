@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
-import { NotFoundError, ConflictError } from '@/shared/errors/AppError';
+import { NotFoundError, ConflictError, ValidationError } from '@/shared/errors/AppError';
 import { actorSelect, resolveActorLabel, formatActorFromRelation, type ActorRelation } from '@/shared/actorLabel';
 import type {
   UpdateHospitalProfileBody,
@@ -19,6 +19,11 @@ import type {
   ReplaceDiscountRulesBody,
   CreateShiftBody,
   UpdateShiftBody,
+  CreateOutsourcedProviderBody,
+  UpdateOutsourcedProviderBody,
+  UpdateHighCostMedicinePolicyBody,
+  CreateProviderSettlementBody,
+  ListProviderSettlementsQuery,
 } from './setup.schemas';
 
 /**
@@ -26,6 +31,39 @@ import type {
  * phase (routes → controller → service, no separate repository layer) —
  * each sub-resource here is a thin CRUD wrapper around one Prisma model.
  */
+
+type CodeModel = 'department' | 'serviceRate' | 'ward' | 'room' | 'bed' | 'corporatePanel' | 'shift' | 'outsourcedProvider';
+
+/**
+ * Trims/uppercases a manually entered code. Returns `undefined` for blank
+ * input so callers can tell "not provided" apart from "provided" — on
+ * create that means "generate one", on update it means "leave untouched"
+ * (Prisma skips `undefined` fields in an update payload).
+ */
+function normalizeCode(raw?: string): string | undefined {
+  const trimmed = raw?.trim();
+  return trimmed ? trimmed.toUpperCase() : undefined;
+}
+
+/**
+ * Auto-generates a unique, human-readable code (e.g. "DEP-0007") for every
+ * master-data "Add" form — code is always accepted from the user but never
+ * required; this is the fallback when they leave it blank.
+ */
+async function generateUniqueCode(model: CodeModel, prefix: string): Promise<string> {
+  const table = prisma[model] as unknown as {
+    count: () => Promise<number>;
+    findFirst: (args: { where: { code: string } }) => Promise<unknown>;
+  };
+  let seq = (await table.count()) + 1;
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const candidate = `${prefix}-${String(seq).padStart(4, '0')}`;
+    if (!(await table.findFirst({ where: { code: candidate } }))) return candidate;
+    seq += 1;
+  }
+  // Practically unreachable — guarantees termination if the sequential range is somehow exhausted.
+  return `${prefix}-${Date.now().toString(36).toUpperCase()}`;
+}
 // Fields that live in the `billingLegalMetadata` JSON blob (tax/legal/invoice identity).
 const BILLING_LEGAL_KEYS = [
   'registrationNumber',
@@ -110,6 +148,41 @@ export const setupService = {
     return toClientProfile(row);
   },
 
+  async getHospitalSummary() {
+    const [
+      departments,
+      doctors,
+      staffUsers,
+      inpatientWards,
+      hospitalRooms,
+      totalBeds,
+      activePanels,
+    ] = await prisma.$transaction([
+      prisma.department.count({ where: { isActive: true } }),
+      prisma.staff.count({
+        where: {
+          category: { equals: 'Doctor', mode: 'insensitive' },
+          isActive: true,
+        },
+      }),
+      prisma.staff.count({ where: { isActive: true } }),
+      prisma.ward.count({ where: { isActive: true } }),
+      prisma.room.count({ where: { isActive: true } }),
+      prisma.bed.count(),
+      prisma.corporatePanel.count({ where: { isActive: true } }),
+    ]);
+
+    return {
+      departments,
+      doctors,
+      staffUsers,
+      inpatientWards,
+      hospitalRooms,
+      totalBeds,
+      activePanels,
+    };
+  },
+
   async updateHospitalProfile(body: UpdateHospitalProfileBody, updatedByPortalUserId: string) {
     const existing = await prisma.hospitalProfile.findFirst();
     const row = existing ?? (await prisma.hospitalProfile.create({ data: {} }));
@@ -192,15 +265,20 @@ export const setupService = {
   },
 
   async createDepartment(body: CreateDepartmentBody, createdById: string) {
+    const code = normalizeCode(body.code) ?? (await generateUniqueCode('department', 'DEP'));
+    // v7.2 §2.1 — an Outsourced department must be linked to a provider.
+    if (body.fulfillmentOwnership === 'OUTSOURCED' && !body.outsourcedProviderId) {
+      throw new ValidationError('An Outsourced department must be linked to an Outsourced Provider.');
+    }
     try {
       const created = await prisma.department.create({
-        data: { ...body, createdById },
+        data: { ...body, code, createdById },
         include: this.departmentInclude,
       });
       return (await this.decorateDepartments([created as any]))[0];
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        throw new ConflictError(`Department code "${body.code}" already exists.`);
+        throw new ConflictError(`Department code "${code}" already exists.`);
       }
       throw error;
     }
@@ -208,7 +286,15 @@ export const setupService = {
 
   async updateDepartment(id: string, body: UpdateDepartmentBody, updatedById: string) {
     const existing = await this.assertExists('department', id);
-    const data: Prisma.DepartmentUncheckedUpdateInput = { ...body, updatedById };
+    const nextOwnership = body.fulfillmentOwnership ?? (existing as { fulfillmentOwnership: string }).fulfillmentOwnership;
+    const nextProviderId =
+      body.outsourcedProviderId !== undefined
+        ? body.outsourcedProviderId
+        : (existing as { outsourcedProviderId: string | null }).outsourcedProviderId;
+    if (nextOwnership === 'OUTSOURCED' && !nextProviderId) {
+      throw new ValidationError('An Outsourced department must be linked to an Outsourced Provider.');
+    }
+    const data: Prisma.DepartmentUncheckedUpdateInput = { ...body, code: normalizeCode(body.code), updatedById };
     if (body.isActive !== undefined && body.isActive !== (existing as { isActive: boolean }).isActive) {
       data.statusChangedAt = new Date();
       data.statusChangedBy = await resolveActorLabel(updatedById);
@@ -275,15 +361,16 @@ export const setupService = {
   },
 
   async createServiceRate(body: CreateServiceRateBody, createdById: string) {
+    const code = normalizeCode(body.code) ?? (await generateUniqueCode('serviceRate', 'SRV'));
     try {
       const created = await prisma.serviceRate.create({
-        data: { ...body, createdById },
+        data: { ...body, code, createdById },
         include: this.serviceRateInclude,
       });
       return this.decorateServiceRates([created as any])[0];
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        throw new ConflictError(`Service code "${body.code}" already exists.`);
+        throw new ConflictError(`Service code "${code}" already exists.`);
       }
       throw error;
     }
@@ -291,7 +378,7 @@ export const setupService = {
 
   async updateServiceRate(id: string, body: UpdateServiceRateBody, updatedById: string) {
     const existing = await this.assertExists('serviceRate', id);
-    const data: Prisma.ServiceRateUncheckedUpdateInput = { ...body, updatedById };
+    const data: Prisma.ServiceRateUncheckedUpdateInput = { ...body, code: normalizeCode(body.code), updatedById };
     if (body.isActive !== undefined && body.isActive !== (existing as { isActive: boolean }).isActive) {
       data.statusChangedAt = new Date();
       data.statusChangedBy = await resolveActorLabel(updatedById);
@@ -401,11 +488,12 @@ export const setupService = {
   },
 
   async createWard(body: CreateWardBody, createdById: string) {
+    const code = normalizeCode(body.code) ?? (await generateUniqueCode('ward', 'WRD'));
     try {
-      return await prisma.ward.create({ data: { ...body, createdById } });
+      return await prisma.ward.create({ data: { ...body, code, createdById } });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        throw new ConflictError(`Ward code "${body.code}" already exists.`);
+        throw new ConflictError(`Ward code "${code}" already exists.`);
       }
       throw error;
     }
@@ -413,7 +501,7 @@ export const setupService = {
 
   async updateWard(id: string, body: UpdateWardBody, updatedById: string) {
     const existing = await this.assertExists('ward', id);
-    const data: Prisma.WardUncheckedUpdateInput = { ...body, updatedById };
+    const data: Prisma.WardUncheckedUpdateInput = { ...body, code: normalizeCode(body.code), updatedById };
     if (body.isActive !== undefined && body.isActive !== (existing as { isActive: boolean }).isActive) {
       data.statusChangedAt = new Date();
       data.statusChangedBy = await resolveActorLabel(updatedById);
@@ -422,11 +510,12 @@ export const setupService = {
   },
 
   async createRoom(body: CreateRoomBody, createdById: string) {
+    const code = normalizeCode(body.code) ?? (await generateUniqueCode('room', 'RM'));
     try {
-      return await prisma.room.create({ data: { ...body, createdById } });
+      return await prisma.room.create({ data: { ...body, code, createdById } });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        throw new ConflictError(`Room code "${body.code}" already exists.`);
+        throw new ConflictError(`Room code "${code}" already exists.`);
       }
       throw error;
     }
@@ -434,7 +523,7 @@ export const setupService = {
 
   async updateRoom(id: string, body: UpdateRoomBody, updatedById: string) {
     const existing = await this.assertExists('room', id);
-    const data: Prisma.RoomUncheckedUpdateInput = { ...body, updatedById };
+    const data: Prisma.RoomUncheckedUpdateInput = { ...body, code: normalizeCode(body.code), updatedById };
     if (body.isActive !== undefined && body.isActive !== (existing as { isActive: boolean }).isActive) {
       data.statusChangedAt = new Date();
       data.statusChangedBy = await resolveActorLabel(updatedById);
@@ -443,8 +532,9 @@ export const setupService = {
   },
 
   async createBed(body: CreateBedBody, createdById: string) {
+    const code = normalizeCode(body.code) ?? (await generateUniqueCode('bed', 'BED'));
     try {
-      return await prisma.bed.create({ data: { ...body, createdById } });
+      return await prisma.bed.create({ data: { ...body, code, createdById } });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         throw new ConflictError(`Bed "${body.bedNumber}" already exists in this room, or the bed code is taken.`);
@@ -455,7 +545,7 @@ export const setupService = {
 
   async updateBed(id: string, body: UpdateBedBody, updatedById: string) {
     const existing = await this.assertExists('bed', id);
-    const data: Prisma.BedUncheckedUpdateInput = { ...body, updatedById };
+    const data: Prisma.BedUncheckedUpdateInput = { ...body, code: normalizeCode(body.code), updatedById };
     if (
       body.operationalStatus !== undefined &&
       body.operationalStatus !== (existing as { operationalStatus: string }).operationalStatus
@@ -464,6 +554,150 @@ export const setupService = {
       data.statusChangedBy = await resolveActorLabel(updatedById);
     }
     return prisma.bed.update({ where: { id }, data });
+  },
+
+  rethrowFkError(error: unknown, fallbackMessage: string): never {
+    const msg = String((error as any)?.message || '');
+    const code = String((error as any)?.code || '');
+    const isFkError =
+      (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') ||
+      code === 'P2003' ||
+      code === '23001' ||
+      code === '23503' ||
+      msg.includes('foreign key constraint') ||
+      msg.includes('violates RESTRICT');
+
+    if (isFkError) {
+      throw new ConflictError(fallbackMessage);
+    }
+    throw error;
+  },
+
+  async deleteBed(id: string) {
+    const bed = await prisma.bed.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: {
+            admissions: true,
+            bedTransfersFrom: true,
+            bedTransfersTo: true,
+          },
+        },
+      },
+    });
+    if (!bed) throw new NotFoundError('Bed not found');
+
+    if (bed.status === 'OCCUPIED') {
+      throw new ConflictError(`Bed "${bed.bedNumber}" is currently occupied and cannot be deleted.`);
+    }
+    const historyCount = bed._count.admissions + bed._count.bedTransfersFrom + bed._count.bedTransfersTo;
+    if (historyCount > 0) {
+      throw new ConflictError(
+        `Bed "${bed.bedNumber}" has recorded patient admission or transfer history (${historyCount} records) and cannot be deleted. Decommission it instead.`,
+      );
+    }
+
+    try {
+      await prisma.bed.delete({ where: { id } });
+    } catch (error: any) {
+      this.rethrowFkError(error, `Bed "${bed.bedNumber}" has linked hospital activity and cannot be deleted. Decommission it instead.`);
+    }
+  },
+
+  async deleteRoom(id: string) {
+    const room = await prisma.room.findUnique({
+      where: { id },
+      include: {
+        beds: {
+          include: {
+            _count: {
+              select: {
+                admissions: true,
+                bedTransfersFrom: true,
+                bedTransfersTo: true,
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!room) throw new NotFoundError('Room not found');
+
+    for (const bed of room.beds) {
+      if (bed.status === 'OCCUPIED') {
+        throw new ConflictError(
+          `Cannot delete room "${room.name}": Bed "${bed.bedNumber}" is currently occupied.`,
+        );
+      }
+      const historyCount = bed._count.admissions + bed._count.bedTransfersFrom + bed._count.bedTransfersTo;
+      if (historyCount > 0) {
+        throw new ConflictError(
+          `Cannot delete room "${room.name}": Bed "${bed.bedNumber}" has recorded patient admission history. Deactivate the room instead.`,
+        );
+      }
+    }
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.bed.deleteMany({ where: { roomId: id } });
+        await tx.room.delete({ where: { id } });
+      });
+    } catch (error: any) {
+      this.rethrowFkError(error, `Room "${room.name}" has linked hospital records and cannot be deleted. Deactivate it instead.`);
+    }
+  },
+
+  async deleteWard(id: string) {
+    const ward = await prisma.ward.findUnique({
+      where: { id },
+      include: {
+        rooms: {
+          include: {
+            beds: {
+              include: {
+                _count: {
+                  select: {
+                    admissions: true,
+                    bedTransfersFrom: true,
+                    bedTransfersTo: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!ward) throw new NotFoundError('Ward not found');
+
+    const allBeds = ward.rooms.flatMap((r) => r.beds);
+    for (const bed of allBeds) {
+      if (bed.status === 'OCCUPIED') {
+        throw new ConflictError(
+          `Cannot delete ward "${ward.name}": Bed "${bed.bedNumber}" is currently occupied.`,
+        );
+      }
+      const historyCount = bed._count.admissions + bed._count.bedTransfersFrom + bed._count.bedTransfersTo;
+      if (historyCount > 0) {
+        throw new ConflictError(
+          `Cannot delete ward "${ward.name}": Bed "${bed.bedNumber}" has recorded patient admission history. Deactivate the ward instead.`,
+        );
+      }
+    }
+
+    const roomIds = ward.rooms.map((r) => r.id);
+    try {
+      await prisma.$transaction(async (tx) => {
+        if (roomIds.length > 0) {
+          await tx.bed.deleteMany({ where: { roomId: { in: roomIds } } });
+          await tx.room.deleteMany({ where: { id: { in: roomIds } } });
+        }
+        await tx.ward.delete({ where: { id } });
+      });
+    } catch (error: any) {
+      this.rethrowFkError(error, `Ward "${ward.name}" has linked hospital records and cannot be deleted. Deactivate it instead.`);
+    }
   },
 
   // ── Corporate Panels ─────────────────────────────────────────────────
@@ -499,12 +733,13 @@ export const setupService = {
   },
 
   async createCorporatePanel(body: CreateCorporatePanelBody, createdById: string) {
+    const code = normalizeCode(body.code) ?? (await generateUniqueCode('corporatePanel', 'PNL'));
     try {
-      const created = await prisma.corporatePanel.create({ data: { ...body, createdById }, include: this.corporatePanelInclude });
+      const created = await prisma.corporatePanel.create({ data: { ...body, code, createdById }, include: this.corporatePanelInclude });
       return this.decorateCorporatePanel(created as any);
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        throw new ConflictError(`Corporate panel code "${body.code}" already exists.`);
+        throw new ConflictError(`Corporate panel code "${code}" already exists.`);
       }
       throw error;
     }
@@ -515,7 +750,7 @@ export const setupService = {
     try {
       const updated = await prisma.corporatePanel.update({
         where: { id },
-        data: { ...body, updatedById },
+        data: { ...body, code: normalizeCode(body.code), updatedById },
         include: this.corporatePanelInclude,
       });
       return this.decorateCorporatePanel(updated as any);
@@ -536,6 +771,22 @@ export const setupService = {
         data: body.rules.map((rule) => ({ ...rule, corporatePanelId })),
       });
       return tx.panelDiscountRule.findMany({ where: { corporatePanelId } });
+    });
+  },
+
+  async deleteCorporatePanel(id: string) {
+    const existing = await this.assertExists('corporatePanel', id);
+    const linkedPatientsCount = await prisma.panelPatient.count({
+      where: { corporatePanelId: id },
+    });
+    if (linkedPatientsCount > 0) {
+      throw new ConflictError(
+        `Cannot delete "${(existing as any).organizationName}" because it is linked to ${linkedPatientsCount} registered patient(s). Deactivate the panel instead.`
+      );
+    }
+    return prisma.$transaction(async (tx) => {
+      await tx.panelDiscountRule.deleteMany({ where: { corporatePanelId: id } });
+      return tx.corporatePanel.delete({ where: { id } });
     });
   },
 
@@ -570,12 +821,13 @@ export const setupService = {
   },
 
   async createShift(body: CreateShiftBody, createdById: string) {
+    const code = normalizeCode(body.code) ?? (await generateUniqueCode('shift', 'SHF'));
     try {
-      const created = await prisma.shift.create({ data: { ...body, createdById }, include: this.shiftInclude });
+      const created = await prisma.shift.create({ data: { ...body, code, createdById }, include: this.shiftInclude });
       return this.decorateShift(created as any);
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        throw new ConflictError(`Shift code "${body.code}" already exists.`);
+        throw new ConflictError(`Shift code "${code}" already exists.`);
       }
       throw error;
     }
@@ -583,7 +835,7 @@ export const setupService = {
 
   async updateShift(id: string, body: UpdateShiftBody, updatedById: string) {
     const existing = await this.assertExists('shift', id);
-    const data: Prisma.ShiftUncheckedUpdateInput = { ...body, updatedById };
+    const data: Prisma.ShiftUncheckedUpdateInput = { ...body, code: normalizeCode(body.code), updatedById };
     if (body.isActive !== undefined && body.isActive !== (existing as { isActive: boolean }).isActive) {
       data.statusChangedAt = new Date();
       data.statusChangedBy = await resolveActorLabel(updatedById);
@@ -609,8 +861,168 @@ export const setupService = {
     return this.decorateShift(updated as any);
   },
 
+  // ── Outsourced Providers (HMS_V7.2_NEW_REQUIREMENTS.md §2.1) ─────────
+  outsourcedProviderInclude: {
+    createdByUser: actorSelect,
+    updatedByUser: actorSelect,
+    _count: { select: { departments: true, settlements: true } },
+  } satisfies Prisma.OutsourcedProviderInclude,
+
+  decorateOutsourcedProviders(
+    rows: Array<
+      Record<string, unknown> & {
+        createdByUser: ActorRelation | null;
+        updatedByUser: ActorRelation | null;
+        _count: { departments: number; settlements: number };
+      }
+    >,
+  ) {
+    return rows.map((row) => ({
+      ...row,
+      linkedDepartmentCount: row._count.departments,
+      settlementCount: row._count.settlements,
+      createdByLabel: formatActorFromRelation(row.createdByUser),
+      updatedByLabel: formatActorFromRelation(row.updatedByUser),
+    }));
+  },
+
+  async listOutsourcedProviders(activeOnly = false) {
+    const rows = await prisma.outsourcedProvider.findMany({
+      where: activeOnly ? { isActive: true } : undefined,
+      include: this.outsourcedProviderInclude,
+      orderBy: { name: 'asc' },
+    });
+    return this.decorateOutsourcedProviders(rows as any);
+  },
+
+  async createOutsourcedProvider(body: CreateOutsourcedProviderBody, createdById: string) {
+    const code = normalizeCode(body.code) ?? (await generateUniqueCode('outsourcedProvider', 'PRV'));
+    try {
+      const created = await prisma.outsourcedProvider.create({
+        data: { ...body, code, createdById },
+        include: this.outsourcedProviderInclude,
+      });
+      return this.decorateOutsourcedProviders([created as any])[0];
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictError(`Outsourced provider code "${code}" already exists.`);
+      }
+      throw error;
+    }
+  },
+
+  async updateOutsourcedProvider(id: string, body: UpdateOutsourcedProviderBody, updatedById: string) {
+    await this.assertExists('outsourcedProvider', id);
+    const data: Prisma.OutsourcedProviderUncheckedUpdateInput = { ...body, code: normalizeCode(body.code), updatedById };
+    try {
+      const updated = await prisma.outsourcedProvider.update({ where: { id }, data, include: this.outsourcedProviderInclude });
+      return this.decorateOutsourcedProviders([updated as any])[0];
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictError(`Outsourced provider code "${body.code}" already exists.`);
+      }
+      throw error;
+    }
+  },
+
+  async deactivateOutsourcedProvider(id: string, updatedById: string) {
+    await this.assertExists('outsourcedProvider', id);
+    const updated = await prisma.outsourcedProvider.update({
+      where: { id },
+      data: { isActive: false, updatedById },
+      include: this.outsourcedProviderInclude,
+    });
+    return this.decorateOutsourcedProviders([updated as any])[0];
+  },
+
+  // ── High-Cost Medicine Policy (HMS_V7.2_NEW_REQUIREMENTS.md §2.6) ────
+  // Singleton, same get-or-create pattern as Hospital Profile.
+  async getHighCostMedicinePolicy() {
+    const existing = await prisma.highCostMedicinePolicy.findFirst();
+    return existing ?? prisma.highCostMedicinePolicy.create({ data: {} });
+  },
+
+  async updateHighCostMedicinePolicy(body: UpdateHighCostMedicinePolicyBody, updatedById: string) {
+    const existing = await this.getHighCostMedicinePolicy();
+    return prisma.highCostMedicinePolicy.update({
+      where: { id: existing.id },
+      data: { ...body, updatedById },
+    });
+  },
+
+  // ── Provider Settlements (HMS_V7.2_NEW_REQUIREMENTS.md §2.8) ─────────
+  providerSettlementInclude: {
+    outsourcedProvider: { select: { id: true, name: true, code: true } },
+    department: { select: { id: true, name: true, code: true } },
+    settledByUser: actorSelect,
+  } satisfies Prisma.ProviderSettlementInclude,
+
+  async listProviderSettlements(query: ListProviderSettlementsQuery) {
+    const rows = await prisma.providerSettlement.findMany({
+      where: {
+        outsourcedProviderId: query.outsourcedProviderId,
+        departmentId: query.departmentId,
+      },
+      include: this.providerSettlementInclude,
+      orderBy: { settledAt: 'desc' },
+    });
+    return rows.map((row) => ({ ...row, settledByLabel: formatActorFromRelation(row.settledByUser as ActorRelation | null) }));
+  },
+
+  /**
+   * Records a settlement voucher against an Outsourced Provider (§2.8).
+   * `eligibleRealizedAmount` is entered by the settling user for now — see
+   * the schema-file comment on `createProviderSettlementSchema` for why
+   * (Front Desk's department sub-invoice split, §2.2, is future work).
+   * `alreadySettledAmount` is always computed server-side from prior
+   * settlements for this exact (provider, department) pair, never trusted
+   * from the client, and settlement can never exceed what remains eligible.
+   */
+  async createProviderSettlement(body: CreateProviderSettlementBody, settledById: string) {
+    await this.assertExists('outsourcedProvider', body.outsourcedProviderId);
+    if (body.departmentId) await this.assertExists('department', body.departmentId);
+
+    const priorSettlements = await prisma.providerSettlement.aggregate({
+      where: { outsourcedProviderId: body.outsourcedProviderId, departmentId: body.departmentId ?? null },
+      _sum: { settlementAmount: true },
+    });
+    const alreadySettledAmount = Number(priorSettlements._sum.settlementAmount ?? 0);
+    const remainingEligible = body.eligibleRealizedAmount - alreadySettledAmount;
+
+    if (body.settlementAmount > remainingEligible + 0.01) {
+      throw new ValidationError(
+        `Settlement amount (${body.settlementAmount}) exceeds the remaining eligible realized payable (${remainingEligible.toFixed(2)}). Already settled: ${alreadySettledAmount.toFixed(2)} of ${body.eligibleRealizedAmount}.`,
+      );
+    }
+
+    const computedStatus = alreadySettledAmount + body.settlementAmount >= body.eligibleRealizedAmount - 0.01 ? 'FULL' : 'PARTIAL';
+
+    const created = await prisma.providerSettlement.create({
+      data: {
+        outsourcedProviderId: body.outsourcedProviderId,
+        departmentId: body.departmentId,
+        periodLabel: body.periodLabel,
+        eligibleRealizedAmount: body.eligibleRealizedAmount,
+        alreadySettledAmount,
+        settlementAmount: body.settlementAmount,
+        status: computedStatus,
+        paymentMethod: body.paymentMethod,
+        paymentReference: body.paymentReference,
+        representativeName: body.representativeName,
+        representativeDesignation: body.representativeDesignation,
+        remarks: body.remarks,
+        settledById,
+      },
+      include: this.providerSettlementInclude,
+    });
+    return { ...created, settledByLabel: formatActorFromRelation(created.settledByUser as ActorRelation | null) };
+  },
+
   // ── shared existence guard ───────────────────────────────────────────
-  async assertExists(model: 'department' | 'serviceRate' | 'ward' | 'room' | 'bed' | 'corporatePanel' | 'shift', id: string) {
+  async assertExists(
+    model: 'department' | 'serviceRate' | 'ward' | 'room' | 'bed' | 'corporatePanel' | 'shift' | 'outsourcedProvider',
+    id: string,
+  ) {
     const record = await (prisma[model] as unknown as { findUnique: (args: { where: { id: string } }) => Promise<unknown> })
       .findUnique({ where: { id } });
     if (!record) throw new NotFoundError(`${model} not found`);

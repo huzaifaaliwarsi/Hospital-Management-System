@@ -94,6 +94,9 @@ function toDepartment(raw: Record<string, any>): Department {
     emergencyEnabled: !!raw.supportsEmergency,
     admissionEnabled: !!raw.supportsAdmission,
     pharmacyRelated: !!raw.pharmacyRelated,
+    fulfillmentOwnership: raw.fulfillmentOwnership === 'OUTSOURCED' ? 'Outsourced' : 'Internal',
+    outsourcedProviderId: raw.outsourcedProviderId || '',
+    outsourcedProviderName: raw.outsourcedProvider?.name || '',
     doctorCount: raw.doctorCount ?? 0,
     staffCount: raw.staffCount ?? 0,
     serviceCount: raw.serviceCount ?? 0,
@@ -119,7 +122,8 @@ function toDepartment(raw: Record<string, any>): Department {
  */
 function toBackendPayload(payload: DepartmentFormValues): Record<string, unknown> {
   const body: Record<string, unknown> = {
-    code: payload.code.trim().toUpperCase(),
+    // Left blank, the backend auto-generates a unique code.
+    code: payload.code.trim() ? payload.code.trim().toUpperCase() : undefined,
     name: payload.name.trim(),
     description: payload.description?.trim() || undefined,
     departmentType: TYPE_TO_BACKEND[payload.type] || 'OTHER',
@@ -130,6 +134,8 @@ function toBackendPayload(payload: DepartmentFormValues): Record<string, unknown
     supportsEmergency: payload.emergencyEnabled,
     supportsAdmission: payload.admissionEnabled,
     pharmacyRelated: payload.pharmacyRelated,
+    fulfillmentOwnership: payload.fulfillmentOwnership === 'Outsourced' ? 'OUTSOURCED' : 'INTERNAL',
+    outsourcedProviderId: payload.fulfillmentOwnership === 'Outsourced' && payload.outsourcedProviderId ? payload.outsourcedProviderId : null,
     isActive: payload.status === 'Active',
   };
   if (isUuid(payload.headUserId)) body.headStaffId = payload.headUserId;
@@ -321,6 +327,8 @@ export class DepartmentService {
       emergencyEnabled: draft.emergencyEnabled,
       admissionEnabled: draft.admissionEnabled,
       pharmacyRelated: draft.pharmacyRelated,
+      fulfillmentOwnership: draft.fulfillmentOwnership || 'Internal',
+      outsourcedProviderId: draft.outsourcedProviderId || '',
       status: draft.status,
     });
   }
@@ -345,29 +353,28 @@ export class DepartmentService {
       const rawHead = (row.head_identifier || '').trim();
       const rawStatus = (row.status || 'Active').trim();
 
-      if (!rawCode) {
-        return { rowNumber, data: row, status: 'Invalid', errorMessage: 'Missing required Department Code' };
-      }
+      // Code is optional — left blank, the backend auto-generates a unique one.
+      if (rawCode) {
+        const codeRegex = /^[A-Z0-9-]+$/;
+        if (!codeRegex.test(rawCode)) {
+          return {
+            rowNumber,
+            data: row,
+            status: 'Invalid',
+            errorMessage: 'Department Code must contain uppercase letters, numbers, and hyphens only',
+          };
+        }
 
-      const codeRegex = /^[A-Z0-9-]+$/;
-      if (!codeRegex.test(rawCode)) {
-        return {
-          rowNumber,
-          data: row,
-          status: 'Invalid',
-          errorMessage: 'Department Code must contain uppercase letters, numbers, and hyphens only',
-        };
+        if (existingCodes.has(rawCode) || seenFileCodes.has(rawCode)) {
+          return {
+            rowNumber,
+            data: row,
+            status: 'Duplicate',
+            errorMessage: `Duplicate code "${rawCode}" already registered in hospital system`,
+          };
+        }
+        seenFileCodes.add(rawCode);
       }
-
-      if (existingCodes.has(rawCode) || seenFileCodes.has(rawCode)) {
-        return {
-          rowNumber,
-          data: row,
-          status: 'Duplicate',
-          errorMessage: `Duplicate code "${rawCode}" already registered in hospital system`,
-        };
-      }
-      seenFileCodes.add(rawCode);
 
       if (!rawName) {
         return { rowNumber, data: row, status: 'Invalid', errorMessage: 'Missing required Department Name' };

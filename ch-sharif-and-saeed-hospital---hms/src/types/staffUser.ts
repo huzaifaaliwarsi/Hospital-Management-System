@@ -80,7 +80,16 @@ export interface StaffUser {
   passwordResetBy?: string;
   passwordResetAt?: string;
 
+  // v7.2 Doctor Clinical Discharge Authorization (HMS_V7.2_NEW_REQUIREMENTS.md
+  // §2.4) — separate from portal login above; only meaningful for doctors,
+  // but present on every row (undefined/false when not configured).
+  clinicalAuthUsername?: string | null;
+  clinicalAuthActive?: boolean;
+  clinicalAuthUpdatedAt?: string;
+  doctorSponsoredDiscountTrackingEnabled?: boolean;
+
   linkedActivityCount: number;
+  notes?: string;
 }
 
 export interface StaffCredential {
@@ -115,6 +124,9 @@ export interface StaffUserFormValues {
   password?: string;
   confirmPassword?: string;
   requirePasswordChange: boolean;
+
+  // v7.2 (HMS_V7.2_NEW_REQUIREMENTS.md §2.3/§3.1) — only meaningful when staffCategory === 'Doctor'.
+  doctorSponsoredDiscountTrackingEnabled: boolean;
 }
 
 export interface StaffUserFilterState {
