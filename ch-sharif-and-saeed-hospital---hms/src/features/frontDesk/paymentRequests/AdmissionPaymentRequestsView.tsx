@@ -4,6 +4,7 @@ import { Select } from '../../../components/forms/FormControls';
 import { formatPKR } from '../../../utils/formatters';
 import { fetchPaymentRequests, PaymentRequestRecord, PaymentRequestStatus } from '../../../services/paymentRequestService';
 import { CollectPaymentRequestModal } from './CollectPaymentRequestModal';
+import { PanelBadge } from '../../../components/common/PanelBadge';
 
 const STATUS_OPTIONS: { label: string; value: PaymentRequestStatus }[] = [
   { label: 'Pending', value: 'PENDING' },
@@ -116,9 +117,11 @@ export const AdmissionPaymentRequestsView: React.FC = () => {
                       <div className="text-[10px] text-slate-400">{r.patientPhone}</div>
                     </td>
                     <td className="px-3 py-2.5 whitespace-nowrap">
-                      <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${r.payerType === 'Corporate / Panel' ? 'bg-purple-100 text-purple-800' : 'bg-slate-100 text-slate-600'}`}>
-                        {r.payerType === 'Corporate / Panel' ? 'Panel' : 'Self-Pay'}
-                      </span>
+                      {r.payerType === 'Corporate / Panel' ? (
+                        <PanelBadge />
+                      ) : (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-600">Self-Pay</span>
+                      )}
                     </td>
                     <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">
                       {r.departmentName} / {r.doctorName}

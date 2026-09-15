@@ -32,6 +32,7 @@ import { CollectAdvanceModal } from './CollectAdvanceModal';
 import { CancelAppointmentModal } from './CancelAppointmentModal';
 import { AppointmentDetailModal } from './AppointmentDetailModal';
 import { InvoiceDetailModal } from '../billing/InvoiceDetailModal';
+import { PanelBadge } from '../../../components/common/PanelBadge';
 
 const STATUS_OPTIONS: { label: string; value: AppointmentStatus }[] = [
   { label: 'Draft', value: 'DRAFT' },
@@ -297,13 +298,11 @@ export const AppointmentsView: React.FC = () => {
                       <td className="px-3 py-2.5 whitespace-nowrap">
                         <div className="font-semibold text-slate-900">{a.patientName}</div>
                         <div className="flex items-center gap-1.5 mt-0.5">
-                          <span
-                            className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
-                              a.payerType === 'Corporate / Panel' ? 'bg-purple-100 text-purple-800' : 'bg-slate-100 text-slate-600'
-                            }`}
-                          >
-                            {a.payerType === 'Corporate / Panel' ? 'Panel' : 'Self-Pay'}
-                          </span>
+                          {a.payerType === 'Corporate / Panel' ? (
+                            <PanelBadge />
+                          ) : (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-600">Self-Pay</span>
+                          )}
                           <span className="text-[10px] text-slate-400">{a.patientPhone}</span>
                         </div>
                       </td>

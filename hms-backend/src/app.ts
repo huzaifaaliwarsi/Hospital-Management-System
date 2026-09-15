@@ -18,6 +18,7 @@ import patientsRoutes from '@/modules/frontdesk/patients.routes';
 import appointmentsRoutes from '@/modules/frontdesk/appointments.routes';
 import paymentRequestsRoutes from '@/modules/frontdesk/paymentRequests.routes';
 import admissionBillingRoutes from '@/modules/frontdesk/admissionBilling.routes';
+import panelBillingRoutes from '@/modules/frontdesk/panelBilling.routes';
 import { encountersRouter, invoicesRouter } from '@/modules/frontdesk/invoices.routes';
 import attendanceRoutes from '@/modules/attendance/attendance.routes';
 import payrollRoutes from '@/modules/payroll/payroll.routes';
@@ -69,6 +70,7 @@ export function createApp() {
   app.use('/api/v1/admissions', admissionRoutes);
   app.use('/api/v1/admission-payment-requests', paymentRequestsRoutes);
   app.use('/api/v1/admission-billing', admissionBillingRoutes);
+  app.use('/api/v1/panel-billing', panelBillingRoutes);
   app.use('/api/v1/inventory', inventoryRoutes);
   app.use('/api/v1/pharmacy', pharmacyRoutes);
   app.use('/api/v1/pharmacy-bridge', pharmacyBridgeRoutes);

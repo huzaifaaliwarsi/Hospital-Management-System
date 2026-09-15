@@ -11,6 +11,7 @@ import { createAdmission, CreateAdmissionFormValues, AdmissionRecord, Medication
 import { getHospitalCurrentDate, formatDateISO } from '../../../utils/dateConstants';
 import { useAuth } from '../../../context/AuthContext';
 import { Select, Textarea, NumberInput, TextInput } from '../../../components/forms/FormControls';
+import { PanelBadge } from '../../../components/common/PanelBadge';
 
 const emptyForm = (): CreateAdmissionFormValues => ({
   panelPatientId: '',
@@ -213,13 +214,11 @@ export const NewAdmissionView: React.FC = () => {
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-bold text-slate-900 text-sm">{selectedPatient.fullName}</span>
-                <span
-                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                    selectedPatient.payerType === 'Corporate / Panel' ? 'bg-purple-100 text-purple-800' : 'bg-slate-100 text-slate-700'
-                  }`}
-                >
-                  {selectedPatient.payerType}
-                </span>
+                {selectedPatient.payerType === 'Corporate / Panel' ? (
+                  <PanelBadge label={selectedPatient.payerType} className="px-2 py-0.5 text-[10px]" />
+                ) : (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">{selectedPatient.payerType}</span>
+                )}
               </div>
               <span className="text-[11px] text-slate-500">
                 {selectedPatient.mrNumber} • {selectedPatient.primaryPhone}
@@ -259,13 +258,11 @@ export const NewAdmissionView: React.FC = () => {
                       <span className="font-semibold text-slate-900">{p.fullName}</span>
                       <span className="text-slate-400 ml-2">{p.mrNumber} • {p.primaryPhone}</span>
                     </div>
-                    <span
-                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                        p.payerType === 'Corporate / Panel' ? 'bg-purple-100 text-purple-800' : 'bg-slate-100 text-slate-700'
-                      }`}
-                    >
-                      {p.payerType}
-                    </span>
+                    {p.payerType === 'Corporate / Panel' ? (
+                      <PanelBadge label={p.payerType} className="text-[10px]" />
+                    ) : (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">{p.payerType}</span>
+                    )}
                   </button>
                 ))}
               </div>

@@ -1,4 +1,5 @@
 import apiClient from './apiClient';
+import { toErrorMessage } from '../utils/apiErrors';
 
 /**
  * My Account Settlement — backed by `/api/v1/cash/settlements*`
@@ -48,9 +49,6 @@ function toSettlementRecord(raw: Record<string, any>): SettlementRecord {
   };
 }
 
-function toErrorMessage(err: any): string {
-  return err?.response?.data?.error?.message || err?.message || 'Something went wrong. Please try again.';
-}
 
 export async function fetchMySettlements(): Promise<SettlementRecord[]> {
   try {

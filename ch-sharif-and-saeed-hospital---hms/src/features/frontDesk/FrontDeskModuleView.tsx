@@ -8,6 +8,7 @@ import { HospitalInvoicesView } from './billing/HospitalInvoicesView';
 import { BillingPendingDischargesView } from './billing/BillingPendingDischargesView';
 import { MyBalanceSheetView } from './billing/MyBalanceSheetView';
 import { WalkInIntakeView } from './encounterIntake/WalkInIntakeView';
+import { PanelBillingView } from './panelBilling/PanelBillingView';
 import { ModulePlaceholderView } from '../shared/ModulePlaceholderView';
 
 interface FrontDeskModuleViewProps {
@@ -24,10 +25,11 @@ interface FrontDeskModuleViewProps {
  * `payments_receipts` / `discounts` / `refunds` all point at the same
  * `HospitalInvoicesView` + its `InvoiceDetailModal` — a deliberate
  * consolidation (those actions live per-invoice, not as separate global
- * lists) rather than four near-duplicate pages; see
- * HMS_V7.2_NEW_REQUIREMENTS.md's progress log for the reasoning and what's
- * still a placeholder (`panel_billing` only — deliberately deferred, needs
- * its own design pass per §2.5/§2.8's open questions).
+ * lists) rather than four near-duplicate pages. `panel_billing` follows the
+ * same idea: Panel Verification, Contract Resolution, Interim Statement and
+ * Remittance all live as tabs on one `PanelBillingView`. Every Front Desk
+ * nav item is now real — see HMS_V7.2_NEW_REQUIREMENTS.md's progress log
+ * for the build history.
  */
 export const FrontDeskModuleView: React.FC<FrontDeskModuleViewProps> = ({ moduleId, moduleName, groupTitle }) => {
   switch (moduleId) {
@@ -84,6 +86,8 @@ export const FrontDeskModuleView: React.FC<FrontDeskModuleViewProps> = ({ module
       return <FrontDeskBillingReportsView />;
     case 'my_account_settlement':
       return <MyAccountSettlementView />;
+    case 'panel_billing':
+      return <PanelBillingView />;
     default:
       return <ModulePlaceholderView moduleId={moduleId} moduleName={moduleName} groupTitle={groupTitle} />;
   }

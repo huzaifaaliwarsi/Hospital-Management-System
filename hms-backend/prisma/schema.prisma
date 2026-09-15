@@ -533,6 +533,7 @@ model PortalUser {
   settledProviderSettlements  ProviderSettlement[]      @relation("ProviderSettlementSettledBy")
   updatedHighCostPolicies     HighCostMedicinePolicy[]  @relation("HighCostPolicyUpdatedBy")
   clinicalAuthUpdatesForStaff Staff[]                   @relation("ClinicalAuthUpdatedBy")
+  receivedPanelRemittances    PanelRemittance[]         @relation("PanelRemittanceReceivedBy")
 
   createdAt DateTime @default(now()) @map("created_at")
   createdBy String?  @map("created_by")
@@ -922,6 +923,7 @@ model CorporatePanel {
 
   discountRules PanelDiscountRule[]
   panelPatients PanelPatient[]
+  remittances   PanelRemittance[]
 
   createdAt     DateTime    @default(now()) @map("created_at")
   createdById   String?     @map("created_by")
@@ -955,6 +957,52 @@ model PanelDiscountRule {
 
   @@unique([corporatePanelId, serviceRateId, effectiveFrom])
   @@map("panel_discount_rules")
+}
+
+/// v7.2 Panel Remittance (HMS_V7.2_NEW_REQUIREMENTS.md §2.5/§2.8/§3.3) — a
+/// panel company's incoming payment against its `PanelReceivable` balance,
+/// allocated across the specific `HospitalInvoice` rows it settles. This is
+/// a separate B2B ledger from `PaymentReceipt` (patient cash collected at
+/// Front Desk) — recording a remittance never touches `HospitalInvoice
+/// .paidTotal`/`status`; panel receivable is only "realized" via its
+/// `PanelRemittanceAllocation` rows, never assumed from billing alone.
+model PanelRemittance {
+  id                String         @id @default(uuid())
+  remittanceNumber  String         @unique @map("remittance_number")
+  corporatePanelId  String         @map("corporate_panel_id")
+  corporatePanel    CorporatePanel @relation(fields: [corporatePanelId], references: [id])
+  amount            Decimal        @db.Decimal(14, 2)
+  method            String // Cash / Bank / Cheque / Online — free text, mirrors ProviderSettlement.paymentMethod
+  reference         String?
+  remarks           String?
+  receivedAt        DateTime       @default(now()) @map("received_at")
+  receivedById      String         @map("received_by")
+  receivedByUser    PortalUser     @relation("PanelRemittanceReceivedBy", fields: [receivedById], references: [id])
+
+  allocations PanelRemittanceAllocation[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([corporatePanelId])
+  @@map("panel_remittances")
+}
+
+/// Per-invoice allocation line for a `PanelRemittance` — one physical
+/// remittance split across N department invoices, same allocation pattern
+/// as `admissionBilling.collectPayment`'s per-department payment split.
+model PanelRemittanceAllocation {
+  id                String          @id @default(uuid())
+  panelRemittanceId String          @map("panel_remittance_id")
+  panelRemittance   PanelRemittance @relation(fields: [panelRemittanceId], references: [id])
+  hospitalInvoiceId String          @map("hospital_invoice_id")
+  hospitalInvoice   HospitalInvoice @relation(fields: [hospitalInvoiceId], references: [id])
+  allocatedAmount   Decimal         @map("allocated_amount") @db.Decimal(14, 2)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([panelRemittanceId])
+  @@index([hospitalInvoiceId])
+  @@map("panel_remittance_allocations")
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1117,8 +1165,9 @@ model HospitalInvoice {
   panelReceivable  Decimal @default(0) @map("panel_receivable") @db.Decimal(14, 2)
   status        InvoiceStatus @default(UNPAID)
 
-  lines           InvoiceLineItem[]
-  paymentReceipts PaymentReceipt[]
+  lines                      InvoiceLineItem[]
+  paymentReceipts            PaymentReceipt[]
+  panelRemittanceAllocations PanelRemittanceAllocation[]
 
   createdAt     DateTime    @default(now()) @map("created_at")
   createdById   String?     @map("created_by")

@@ -1,4 +1,5 @@
 import apiClient from './apiClient';
+import { toErrorMessage } from '../utils/apiErrors';
 
 /**
  * Front Desk's consolidated view + payment collection over an admission's
@@ -98,10 +99,6 @@ function normalize(raw: Record<string, any>): AdmissionStatement {
       outstanding: toNumber(raw.consolidated?.outstanding),
     },
   };
-}
-
-function toErrorMessage(err: any): string {
-  return err?.response?.data?.error?.message || err?.message || 'Something went wrong. Please try again.';
 }
 
 export async function fetchAdmissionStatement(admissionId: string): Promise<AdmissionStatement> {

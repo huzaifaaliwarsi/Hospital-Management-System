@@ -1,0 +1,228 @@
+import apiClient from './apiClient';
+import { toErrorMessage } from '../utils/apiErrors';
+
+/**
+ * Panel Billing — Panel Verification, Contract Resolution, Panel Interim
+ * Statement, and Panel Remittance (HMS_V7.2_NEW_REQUIREMENTS.md §2.5/§3.3).
+ * Backed by `/api/v1/panel-billing*`. Reuses `PanelDiscountRule`'s shape
+ * from `panelService.ts` rather than redefining it — Contract Resolution
+ * reads the exact same `coveragePercent`/`capAmount`/`preauthorizationRequired`
+ * fields Super Admin's discount-rule editor already writes.
+ */
+
+export type PanelRemittanceMethod = 'CASH' | 'BANK_TRANSFER' | 'CHEQUE' | 'ONLINE';
+
+export interface PanelMembershipVerification {
+  panelPatient: {
+    id: string;
+    mrNumber: string;
+    fullName: string;
+    panelMemberId?: string;
+    status: string;
+    isActive: boolean;
+  };
+  corporatePanel: {
+    id: string;
+    code?: string;
+    organizationName: string;
+    isActive: boolean;
+  };
+  membershipActive: boolean;
+  reasons: string[];
+}
+
+export interface ContractResolution {
+  serviceRateId: string;
+  serviceCode: string;
+  serviceName: string;
+  quantity: number;
+  contractAmount: number;
+  patientShare: number;
+  panelReceivable: number;
+  discountAmount: number;
+  discountReason: string | null;
+  coveragePercent: number | null;
+  capAmount: number | null;
+  preauthorizationRequired: boolean;
+  source: 'COVERAGE' | 'LEGACY_DISCOUNT' | 'NOT_COVERED';
+}
+
+export interface PanelStatementInvoiceRow {
+  hospitalInvoiceId: string;
+  invoiceNumber: string;
+  patientName: string;
+  patientMrNumber: string;
+  departmentName: string;
+  total: number;
+  patientShare: number;
+  patientShareCollected: number;
+  patientShareOutstanding: number;
+  panelReceivable: number;
+  panelReceivableRealized: number;
+  panelReceivableOutstanding: number;
+}
+
+export interface PanelStatement {
+  corporatePanelId: string;
+  corporatePanelName: string;
+  activePatientsCount: number;
+  invoices: PanelStatementInvoiceRow[];
+  consolidated: {
+    patientShare: number;
+    patientShareCollected: number;
+    patientShareOutstanding: number;
+    panelReceivable: number;
+    panelReceivableRealized: number;
+    panelReceivableOutstanding: number;
+  };
+}
+
+export interface PanelRemittanceAllocationRow {
+  id: string;
+  hospitalInvoiceId: string;
+  invoiceNumber: string;
+  allocatedAmount: number;
+}
+
+export interface PanelRemittanceRecord {
+  id: string;
+  remittanceNumber: string;
+  amount: number;
+  method: PanelRemittanceMethod;
+  reference?: string;
+  remarks?: string;
+  receivedAt: string;
+  receivedByName: string;
+  allocations: PanelRemittanceAllocationRow[];
+}
+
+function toNumber(v: any): number {
+  return Number(v ?? 0);
+}
+
+function toContractResolution(raw: Record<string, any>): ContractResolution {
+  return {
+    serviceRateId: raw.serviceRateId,
+    serviceCode: raw.serviceCode,
+    serviceName: raw.serviceName,
+    quantity: toNumber(raw.quantity) || 1,
+    contractAmount: toNumber(raw.contractAmount),
+    patientShare: toNumber(raw.patientShare),
+    panelReceivable: toNumber(raw.panelReceivable),
+    discountAmount: toNumber(raw.discountAmount),
+    discountReason: raw.discountReason ?? null,
+    coveragePercent: raw.coveragePercent != null ? toNumber(raw.coveragePercent) : null,
+    capAmount: raw.capAmount != null ? toNumber(raw.capAmount) : null,
+    preauthorizationRequired: !!raw.preauthorizationRequired,
+    source: raw.source,
+  };
+}
+
+function toStatement(raw: Record<string, any>): PanelStatement {
+  return {
+    corporatePanelId: raw.corporatePanelId,
+    corporatePanelName: raw.corporatePanelName,
+    activePatientsCount: raw.activePatientsCount ?? 0,
+    invoices: (raw.invoices || []).map((inv: any) => ({
+      hospitalInvoiceId: inv.hospitalInvoiceId,
+      invoiceNumber: inv.invoiceNumber,
+      patientName: inv.panelPatient?.fullName || '',
+      patientMrNumber: inv.panelPatient?.mrNumber || '',
+      departmentName: inv.department?.name || 'Unassigned',
+      total: toNumber(inv.total),
+      patientShare: toNumber(inv.patientShare),
+      patientShareCollected: toNumber(inv.patientShareCollected),
+      patientShareOutstanding: toNumber(inv.patientShareOutstanding),
+      panelReceivable: toNumber(inv.panelReceivable),
+      panelReceivableRealized: toNumber(inv.panelReceivableRealized),
+      panelReceivableOutstanding: toNumber(inv.panelReceivableOutstanding),
+    })),
+    consolidated: {
+      patientShare: toNumber(raw.consolidated?.patientShare),
+      patientShareCollected: toNumber(raw.consolidated?.patientShareCollected),
+      patientShareOutstanding: toNumber(raw.consolidated?.patientShareOutstanding),
+      panelReceivable: toNumber(raw.consolidated?.panelReceivable),
+      panelReceivableRealized: toNumber(raw.consolidated?.panelReceivableRealized),
+      panelReceivableOutstanding: toNumber(raw.consolidated?.panelReceivableOutstanding),
+    },
+  };
+}
+
+function toRemittanceRecord(raw: Record<string, any>): PanelRemittanceRecord {
+  return {
+    id: raw.id,
+    remittanceNumber: raw.remittanceNumber,
+    amount: toNumber(raw.amount),
+    method: raw.method,
+    reference: raw.reference || undefined,
+    remarks: raw.remarks || undefined,
+    receivedAt: raw.receivedAt,
+    receivedByName: raw.receivedByUser?.displayName || raw.receivedByUser?.username || 'System',
+    allocations: (raw.allocations || []).map((a: any) => ({
+      id: a.id,
+      hospitalInvoiceId: a.hospitalInvoiceId,
+      invoiceNumber: a.hospitalInvoice?.invoiceNumber || '',
+      allocatedAmount: toNumber(a.allocatedAmount),
+    })),
+  };
+}
+
+export async function verifyPanelPatient(panelPatientId: string): Promise<PanelMembershipVerification> {
+  try {
+    const res = await apiClient.get<{ data: PanelMembershipVerification }>(`/panel-billing/verify/${panelPatientId}`);
+    return res.data.data;
+  } catch (err) {
+    throw new Error(toErrorMessage(err));
+  }
+}
+
+export async function resolveContract(params: {
+  panelPatientId: string;
+  serviceRateId: string;
+  quantity?: number;
+}): Promise<ContractResolution> {
+  try {
+    const res = await apiClient.get<{ data: Record<string, any> }>('/panel-billing/contract-resolution', { params });
+    return toContractResolution(res.data.data);
+  } catch (err) {
+    throw new Error(toErrorMessage(err));
+  }
+}
+
+export async function fetchPanelStatement(corporatePanelId: string, panelPatientId?: string): Promise<PanelStatement> {
+  try {
+    const res = await apiClient.get<{ data: Record<string, any> }>(`/panel-billing/panels/${corporatePanelId}/statement`, {
+      params: panelPatientId ? { panelPatientId } : undefined,
+    });
+    return toStatement(res.data.data);
+  } catch (err) {
+    throw new Error(toErrorMessage(err));
+  }
+}
+
+export async function recordPanelRemittance(
+  corporatePanelId: string,
+  values: {
+    amount: number;
+    method: PanelRemittanceMethod;
+    reference?: string;
+    remarks?: string;
+    allocations?: { hospitalInvoiceId: string; amount: number }[];
+  },
+): Promise<PanelRemittanceRecord> {
+  try {
+    const res = await apiClient.post<{ data: Record<string, any> }>(`/panel-billing/panels/${corporatePanelId}/remittances`, values);
+    return toRemittanceRecord(res.data.data);
+  } catch (err) {
+    throw new Error(toErrorMessage(err));
+  }
+}
+
+export async function fetchPanelRemittances(corporatePanelId: string): Promise<PanelRemittanceRecord[]> {
+  try {
+    const res = await apiClient.get<{ data: Record<string, any>[] }>(`/panel-billing/panels/${corporatePanelId}/remittances`);
+    return res.data.data.map(toRemittanceRecord);
+  } catch (err) {
+    throw new Error(toErrorMessage(err));
+  }
+}

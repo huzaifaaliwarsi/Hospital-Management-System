@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { X, Receipt, Plus, Tag, CreditCard, RotateCcw, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Plus, Tag, CreditCard, RotateCcw, Loader2, AlertCircle } from 'lucide-react';
 import { formatPKR } from '../../../utils/formatters';
+import { useToast } from '../../../context/ToastContext';
 import {
   InvoiceDetail,
   PaymentMethod,
@@ -39,13 +40,13 @@ const PAYMENT_METHODS: { label: string; value: PaymentMethod }[] = [
  * `services/invoiceService.ts`'s header comment on the pending §2.2 split).
  */
 export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceId, onClose, onChanged }) => {
+  const toast = useToast();
   const [invoice, setInvoice] = useState<InvoiceDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeAction, setActiveAction] = useState<ActiveAction>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
 
   const services = ServiceRatesService.getServices().filter((s) => s.status === 'Active');
   const doctors = StaffUserService.getStaffUsers().filter((s) => s.staffCategory === 'Doctor' && s.status === 'ACTIVE');
@@ -103,8 +104,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceI
   };
 
   const afterMutate = async (message: string) => {
-    setToast(message);
-    setTimeout(() => setToast(null), 3500);
+    toast.success(message);
     closeAction();
     await load();
     onChanged();
@@ -196,12 +196,6 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceI
 
   return (
     <Modal isOpen onClose={onClose} title={invoice ? `Invoice ${invoice.invoiceNumber}` : 'Invoice'} maxWidth="3xl">
-      {toast && (
-        <div className="mb-3 p-2.5 rounded-lg bg-[#effaf5] border border-[#c2e7db] text-[#08775A] text-xs font-semibold flex items-center gap-2">
-          <CheckCircle2 className="h-4 w-4" /> {toast}
-        </div>
-      )}
-
       {isLoading ? (
         <div className="flex items-center justify-center py-16 text-slate-500 gap-2 text-sm">
           <Loader2 className="h-5 w-5 animate-spin" /> Loading invoice…

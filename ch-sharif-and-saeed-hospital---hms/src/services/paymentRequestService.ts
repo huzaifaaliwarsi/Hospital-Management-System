@@ -1,4 +1,5 @@
 import apiClient from './apiClient';
+import { toErrorMessage } from '../utils/apiErrors';
 import { formatDisplayDate } from '../utils/dateConstants';
 
 /**
@@ -66,9 +67,6 @@ function toPaymentRequestRecord(raw: Record<string, any>): PaymentRequestRecord 
   };
 }
 
-function toErrorMessage(err: any): string {
-  return err?.response?.data?.error?.message || err?.message || 'Something went wrong. Please try again.';
-}
 
 export async function fetchPaymentRequests(status?: PaymentRequestStatus): Promise<PaymentRequestRecord[]> {
   try {

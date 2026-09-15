@@ -60,6 +60,19 @@ export const admissionService = {
         selfPayEncounterId = createdSelfPay.id;
       }
 
+      if (body.panelPatientId) {
+        const panelPatient = await tx.panelPatient.findUnique({
+          where: { id: body.panelPatientId },
+          include: { corporatePanel: true },
+        });
+        if (!panelPatient || !panelPatient.isActive) {
+          throw new NotFoundError('Panel patient not found or inactive');
+        }
+        if (panelPatient.corporatePanel && !panelPatient.corporatePanel.isActive) {
+          throw new ValidationError('Corporate panel is inactive');
+        }
+      }
+
       const admissionNumber = generateAdmissionNumber();
 
       const admission = await tx.admissionRecord.create({

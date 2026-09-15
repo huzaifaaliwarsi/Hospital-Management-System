@@ -1,4 +1,5 @@
 import apiClient from './apiClient';
+import { toErrorMessage } from '../utils/apiErrors';
 import { formatDisplayDate } from '../utils/dateConstants';
 
 export interface BackendPatient {
@@ -208,10 +209,6 @@ export interface CheckInAppointmentPayload {
   notes?: string;
 }
 
-/** Normalizes an axios/backend error into a plain, displayable message. */
-function toErrorMessage(err: any): string {
-  return err?.response?.data?.error?.message || err?.message || 'Something went wrong. Please try again.';
-}
 
 export const appointmentsApiService = {
   async getAppointments(filters?: ListAppointmentsFilters): Promise<AppointmentRecord[]> {
