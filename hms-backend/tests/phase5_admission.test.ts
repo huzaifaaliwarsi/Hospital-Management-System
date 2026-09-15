@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Decimal } from '@prisma/client/runtime/library';
+import bcrypt from 'bcryptjs';
 
 // Mock prisma client
 vi.mock('@/db/client', () => {
@@ -31,6 +32,8 @@ vi.mock('@/db/client', () => {
     },
     pharmacyClearance: {
       create: vi.fn(),
+      findUnique: vi.fn(),
+      update: vi.fn(),
     },
     dualDischargeClearance: {
       createMany: vi.fn(),
@@ -38,6 +41,25 @@ vi.mock('@/db/client', () => {
       updateMany: vi.fn(),
       create: vi.fn(),
       findMany: vi.fn(),
+    },
+    dischargeSummary: {
+      create: vi.fn(),
+    },
+    staff: {
+      findUnique: vi.fn(),
+    },
+    portalUser: {
+      findUnique: vi.fn(),
+    },
+    highCostMedicinePolicy: {
+      findFirst: vi.fn(),
+    },
+    medicineMaster: {
+      findMany: vi.fn(),
+    },
+    highCostMedicineAuthorization: {
+      create: vi.fn(),
+      update: vi.fn(),
     },
     hospitalInvoice: {
       findFirst: vi.fn(),
@@ -654,6 +676,244 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
       );
 
       expect(result.admission.status).toBe('DISCHARGED');
+    });
+  });
+
+  describe('6. Doctor Clinical Discharge Authorization (v7.2 §2.4)', () => {
+    const doctorPasswordHash = bcrypt.hashSync('Correct-Doctor-Pass1', 4);
+
+    it('accepts valid doctor credentials, creates the Discharge Summary, clears CLINICAL, and routes to DISCHARGE_PENDING', async () => {
+      (prisma.admissionRecord.findUnique as any).mockResolvedValue({
+        id: 'adm-001',
+        status: 'ACTIVE',
+        dischargeClearances: [{ id: 'dc-clinical', clearanceType: 'CLINICAL', status: 'PENDING' }],
+      });
+      (prisma.staff.findUnique as any).mockResolvedValue({
+        id: 'doctor-1',
+        fullName: 'Dr. Kamran Sheikh',
+        departmentId: 'dept-1',
+        department: { name: 'General Medicine' },
+        clinicalAuthUsername: 'dr.kamran',
+        clinicalAuthActive: true,
+        clinicalAuthPasswordHash: doctorPasswordHash,
+      });
+      (prisma.dischargeSummary.create as any).mockImplementation((args: any) => ({ id: 'ds-1', ...args.data }));
+      (prisma.dualDischargeClearance.update as any).mockResolvedValue({ id: 'dc-clinical', status: 'CLEARED' });
+      (prisma.admissionRecord.update as any).mockResolvedValue({ id: 'adm-001', status: 'DISCHARGE_PENDING' });
+
+      const result = await admissionService.clinicalDischarge(
+        'adm-001',
+        {
+          doctorUsername: 'dr.kamran',
+          doctorPassword: 'Correct-Doctor-Pass1',
+          dischargeSummary: {
+            finalDiagnosis: 'Resolved chest pain',
+            treatmentSummary: 'Observation + medication',
+            conditionAtDischarge: 'Stable',
+            medicinesInstructions: 'Paracetamol as needed',
+          },
+        },
+        staffUserId,
+      );
+
+      expect(prisma.dischargeSummary.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ doctorStaffId: 'doctor-1', doctorNameSnapshot: 'Dr. Kamran Sheikh', initiatedById: staffUserId }),
+        }),
+      );
+      expect(prisma.dualDischargeClearance.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'dc-clinical' }, data: expect.objectContaining({ status: 'CLEARED' }) }),
+      );
+      expect(prisma.admissionRecord.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'adm-001' }, data: { status: 'DISCHARGE_PENDING' } }),
+      );
+      expect(result.admission.status).toBe('DISCHARGE_PENDING');
+    });
+
+    it('rejects a wrong doctor password', async () => {
+      (prisma.admissionRecord.findUnique as any).mockResolvedValue({ id: 'adm-001', status: 'ACTIVE', dischargeClearances: [] });
+      (prisma.staff.findUnique as any).mockResolvedValue({
+        id: 'doctor-1',
+        clinicalAuthUsername: 'dr.kamran',
+        clinicalAuthActive: true,
+        clinicalAuthPasswordHash: doctorPasswordHash,
+      });
+
+      await expect(
+        admissionService.clinicalDischarge(
+          'adm-001',
+          {
+            doctorUsername: 'dr.kamran',
+            doctorPassword: 'wrong-password',
+            dischargeSummary: {
+              finalDiagnosis: 'x',
+              treatmentSummary: 'x',
+              conditionAtDischarge: 'x',
+              medicinesInstructions: 'x',
+            },
+          },
+          staffUserId,
+        ),
+      ).rejects.toThrow(/Invalid doctor credentials/);
+    });
+
+    it('rejects an inactive clinical-auth credential', async () => {
+      (prisma.admissionRecord.findUnique as any).mockResolvedValue({ id: 'adm-001', status: 'ACTIVE', dischargeClearances: [] });
+      (prisma.staff.findUnique as any).mockResolvedValue({
+        id: 'doctor-1',
+        clinicalAuthUsername: 'dr.kamran',
+        clinicalAuthActive: false,
+        clinicalAuthPasswordHash: doctorPasswordHash,
+      });
+
+      await expect(
+        admissionService.clinicalDischarge(
+          'adm-001',
+          {
+            doctorUsername: 'dr.kamran',
+            doctorPassword: 'Correct-Doctor-Pass1',
+            dischargeSummary: {
+              finalDiagnosis: 'x',
+              treatmentSummary: 'x',
+              conditionAtDischarge: 'x',
+              medicinesInstructions: 'x',
+            },
+          },
+          staffUserId,
+        ),
+      ).rejects.toThrow(/Invalid doctor credentials/);
+    });
+
+    it('rejects granting the CLINICAL gate through the generic grantClearance path — doctor auth only', async () => {
+      await expect(
+        admissionService.grantClearance('adm-001', { clearanceType: 'CLINICAL' }, staffUserId),
+      ).rejects.toThrow(/doctor credential authorization/);
+    });
+  });
+
+  describe('7. High-Cost Medicine Authorization (v7.2 §2.6)', () => {
+    const managementPasswordHash = bcrypt.hashSync('Admin-Pass-123', 4);
+
+    it('leaves a below-threshold pharmacy request as plain REQUESTED (no regression)', async () => {
+      (prisma.admissionRecord.findUnique as any).mockResolvedValue({ id: 'adm-001', medicationMode: 'HOSPITAL_MANAGED' });
+      (prisma.highCostMedicinePolicy.findFirst as any).mockResolvedValue({
+        enabled: true,
+        thresholdAmount: new Decimal(10000),
+        thresholdBasis: 'LINE_TOTAL',
+      });
+      (prisma.medicineMaster.findMany as any).mockResolvedValue([{ id: 'med-cheap', saleRate: new Decimal(50) }]);
+      (prisma.pharmacyClearance.create as any).mockResolvedValue({ id: 'pharm-req-002', status: 'REQUESTED' });
+
+      const req = await admissionService.createPharmacyRequest(
+        'adm-001',
+        { lines: [{ medicineId: 'med-cheap', requestedQuantity: 2 }] },
+        staffUserId,
+      );
+
+      expect(prisma.pharmacyClearance.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'REQUESTED' }) }));
+      expect(prisma.highCostMedicineAuthorization.create).not.toHaveBeenCalled();
+      expect(req.status).toBe('REQUESTED');
+    });
+
+    it('blocks an above-threshold pharmacy request at AUTHORIZATION_REQUIRED and records the authorization row', async () => {
+      (prisma.admissionRecord.findUnique as any).mockResolvedValue({ id: 'adm-001', medicationMode: 'HOSPITAL_MANAGED' });
+      (prisma.highCostMedicinePolicy.findFirst as any).mockResolvedValue({
+        enabled: true,
+        thresholdAmount: new Decimal(1000),
+        thresholdBasis: 'LINE_TOTAL',
+      });
+      (prisma.medicineMaster.findMany as any).mockResolvedValue([{ id: 'med-expensive', saleRate: new Decimal(6000) }]);
+      (prisma.pharmacyClearance.create as any).mockResolvedValue({ id: 'pharm-req-003', status: 'AUTHORIZATION_REQUIRED' });
+      (prisma.highCostMedicineAuthorization.create as any).mockImplementation((args: any) => ({ id: 'hca-1', ...args.data }));
+
+      const req = await admissionService.createPharmacyRequest(
+        'adm-001',
+        { lines: [{ medicineId: 'med-expensive', requestedQuantity: 2 }] }, // 12,000 line total vs 1,000 threshold (Worked Example 8 shape)
+        staffUserId,
+      );
+
+      expect(prisma.pharmacyClearance.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'AUTHORIZATION_REQUIRED' }) }));
+      expect(prisma.highCostMedicineAuthorization.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ pharmacyClearanceId: 'pharm-req-003', lineTotal: expect.any(Decimal), status: 'PENDING' }) }),
+      );
+      expect(req.status).toBe('AUTHORIZATION_REQUIRED');
+      expect(req.highCostAuthorization).toBeTruthy();
+    });
+
+    it('authorizes on EITHER logic satisfied by attendant confirmation alone, and releases the clearance back to REQUESTED', async () => {
+      (prisma.pharmacyClearance.findUnique as any).mockResolvedValue({
+        id: 'pharm-req-003',
+        admissionRecordId: 'adm-001',
+        highCostAuthorization: { id: 'hca-1', status: 'PENDING' },
+      });
+      (prisma.highCostMedicinePolicy.findFirst as any).mockResolvedValue({
+        attendantConfirmationRequired: true,
+        managementApprovalRequired: true,
+        combinedLogic: 'EITHER',
+      });
+      (prisma.highCostMedicineAuthorization.update as any).mockImplementation((args: any) => ({ id: 'hca-1', ...args.data }));
+
+      const result = await admissionService.authorizeHighCostMedicine(
+        'adm-001',
+        'pharm-req-003',
+        { attendantName: 'Ali Khan', attendantRelation: 'Son', attendantConfirmed: true },
+        staffUserId,
+      );
+
+      expect(result.status).toBe('AUTHORIZED');
+      expect(prisma.pharmacyClearance.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'pharm-req-003' }, data: { status: 'REQUESTED' } }),
+      );
+    });
+
+    it('rejects BOTH-logic authorization when only attendant confirmation was provided', async () => {
+      (prisma.pharmacyClearance.findUnique as any).mockResolvedValue({
+        id: 'pharm-req-004',
+        admissionRecordId: 'adm-001',
+        highCostAuthorization: { id: 'hca-2', status: 'PENDING' },
+      });
+      (prisma.highCostMedicinePolicy.findFirst as any).mockResolvedValue({
+        attendantConfirmationRequired: true,
+        managementApprovalRequired: true,
+        combinedLogic: 'BOTH',
+      });
+
+      await expect(
+        admissionService.authorizeHighCostMedicine(
+          'adm-001',
+          'pharm-req-004',
+          { attendantName: 'Ali Khan', attendantRelation: 'Son', attendantConfirmed: true },
+          staffUserId,
+        ),
+      ).rejects.toThrow(/still missing: management approval/);
+    });
+
+    it('rejects wrong management credentials rather than silently proceeding', async () => {
+      (prisma.pharmacyClearance.findUnique as any).mockResolvedValue({
+        id: 'pharm-req-005',
+        admissionRecordId: 'adm-001',
+        highCostAuthorization: { id: 'hca-3', status: 'PENDING' },
+      });
+      (prisma.highCostMedicinePolicy.findFirst as any).mockResolvedValue({
+        attendantConfirmationRequired: false,
+        managementApprovalRequired: true,
+        combinedLogic: 'MANAGEMENT_ONLY',
+      });
+      (prisma.portalUser.findUnique as any).mockResolvedValue({
+        id: 'admin-1',
+        role: 'ADMIN',
+        status: 'ACTIVE',
+        passwordHash: managementPasswordHash,
+      });
+
+      await expect(
+        admissionService.authorizeHighCostMedicine(
+          'adm-001',
+          'pharm-req-005',
+          { managementUsername: 'admin', managementPassword: 'wrong-password' },
+          staffUserId,
+        ),
+      ).rejects.toThrow(/Invalid management credentials/);
     });
   });
 

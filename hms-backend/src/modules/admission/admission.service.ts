@@ -1,7 +1,8 @@
+import bcrypt from 'bcryptjs';
 import { Decimal } from '@prisma/client/runtime/library';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
-import { NotFoundError, ValidationError } from '@/shared/errors/AppError';
+import { AuthenticationError, NotFoundError, ValidationError } from '@/shared/errors/AppError';
 import { resolvePanelCoverage } from '@/shared/panelCoverage';
 import type {
   CreatePlannedAdmissionBody,
@@ -14,25 +15,16 @@ import type {
   CreatePharmacyRequestBody,
   GrantClearanceBody,
   ListAdmissionsQuery,
+  ClinicalDischargeBody,
+  AuthorizeHighCostMedicineBody,
+  RejectHighCostMedicineBody,
 } from './admission.schemas';
 
-function generateAdmissionNumber(): string {
-  const ts = Date.now().toString(36).toUpperCase();
-  const rand = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-  return `ADM-${ts}-${rand}`;
-}
-
-function generateInvoiceNumber(): string {
-  const ts = Date.now().toString(36).toUpperCase();
-  const rand = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-  return `INV-${ts}-${rand}`;
-}
-
-function generateMedicineRequestNumber(): string {
-  const ts = Date.now().toString(36).toUpperCase();
-  const rand = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-  return `MED-REQ-${ts}-${rand}`;
-}
+import {
+  generateAdmissionNumber,
+  generateInvoiceNumber,
+  generateMedicineRequestNumber,
+} from '@/shared/idGenerator';
 
 export const admissionService = {
   /**
@@ -73,7 +65,7 @@ export const admissionService = {
         }
       }
 
-      const admissionNumber = generateAdmissionNumber();
+      const admissionNumber = await generateAdmissionNumber(tx);
 
       const admission = await tx.admissionRecord.create({
         data: {
@@ -170,11 +162,13 @@ export const admissionService = {
           include: {
             lines: { include: { medicine: true } },
             requestedBy: { select: { id: true, username: true } },
+            highCostAuthorization: true,
           },
         },
         dischargeClearances: {
           include: { clearedBy: { select: { id: true, username: true } } },
         },
+        dischargeSummary: true,
         hospitalInvoices: {
           include: {
             lines: { include: { serviceRate: true, performedBy: true } },
@@ -285,7 +279,7 @@ export const admissionService = {
       });
 
       if (!existingInvoice) {
-        const invoiceNumber = generateInvoiceNumber();
+        const invoiceNumber = await generateInvoiceNumber(tx);
         await tx.hospitalInvoice.create({
           data: {
             invoiceNumber,
@@ -422,7 +416,7 @@ export const admissionService = {
       if (!invoice) {
         invoice = await tx.hospitalInvoice.create({
           data: {
-            invoiceNumber: generateInvoiceNumber(),
+            invoiceNumber: await generateInvoiceNumber(tx),
             sourceType: 'ADMISSION',
             admissionRecordId: admission.id,
             departmentId: serviceRate.departmentId,
@@ -565,15 +559,37 @@ export const admissionService = {
         );
       }
 
-      const medicineRequestNumber = generateMedicineRequestNumber();
+      const medicineRequestNumber = await generateMedicineRequestNumber(tx);
       const idempotencyKey = `MED-IDEMP-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+
+      // v7.2 §2.6 High-Cost Medicine gate — Medicine Line Amount = Quantity
+      // × Current Approved Rate; if the configured policy is enabled and any
+      // line exceeds its threshold, the whole request is blocked at
+      // AUTHORIZATION_REQUIRED instead of proceeding straight to REQUESTED.
+      // No policy row / disabled policy → completely unchanged behavior.
+      const policy = await tx.highCostMedicinePolicy.findFirst();
+      let triggeringLineAmount: Decimal | null = null;
+      if (policy?.enabled) {
+        const medicines = await tx.medicineMaster.findMany({
+          where: { id: { in: body.lines.map((l) => l.medicineId) } },
+        });
+        const rateById = new Map(medicines.map((m) => [m.id, m.saleRate ?? new Decimal(0)]));
+        for (const line of body.lines) {
+          const rate = rateById.get(line.medicineId) ?? new Decimal(0);
+          const lineAmount = policy.thresholdBasis === 'PER_UNIT' ? rate : rate.mul(line.requestedQuantity);
+          if (lineAmount.greaterThan(policy.thresholdAmount)) {
+            triggeringLineAmount = lineAmount;
+            break;
+          }
+        }
+      }
 
       const clearance = await tx.pharmacyClearance.create({
         data: {
           admissionRecordId: admission.id,
           medicineRequestNumber,
           idempotencyKey,
-          status: 'REQUESTED',
+          status: triggeringLineAmount ? 'AUTHORIZATION_REQUIRED' : 'REQUESTED',
           requestedById: actorId,
           lines: {
             create: body.lines.map((l) => ({
@@ -585,8 +601,21 @@ export const admissionService = {
         },
         include: {
           lines: { include: { medicine: true } },
+          highCostAuthorization: true,
         },
       });
+
+      let highCostAuthorization = null;
+      if (triggeringLineAmount && policy) {
+        highCostAuthorization = await tx.highCostMedicineAuthorization.create({
+          data: {
+            pharmacyClearanceId: clearance.id,
+            lineTotal: triggeringLineAmount,
+            thresholdAmount: policy.thresholdAmount,
+            status: 'PENDING',
+          },
+        });
+      }
 
       // Ensure PHARMACY discharge clearance is set to PENDING
       await tx.dualDischargeClearance.updateMany({
@@ -594,7 +623,125 @@ export const admissionService = {
         data: { status: 'PENDING' },
       });
 
-      return clearance;
+      return { ...clearance, highCostAuthorization };
+    });
+  },
+
+  /**
+   * High-Cost Medicine Authorization (HMS_V7.2_NEW_REQUIREMENTS.md §2.6) —
+   * captures whichever of attendant confirmation / management credential
+   * approval the policy requires, evaluates `combinedLogic`, and releases
+   * the pharmacy request back to `REQUESTED` only once satisfied. Never a
+   * free-typed approver name — management approval validates a real
+   * `PortalUser` (ADMIN/SUPER_ADMIN) credential.
+   */
+  async authorizeHighCostMedicine(
+    admissionId: string,
+    clearanceId: string,
+    body: AuthorizeHighCostMedicineBody,
+    actorId: string,
+  ) {
+    return prisma.$transaction(async (tx) => {
+      const clearance = await tx.pharmacyClearance.findUnique({
+        where: { id: clearanceId },
+        include: { highCostAuthorization: true },
+      });
+      if (!clearance || clearance.admissionRecordId !== admissionId) {
+        throw new NotFoundError('Pharmacy request not found for this admission');
+      }
+      if (!clearance.highCostAuthorization) {
+        throw new ValidationError('This pharmacy request has no high-cost authorization pending');
+      }
+      if (clearance.highCostAuthorization.status !== 'PENDING') {
+        throw new ValidationError(`This high-cost authorization is already ${clearance.highCostAuthorization.status}`);
+      }
+
+      const policy = await tx.highCostMedicinePolicy.findFirst();
+      if (!policy) throw new NotFoundError('High-cost medicine policy not configured');
+
+      const updateData: Record<string, any> = {
+        panelAuthorizationRef: body.panelAuthorizationRef,
+      };
+
+      let attendantSatisfied = !policy.attendantConfirmationRequired;
+      if (policy.attendantConfirmationRequired && body.attendantConfirmed) {
+        if (!body.attendantName || !body.attendantRelation) {
+          throw new ValidationError('Attendant name and relationship are required to confirm this request');
+        }
+        updateData.attendantName = body.attendantName;
+        updateData.attendantRelation = body.attendantRelation;
+        updateData.attendantContact = body.attendantContact;
+        updateData.attendantConfirmed = true;
+        updateData.attendantConfirmedById = actorId;
+        updateData.attendantConfirmedAt = new Date();
+        attendantSatisfied = true;
+      }
+
+      let managementSatisfied = !policy.managementApprovalRequired;
+      if (policy.managementApprovalRequired && body.managementUsername && body.managementPassword) {
+        const manager = await tx.portalUser.findUnique({ where: { username: body.managementUsername } });
+        if (!manager || manager.status !== 'ACTIVE' || !['ADMIN', 'SUPER_ADMIN'].includes(manager.role)) {
+          throw new AuthenticationError('Invalid management credentials');
+        }
+        const passwordOk = await bcrypt.compare(body.managementPassword, manager.passwordHash);
+        if (!passwordOk) throw new AuthenticationError('Invalid management credentials');
+
+        updateData.managementApprovedById = manager.id;
+        updateData.managementReason = body.managementReason;
+        updateData.managementApprovedAt = new Date();
+        managementSatisfied = true;
+      }
+
+      const combinedSatisfied =
+        policy.combinedLogic === 'ATTENDANT_ONLY'
+          ? attendantSatisfied
+          : policy.combinedLogic === 'MANAGEMENT_ONLY'
+            ? managementSatisfied
+            : policy.combinedLogic === 'EITHER'
+              ? attendantSatisfied || managementSatisfied
+              : attendantSatisfied && managementSatisfied; // BOTH
+
+      if (!combinedSatisfied) {
+        const missing = [
+          policy.attendantConfirmationRequired && !attendantSatisfied ? 'attendant confirmation' : null,
+          policy.managementApprovalRequired && !managementSatisfied ? 'management approval' : null,
+        ].filter(Boolean);
+        throw new ValidationError(`Authorization incomplete — still missing: ${missing.join(', ') || 'required approval'}`);
+      }
+
+      updateData.status = 'AUTHORIZED';
+      const updated = await tx.highCostMedicineAuthorization.update({
+        where: { id: clearance.highCostAuthorization.id },
+        data: updateData,
+      });
+
+      await tx.pharmacyClearance.update({ where: { id: clearance.id }, data: { status: 'REQUESTED' } });
+
+      return updated;
+    });
+  },
+
+  /** Explicit decline — no credential requirement, matches "Rejected/Pending request cannot be dispensed" as the safe default. */
+  async rejectHighCostMedicine(admissionId: string, clearanceId: string, body: RejectHighCostMedicineBody) {
+    return prisma.$transaction(async (tx) => {
+      const clearance = await tx.pharmacyClearance.findUnique({
+        where: { id: clearanceId },
+        include: { highCostAuthorization: true },
+      });
+      if (!clearance || clearance.admissionRecordId !== admissionId) {
+        throw new NotFoundError('Pharmacy request not found for this admission');
+      }
+      if (!clearance.highCostAuthorization) {
+        throw new ValidationError('This pharmacy request has no high-cost authorization pending');
+      }
+
+      const updated = await tx.highCostMedicineAuthorization.update({
+        where: { id: clearance.highCostAuthorization.id },
+        data: { status: 'REJECTED', managementReason: body.reason },
+      });
+      await tx.pharmacyClearance.update({ where: { id: clearance.id }, data: { status: 'REJECTED' } });
+
+      return updated;
     });
   },
 
@@ -603,6 +750,14 @@ export const admissionService = {
    * Streams: CLINICAL, HOSPITAL_BILLING, PHARMACY
    */
   async grantClearance(admissionId: string, body: GrantClearanceBody, actorId: string) {
+    // v7.2 §2.4 — Clinical discharge is doctor-credential-only; an Admission
+    // user may never self-clear this gate. Use `clinicalDischarge` instead.
+    if (body.clearanceType === 'CLINICAL') {
+      throw new ValidationError(
+        'Clinical discharge requires doctor credential authorization — use the Doctor Discharge Authorization action instead.',
+      );
+    }
+
     return prisma.$transaction(async (tx) => {
       const admission = await tx.admissionRecord.findUnique({
         where: { id: admissionId },
@@ -651,6 +806,84 @@ export const admissionService = {
       }
 
       return cleared;
+    });
+  },
+
+  /**
+   * Doctor Clinical Discharge Authorization (HMS_V7.2_NEW_REQUIREMENTS.md
+   * §2.4) — the only way the CLINICAL clearance gate can be cleared. Verifies
+   * the doctor's own clinical-authorization credential (separate from
+   * `PortalUser` login — a doctor can be Staff-Record-Only and still hold
+   * this), captures the Discharge Summary, clears the CLINICAL gate the same
+   * way `grantClearance` would (so `getClearances`/`dischargePatient` need no
+   * changes), and immediately routes the case to Front Desk by setting
+   * status to `DISCHARGE_PENDING` ("Clinically Discharged - Billing
+   * Pending", PDF 23 §12's status chain) — HOSPITAL_BILLING/PHARMACY
+   * clearance and final discharge are unaffected, still gated as before.
+   */
+  async clinicalDischarge(admissionId: string, body: ClinicalDischargeBody, actorId: string) {
+    return prisma.$transaction(async (tx) => {
+      const admission = await tx.admissionRecord.findUnique({
+        where: { id: admissionId },
+        include: { dischargeClearances: true },
+      });
+      if (!admission) throw new NotFoundError('Admission record not found');
+      if (admission.status !== 'ACTIVE') {
+        throw new ValidationError('Clinical discharge is only permitted for an ACTIVE admission');
+      }
+
+      // `db/client.ts`'s global `omit` structurally hides
+      // `clinicalAuthPasswordHash` from every Staff query (by design, so it
+      // can never leak through a `doctor: true`/`performedBy: true`
+      // include) — this is the one legitimate server-side read that
+      // actually needs it, so it's explicitly un-omitted for this query only.
+      const doctor = await tx.staff.findUnique({
+        where: { clinicalAuthUsername: body.doctorUsername },
+        include: { department: true },
+        omit: { clinicalAuthPasswordHash: false },
+      });
+      if (!doctor || !doctor.clinicalAuthActive || !doctor.clinicalAuthPasswordHash) {
+        throw new AuthenticationError('Invalid doctor credentials');
+      }
+      const passwordOk = await bcrypt.compare(body.doctorPassword, doctor.clinicalAuthPasswordHash);
+      if (!passwordOk) throw new AuthenticationError('Invalid doctor credentials');
+
+      const summary = await tx.dischargeSummary.create({
+        data: {
+          admissionRecordId: admission.id,
+          finalDiagnosis: body.dischargeSummary.finalDiagnosis,
+          treatmentSummary: body.dischargeSummary.treatmentSummary,
+          conditionAtDischarge: body.dischargeSummary.conditionAtDischarge,
+          medicinesInstructions: body.dischargeSummary.medicinesInstructions,
+          followUpAdvice: body.dischargeSummary.followUpAdvice,
+          followUpDoctorStaffId: body.dischargeSummary.followUpDoctorStaffId,
+          followUpDate: body.dischargeSummary.followUpDate,
+          additionalNotes: body.dischargeSummary.additionalNotes,
+          doctorStaffId: doctor.id,
+          doctorNameSnapshot: doctor.fullName,
+          doctorDepartmentSnapshot: doctor.department.name,
+          initiatedById: actorId,
+        },
+      });
+
+      const existingClinical = admission.dischargeClearances.find((c) => c.clearanceType === 'CLINICAL');
+      if (existingClinical) {
+        await tx.dualDischargeClearance.update({
+          where: { id: existingClinical.id },
+          data: { status: 'CLEARED', clearedById: actorId, clearedAt: new Date() },
+        });
+      } else {
+        await tx.dualDischargeClearance.create({
+          data: { admissionRecordId: admission.id, clearanceType: 'CLINICAL', status: 'CLEARED', clearedById: actorId, clearedAt: new Date() },
+        });
+      }
+
+      const updatedAdmission = await tx.admissionRecord.update({
+        where: { id: admission.id },
+        data: { status: 'DISCHARGE_PENDING' },
+      });
+
+      return { admission: updatedAdmission, dischargeSummary: summary };
     });
   },
 

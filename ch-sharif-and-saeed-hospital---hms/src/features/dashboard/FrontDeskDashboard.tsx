@@ -195,6 +195,122 @@ export const FrontDeskDashboard: React.FC = () => {
         </div>
       </div>
 
+      {/* 4 Primary Front Desk Quick Intake Cards (OPD, OBSV, ER, ADM+) */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
+        {/* OPD Card */}
+        <button
+          type="button"
+          onClick={() => {
+            sessionStorage.setItem('preferred_encounter_type', 'OPD');
+            navigate('/front-desk/walk_in_intake?type=OPD');
+          }}
+          className="group relative p-4 rounded-xl border-2 border-emerald-500/80 bg-gradient-to-br from-emerald-50/80 via-white to-emerald-50/30 hover:from-emerald-100/90 hover:to-white shadow-xs hover:shadow-md transition-all text-left flex flex-col justify-between overflow-hidden cursor-pointer"
+        >
+          <div className="flex items-center justify-between w-full mb-3">
+            <div className="h-11 w-11 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
+              <Stethoscope className="h-6 w-6" />
+            </div>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+              {data.opdCount} Today
+            </span>
+          </div>
+          <div>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-xl font-extrabold text-slate-900 tracking-tight">OPD</span>
+              <span className="text-[11px] font-semibold text-emerald-700">Outpatient</span>
+            </div>
+            <p className="text-xs text-slate-600 mt-0.5 line-clamp-1">Clinic & Doctor Consultation Intake</p>
+          </div>
+          <div className="mt-3 pt-2 border-t border-emerald-100 flex items-center justify-between text-[11px] font-bold text-emerald-700">
+            <span>Fast Walk-In &rarr;</span>
+          </div>
+        </button>
+
+        {/* OBSV Card */}
+        <button
+          type="button"
+          onClick={() => {
+            sessionStorage.setItem('preferred_encounter_type', 'OBSERVATION');
+            navigate('/front-desk/walk_in_intake?type=OBSERVATION');
+          }}
+          className="group relative p-4 rounded-xl border-2 border-indigo-500/80 bg-gradient-to-br from-indigo-50/80 via-white to-indigo-50/30 hover:from-indigo-100/90 hover:to-white shadow-xs hover:shadow-md transition-all text-left flex flex-col justify-between overflow-hidden cursor-pointer"
+        >
+          <div className="flex items-center justify-between w-full mb-3">
+            <div className="h-11 w-11 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
+              <Eye className="h-6 w-6" />
+            </div>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">
+              {data.observationCount} Today
+            </span>
+          </div>
+          <div>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-xl font-extrabold text-slate-900 tracking-tight">OBSV</span>
+              <span className="text-[11px] font-semibold text-indigo-700">Observation</span>
+            </div>
+            <p className="text-xs text-slate-600 mt-0.5 line-clamp-1">Day-Care, Drips & Short Monitoring</p>
+          </div>
+          <div className="mt-3 pt-2 border-t border-indigo-100 flex items-center justify-between text-[11px] font-bold text-indigo-700">
+            <span>Fast Walk-In &rarr;</span>
+          </div>
+        </button>
+
+        {/* ER Card */}
+        <button
+          type="button"
+          onClick={() => {
+            sessionStorage.setItem('preferred_encounter_type', 'EMERGENCY');
+            navigate('/front-desk/walk_in_intake?type=EMERGENCY');
+          }}
+          className="group relative p-4 rounded-xl border-2 border-rose-500/80 bg-gradient-to-br from-rose-50/80 via-white to-rose-50/30 hover:from-rose-100/90 hover:to-white shadow-xs hover:shadow-md transition-all text-left flex flex-col justify-between overflow-hidden cursor-pointer"
+        >
+          <div className="flex items-center justify-between w-full mb-3">
+            <div className="h-11 w-11 rounded-xl bg-rose-600 text-white flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
+              <AlertTriangle className="h-6 w-6" />
+            </div>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+              {data.emergencyCount} Today
+            </span>
+          </div>
+          <div>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-xl font-extrabold text-slate-900 tracking-tight">ER</span>
+              <span className="text-[11px] font-semibold text-rose-700">Emergency</span>
+            </div>
+            <p className="text-xs text-slate-600 mt-0.5 line-clamp-1">Triage, Trauma & Urgent Care</p>
+          </div>
+          <div className="mt-3 pt-2 border-t border-rose-100 flex items-center justify-between text-[11px] font-bold text-rose-700">
+            <span>Fast Walk-In &rarr;</span>
+          </div>
+        </button>
+
+        {/* ADM+ Card */}
+        <button
+          type="button"
+          onClick={() => navigate('/front-desk/new_admission')}
+          className="group relative p-4 rounded-xl border-2 border-sky-500/80 bg-gradient-to-br from-sky-50/80 via-white to-sky-50/30 hover:from-sky-100/90 hover:to-white shadow-xs hover:shadow-md transition-all text-left flex flex-col justify-between overflow-hidden cursor-pointer"
+        >
+          <div className="flex items-center justify-between w-full mb-3">
+            <div className="h-11 w-11 rounded-xl bg-sky-600 text-white flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
+              <BedDouble className="h-6 w-6" />
+            </div>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-100 text-sky-800 border border-sky-200">
+              {data.todayAdmissionsCount} Today
+            </span>
+          </div>
+          <div>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-xl font-extrabold text-slate-900 tracking-tight">ADM+</span>
+              <span className="text-[11px] font-semibold text-sky-700">Inpatient</span>
+            </div>
+            <p className="text-xs text-slate-600 mt-0.5 line-clamp-1">Planned Admission & Bed Booking</p>
+          </div>
+          <div className="mt-3 pt-2 border-t border-sky-100 flex items-center justify-between text-[11px] font-bold text-sky-700">
+            <span>New Admission &rarr;</span>
+          </div>
+        </button>
+      </div>
+
       {loadError && (
         <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg flex items-center justify-between gap-2 text-xs text-rose-700 font-medium">
           <span className="flex items-center gap-2">

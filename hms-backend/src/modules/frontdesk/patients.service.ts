@@ -27,17 +27,7 @@ function decoratePanelPatient(
   };
 }
 
-async function nextMrNumber(): Promise<string> {
-  const year = new Date().getFullYear();
-  const count = await prisma.panelPatient.count();
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const candidate = `MR-${year}-${String(count + 1 + attempt).padStart(6, '0')}`;
-    const exists = await prisma.panelPatient.findUnique({ where: { mrNumber: candidate }, select: { id: true } });
-    if (!exists) return candidate;
-  }
-  // Extremely unlikely fallback if the sequential slot keeps colliding under concurrency.
-  return `MR-${year}-${Date.now().toString().slice(-8)}`;
-}
+import { generateMrNumber } from '@/shared/idGenerator';
 
 /**
  * §4.6 Patient identity model — Panel Patient (permanent master) vs.
@@ -102,7 +92,7 @@ export const patientsService = {
   },
 
   async createPanelPatient(body: CreatePanelPatientBody, createdById: string) {
-    const mrNumber = await nextMrNumber();
+    const mrNumber = await generateMrNumber();
     try {
       const created = await prisma.panelPatient.create({
         data: {

@@ -104,6 +104,49 @@ export const grantClearanceSchema = z.object({
 
 export type GrantClearanceBody = z.infer<typeof grantClearanceSchema>;
 
+// v7.2 §2.4 — Doctor Clinical Discharge Authorization + Discharge Summary.
+export const clinicalDischargeSchema = z.object({
+  doctorUsername: z.string().min(1, 'Doctor username is required'),
+  doctorPassword: z.string().min(1, 'Doctor password is required'),
+  dischargeSummary: z.object({
+    finalDiagnosis: z.string().min(1, 'Final diagnosis is required'),
+    treatmentSummary: z.string().min(1, 'Treatment / procedures summary is required'),
+    conditionAtDischarge: z.string().min(1, 'Condition at discharge is required'),
+    medicinesInstructions: z.string().min(1, 'Medicines / instructions is required'),
+    followUpAdvice: z.string().optional(),
+    followUpDoctorStaffId: z.string().uuid().optional(),
+    followUpDate: z.coerce.date().optional(),
+    additionalNotes: z.string().optional(),
+  }),
+});
+
+export type ClinicalDischargeBody = z.infer<typeof clinicalDischargeSchema>;
+
+// v7.2 §2.6 — High-Cost Medicine Authorization.
+export const pharmacyClearanceIdParamsSchema = z.object({
+  id: z.string().uuid(),
+  clearanceId: z.string().uuid(),
+});
+
+export const authorizeHighCostMedicineSchema = z.object({
+  attendantName: z.string().optional(),
+  attendantRelation: z.string().optional(),
+  attendantContact: z.string().optional(),
+  attendantConfirmed: z.boolean().optional(),
+  managementUsername: z.string().optional(),
+  managementPassword: z.string().optional(),
+  managementReason: z.string().optional(),
+  panelAuthorizationRef: z.string().optional(),
+});
+
+export type AuthorizeHighCostMedicineBody = z.infer<typeof authorizeHighCostMedicineSchema>;
+
+export const rejectHighCostMedicineSchema = z.object({
+  reason: z.string().min(1, 'A reason is required to reject a high-cost medicine request'),
+});
+
+export type RejectHighCostMedicineBody = z.infer<typeof rejectHighCostMedicineSchema>;
+
 export const listAdmissionsQuerySchema = z.object({
   status: z
     .enum(['PLANNED', 'CONFIRMED', 'ACTIVE', 'DISCHARGE_PENDING', 'DISCHARGED', 'CANCELLED'])

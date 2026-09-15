@@ -5,11 +5,7 @@ import { NotFoundError, ValidationError } from '@/shared/errors/AppError';
 import { resolvePanelCoverage } from '@/shared/panelCoverage';
 import type { ContractResolutionQuery, RecordPanelRemittanceBody } from './panelBilling.schemas';
 
-function generateRemittanceNumber(): string {
-  const ts = Date.now().toString(36).toUpperCase();
-  const rand = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-  return `PRM-${ts}-${rand}`;
-}
+import { generateRemittanceNumber } from '@/shared/idGenerator';
 
 /**
  * Panel Billing (HMS_V7.2_NEW_REQUIREMENTS.md §2.5/§3.3): Panel Verification,
@@ -272,7 +268,7 @@ export const panelBillingService = {
 
       const remittance = await tx.panelRemittance.create({
         data: {
-          remittanceNumber: generateRemittanceNumber(),
+          remittanceNumber: await generateRemittanceNumber(tx),
           corporatePanelId,
           amount: amountDecimal,
           method: body.method,

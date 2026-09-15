@@ -3,11 +3,7 @@ import { prisma } from '@/db/client';
 import { NotFoundError, ValidationError } from '@/shared/errors/AppError';
 import type { CollectAdmissionPaymentBody } from './admissionBilling.schemas';
 
-function generateReceiptNumber(): string {
-  const ts = Date.now().toString(36).toUpperCase();
-  const rand = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-  return `REC-${ts}-${rand}`;
-}
+import { generateReceiptNumber } from '@/shared/idGenerator';
 
 const invoiceInclude = {
   department: { select: { id: true, name: true, code: true } },
@@ -141,7 +137,7 @@ export const admissionBillingService = {
 
         const receipt = await tx.paymentReceipt.create({
           data: {
-            receiptNumber: generateReceiptNumber(),
+            receiptNumber: await generateReceiptNumber(tx),
             amount: alloc.amount,
             method: body.paymentMethod,
             reference: body.reference ?? `Admission ${admissionId} payment allocation`,

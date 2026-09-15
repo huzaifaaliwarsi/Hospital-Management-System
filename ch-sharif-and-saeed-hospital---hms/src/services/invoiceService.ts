@@ -172,11 +172,20 @@ export async function refundPayment(
 
 export interface CreateEncounterFormValues {
   encounterType: EncounterType;
-  panelPatientId: string;
-  selfPayEncounterId: string;
-  departmentId: string;
-  doctorStaffId: string;
-  notes: string;
+  panelPatientId?: string;
+  selfPayEncounterId?: string;
+  newSelfPayPatient?: {
+    fullName: string;
+    guardianName?: string;
+    gender?: string;
+    dob?: string;
+    cnicOrPassport?: string;
+    phone?: string;
+    address?: string;
+  };
+  departmentId?: string;
+  doctorStaffId?: string;
+  notes?: string;
 }
 
 /** `POST /encounters` — Walk-In / Encounter Intake (OPD/Observation/Emergency), creates the invoice shell. */
@@ -185,9 +194,11 @@ export async function createEncounter(values: CreateEncounterFormValues): Promis
     encounterType: values.encounterType,
     panelPatientId: values.panelPatientId || undefined,
     selfPayEncounterId: values.selfPayEncounterId || undefined,
+    newSelfPayPatient: values.newSelfPayPatient || undefined,
     departmentId: values.departmentId || undefined,
     doctorStaffId: values.doctorStaffId || undefined,
     notes: values.notes?.trim() || undefined,
   });
   return toInvoiceDetail(res.data.data);
 }
+

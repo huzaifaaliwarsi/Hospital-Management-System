@@ -12,20 +12,10 @@ import type {
   ListInvoicesQuery,
 } from './invoices.schemas';
 
+import { generateInvoiceNumber, generateReceiptNumber } from '@/shared/idGenerator';
+
 const DISCOUNT_APPROVAL_PERCENT_THRESHOLD = 15; // > 15% requires Admin approval
 const DISCOUNT_APPROVAL_AMOUNT_THRESHOLD = 1500; // > PKR 1,500 requires Admin approval
-
-function generateInvoiceNumber(): string {
-  const ts = Date.now().toString(36).toUpperCase();
-  const rand = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-  return `INV-${ts}-${rand}`;
-}
-
-function generateReceiptNumber(): string {
-  const ts = Date.now().toString(36).toUpperCase();
-  const rand = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-  return `REC-${ts}-${rand}`;
-}
 
 export const invoicesService = {
   /**
@@ -52,7 +42,7 @@ export const invoicesService = {
         selfPayEncounterId = createdSelfPay.id;
       }
 
-      const invoiceNumber = generateInvoiceNumber();
+      const invoiceNumber = await generateInvoiceNumber(tx);
 
       const invoice = await tx.hospitalInvoice.create({
         data: {
@@ -371,7 +361,7 @@ export const invoicesService = {
         );
       }
 
-      const receiptNumber = generateReceiptNumber();
+      const receiptNumber = await generateReceiptNumber(tx);
 
       const receipt = await tx.paymentReceipt.create({
         data: {
@@ -441,7 +431,7 @@ export const invoicesService = {
         );
       }
 
-      const receiptNumber = generateReceiptNumber();
+      const receiptNumber = await generateReceiptNumber(tx);
 
       // Record reversal receipt row (preserving audit trail, no silent deletion per D16 p.22)
       const reversalReceipt = await tx.paymentReceipt.create({

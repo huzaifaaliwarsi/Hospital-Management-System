@@ -149,4 +149,27 @@ router.get(
   asyncHandler(c.getDischargeSummary),
 );
 
+// Doctor Clinical Discharge Authorization (v7.2 §2.4)
+router.post(
+  '/:id/clinical-discharge',
+  write,
+  validate({ params: s.admissionIdParamsSchema, body: s.clinicalDischargeSchema }),
+  asyncHandler(c.clinicalDischarge),
+);
+
+// High-Cost Medicine Authorization (v7.2 §2.6)
+router.post(
+  '/:id/pharmacy-requests/:clearanceId/authorize',
+  create,
+  validate({ params: s.pharmacyClearanceIdParamsSchema, body: s.authorizeHighCostMedicineSchema }),
+  asyncHandler(c.authorizeHighCostMedicine),
+);
+
+router.post(
+  '/:id/pharmacy-requests/:clearanceId/reject',
+  create,
+  validate({ params: s.pharmacyClearanceIdParamsSchema, body: s.rejectHighCostMedicineSchema }),
+  asyncHandler(c.rejectHighCostMedicine),
+);
+
 export default router;
