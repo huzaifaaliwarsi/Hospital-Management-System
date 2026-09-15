@@ -41,6 +41,7 @@ vi.mock('@/db/client', () => {
     },
     hospitalInvoice: {
       findFirst: vi.fn(),
+      findMany: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
     },
@@ -49,6 +50,12 @@ vi.mock('@/db/client', () => {
     },
     serviceRate: {
       findUnique: vi.fn(),
+    },
+    paymentReceipt: {
+      create: vi.fn(),
+    },
+    userCashBalance: {
+      create: vi.fn(),
     },
   };
 
@@ -63,6 +70,7 @@ vi.mock('@/db/client', () => {
 
 import { prisma } from '@/db/client';
 import { admissionService } from '@/modules/admission/admission.service';
+import { admissionBillingService } from '@/modules/frontdesk/admissionBilling.service';
 
 describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge Workflow', () => {
   const staffUserId = 'user-admission-staff-1';
@@ -291,16 +299,20 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
       expect(result.admission.bedId).toBe(bedId2);
     });
 
-    it('appends billable hospital service to running admission invoice', async () => {
+    it('appends billable hospital service to the admitting department\'s existing invoice (v7.2 §2.2)', async () => {
       (prisma.admissionRecord.findUnique as any).mockResolvedValue({
         id: 'adm-001',
         status: 'ACTIVE',
+        doctorStaffId,
         hospitalInvoices: [
           {
             id: 'inv-adm-1',
+            departmentId, // matches admission's own department
             subtotal: new Decimal(10000),
             total: new Decimal(10000),
             paidTotal: new Decimal(5000),
+            patientShare: new Decimal(10000),
+            panelReceivable: new Decimal(0),
             lines: [],
           },
         ],
@@ -311,6 +323,7 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
         id: 'srv-rate-ecg',
         standardRate: new Decimal(3000),
         isActive: true,
+        departmentId, // same department as the existing invoice
       });
 
       (prisma.invoiceLineItem.create as any).mockResolvedValue({
@@ -318,6 +331,8 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
         lineGross: new Decimal(3000),
         discountAmount: new Decimal(0),
         lineNet: new Decimal(3000),
+        patientShare: new Decimal(3000),
+        panelReceivable: new Decimal(0),
       });
 
       const line = await admissionService.addAdmissionService(
@@ -326,9 +341,12 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
         staffUserId,
       );
 
+      // Reuses the existing invoice — no new one created for the same department.
+      expect(prisma.hospitalInvoice.create).not.toHaveBeenCalled();
       expect(prisma.invoiceLineItem.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
+            hospitalInvoiceId: 'inv-adm-1',
             rateSnapshot: new Decimal(3000),
             lineGross: new Decimal(3000),
             lineNet: new Decimal(3000),
@@ -336,6 +354,132 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
         }),
       );
       expect(line.lineNet).toEqual(new Decimal(3000));
+    });
+
+    it('creates a SEPARATE department invoice when the service belongs to a different department than the admitting one (v7.2 §2.2)', async () => {
+      const labDeptId = 'dept-laboratory';
+      (prisma.admissionRecord.findUnique as any).mockResolvedValue({
+        id: 'adm-002',
+        status: 'ACTIVE',
+        doctorStaffId,
+        hospitalInvoices: [
+          {
+            id: 'inv-hospital-services',
+            departmentId, // the admitting department's invoice already exists
+            subtotal: new Decimal(5000),
+            total: new Decimal(5000),
+            paidTotal: new Decimal(0),
+            patientShare: new Decimal(5000),
+            panelReceivable: new Decimal(0),
+            lines: [],
+          },
+        ],
+        panelPatient: null,
+      });
+
+      (prisma.serviceRate.findUnique as any).mockResolvedValue({
+        id: 'srv-rate-cbc',
+        standardRate: new Decimal(1500),
+        isActive: true,
+        departmentId: labDeptId, // Lab, NOT the admitting department
+      });
+
+      (prisma.hospitalInvoice.create as any).mockResolvedValue({
+        id: 'inv-laboratory',
+        departmentId: labDeptId,
+        paidTotal: new Decimal(0),
+        lines: [],
+      });
+      (prisma.invoiceLineItem.create as any).mockResolvedValue({
+        id: 'line-cbc-1',
+        lineGross: new Decimal(1500),
+        discountAmount: new Decimal(0),
+        lineNet: new Decimal(1500),
+        patientShare: new Decimal(1500),
+        panelReceivable: new Decimal(0),
+      });
+
+      await admissionService.addAdmissionService(
+        'adm-002',
+        { serviceRateId: 'srv-rate-cbc', quantity: 1 },
+        staffUserId,
+      );
+
+      // A brand-new invoice is created for Laboratory — the existing
+      // Hospital Services invoice is left untouched (never merged).
+      expect(prisma.hospitalInvoice.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ departmentId: labDeptId, admissionRecordId: 'adm-002' }),
+        }),
+      );
+      expect(prisma.invoiceLineItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ hospitalInvoiceId: 'inv-laboratory' }) }),
+      );
+    });
+
+    it('splits Patient Share / Panel Receivable on an admission service line using the panel coverage rule (v7.2 §2.5)', async () => {
+      (prisma.admissionRecord.findUnique as any).mockResolvedValue({
+        id: 'adm-003',
+        status: 'ACTIVE',
+        doctorStaffId,
+        hospitalInvoices: [],
+        panelPatient: {
+          corporatePanel: {
+            discountRules: [
+              {
+                serviceRateId: 'srv-rate-mri',
+                discountPercent: new Decimal(0),
+                coveragePercent: new Decimal(70),
+                capAmount: null,
+                effectiveFrom: new Date('2020-01-01'),
+                effectiveTo: null,
+              },
+            ],
+          },
+        },
+      });
+
+      (prisma.serviceRate.findUnique as any).mockResolvedValue({
+        id: 'srv-rate-mri',
+        standardRate: new Decimal(20000),
+        isActive: true,
+        departmentId: 'dept-radiology',
+      });
+
+      (prisma.hospitalInvoice.create as any).mockResolvedValue({
+        id: 'inv-radiology',
+        departmentId: 'dept-radiology',
+        paidTotal: new Decimal(0),
+        lines: [],
+      });
+      (prisma.invoiceLineItem.create as any).mockResolvedValue({
+        id: 'line-mri-1',
+        lineGross: new Decimal(20000),
+        discountAmount: new Decimal(0),
+        lineNet: new Decimal(20000),
+        patientShare: new Decimal(6000),
+        panelReceivable: new Decimal(14000),
+      });
+
+      await admissionService.addAdmissionService('adm-003', { serviceRateId: 'srv-rate-mri', quantity: 1 }, staffUserId);
+
+      expect(prisma.invoiceLineItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            lineNet: new Decimal(20000), // coverage split doesn't touch the billed total
+            patientShare: new Decimal(6000), // 20,000 - 70% coverage (14,000)
+            panelReceivable: new Decimal(14000),
+          }),
+        }),
+      );
+      expect(prisma.hospitalInvoice.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            patientShare: new Decimal(6000),
+            panelReceivable: new Decimal(14000),
+          }),
+        }),
+      );
     });
   });
 
@@ -510,6 +654,138 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
       );
 
       expect(result.admission.status).toBe('DISCHARGED');
+    });
+  });
+
+  describe('5. Admission Billing — Department Split Statement & Payment Allocation (v7.2 §2.2/§2.10/§2.11)', () => {
+    it('builds a consolidated Interim Statement summing across every department invoice', async () => {
+      (prisma.admissionRecord.findUnique as any).mockResolvedValue({
+        id: 'adm-stmt-1',
+        admissionNumber: 'ADM-0001',
+        status: 'ACTIVE',
+        panelPatient: null,
+        selfPayEncounter: { id: 'sp-1', fullName: 'Test Patient' },
+        hospitalInvoices: [
+          {
+            id: 'inv-hs',
+            subtotal: new Decimal(20000),
+            discountTotal: new Decimal(0),
+            total: new Decimal(20000),
+            paidTotal: new Decimal(20000),
+            patientShare: new Decimal(20000),
+            panelReceivable: new Decimal(0),
+          },
+          {
+            id: 'inv-lab',
+            subtotal: new Decimal(20000),
+            discountTotal: new Decimal(0),
+            total: new Decimal(20000),
+            paidTotal: new Decimal(0),
+            patientShare: new Decimal(20000),
+            panelReceivable: new Decimal(0),
+          },
+          {
+            id: 'inv-pharm',
+            subtotal: new Decimal(10000),
+            discountTotal: new Decimal(0),
+            total: new Decimal(10000),
+            paidTotal: new Decimal(0),
+            patientShare: new Decimal(10000),
+            panelReceivable: new Decimal(0),
+          },
+        ],
+      });
+
+      const statement = await admissionBillingService.getStatement('adm-stmt-1');
+
+      expect(statement.isNotFinalDischargeInvoice).toBe(true);
+      expect(statement.departmentInvoices).toHaveLength(3);
+      expect(statement.consolidated.total).toEqual(new Decimal(50000)); // matches the PDF's PKR 50,000 worked split
+      expect(statement.consolidated.paidTotal).toEqual(new Decimal(20000));
+      expect(statement.consolidated.outstanding).toEqual(new Decimal(30000));
+    });
+
+    it('auto-allocates one payment proportionally across outstanding department invoices', async () => {
+      (prisma.hospitalInvoice.findMany as any).mockResolvedValue([
+        { id: 'inv-hs', invoiceNumber: 'INV-HS-1', total: new Decimal(25000), paidTotal: new Decimal(0) },
+        { id: 'inv-lab', invoiceNumber: 'INV-LAB-1', total: new Decimal(12000), paidTotal: new Decimal(0) },
+        { id: 'inv-pharm', invoiceNumber: 'INV-PHARM-1', total: new Decimal(18000), paidTotal: new Decimal(0) },
+      ]);
+      (prisma.paymentReceipt.create as any).mockImplementation((args: any) => ({ id: `rec-${args.data.hospitalInvoiceId}`, ...args.data }));
+
+      const result = await admissionBillingService.collectPayment('adm-alloc-1', { amount: 20000, paymentMethod: 'CASH' }, staffUserId);
+
+      const sum = result.allocations.reduce((s: Decimal, a: any) => s.plus(a.amount), new Decimal(0));
+      expect(sum).toEqual(new Decimal(20000)); // always sums exactly to the collected amount
+      expect(result.allocations).toHaveLength(3);
+      // Proportional to outstanding (25k : 12k : 18k of 55k total)
+      const hs = result.allocations.find((a: any) => a.invoiceId === 'inv-hs')!;
+      expect(hs.amount.toNumber()).toBeCloseTo((20000 * 25000) / 55000, 1);
+    });
+
+    it('honors explicit allocations and rejects a mismatched sum', async () => {
+      (prisma.hospitalInvoice.findMany as any).mockResolvedValue([
+        { id: 'inv-hs', invoiceNumber: 'INV-HS-2', total: new Decimal(25000), paidTotal: new Decimal(15000) }, // 10,000 outstanding
+        { id: 'inv-lab', invoiceNumber: 'INV-LAB-2', total: new Decimal(12000), paidTotal: new Decimal(7000) }, // 5,000 outstanding
+        { id: 'inv-pharm', invoiceNumber: 'INV-PHARM-2', total: new Decimal(18000), paidTotal: new Decimal(13000) }, // 5,000 outstanding
+      ]);
+
+      await expect(
+        admissionBillingService.collectPayment(
+          'adm-alloc-2',
+          {
+            amount: 20000,
+            paymentMethod: 'CASH',
+            allocations: [
+              { invoiceId: 'inv-hs', amount: 10000 },
+              { invoiceId: 'inv-lab', amount: 5000 },
+              { invoiceId: 'inv-pharm', amount: 4999 }, // sums to 19,999, not 20,000
+            ],
+          },
+          staffUserId,
+        ),
+      ).rejects.toThrow(/must sum to exactly/);
+
+      (prisma.paymentReceipt.create as any).mockImplementation((args: any) => ({ id: `rec-${args.data.hospitalInvoiceId}`, ...args.data }));
+
+      const result = await admissionBillingService.collectPayment(
+        'adm-alloc-2',
+        {
+          amount: 20000,
+          paymentMethod: 'CASH',
+          allocations: [
+            { invoiceId: 'inv-hs', amount: 10000 },
+            { invoiceId: 'inv-lab', amount: 5000 },
+            { invoiceId: 'inv-pharm', amount: 5000 },
+          ],
+        },
+        staffUserId,
+      );
+      expect(result.allocations).toHaveLength(3);
+    });
+
+    it('rejects an explicit allocation that exceeds that invoice\'s own outstanding balance', async () => {
+      (prisma.hospitalInvoice.findMany as any).mockResolvedValue([
+        { id: 'inv-hs', invoiceNumber: 'INV-HS-3', total: new Decimal(10000), paidTotal: new Decimal(8000) }, // 2,000 outstanding
+      ]);
+
+      await expect(
+        admissionBillingService.collectPayment(
+          'adm-alloc-3',
+          { amount: 5000, paymentMethod: 'CASH', allocations: [{ invoiceId: 'inv-hs', amount: 5000 }] },
+          staffUserId,
+        ),
+      ).rejects.toThrow(/exceeds its outstanding balance/);
+    });
+
+    it('rejects an auto-allocation that exceeds the total outstanding across all department invoices', async () => {
+      (prisma.hospitalInvoice.findMany as any).mockResolvedValue([
+        { id: 'inv-hs', invoiceNumber: 'INV-HS-4', total: new Decimal(5000), paidTotal: new Decimal(4000) }, // 1,000 outstanding
+      ]);
+
+      await expect(
+        admissionBillingService.collectPayment('adm-alloc-4', { amount: 5000, paymentMethod: 'CASH' }, staffUserId),
+      ).rejects.toThrow(/exceeds total outstanding/);
     });
   });
 });

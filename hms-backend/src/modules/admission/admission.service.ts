@@ -2,6 +2,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
 import { NotFoundError, ValidationError } from '@/shared/errors/AppError';
+import { resolvePanelCoverage } from '@/shared/panelCoverage';
 import type {
   CreatePlannedAdmissionBody,
   UpdatePlannedAdmissionBody,
@@ -261,9 +262,13 @@ export const admissionService = {
         },
       });
 
-      // Initialize running HospitalInvoice if one does not exist
+      // Initialize the admitting department's own "Hospital Services" invoice
+      // if one does not exist yet (v7.2 §2.2 — one department invoice per
+      // department that bills this admission; other departments' invoices
+      // are created on-demand in `addAdmissionService` as their services
+      // are actually posted).
       const existingInvoice = await tx.hospitalInvoice.findFirst({
-        where: { admissionRecordId: admission.id },
+        where: { admissionRecordId: admission.id, departmentId: admission.departmentId },
       });
 
       if (!existingInvoice) {
@@ -273,12 +278,15 @@ export const admissionService = {
             invoiceNumber,
             sourceType: 'ADMISSION',
             admissionRecordId: admission.id,
+            departmentId: admission.departmentId,
             panelPatientId: admission.panelPatientId,
             selfPayEncounterId: admission.selfPayEncounterId,
             subtotal: new Decimal(0),
             discountTotal: new Decimal(0),
             total: new Decimal(0),
             paidTotal: new Decimal(0),
+            patientShare: new Decimal(0),
+            panelReceivable: new Decimal(0),
             status: 'UNPAID',
             createdById: actorId,
           },
@@ -387,19 +395,32 @@ export const admissionService = {
         throw new ValidationError('Cannot add hospital charges to a non-active admission');
       }
 
-      let invoice = admission.hospitalInvoices[0];
+      const serviceRate = await tx.serviceRate.findUnique({ where: { id: body.serviceRateId } });
+      if (!serviceRate || !serviceRate.isActive) {
+        throw new NotFoundError('Service rate not found or inactive');
+      }
+
+      // v7.2 §2.2 — one invoice per (admission × department): a Lab or
+      // Pharmacy service posted against a General Medicine admission bills
+      // to that service's OWN department's invoice, not the admitting
+      // department's. Find-or-create per department, never a single
+      // admission-wide invoice.
+      let invoice = admission.hospitalInvoices.find((inv) => inv.departmentId === serviceRate.departmentId);
       if (!invoice) {
         invoice = await tx.hospitalInvoice.create({
           data: {
             invoiceNumber: generateInvoiceNumber(),
             sourceType: 'ADMISSION',
             admissionRecordId: admission.id,
+            departmentId: serviceRate.departmentId,
             panelPatientId: admission.panelPatientId,
             selfPayEncounterId: admission.selfPayEncounterId,
             subtotal: new Decimal(0),
             discountTotal: new Decimal(0),
             total: new Decimal(0),
             paidTotal: new Decimal(0),
+            patientShare: new Decimal(0),
+            panelReceivable: new Decimal(0),
             status: 'UNPAID',
             createdById: actorId,
           },
@@ -407,29 +428,15 @@ export const admissionService = {
         });
       }
 
-      const serviceRate = await tx.serviceRate.findUnique({ where: { id: body.serviceRateId } });
-      if (!serviceRate || !serviceRate.isActive) {
-        throw new NotFoundError('Service rate not found or inactive');
-      }
-
       const rate = serviceRate.standardRate;
       const qty = new Decimal(body.quantity);
       const lineGross = rate.mul(qty);
 
-      let discountAmount = new Decimal(0);
-      let discountReason = body.notes ?? null;
-
-      // Check corporate panel discount
-      if (admission.panelPatient?.corporatePanel) {
-        const panelRule = admission.panelPatient.corporatePanel.discountRules.find(
-          (r) => r.serviceRateId === serviceRate.id,
-        );
-        if (panelRule) {
-          discountAmount = lineGross.mul(panelRule.discountPercent).div(100);
-          discountReason = `Panel discount: ${panelRule.discountPercent}%`;
-        }
-      }
-
+      // v7.2 §2.5 — Patient Share vs Panel Receivable, same resolution
+      // `appointments.service.ts` uses (Panel Service rule → else NOT_COVERED).
+      const coverage = resolvePanelCoverage(lineGross, admission.panelPatient?.corporatePanel?.discountRules, serviceRate.id);
+      const discountAmount = coverage.discountAmount;
+      const discountReason = coverage.discountReason ?? body.notes ?? null;
       const lineNet = lineGross.minus(discountAmount);
 
       const createdLine = await tx.invoiceLineItem.create({
@@ -442,17 +449,22 @@ export const admissionService = {
           discountAmount,
           discountReason,
           lineNet,
+          patientShare: coverage.patientShare,
+          panelReceivable: coverage.panelReceivable,
           performedByStaffId: body.performedByStaffId ?? admission.doctorStaffId,
           isCompleted: true,
         },
         include: { serviceRate: true, performedBy: true },
       });
 
-      // Recalculate invoice totals
+      // Recalculate this department invoice's totals (never another
+      // department's — each stays independently owned per §2.2).
       const allLines = [...invoice.lines, createdLine];
       const newSubtotal = allLines.reduce((acc, l) => acc.plus(l.lineGross ?? 0), new Decimal(0));
       const newDiscountTotal = allLines.reduce((acc, l) => acc.plus(l.discountAmount ?? 0), new Decimal(0));
       const newTotal = allLines.reduce((acc, l) => acc.plus(l.lineNet ?? 0), new Decimal(0));
+      const newPatientShare = allLines.reduce((acc, l: any) => acc.plus(l.patientShare ?? 0), new Decimal(0));
+      const newPanelReceivable = allLines.reduce((acc, l: any) => acc.plus(l.panelReceivable ?? 0), new Decimal(0));
 
       const newStatus = invoice.paidTotal.greaterThanOrEqualTo(newTotal) && newTotal.greaterThan(0)
         ? 'PAID'
@@ -466,6 +478,8 @@ export const admissionService = {
           subtotal: newSubtotal,
           discountTotal: newDiscountTotal,
           total: newTotal,
+          patientShare: newPatientShare,
+          panelReceivable: newPanelReceivable,
           status: newStatus,
         },
       });

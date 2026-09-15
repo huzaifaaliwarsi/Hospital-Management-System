@@ -16,7 +16,7 @@ import {
 import { formatPKR } from '../../utils/formatters';
 import { useRouter } from '../../context/RouterContext';
 import { useAuth } from '../../context/AuthContext';
-import { frontdeskApiService } from '../../services/frontdeskApiService';
+import { frontdeskApiService, appointmentsApiService } from '../../services/frontdeskApiService';
 import { fetchAdmissions } from '../../services/admissionService';
 import { getAllPatients, primePatientRegistryCache } from '../../services/patientRegistryService';
 import { getHospitalCurrentDate, formatDateISO } from '../../utils/dateConstants';
@@ -76,7 +76,7 @@ export const FrontDeskDashboard: React.FC = () => {
       await primePatientRegistryCache();
 
       const [appointmentsRes, invoicesRes, cashRes, admissionsRes] = await Promise.all([
-        frontdeskApiService.getAppointments(today).catch(() => []),
+        appointmentsApiService.getAppointments({ date: today }).catch(() => []),
         frontdeskApiService.getInvoices().catch(() => []),
         frontdeskApiService.getCashBalance().catch(() => null),
         fetchAdmissions().catch(() => []),

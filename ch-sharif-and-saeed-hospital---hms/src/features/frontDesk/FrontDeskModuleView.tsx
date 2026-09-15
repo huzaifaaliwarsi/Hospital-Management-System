@@ -1,5 +1,9 @@
 import React from 'react';
 import { NewAdmissionView } from './newAdmission/NewAdmissionView';
+import { AppointmentsView } from './appointments/AppointmentsView';
+import { AdmissionPaymentRequestsView } from './paymentRequests/AdmissionPaymentRequestsView';
+import { FrontDeskBillingReportsView } from './reports/FrontDeskBillingReportsView';
+import { MyAccountSettlementView } from './settlement/MyAccountSettlementView';
 import { HospitalInvoicesView } from './billing/HospitalInvoicesView';
 import { BillingPendingDischargesView } from './billing/BillingPendingDischargesView';
 import { MyBalanceSheetView } from './billing/MyBalanceSheetView';
@@ -22,13 +26,15 @@ interface FrontDeskModuleViewProps {
  * consolidation (those actions live per-invoice, not as separate global
  * lists) rather than four near-duplicate pages; see
  * HMS_V7.2_NEW_REQUIREMENTS.md's progress log for the reasoning and what's
- * still a placeholder (Appointments, OPD/Observation/Emergency queues,
- * Panel Billing, Admission Payment Requests, Reports).
+ * still a placeholder (`panel_billing` only — deliberately deferred, needs
+ * its own design pass per §2.5/§2.8's open questions).
  */
 export const FrontDeskModuleView: React.FC<FrontDeskModuleViewProps> = ({ moduleId, moduleName, groupTitle }) => {
   switch (moduleId) {
     case 'new_admission':
       return <NewAdmissionView />;
+    case 'appointments':
+      return <AppointmentsView />;
     case 'walk_in_intake':
       return <WalkInIntakeView />;
     case 'billing_pending_discharges':
@@ -46,8 +52,38 @@ export const FrontDeskModuleView: React.FC<FrontDeskModuleViewProps> = ({ module
           subtitle="Every invoice with a remaining balance due — open one to collect payment."
         />
       );
+    case 'opd':
+      return (
+        <HospitalInvoicesView
+          encounterTypeFilter="OPD"
+          title="OPD Queue"
+          subtitle="Outpatient encounters — invoices raised via Walk-In Intake or an Appointment Check-In."
+        />
+      );
+    case 'observation':
+      return (
+        <HospitalInvoicesView
+          encounterTypeFilter="OBSERVATION"
+          title="Observation Queue"
+          subtitle="Observation encounters — invoices raised via Walk-In Intake or an Appointment Check-In."
+        />
+      );
+    case 'emergency':
+      return (
+        <HospitalInvoicesView
+          encounterTypeFilter="EMERGENCY"
+          title="Emergency Queue"
+          subtitle="Emergency encounters — invoices raised via Walk-In Intake or an Appointment Check-In."
+        />
+      );
     case 'my_balance_sheet':
       return <MyBalanceSheetView />;
+    case 'admission_payment_requests':
+      return <AdmissionPaymentRequestsView />;
+    case 'front_desk_billing_reports':
+      return <FrontDeskBillingReportsView />;
+    case 'my_account_settlement':
+      return <MyAccountSettlementView />;
     default:
       return <ModulePlaceholderView moduleId={moduleId} moduleName={moduleName} groupTitle={groupTitle} />;
   }

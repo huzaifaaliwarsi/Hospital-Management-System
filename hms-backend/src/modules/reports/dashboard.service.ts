@@ -163,7 +163,7 @@ export interface SuperAdminDashboardData {
   }>;
 }
 
-function resolveDateRange(query: GetSuperAdminDashboardQuery): {
+export function resolveDateRange(query: GetSuperAdminDashboardQuery): {
   start: Date;
   end: Date;
   label: string;

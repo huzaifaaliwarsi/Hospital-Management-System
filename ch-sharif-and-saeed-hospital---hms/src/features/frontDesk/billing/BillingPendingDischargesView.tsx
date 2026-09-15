@@ -1,25 +1,24 @@
 import React, { useState, useEffect } from 'react';
-import { ClipboardCheck, Loader2, AlertTriangle, ArrowRight } from 'lucide-react';
-import { formatPKR } from '../../../utils/formatters';
+import { ClipboardCheck, Loader2, AlertTriangle, Receipt } from 'lucide-react';
 import { fetchAdmissions, AdmissionRecord } from '../../../services/admissionService';
 import { fetchInvoices, InvoiceSummary } from '../../../services/invoiceService';
+import { AdmissionStatementModal } from './AdmissionStatementModal';
 
 /**
  * Real "Billing Pending Discharges" queue — admissions the doctor has
  * clinically discharged (`AdmissionStatus.DISCHARGE_PENDING`, a real,
  * pre-existing status) and that now need Front Desk's financial closure
  * (v7.2 §2.10/§2.11 — the "Clinically Discharged → Billing Pending" status
- * chain). Final billing itself (freeze department invoices, apply
- * advance/prior payments, collect remaining due) still runs on the current
- * single-invoice-per-admission model until the Department Sub-Invoice
- * Split (§2.2) lands — this page surfaces the queue and links each case
- * into the real Hospital Invoices flow to finish billing today.
+ * chain). Final billing now opens the real per-department Interim Statement
+ * + Payment Allocation (§2.2 — `AdmissionStatementModal`), not a generic
+ * link into the single-invoice Hospital Invoices list.
  */
 export const BillingPendingDischargesView: React.FC = () => {
   const [admissions, setAdmissions] = useState<AdmissionRecord[]>([]);
   const [invoices, setInvoices] = useState<InvoiceSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [statementAdmissionId, setStatementAdmissionId] = useState<string | null>(null);
 
   const load = async () => {
     setIsLoading(true);
@@ -101,9 +100,13 @@ export const BillingPendingDischargesView: React.FC = () => {
                   <td className="py-2.5 px-4">{a.doctorName}</td>
                   <td className="py-2.5 px-4 text-slate-500">{a.dischargedAt || '—'}</td>
                   <td className="py-2.5 px-4 text-right">
-                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#08775A]">
-                      Finalize in Hospital Invoices <ArrowRight className="h-3 w-3" />
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setStatementAdmissionId(a.id)}
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#08775A] hover:underline"
+                    >
+                      <Receipt className="h-3 w-3" /> View Statement / Collect
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -125,6 +128,14 @@ export const BillingPendingDischargesView: React.FC = () => {
           {invoices.length} unpaid invoice(s) in the system overall — open Hospital Invoices to search by patient and collect the
           remaining balance for a discharged case.
         </div>
+      )}
+
+      {statementAdmissionId && (
+        <AdmissionStatementModal
+          admissionId={statementAdmissionId}
+          onClose={() => setStatementAdmissionId(null)}
+          onChanged={load}
+        />
       )}
     </div>
   );

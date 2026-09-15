@@ -16,6 +16,13 @@ router.get(
   asyncHandler(dashboardController.getSuperAdminDashboard),
 );
 
+router.get(
+  '/frontdesk-billing',
+  view,
+  validate({ query: getSuperAdminDashboardQuerySchema }),
+  asyncHandler(dashboardController.getFrontDeskBillingReport),
+);
+
 router.get('/_scaffold', (_req, res) => {
   res.json({ data: { module: 'reports', status: 'scaffolded' } });
 });

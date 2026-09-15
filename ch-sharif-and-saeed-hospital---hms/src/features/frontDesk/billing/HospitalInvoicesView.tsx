@@ -1,25 +1,29 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Receipt, Loader2, AlertTriangle, Search } from 'lucide-react';
 import { formatPKR } from '../../../utils/formatters';
-import { fetchInvoices, InvoiceSummary, InvoiceStatus } from '../../../services/invoiceService';
+import { fetchInvoices, InvoiceSummary, InvoiceStatus, EncounterType } from '../../../services/invoiceService';
 import { InvoiceDetailModal } from './InvoiceDetailModal';
 
 interface HospitalInvoicesViewProps {
   /** When true, only invoices with an outstanding balance are shown (Outstanding Balances nav item). */
   outstandingOnly?: boolean;
+  /** When set, only invoices of this encounter type are fetched (OPD/Observation/Emergency queue nav items) — backend-filtered, not client-side. */
+  encounterTypeFilter?: EncounterType;
   title?: string;
   subtitle?: string;
 }
 
 /**
  * Real Hospital Invoices list — backed by `GET /invoices`. Also serves as
- * the Outstanding Balances / Payments-Receipts / Discounts / Refunds nav
- * items (`outstandingOnly` prop + the shared `InvoiceDetailModal`'s action
- * tabs cover all four — a deliberate consolidation given today's scope; see
- * HMS_V7.2_NEW_REQUIREMENTS.md's progress log).
+ * the Outstanding Balances / Payments-Receipts / Discounts / Refunds /
+ * OPD / Observation / Emergency queue nav items (`outstandingOnly` /
+ * `encounterTypeFilter` props + the shared `InvoiceDetailModal`'s action
+ * tabs cover all of them — a deliberate consolidation given today's scope;
+ * see HMS_V7.2_NEW_REQUIREMENTS.md's progress log).
  */
 export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
   outstandingOnly = false,
+  encounterTypeFilter,
   title = 'Hospital Invoices',
   subtitle = 'Every walk-in, appointment and admission invoice — service lines, discounts, payments and refunds in one place.',
 }) => {
@@ -34,7 +38,7 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
     setIsLoading(true);
     setLoadError(null);
     try {
-      setInvoices(await fetchInvoices());
+      setInvoices(await fetchInvoices(encounterTypeFilter ? { encounterType: encounterTypeFilter } : undefined));
     } catch (err: any) {
       setLoadError(err?.response?.data?.error?.message || err?.message || 'Failed to load invoices.');
     } finally {
@@ -44,7 +48,8 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
 
   useEffect(() => {
     load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [encounterTypeFilter]);
 
   const filtered = useMemo(() => {
     return invoices.filter((inv) => {

@@ -641,6 +641,7 @@ model Department {
   DepartmentRequisition  DepartmentRequisition[]
   StaffEmploymentHistory StaffEmploymentHistory[]
   providerSettlements    ProviderSettlement[]
+  hospitalInvoices       HospitalInvoice[]
 
   @@map("departments")
 }
@@ -1059,6 +1060,11 @@ model Appointment {
   notes              String?
 
   hospitalInvoices HospitalInvoice[]
+  // v7.2 §4 (Appointment Advance Accounting) — advance receipts collected
+  // before Check-In link here directly rather than via string-matching
+  // `PaymentReceipt.reference`, so pre-Check-In advance is reliably
+  // queryable (see `checkInAppointment`'s allocation step).
+  paymentReceipts  PaymentReceipt[]
 
   createdAt     DateTime    @default(now()) @map("created_at")
   createdById   String?     @map("created_by")
@@ -1087,11 +1093,28 @@ model HospitalInvoice {
   panelPatient       PanelPatient?     @relation(fields: [panelPatientId], references: [id])
   selfPayEncounterId String?           @map("self_pay_encounter_id")
   selfPayEncounter   SelfPayEncounter? @relation(fields: [selfPayEncounterId], references: [id])
+  // v7.2 §2.2/§3.3 — tags which department this invoice belongs to
+  // (derived from the appointment/service at creation time). Nullable/
+  // additive: existing admission-flow invoices are untouched; this does
+  // NOT implement the full multi-department-per-admission split (§2.2 is
+  // still its own dedicated pass) — for Appointments, one invoice is
+  // already inherently one department, so this is a plain tag, not an
+  // aggregation layer.
+  departmentId   String?     @map("department_id")
+  department     Department? @relation(fields: [departmentId], references: [id])
 
   subtotal      Decimal       @default(0) @db.Decimal(14, 2)
   discountTotal Decimal       @default(0) @map("discount_total") @db.Decimal(14, 2)
   total         Decimal       @default(0) @db.Decimal(14, 2)
   paidTotal     Decimal       @default(0) @map("paid_total") @db.Decimal(14, 2)
+  // v7.2 §2.5/§20/§21 — Patient Share vs Panel Receivable split, informational
+  // (does not change `total`/`paidTotal`/`status` arithmetic below, which
+  // stays keyed off `total` exactly as before). Self-Pay: patientShare =
+  // total, panelReceivable = 0. Panel with no matching coverage rule:
+  // NOT_COVERED, same as Self-Pay. Panel realization (remittance posting,
+  // §2.8) is still out of scope — this is the split, not the ledger.
+  patientShare     Decimal @default(0) @map("patient_share") @db.Decimal(14, 2)
+  panelReceivable  Decimal @default(0) @map("panel_receivable") @db.Decimal(14, 2)
   status        InvoiceStatus @default(UNPAID)
 
   lines           InvoiceLineItem[]
@@ -1121,6 +1144,12 @@ model InvoiceLineItem {
   discountAmount     Decimal         @default(0) @map("discount_amount") @db.Decimal(14, 2)
   discountReason     String?         @map("discount_reason")
   lineNet            Decimal         @map("line_net") @db.Decimal(14, 2)
+  // v7.2 §2.2/§2.5 — per-line Patient Share / Panel Receivable split, so a
+  // multi-line department invoice (admissions) can sum these per line, the
+  // same way `subtotal`/`discountTotal`/`total` already sum `lineGross`/
+  // `discountAmount`/`lineNet`. Additive, default 0 — existing rows unaffected.
+  patientShare       Decimal         @default(0) @map("patient_share") @db.Decimal(14, 2)
+  panelReceivable    Decimal         @default(0) @map("panel_receivable") @db.Decimal(14, 2)
   performedByStaffId String?         @map("performed_by_staff_id") // doctor, feeds commission accrual
   performedBy        Staff?          @relation("InvoiceLinePerformedBy", fields: [performedByStaffId], references: [id])
   isCompleted        Boolean         @default(false) @map("is_completed")
@@ -1141,6 +1170,11 @@ model PaymentReceipt {
   hospitalInvoice           HospitalInvoice?         @relation(fields: [hospitalInvoiceId], references: [id])
   admissionPaymentRequestId String?                  @map("admission_payment_request_id")
   admissionPaymentRequest   AdmissionPaymentRequest? @relation(fields: [admissionPaymentRequestId], references: [id])
+  // v7.2 §4 — direct link for advance receipts collected before an
+  // invoice exists (pre-Check-In). Replaces the old `reference`-substring
+  // matching in `appointments.service.ts`'s check-in allocation step.
+  appointmentId             String?                  @map("appointment_id")
+  appointment               Appointment?             @relation(fields: [appointmentId], references: [id])
   amount                    Decimal                  @db.Decimal(14, 2)
   method                    PaymentMethod
   reference                 String?

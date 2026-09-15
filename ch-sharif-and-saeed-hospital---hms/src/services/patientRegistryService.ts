@@ -123,13 +123,20 @@ function toPatientFromPanel(raw: Record<string, any>): Patient {
   };
 }
 
-/** Maps a backend `SelfPayEncounter` row — a thinner, per-visit, non-editable identity. */
-function toPatientFromSelfPay(raw: Record<string, any>): Patient {
+/** Maps a backend `SelfPayEncounter` row — with a proper, standard hospital MR number. */
+function toPatientFromSelfPay(raw: Record<string, any>, seq?: number): Patient {
   const cnicOrPassport: string = raw.cnicOrPassport || '';
   const looksLikeCnic = isValidCnic(cnicOrPassport);
+  const year = raw.createdAt ? new Date(raw.createdAt).getFullYear() : new Date().getFullYear();
+  const mrNumber =
+    raw.mrNumber ||
+    (seq != null
+      ? `MR-${year}-${String(seq).padStart(6, '0')}`
+      : `MR-${year}-${String(raw.id || '').replace(/-/g, '').slice(0, 6).toUpperCase()}`);
+
   return {
     id: raw.id,
-    mrNumber: '— (Self-Pay, per-visit)',
+    mrNumber,
     fullName: raw.fullName,
     fatherGuardianName: raw.guardianName || '',
     guardianRelation: 'Father',
@@ -162,7 +169,32 @@ export async function fetchPatients(): Promise<Patient[]> {
     apiClient.get<{ data: Record<string, any>[] }>('/patients/panel', { params: { pageSize: 200 } }),
     apiClient.get<{ data: Record<string, any>[] }>('/patients/encounters'),
   ]);
-  cachedPatients = [...panelRes.data.data.map(toPatientFromPanel), ...selfPayRes.data.data.map(toPatientFromSelfPay)];
+
+  const panelPatients = panelRes.data.data.map(toPatientFromPanel);
+
+  // Extract all existing numeric sequences used by panel patients to prevent collisions
+  const usedNumbers = new Set<number>();
+  for (const p of panelPatients) {
+    const match = p.mrNumber?.match(/MR-\d{4}-(\d+)/);
+    if (match) usedNumbers.add(parseInt(match[1], 10));
+  }
+
+  // Sort self-pay encounters chronologically
+  const sortedSelfPay = [...selfPayRes.data.data].sort(
+    (a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime()
+  );
+
+  let nextSeq = 1;
+  const selfPayPatients = sortedSelfPay.map((raw) => {
+    while (usedNumbers.has(nextSeq)) {
+      nextSeq++;
+    }
+    const assignedSeq = nextSeq++;
+    usedNumbers.add(assignedSeq);
+    return toPatientFromSelfPay(raw, assignedSeq);
+  });
+
+  cachedPatients = [...panelPatients, ...selfPayPatients];
   return cachedPatients;
 }
 
@@ -188,8 +220,8 @@ export function getPatientByMr(mrNumber: string): Patient | undefined {
 
 /** Preview only — the real, race-free MR number is assigned server-side on create. */
 export function generateNextMrNumber(): string {
-  const panelCount = cachedPatients.filter((p) => p.payerType === 'Corporate / Panel').length;
-  return `MR-${new Date().getFullYear()}-${String(panelCount + 1).padStart(6, '0')}`;
+  const totalCount = cachedPatients.length;
+  return `MR-${new Date().getFullYear()}-${String(totalCount + 1).padStart(6, '0')}`;
 }
 
 export function checkDuplicates(

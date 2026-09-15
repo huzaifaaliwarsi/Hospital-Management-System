@@ -2,6 +2,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
 import { NotFoundError, ValidationError } from '@/shared/errors/AppError';
+import { resolvePanelCoverage } from '@/shared/panelCoverage';
 import type {
   BookAppointmentBody,
   ListAppointmentsQuery,
@@ -53,6 +54,23 @@ export const appointmentsService = {
         throw new NotFoundError('Selected service rate not found or inactive');
       }
 
+      if (serviceRate.departmentId && serviceRate.departmentId !== body.departmentId) {
+        throw new ValidationError('Selected service does not belong to the chosen department');
+      }
+
+      if (body.panelPatientId) {
+        const panelPatient = await tx.panelPatient.findUnique({
+          where: { id: body.panelPatientId },
+          include: { corporatePanel: true },
+        });
+        if (!panelPatient || !panelPatient.isActive) {
+          throw new NotFoundError('Panel patient not found or inactive');
+        }
+        if (panelPatient.corporatePanel && !panelPatient.corporatePanel.isActive) {
+          throw new ValidationError('Corporate panel is inactive');
+        }
+      }
+
       const estimatedAmount = body.estimatedAmount !== undefined
         ? new Decimal(body.estimatedAmount)
         : serviceRate.standardRate;
@@ -92,6 +110,7 @@ export const appointmentsService = {
             amount: advDecimal,
             method: body.paymentMethod ?? 'CASH',
             reference: body.paymentReference ?? `Advance for appointment ${appointment.id}`,
+            appointmentId: appointment.id,
             collectedById: actorId,
           },
         });
@@ -138,17 +157,25 @@ export const appointmentsService = {
     return prisma.appointment.findMany({
       where,
       include: {
-        panelPatient: { select: { id: true, fullName: true, mrNumber: true, phone: true } },
+        panelPatient: {
+          select: { id: true, fullName: true, mrNumber: true, phone: true, status: true, panelMemberId: true, corporatePanel: { select: { id: true, organizationName: true } } },
+        },
         selfPayEncounter: { select: { id: true, fullName: true, phone: true } },
         department: { select: { id: true, name: true, code: true } },
         doctor: { select: { id: true, fullName: true, designation: true } },
         serviceRate: { select: { id: true, name: true, standardRate: true } },
+        // Pre-Check-In advance (linked via appointmentId) AND post-Check-In
+        // receipts (dual-linked, see checkInAppointment) — one source for
+        // "Advance Paid" regardless of status.
+        paymentReceipts: { where: { isReversed: false }, orderBy: { collectedAt: 'asc' } },
         hospitalInvoices: {
           select: {
             id: true,
             invoiceNumber: true,
             total: true,
             paidTotal: true,
+            patientShare: true,
+            panelReceivable: true,
             status: true,
             paymentReceipts: true,
           },
@@ -163,17 +190,19 @@ export const appointmentsService = {
     const appointment = await prisma.appointment.findUnique({
       where: { id },
       include: {
-        panelPatient: { include: { corporatePanel: true } },
+        panelPatient: { include: { corporatePanel: { include: { discountRules: true } } } },
         selfPayEncounter: true,
         department: true,
         doctor: true,
         serviceRate: true,
+        paymentReceipts: { where: { isReversed: false }, orderBy: { collectedAt: 'asc' }, include: { collectedBy: true } },
         hospitalInvoices: {
           include: {
             lines: { include: { serviceRate: true, performedBy: true } },
             paymentReceipts: true,
           },
         },
+        createdByUser: { select: { id: true, username: true, displayName: true } },
       },
     });
     if (!appointment) throw new NotFoundError('Appointment not found');
@@ -242,6 +271,7 @@ export const appointmentsService = {
           method: body.paymentMethod,
           reference: body.reference ?? `Advance payment for appointment ${appointmentId}`,
           hospitalInvoiceId: targetInvoice?.id,
+          appointmentId,
           collectedById: actorId,
         },
       });
@@ -298,6 +328,9 @@ export const appointmentsService = {
       });
 
       if (!appointment) throw new NotFoundError('Appointment not found');
+      if (appointment.status === 'CHECKED_IN') {
+        throw new ValidationError('Appointment is already checked in');
+      }
       if (appointment.status === 'CANCELLED') {
         throw new ValidationError('Cannot check-in a cancelled appointment');
       }
@@ -307,29 +340,25 @@ export const appointmentsService = {
 
       if (!invoice) {
         const rate = appointment.serviceRate.standardRate;
-        let discountAmount = new Decimal(0);
-        let discountReason: string | null = null;
-
-        // Apply corporate panel discount rule automatically if applicable
-        if (appointment.panelPatient?.corporatePanel) {
-          const matchingRule = appointment.panelPatient.corporatePanel.discountRules.find(
-            (r) => r.serviceRateId === appointment.serviceRateId,
-          );
-          if (matchingRule) {
-            discountAmount = rate.mul(matchingRule.discountPercent).div(100);
-            discountReason = `Corporate Panel Discount: ${matchingRule.discountPercent}%`;
-          }
-        }
+        // v7.2 §2.5/§20/§21 — Patient Share vs Panel Receivable split. Panel
+        // Service rule (only tier that exists today) → else NOT_COVERED —
+        // shared with `admission.service.ts` via `resolvePanelCoverage`.
+        const { discountAmount, discountReason, patientShare, panelReceivable } = resolvePanelCoverage(
+          rate,
+          appointment.panelPatient?.corporatePanel?.discountRules,
+          appointment.serviceRateId,
+        );
 
         const lineNet = rate.minus(discountAmount);
         const invoiceNumber = generateInvoiceNumber();
 
-        // Check if there are any unlinked receipts for this appointment
-        // Receipts collected with reference containing appointment id
+        // Advance receipts collected before Check-In link directly via
+        // `appointmentId` (set at booking/collectAdvance time) rather than
+        // string-matching `reference`.
         const unlinkedReceipts = await tx.paymentReceipt.findMany({
           where: {
+            appointmentId: appointment.id,
             hospitalInvoiceId: null,
-            reference: { contains: appointment.id },
           },
         });
 
@@ -351,12 +380,15 @@ export const appointmentsService = {
             sourceType: 'APPOINTMENT',
             encounterType: body.encounterType ?? 'OPD',
             appointmentId: appointment.id,
+            departmentId: appointment.departmentId,
             panelPatientId: appointment.panelPatientId,
             selfPayEncounterId: appointment.selfPayEncounterId,
             subtotal: rate,
             discountTotal: discountAmount,
             total: lineNet,
             paidTotal: newPaidTotal,
+            patientShare,
+            panelReceivable,
             status: newStatus,
             createdById: actorId,
             lines: {
@@ -379,7 +411,8 @@ export const appointmentsService = {
           },
         });
 
-        // Link the advance receipts to this invoice
+        // Link the advance receipts to this invoice (kept linked to the
+        // appointment too — dual-linked, both reads stay valid).
         if (unlinkedReceipts.length > 0) {
           await tx.paymentReceipt.updateMany({
             where: { id: { in: unlinkedReceipts.map((r) => r.id) } },

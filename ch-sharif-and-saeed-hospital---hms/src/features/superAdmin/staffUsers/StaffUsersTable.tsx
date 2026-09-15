@@ -281,11 +281,10 @@ export const StaffUsersTable: React.FC<StaffUsersTableProps> = ({
                         {staff.staffCategory === 'Doctor' && (
                           <button
                             onClick={() => onClinicalAuth(staff)}
-                            className={`p-1.5 rounded-md transition-colors cursor-pointer ${
-                              staff.clinicalAuthActive
+                            className={`p-1.5 rounded-md transition-colors cursor-pointer ${staff.clinicalAuthActive
                                 ? 'text-[#08775A] hover:bg-[#e7f6f1]'
                                 : 'text-[#52665e] hover:text-[#08775A] hover:bg-[#e7f6f1]'
-                            }`}
+                              }`}
                             title={
                               staff.clinicalAuthUsername
                                 ? `Clinical Discharge Authorization — ${staff.clinicalAuthActive ? 'Active' : 'Inactive'}`

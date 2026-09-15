@@ -16,6 +16,10 @@ vi.mock('@/db/client', () => {
       create: vi.fn(),
       findMany: vi.fn(),
     },
+    panelPatient: {
+      findUnique: vi.fn(),
+      findMany: vi.fn(),
+    },
     serviceRate: {
       findUnique: vi.fn(),
     },
@@ -38,6 +42,14 @@ vi.mock('@/db/client', () => {
     userCashBalance: {
       create: vi.fn(),
       findMany: vi.fn(),
+      updateMany: vi.fn(),
+    },
+    accountSettlement: {
+      create: vi.fn(),
+      findMany: vi.fn(),
+    },
+    settlementTransaction: {
+      createMany: vi.fn(),
     },
     doctorCommissionRule: {
       findFirst: vi.fn(),
@@ -55,6 +67,11 @@ vi.mock('@/db/client', () => {
     hospitalProfile: {
       findFirst: vi.fn(),
     },
+    admissionPaymentRequest: {
+      findUnique: vi.fn(),
+      findMany: vi.fn(),
+      update: vi.fn(),
+    },
   };
 
   // Bind transaction methods to mockPrisma methods for testing
@@ -70,6 +87,8 @@ vi.mock('@/db/client', () => {
 import { prisma } from '@/db/client';
 import { appointmentsService } from '@/modules/frontdesk/appointments.service';
 import { invoicesService } from '@/modules/frontdesk/invoices.service';
+import { paymentRequestsService } from '@/modules/frontdesk/paymentRequests.service';
+import { settlementService } from '@/modules/cash/settlement.service';
 import { commissionService } from '@/modules/commission/commission.service';
 import { cashService } from '@/modules/cash/cash.service';
 
@@ -237,6 +256,226 @@ describe('Phase 4: Front Desk Billing, Appointments & Doctor Commission Engine',
         }),
       );
       expect(result.appointment.status).toBe('CHECKED_IN');
+    });
+
+    it('tags the created invoice with the appointment department and self-pay patientShare/panelReceivable (v7.2 §2.2/§21)', async () => {
+      (prisma.appointment.findUnique as any).mockResolvedValue({
+        id: 'apt-selfpay-1',
+        departmentId: 'dept-1',
+        serviceRateId,
+        doctorStaffId,
+        panelPatientId: null,
+        selfPayEncounterId: 'self-pay-1',
+        serviceRate: { id: serviceRateId, standardRate: new Decimal(2000) },
+        hospitalInvoices: [],
+        panelPatient: null,
+      });
+      (prisma.paymentReceipt.findMany as any).mockResolvedValue([]);
+      (prisma.hospitalInvoice.create as any).mockResolvedValue({
+        id: 'inv-selfpay-1',
+        invoiceNumber: 'INV-TEST-SP-1',
+        total: new Decimal(2000),
+        paidTotal: new Decimal(0),
+        patientShare: new Decimal(2000),
+        panelReceivable: new Decimal(0),
+        status: 'UNPAID',
+      });
+      (prisma.appointment.update as any).mockResolvedValue({ id: 'apt-selfpay-1', status: 'CHECKED_IN' });
+
+      await appointmentsService.checkInAppointment('apt-selfpay-1', { encounterType: 'OPD' }, cashierId);
+
+      expect(prisma.paymentReceipt.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { appointmentId: 'apt-selfpay-1', hospitalInvoiceId: null },
+        }),
+      );
+      expect(prisma.hospitalInvoice.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            departmentId: 'dept-1',
+            patientShare: new Decimal(2000),
+            panelReceivable: new Decimal(0),
+          }),
+        }),
+      );
+    });
+
+    it('splits Patient Share / Panel Receivable using the panel coverage rule, capped by capAmount (v7.2 §2.5)', async () => {
+      (prisma.appointment.findUnique as any).mockResolvedValue({
+        id: 'apt-panel-1',
+        departmentId: 'dept-1',
+        serviceRateId,
+        doctorStaffId,
+        panelPatientId: 'panel-patient-1',
+        selfPayEncounterId: null,
+        serviceRate: { id: serviceRateId, standardRate: new Decimal(10000) },
+        hospitalInvoices: [],
+        panelPatient: {
+          corporatePanel: {
+            discountRules: [
+              {
+                serviceRateId,
+                discountPercent: new Decimal(0),
+                coveragePercent: new Decimal(80), // 80% of 10,000 = 8,000, but capped at 5,000
+                capAmount: new Decimal(5000),
+                effectiveFrom: new Date('2020-01-01'),
+                effectiveTo: null,
+              },
+            ],
+          },
+        },
+      });
+      (prisma.paymentReceipt.findMany as any).mockResolvedValue([]);
+      (prisma.hospitalInvoice.create as any).mockResolvedValue({
+        id: 'inv-panel-cov-1',
+        invoiceNumber: 'INV-TEST-PC-1',
+        total: new Decimal(10000),
+        paidTotal: new Decimal(0),
+        patientShare: new Decimal(5000),
+        panelReceivable: new Decimal(5000),
+        status: 'UNPAID',
+      });
+      (prisma.appointment.update as any).mockResolvedValue({ id: 'apt-panel-1', status: 'CHECKED_IN' });
+
+      await appointmentsService.checkInAppointment('apt-panel-1', { encounterType: 'OPD' }, cashierId);
+
+      expect(prisma.hospitalInvoice.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            // Coverage split is a receivable split, not a hospital discount —
+            // total/discountTotal stay at the full gross rate.
+            discountTotal: new Decimal(0),
+            total: new Decimal(10000),
+            patientShare: new Decimal(5000), // 10,000 - min(8,000, cap 5,000)
+            panelReceivable: new Decimal(5000),
+          }),
+        }),
+      );
+    });
+
+    it('falls back to NOT_COVERED (patient pays full, panelReceivable = 0) when no panel coverage rule matches (v7.2 §2.5 CRITICAL rule)', async () => {
+      (prisma.appointment.findUnique as any).mockResolvedValue({
+        id: 'apt-panel-2',
+        departmentId: 'dept-1',
+        serviceRateId,
+        doctorStaffId,
+        panelPatientId: 'panel-patient-2',
+        selfPayEncounterId: null,
+        serviceRate: { id: serviceRateId, standardRate: new Decimal(3000) },
+        hospitalInvoices: [],
+        panelPatient: {
+          corporatePanel: { discountRules: [] }, // no rule at all for this service
+        },
+      });
+      (prisma.paymentReceipt.findMany as any).mockResolvedValue([]);
+      (prisma.hospitalInvoice.create as any).mockResolvedValue({
+        id: 'inv-panel-nc-1',
+        invoiceNumber: 'INV-TEST-NC-1',
+        total: new Decimal(3000),
+        paidTotal: new Decimal(0),
+        patientShare: new Decimal(3000),
+        panelReceivable: new Decimal(0),
+        status: 'UNPAID',
+      });
+      (prisma.appointment.update as any).mockResolvedValue({ id: 'apt-panel-2', status: 'CHECKED_IN' });
+
+      await appointmentsService.checkInAppointment('apt-panel-2', { encounterType: 'OPD' }, cashierId);
+
+      expect(prisma.hospitalInvoice.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            patientShare: new Decimal(3000),
+            panelReceivable: new Decimal(0),
+          }),
+        }),
+      );
+    });
+
+    it('rejects duplicate check-in on already checked-in appointment', async () => {
+      (prisma.appointment.findUnique as any).mockResolvedValue({
+        id: 'apt-001',
+        status: 'CHECKED_IN',
+        hospitalInvoices: [],
+      });
+
+      await expect(
+        appointmentsService.checkInAppointment('apt-001', { encounterType: 'OPD' }, cashierId),
+      ).rejects.toThrow('Appointment is already checked in');
+    });
+
+    it('rejects booking when service rate belongs to another department', async () => {
+      (prisma.serviceRate.findUnique as any).mockResolvedValue({
+        id: serviceRateId,
+        standardRate: new Decimal(2000),
+        isActive: true,
+        departmentId: 'dept-other',
+      });
+
+      await expect(
+        appointmentsService.bookAppointment(
+          {
+            departmentId: 'dept-1',
+            doctorStaffId,
+            serviceRateId,
+            slotAt: new Date(),
+            newSelfPayPatient: { fullName: 'Ali Raza' },
+          },
+          cashierId,
+        ),
+      ).rejects.toThrow('Selected service does not belong to the chosen department');
+    });
+
+    it('reschedules appointment and updates status to RESCHEDULED', async () => {
+      (prisma.appointment.findUnique as any).mockResolvedValue({
+        id: 'apt-001',
+        status: 'CONFIRMED',
+      });
+
+      const newSlot = new Date('2026-09-20T10:00:00.000Z');
+      (prisma.appointment.update as any).mockResolvedValue({
+        id: 'apt-001',
+        status: 'RESCHEDULED',
+        slotAt: newSlot,
+      });
+
+      const updated = await appointmentsService.updateAppointment('apt-001', { slotAt: newSlot });
+      expect(prisma.appointment.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: 'RESCHEDULED',
+            slotAt: newSlot,
+          }),
+        }),
+      );
+      expect(updated.status).toBe('RESCHEDULED');
+    });
+
+    it('cancels appointment with mandatory reason and preserves advance', async () => {
+      (prisma.appointment.findUnique as any).mockResolvedValue({
+        id: 'apt-001',
+        status: 'CONFIRMED',
+        notes: 'Original note',
+      });
+
+      (prisma.appointment.update as any).mockResolvedValue({
+        id: 'apt-001',
+        status: 'CANCELLED',
+        notes: 'Original note | Cancellation Reason: Patient request',
+      });
+
+      const cancelled = await appointmentsService.cancelAppointment('apt-001', {
+        reason: 'Patient request',
+      });
+
+      expect(cancelled.status).toBe('CANCELLED');
+      expect(prisma.appointment.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: 'CANCELLED',
+            notes: 'Original note | Cancellation Reason: Patient request',
+          }),
+        }),
+      );
     });
   });
 
@@ -628,6 +867,176 @@ describe('Phase 4: Front Desk Billing, Appointments & Doctor Commission Engine',
       expect(sheet.summary.nonPhysicalTotal).toEqual(new Decimal(2500));
       expect(sheet.summary.totalCollections).toEqual(new Decimal(6000));
       expect(sheet.summary.totalRefunds).toEqual(new Decimal(1000));
+    });
+  });
+
+  describe('5. Admission Payment Requests — Front Desk collection queue (v7.2 §3.3)', () => {
+    it('fully fulfills a payment request when the collected amount meets the requested amount', async () => {
+      (prisma.admissionPaymentRequest.findUnique as any).mockResolvedValue({
+        id: 'preq-1',
+        requestedAmount: new Decimal(5000),
+        status: 'PENDING',
+        paymentReceipts: [],
+      });
+      (prisma.paymentReceipt.create as any).mockResolvedValue({
+        id: 'rec-preq-1',
+        receiptNumber: 'REC-TEST-PR1',
+        amount: new Decimal(5000),
+        method: 'CASH',
+      });
+      (prisma.admissionPaymentRequest.update as any).mockResolvedValue({
+        id: 'preq-1',
+        status: 'FULFILLED',
+      });
+
+      const result = await paymentRequestsService.collectPaymentRequest(
+        'preq-1',
+        { amount: 5000, paymentMethod: 'CASH' },
+        cashierId,
+      );
+
+      expect(prisma.userCashBalance.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ portalUserId: cashierId, amount: new Decimal(5000), isPhysicalCash: true }),
+        }),
+      );
+      expect(prisma.admissionPaymentRequest.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { status: 'FULFILLED' } }),
+      );
+      expect(result.request.status).toBe('FULFILLED');
+    });
+
+    it('marks PARTIALLY_FULFILLED when the collected amount is less than requested', async () => {
+      (prisma.admissionPaymentRequest.findUnique as any).mockResolvedValue({
+        id: 'preq-2',
+        requestedAmount: new Decimal(10000),
+        status: 'PENDING',
+        paymentReceipts: [],
+      });
+      (prisma.paymentReceipt.create as any).mockResolvedValue({
+        id: 'rec-preq-2',
+        receiptNumber: 'REC-TEST-PR2',
+        amount: new Decimal(4000),
+        method: 'CASH',
+      });
+      (prisma.admissionPaymentRequest.update as any).mockResolvedValue({
+        id: 'preq-2',
+        status: 'PARTIALLY_FULFILLED',
+      });
+
+      await paymentRequestsService.collectPaymentRequest('preq-2', { amount: 4000, paymentMethod: 'CASH' }, cashierId);
+
+      expect(prisma.admissionPaymentRequest.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { status: 'PARTIALLY_FULFILLED' } }),
+      );
+    });
+
+    it('rejects collecting more than the remaining requested balance across multiple partial collections', async () => {
+      (prisma.admissionPaymentRequest.findUnique as any).mockResolvedValue({
+        id: 'preq-3',
+        requestedAmount: new Decimal(10000),
+        status: 'PARTIALLY_FULFILLED',
+        paymentReceipts: [{ amount: new Decimal(7000) }], // 3,000 remaining
+      });
+
+      await expect(
+        paymentRequestsService.collectPaymentRequest('preq-3', { amount: 5000, paymentMethod: 'CASH' }, cashierId),
+      ).rejects.toThrow(/remaining requested balance/);
+    });
+
+    it('rejects collecting against an already-FULFILLED payment request', async () => {
+      (prisma.admissionPaymentRequest.findUnique as any).mockResolvedValue({
+        id: 'preq-4',
+        requestedAmount: new Decimal(5000),
+        status: 'FULFILLED',
+        paymentReceipts: [{ amount: new Decimal(5000) }],
+      });
+
+      await expect(
+        paymentRequestsService.collectPaymentRequest('preq-4', { amount: 100, paymentMethod: 'CASH' }, cashierId),
+      ).rejects.toThrow(/already fulfilled/);
+    });
+  });
+
+  describe('6. My Account Settlement (v7.2 §3.3)', () => {
+    it('submits a settlement matching expected cash with zero variance, and marks the ledger rows settled', async () => {
+      (prisma.userCashBalance.findMany as any).mockResolvedValue([
+        { id: 'ucb-1', direction: 'IN', amount: new Decimal(3000), isPhysicalCash: true, occurredAt: new Date('2026-09-15T09:00:00Z') },
+        { id: 'ucb-2', direction: 'OUT', amount: new Decimal(500), isPhysicalCash: true, occurredAt: new Date('2026-09-15T10:00:00Z') },
+      ]);
+      (prisma.accountSettlement.create as any).mockResolvedValue({
+        id: 'settle-1',
+        expectedCash: new Decimal(2500),
+        physicalCash: new Decimal(2500),
+        variance: new Decimal(0),
+        status: 'SUBMITTED',
+      });
+
+      const settlement = await settlementService.submitSettlement(cashierId, { physicalCash: 2500 });
+
+      expect(prisma.accountSettlement.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            expectedCash: new Decimal(2500),
+            physicalCash: new Decimal(2500),
+            variance: new Decimal(0),
+            status: 'SUBMITTED',
+          }),
+        }),
+      );
+      expect(prisma.settlementTransaction.createMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: [
+            { accountSettlementId: 'settle-1', userCashBalanceId: 'ucb-1' },
+            { accountSettlementId: 'settle-1', userCashBalanceId: 'ucb-2' },
+          ],
+        }),
+      );
+      expect(prisma.userCashBalance.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: { in: ['ucb-1', 'ucb-2'] } },
+          data: { isSettled: true },
+        }),
+      );
+      expect(settlement.status).toBe('SUBMITTED');
+    });
+
+    it('rejects a variance without a variance reason', async () => {
+      (prisma.userCashBalance.findMany as any).mockResolvedValue([
+        { id: 'ucb-3', direction: 'IN', amount: new Decimal(2000), isPhysicalCash: true, occurredAt: new Date() },
+      ]);
+
+      await expect(
+        settlementService.submitSettlement(cashierId, { physicalCash: 1800 }), // short by 200, no reason given
+      ).rejects.toThrow(/variance reason is required/);
+    });
+
+    it('accepts a variance when a reason is provided', async () => {
+      (prisma.userCashBalance.findMany as any).mockResolvedValue([
+        { id: 'ucb-4', direction: 'IN', amount: new Decimal(2000), isPhysicalCash: true, occurredAt: new Date() },
+      ]);
+      (prisma.accountSettlement.create as any).mockResolvedValue({
+        id: 'settle-2',
+        expectedCash: new Decimal(2000),
+        physicalCash: new Decimal(1800),
+        variance: new Decimal(-200),
+        status: 'SUBMITTED',
+      });
+
+      const settlement = await settlementService.submitSettlement(cashierId, {
+        physicalCash: 1800,
+        varianceReason: 'Petty cash advance given to attendant, receipt pending',
+      });
+
+      expect(settlement.variance).toEqual(new Decimal(-200));
+    });
+
+    it('rejects settlement when there are no unsettled transactions', async () => {
+      (prisma.userCashBalance.findMany as any).mockResolvedValue([]);
+
+      await expect(settlementService.submitSettlement(cashierId, { physicalCash: 0 })).rejects.toThrow(
+        /No unsettled transactions/,
+      );
     });
   });
 });

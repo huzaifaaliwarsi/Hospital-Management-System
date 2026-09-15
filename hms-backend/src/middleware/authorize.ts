@@ -57,6 +57,9 @@ const policy: Policy = {
   // (services/wards/panels are read in the billing flow, §8.4/§8.7).
   FRONT_DESK_BILLING: {
     setup: new Set<Action>(['view']),
+    // Read-only doctor list — New Admission's "Admitting Doctor" dropdown
+    // reads `/staff`, which sits behind the `identity` module.
+    identity: new Set<Action>(['view']),
     frontdesk: new Set(fullAccess),
     cash: new Set<Action>(['view', 'create']),
     commission: new Set<Action>(['view']),
@@ -66,6 +69,11 @@ const policy: Policy = {
     // (still no `create` intentionally revoked there — see the doc's §3.4
     // follow-up note on fully closing out the relocation).
     admission: new Set<Action>(['view', 'edit', 'create']),
+    // Read-only Front Desk / Billing Reports (HMS_V7.2_NEW_REQUIREMENTS.md
+    // §3.3) — module-level grant, same coarse-grained pattern as the rest
+    // of this policy map; also happens to permit the `reports:view` guard
+    // on the Super Admin dashboard route, which is harmless (read-only).
+    reports: new Set<Action>(['view']),
   },
   INVENTORY_MANAGEMENT: {
     setup: new Set<Action>(['view']),
