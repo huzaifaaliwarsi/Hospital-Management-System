@@ -12,17 +12,7 @@ import type {
   CheckInAppointmentBody,
 } from './appointments.schemas';
 
-function generateReceiptNumber(): string {
-  const ts = Date.now().toString(36).toUpperCase();
-  const rand = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-  return `REC-${ts}-${rand}`;
-}
-
-function generateInvoiceNumber(): string {
-  const ts = Date.now().toString(36).toUpperCase();
-  const rand = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-  return `INV-${ts}-${rand}`;
-}
+import { generateInvoiceNumber, generateReceiptNumber } from '@/shared/idGenerator';
 
 export const appointmentsService = {
   async bookAppointment(body: BookAppointmentBody, actorId: string) {
@@ -259,7 +249,7 @@ export const appointmentsService = {
       if (!appointment) throw new NotFoundError('Appointment not found');
 
       const amountDecimal = new Decimal(body.amount);
-      const receiptNumber = generateReceiptNumber();
+      const receiptNumber = await generateReceiptNumber(tx);
 
       // If an invoice exists already for this appointment, link to it
       const targetInvoice = appointment.hospitalInvoices[0];
@@ -350,7 +340,7 @@ export const appointmentsService = {
         );
 
         const lineNet = rate.minus(discountAmount);
-        const invoiceNumber = generateInvoiceNumber();
+        const invoiceNumber = await generateInvoiceNumber(tx);
 
         // Advance receipts collected before Check-In link directly via
         // `appointmentId` (set at booking/collectAdvance time) rather than

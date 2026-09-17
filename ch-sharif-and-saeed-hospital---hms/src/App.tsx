@@ -12,6 +12,7 @@ import { AdmissionDashboard } from './features/dashboard/AdmissionDashboard';
 import { InventoryDashboard } from './features/dashboard/InventoryDashboard';
 import { SuperAdminModuleView } from './features/superAdmin/SuperAdminModuleView';
 import { FrontDeskModuleView } from './features/frontDesk/FrontDeskModuleView';
+import { AdmissionModuleView } from './features/admission/AdmissionModuleView';
 import { ModulePlaceholderView } from './features/shared/ModulePlaceholderView';
 import { PortalArchitectureShowcase } from './features/shared/PortalArchitectureShowcase';
 import { DesignSystemShowcase } from './features/shared/DesignSystemShowcase';
@@ -168,8 +169,17 @@ const MainPortalRouter: React.FC = () => {
           groupTitle={currentGroupTitle}
         />
       ) : currentPortal === 'front-desk' ? (
-        // Front Desk — real pages added incrementally (v7.2 §3.3), placeholder for the rest
+        // Front Desk — every nav item is real (v7.2 §3.3, Panel Billing shipped last)
         <FrontDeskModuleView
+          moduleId={currentModule}
+          moduleName={currentModuleName}
+          groupTitle={currentGroupTitle}
+        />
+      ) : currentPortal === 'admission' ? (
+        // Admission — every nav item is real; Doctor Discharge Authorization
+        // (v7.2 §2.4) and the High-Cost Medicine gate (§2.6) are still on
+        // the pre-v7.2 mechanism, a deliberately separate next pass.
+        <AdmissionModuleView
           moduleId={currentModule}
           moduleName={currentModuleName}
           groupTitle={currentGroupTitle}

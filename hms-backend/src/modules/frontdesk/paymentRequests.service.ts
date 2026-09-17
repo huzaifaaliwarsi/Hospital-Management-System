@@ -3,11 +3,7 @@ import { prisma } from '@/db/client';
 import { NotFoundError, ValidationError } from '@/shared/errors/AppError';
 import type { ListPaymentRequestsQuery, CollectPaymentRequestBody } from './paymentRequests.schemas';
 
-function generateReceiptNumber(): string {
-  const ts = Date.now().toString(36).toUpperCase();
-  const rand = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-  return `REC-${ts}-${rand}`;
-}
+import { generateReceiptNumber } from '@/shared/idGenerator';
 
 const requestInclude = {
   admissionRecord: {
@@ -62,7 +58,7 @@ export const paymentRequestsService = {
 
       const receipt = await tx.paymentReceipt.create({
         data: {
-          receiptNumber: generateReceiptNumber(),
+          receiptNumber: await generateReceiptNumber(tx),
           amount: amountDecimal,
           method: body.paymentMethod,
           reference: body.reference ?? `Payment request ${request.id}`,

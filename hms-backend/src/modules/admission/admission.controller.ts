@@ -12,6 +12,9 @@ import type {
   CreatePharmacyRequestBody,
   GrantClearanceBody,
   ListAdmissionsQuery,
+  ClinicalDischargeBody,
+  AuthorizeHighCostMedicineBody,
+  RejectHighCostMedicineBody,
 } from './admission.schemas';
 
 function actorId(req: Request): string {
@@ -127,5 +130,33 @@ export const admissionController = {
   getDischargeSummary: async (req: Request, res: Response) => {
     const summary = await admissionService.getDischargeSummary(req.params.id as string);
     res.json({ data: summary });
+  },
+
+  clinicalDischarge: async (req: Request, res: Response) => {
+    const result = await admissionService.clinicalDischarge(
+      req.params.id as string,
+      req.body as ClinicalDischargeBody,
+      actorId(req),
+    );
+    res.json({ data: result });
+  },
+
+  authorizeHighCostMedicine: async (req: Request, res: Response) => {
+    const result = await admissionService.authorizeHighCostMedicine(
+      req.params.id as string,
+      req.params.clearanceId as string,
+      req.body as AuthorizeHighCostMedicineBody,
+      actorId(req),
+    );
+    res.json({ data: result });
+  },
+
+  rejectHighCostMedicine: async (req: Request, res: Response) => {
+    const result = await admissionService.rejectHighCostMedicine(
+      req.params.id as string,
+      req.params.clearanceId as string,
+      req.body as RejectHighCostMedicineBody,
+    );
+    res.json({ data: result });
   },
 };

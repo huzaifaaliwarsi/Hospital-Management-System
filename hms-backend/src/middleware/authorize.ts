@@ -52,6 +52,10 @@ const policy: Policy = {
     frontdesk: new Set<Action>(['view']),
     admission: new Set(fullAccess),
     'pharmacy-bridge': new Set<Action>(['view']),
+    // Read-only doctor list for "Performed By" pickers/filters.
+    identity: new Set<Action>(['view']),
+    // Read-only medicine list for the Pharmacy Requests picker.
+    pharmacy: new Set<Action>(['view']),
   },
   // Front Desk/Billing: full patient-registry CRUD (§3.3), read-only Setup
   // (services/wards/panels are read in the billing flow, §8.4/§8.7).

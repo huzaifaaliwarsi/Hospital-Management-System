@@ -46,7 +46,8 @@ function extractPath(): string {
 export function parsePath(path: string): ParsedRoute {
   // Clean path
   const normalized = path.startsWith('/') ? path : `/${path}`;
-  const segments = normalized.split('/').filter(Boolean);
+  const pathWithoutQuery = normalized.split('?')[0];
+  const segments = pathWithoutQuery.split('/').filter(Boolean);
 
   if (segments.length === 0 || normalized === '/login') {
     return {

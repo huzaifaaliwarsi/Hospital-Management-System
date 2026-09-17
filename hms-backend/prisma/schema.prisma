@@ -235,6 +235,10 @@ enum PharmacyClearanceStatus {
   INVOICED
   CLEARANCE_SENT
   INTEGRATION_ERROR
+  /// v7.2 High-Cost Medicine gate (§2.6) — blocked until
+  /// `HighCostMedicineAuthorization` is resolved; never reaches Pharmacy
+  /// while in this status.
+  AUTHORIZATION_REQUIRED
 }
 
 enum CashModuleScope {
@@ -356,6 +360,8 @@ model Staff {
   salarySlips           SalarySlip[]              @relation("SalarySlipStaff")
   employmentHistory     StaffEmploymentHistory[]  @relation("EmploymentHistoryStaff")
   salaryProfiles        StaffSalaryProfile[]      @relation("SalaryProfileStaff")
+  dischargeSummariesAuthorized DischargeSummary[] @relation("DischargeSummaryAuthorizedBy")
+  dischargeSummariesFollowUp   DischargeSummary[] @relation("DischargeSummaryFollowUpDoctor")
 
   createdAt DateTime @default(now()) @map("created_at")
   createdBy String?  @map("created_by")
@@ -534,6 +540,9 @@ model PortalUser {
   updatedHighCostPolicies     HighCostMedicinePolicy[]  @relation("HighCostPolicyUpdatedBy")
   clinicalAuthUpdatesForStaff Staff[]                   @relation("ClinicalAuthUpdatedBy")
   receivedPanelRemittances    PanelRemittance[]         @relation("PanelRemittanceReceivedBy")
+  dischargeSummariesInitiated DischargeSummary[]        @relation("DischargeSummaryInitiatedBy")
+  highCostAttendantConfirmations HighCostMedicineAuthorization[] @relation("HighCostAttendantConfirmedBy")
+  highCostManagementApprovals    HighCostMedicineAuthorization[] @relation("HighCostManagementApprovedBy")
 
   createdAt DateTime @default(now()) @map("created_at")
   createdBy String?  @map("created_by")
@@ -1332,6 +1341,7 @@ model AdmissionRecord {
   paymentRequests       AdmissionPaymentRequest[]
   dischargeClearances   DualDischargeClearance[]
   pharmacyClearances    PharmacyClearance[]
+  dischargeSummary      DischargeSummary?
 
   createdAt     DateTime    @default(now()) @map("created_at")
   createdById   String?     @map("created_by")
@@ -1412,6 +1422,41 @@ model DualDischargeClearance {
 
   @@unique([admissionRecordId, clearanceType])
   @@map("dual_discharge_clearances")
+}
+
+/// v7.2 Doctor Clinical Discharge Authorization + Discharge Summary
+/// (HMS_V7.2_NEW_REQUIREMENTS.md §2.4) — created only via
+/// `admissionService.clinicalDischarge`'s doctor-credential re-auth, never
+/// directly. `doctorNameSnapshot`/`doctorDepartmentSnapshot` freeze the
+/// authorizing doctor's identity at authorization time (per spec: "stores
+/// Doctor Staff ID, name, department") so this record stays accurate even
+/// if the `Staff` row is edited later. `initiatedById` is the actual
+/// Admission-portal user who clicked Discharge — distinct from the
+/// authorizing doctor.
+model DischargeSummary {
+  id                       String          @id @default(uuid())
+  admissionRecordId        String          @unique @map("admission_record_id")
+  admissionRecord          AdmissionRecord @relation(fields: [admissionRecordId], references: [id])
+
+  finalDiagnosis           String          @map("final_diagnosis")
+  treatmentSummary         String          @map("treatment_summary")
+  conditionAtDischarge     String          @map("condition_at_discharge")
+  medicinesInstructions    String          @map("medicines_instructions")
+  followUpAdvice           String?         @map("follow_up_advice")
+  followUpDoctorStaffId    String?         @map("follow_up_doctor_staff_id")
+  followUpDoctor           Staff?          @relation("DischargeSummaryFollowUpDoctor", fields: [followUpDoctorStaffId], references: [id])
+  followUpDate             DateTime?       @map("follow_up_date") @db.Date
+  additionalNotes          String?         @map("additional_notes")
+
+  doctorStaffId            String          @map("doctor_staff_id")
+  doctor                   Staff           @relation("DischargeSummaryAuthorizedBy", fields: [doctorStaffId], references: [id])
+  doctorNameSnapshot        String         @map("doctor_name_snapshot")
+  doctorDepartmentSnapshot  String?        @map("doctor_department_snapshot")
+  authorizedAt              DateTime       @default(now()) @map("authorized_at")
+  initiatedById              String        @map("initiated_by")
+  initiatedByUser             PortalUser   @relation("DischargeSummaryInitiatedBy", fields: [initiatedById], references: [id])
+
+  @@map("discharge_summaries")
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1689,6 +1734,7 @@ model PharmacyClearance {
 
   lines             PharmacyClearanceLine[]
   pharmacyDispenses PharmacyDispense[]
+  highCostAuthorization HighCostMedicineAuthorization?
 
   requestedById String      @map("requested_by")
   requestedBy   PortalUser  @relation("PharmacyClearanceRequestedBy", fields: [requestedById], references: [id])
@@ -1698,6 +1744,41 @@ model PharmacyClearance {
   fulfilledAt   DateTime?   @map("fulfilled_at")
 
   @@map("pharmacy_clearances")
+}
+
+/// v7.2 High-Cost Medicine Authorization record (HMS_V7.2_NEW_REQUIREMENTS.md
+/// §2.6) — one per `PharmacyClearance` that tripped `HighCostMedicinePolicy`'s
+/// threshold. `lineTotal`/`thresholdAmount` are snapshots at request time
+/// (the policy can change later without rewriting history). Never created
+/// unless the policy was actually enabled and exceeded — most pharmacy
+/// requests have no row here at all.
+model HighCostMedicineAuthorization {
+  id                  String          @id @default(uuid())
+  pharmacyClearanceId String          @unique @map("pharmacy_clearance_id")
+  pharmacyClearance   PharmacyClearance @relation(fields: [pharmacyClearanceId], references: [id])
+
+  lineTotal      Decimal @map("line_total") @db.Decimal(14, 2)
+  thresholdAmount Decimal @map("threshold_amount") @db.Decimal(14, 2)
+
+  attendantName          String?   @map("attendant_name")
+  attendantRelation      String?   @map("attendant_relation")
+  attendantContact       String?   @map("attendant_contact")
+  attendantConfirmed     Boolean   @default(false) @map("attendant_confirmed")
+  attendantConfirmedById String?   @map("attendant_confirmed_by")
+  attendantConfirmedByUser PortalUser? @relation("HighCostAttendantConfirmedBy", fields: [attendantConfirmedById], references: [id])
+  attendantConfirmedAt   DateTime? @map("attendant_confirmed_at")
+
+  managementApprovedById String?   @map("management_approved_by")
+  managementApprovedByUser PortalUser? @relation("HighCostManagementApprovedBy", fields: [managementApprovedById], references: [id])
+  managementReason       String?   @map("management_reason")
+  managementApprovedAt   DateTime? @map("management_approved_at")
+
+  panelAuthorizationRef String? @map("panel_authorization_ref")
+
+  status    String   @default("PENDING") // PENDING | AUTHORIZED | REJECTED
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("high_cost_medicine_authorizations")
 }
 
 model PharmacyClearanceLine {
