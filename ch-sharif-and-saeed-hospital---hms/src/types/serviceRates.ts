@@ -49,6 +49,10 @@ export interface HospitalService {
 
   status: ServiceStatus;
 
+  // Encounter Type Mapping (V7.2)
+  encounterType?: 'NONE' | 'OPD' | 'OBSERVATION' | 'EMERGENCY';
+  isDefaultEncounterService?: boolean;
+
   // Mock linked usage counts for deletion safeguards
   linkedInvoiceCount?: number;
   linkedPanelRuleCount?: number;
@@ -82,6 +86,8 @@ export interface ServiceFormValues {
   manualRateOverrideAllowed: boolean;
   discountAllowed: boolean;
   status: ServiceStatus;
+  encounterType?: 'NONE' | 'OPD' | 'OBSERVATION' | 'EMERGENCY';
+  isDefaultEncounterService?: boolean;
 }
 
 export interface ServiceImportRow {

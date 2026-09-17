@@ -92,7 +92,7 @@ export const appointmentsService = {
       let receipt = null;
       if (body.advanceAmount && body.advanceAmount > 0) {
         const advDecimal = new Decimal(body.advanceAmount);
-        const receiptNumber = generateReceiptNumber();
+        const receiptNumber = await generateReceiptNumber();
 
         receipt = await tx.paymentReceipt.create({
           data: {

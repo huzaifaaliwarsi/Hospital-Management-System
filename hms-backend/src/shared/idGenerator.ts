@@ -19,7 +19,7 @@ export function compactRandom(length = 4): string {
   let res = '';
   const bytes = crypto.randomBytes(length);
   for (let i = 0; i < length; i++) {
-    res += chars[bytes[i] % chars.length];
+    res += chars[bytes[i]! % chars.length];
   }
   return res;
 }

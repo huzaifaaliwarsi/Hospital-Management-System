@@ -118,6 +118,8 @@ export const createServiceRateSchema = z.object({
   discountAllowed: z.boolean().optional(),
   manualRateOverrideAllowed: z.boolean().optional(),
   isActive: z.boolean().optional(),
+  encounterType: z.enum(['NONE', 'OPD', 'OBSERVATION', 'EMERGENCY']).optional(),
+  isDefaultEncounterService: z.boolean().optional(),
 });
 export type CreateServiceRateBody = z.infer<typeof createServiceRateSchema>;
 export const updateServiceRateSchema = createServiceRateSchema.partial();

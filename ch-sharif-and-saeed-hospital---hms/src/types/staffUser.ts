@@ -90,6 +90,8 @@ export interface StaffUser {
 
   linkedActivityCount: number;
   notes?: string;
+  baseSalary?: number;
+  commissionEnabled?: boolean;
 }
 
 export interface StaffCredential {
@@ -127,6 +129,13 @@ export interface StaffUserFormValues {
 
   // v7.2 (HMS_V7.2_NEW_REQUIREMENTS.md §2.3/§3.1) — only meaningful when staffCategory === 'Doctor'.
   doctorSponsoredDiscountTrackingEnabled: boolean;
+
+  // Canonical Salary & Commission compensation integration
+  salaryEnabled?: boolean;
+  salaryBasis?: 'MONTHLY' | 'PER_DAY';
+  baseSalary?: number;
+  salaryEffectiveFrom?: string;
+  commissionEnabled?: boolean;
 }
 
 export interface StaffUserFilterState {

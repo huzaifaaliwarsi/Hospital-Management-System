@@ -46,6 +46,7 @@ async function seedHospitalProfile() {
 
 async function seedDepartments() {
   const departmentSeeds = [
+    { code: 'OPD', name: 'Outpatient Department (OPD)', departmentType: 'CLINICAL' as const, supportsOpd: true, supportsObservation: true },
     { code: 'ADM', name: 'Administration', departmentType: 'ADMINISTRATIVE' as const },
     { code: 'FDB', name: 'Front Desk / Billing', departmentType: 'ADMINISTRATIVE' as const, supportsOpd: true },
     {

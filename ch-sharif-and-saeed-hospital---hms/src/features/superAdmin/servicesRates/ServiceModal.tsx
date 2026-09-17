@@ -37,6 +37,8 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({
     manualRateOverrideAllowed: false,
     discountAllowed: true,
     status: 'Active',
+    encounterType: 'NONE',
+    isDefaultEncounterService: false,
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -57,6 +59,8 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({
         manualRateOverrideAllowed: service.manualRateOverrideAllowed,
         discountAllowed: service.discountAllowed,
         status: service.status,
+        encounterType: service.encounterType || 'NONE',
+        isDefaultEncounterService: !!service.isDefaultEncounterService,
       });
       setCodeError(null);
       setErrors({});
@@ -73,6 +77,8 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({
         manualRateOverrideAllowed: false,
         discountAllowed: true,
         status: 'Active',
+        encounterType: 'NONE',
+        isDefaultEncounterService: false,
       });
       setCodeError(null);
       setErrors({});
@@ -413,6 +419,63 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({
                   </span>
                 </div>
               </label>
+            </div>
+          </div>
+
+          {/* Encounter Mapping (V7.2) */}
+          <div className="bg-emerald-50/50 p-3.5 rounded-xl border border-emerald-200/80 space-y-3">
+            <span className="text-[11px] font-bold text-[#08775A] uppercase tracking-wider block">
+              Encounter Service Mapping (Front Desk)
+            </span>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Encounter Type
+                </label>
+                <select
+                  value={formValues.encounterType || 'NONE'}
+                  onChange={(e) =>
+                    setFormValues((prev) => ({
+                      ...prev,
+                      encounterType: e.target.value as any,
+                      isDefaultEncounterService: e.target.value === 'NONE' ? false : prev.isDefaultEncounterService,
+                    }))
+                  }
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
+                >
+                  <option value="NONE">None (General Service)</option>
+                  <option value="OPD">OPD Consultation</option>
+                  <option value="OBSERVATION">Observation Care</option>
+                  <option value="EMERGENCY">Emergency Care</option>
+                </select>
+              </div>
+
+              {formValues.encounterType && formValues.encounterType !== 'NONE' && (
+                <div className="pt-3 sm:pt-4">
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formValues.isDefaultEncounterService || false}
+                      onChange={(e) =>
+                        setFormValues((prev) => ({
+                          ...prev,
+                          isDefaultEncounterService: e.target.checked,
+                        }))
+                      }
+                      className="mt-0.5 rounded text-[#08775A] focus:ring-[#08775A]"
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-slate-800 block">
+                        Default {formValues.encounterType} Service
+                      </span>
+                      <span className="text-[11px] text-slate-500 block leading-tight">
+                        Auto-charged at Front Desk walk-in intake
+                      </span>
+                    </div>
+                  </label>
+                </div>
+              )}
             </div>
           </div>
 

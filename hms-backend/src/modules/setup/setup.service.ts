@@ -362,6 +362,12 @@ export const setupService = {
 
   async createServiceRate(body: CreateServiceRateBody, createdById: string) {
     const code = normalizeCode(body.code) ?? (await generateUniqueCode('serviceRate', 'SRV'));
+    if (body.isDefaultEncounterService && body.encounterType && body.encounterType !== 'NONE') {
+      await prisma.serviceRate.updateMany({
+        where: { encounterType: body.encounterType },
+        data: { isDefaultEncounterService: false },
+      });
+    }
     try {
       const created = await prisma.serviceRate.create({
         data: { ...body, code, createdById },
@@ -378,6 +384,13 @@ export const setupService = {
 
   async updateServiceRate(id: string, body: UpdateServiceRateBody, updatedById: string) {
     const existing = await this.assertExists('serviceRate', id);
+    if (body.isDefaultEncounterService && (body.encounterType ?? (existing as any).encounterType) && (body.encounterType ?? (existing as any).encounterType) !== 'NONE') {
+      const encType = body.encounterType ?? (existing as any).encounterType;
+      await prisma.serviceRate.updateMany({
+        where: { encounterType: encType, id: { not: id } },
+        data: { isDefaultEncounterService: false },
+      });
+    }
     const data: Prisma.ServiceRateUncheckedUpdateInput = { ...body, code: normalizeCode(body.code), updatedById };
     if (body.isActive !== undefined && body.isActive !== (existing as { isActive: boolean }).isActive) {
       data.statusChangedAt = new Date();

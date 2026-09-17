@@ -10,6 +10,8 @@ import {
   KeyRound,
   Building,
   AlertTriangle,
+  Wallet,
+  Percent,
 } from 'lucide-react';
 import {
   StaffUser,
@@ -25,6 +27,7 @@ import {
 } from '../../../types/staffUser';
 import { Department } from '../../../types/department';
 import { StaffUserService } from '../../../services/staffUserService';
+import { formatCnicInput } from '../../../utils/formatters';
 
 interface StaffUserModalProps {
   isOpen: boolean;
@@ -68,6 +71,11 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
     confirmPassword: '',
     requirePasswordChange: false,
     doctorSponsoredDiscountTrackingEnabled: false,
+    salaryEnabled: false,
+    salaryBasis: 'MONTHLY',
+    baseSalary: undefined,
+    salaryEffectiveFrom: new Date().toISOString().slice(0, 10),
+    commissionEnabled: false,
   });
 
   const [showPassword, setShowPassword] = useState(false);
@@ -103,7 +111,28 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
         confirmPassword: '',
         requirePasswordChange: editingStaff.requirePasswordChange || false,
         doctorSponsoredDiscountTrackingEnabled: editingStaff.doctorSponsoredDiscountTrackingEnabled || false,
+        salaryEnabled: false,
+        salaryBasis: 'MONTHLY',
+        baseSalary: undefined,
+        salaryEffectiveFrom: new Date().toISOString().slice(0, 10),
+        commissionEnabled: false,
       });
+
+      // Fetch canonical Staff 360 profile to prefill active Salary and Commission state
+      StaffUserService.fetchFullProfile(editingStaff.id)
+        .then((profile) => {
+          const currentSalary = profile?.salary?.current;
+          const commissionRules = profile?.commissionRules;
+          setFormData((prev) => ({
+            ...prev,
+            salaryEnabled: Boolean(currentSalary),
+            salaryBasis: currentSalary?.salaryBasis === 'PER_DAY' ? 'PER_DAY' : 'MONTHLY',
+            baseSalary: currentSalary?.baseAmount != null ? Number(currentSalary.baseAmount) : undefined,
+            salaryEffectiveFrom: currentSalary?.effectiveFrom ? String(currentSalary.effectiveFrom).slice(0, 10) : new Date().toISOString().slice(0, 10),
+            commissionEnabled: Array.isArray(commissionRules) && commissionRules.length > 0,
+          }));
+        })
+        .catch(() => {});
     } else {
       const defaultDept = activeDepartments[0] || departments[0];
       setFormData({
@@ -127,6 +156,11 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
         confirmPassword: '',
         requirePasswordChange: true,
         doctorSponsoredDiscountTrackingEnabled: false,
+        salaryEnabled: false,
+        salaryBasis: 'MONTHLY',
+        baseSalary: undefined,
+        salaryEffectiveFrom: new Date().toISOString().slice(0, 10),
+        commissionEnabled: false,
       });
     }
     setErrors({});
@@ -399,7 +433,8 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
                 <input
                   type="text"
                   value={formData.cnic}
-                  onChange={(e) => setFormData({ ...formData, cnic: e.target.value })}
+                  onChange={(e) => setFormData({ ...formData, cnic: formatCnicInput(e.target.value) })}
+                  maxLength={15}
                   placeholder="35201-1234567-1"
                   className={`w-full px-3 py-2 bg-[#f6f8f7] border rounded-lg text-xs font-mono text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#129b70]/20 ${
                     errors.cnic ? 'border-red-500' : 'border-[#e2eae5] focus:border-[#129b70]'
@@ -526,6 +561,131 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
                     </option>
                   ))}
                 </select>
+              </div>
+
+              {/* Canonical Payroll & Compensation Section */}
+              <div className="sm:col-span-2 p-4 bg-[#f8faf9] border border-[#e2eae5] rounded-xl space-y-3">
+                <div className="flex items-center gap-2 pb-2 border-b border-[#e2eae5]">
+                  <div className="h-7 w-7 rounded-lg bg-teal-50 text-[#08775A] flex items-center justify-center">
+                    <Wallet className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wide">
+                      Payroll Compensation & Commission
+                    </h4>
+                    <p className="text-[11px] text-slate-500">
+                      Configures canonical salary basis and service-based revenue commission eligibility
+                    </p>
+                  </div>
+                </div>
+
+                {/* Salary Profile Shortcut */}
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formData.salaryEnabled || false}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            salaryEnabled: e.target.checked,
+                            baseSalary: e.target.checked ? formData.baseSalary || 50000 : undefined,
+                          })
+                        }
+                        className="rounded border-[#e2eae5] text-[#08775A] focus:ring-[#08775A]"
+                      />
+                      <span>Enable Payroll Salary Profile</span>
+                    </label>
+                    <span className="text-[11px] text-slate-500 font-medium">Independent of Commission</span>
+                  </div>
+
+                  {formData.salaryEnabled && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 bg-white border border-[#e2eae5] rounded-lg animate-in fade-in">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                          Salary Basis
+                        </label>
+                        <select
+                          value={formData.salaryBasis || 'MONTHLY'}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              salaryBasis: e.target.value as 'MONTHLY' | 'PER_DAY',
+                            })
+                          }
+                          className="w-full px-2.5 py-1.5 bg-[#f6f8f7] border border-[#e2eae5] rounded-lg text-xs text-slate-900 focus:outline-none focus:border-[#08775A]"
+                        >
+                          <option value="MONTHLY">Monthly Fixed</option>
+                          <option value="PER_DAY">Daily Rate (Per Day)</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                          Base Amount (PKR) <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="500"
+                          value={formData.baseSalary ?? ''}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              baseSalary: e.target.value ? Number(e.target.value) : undefined,
+                            })
+                          }
+                          placeholder={formData.salaryBasis === 'PER_DAY' ? '2500' : '50000'}
+                          className="w-full px-2.5 py-1.5 bg-[#f6f8f7] border border-[#e2eae5] rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:border-[#08775A]"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                          Effective From
+                        </label>
+                        <input
+                          type="date"
+                          value={formData.salaryEffectiveFrom || ''}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              salaryEffectiveFrom: e.target.value,
+                            })
+                          }
+                          className="w-full px-2.5 py-1.5 bg-[#f6f8f7] border border-[#e2eae5] rounded-lg text-xs text-slate-900 focus:outline-none focus:border-[#08775A]"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Service Commission Eligibility */}
+                <div className="pt-2 border-t border-[#e2eae5]/80 flex items-start justify-between gap-4">
+                  <label className="flex items-start gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.commissionEnabled || false}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          commissionEnabled: e.target.checked,
+                        })
+                      }
+                      className="mt-0.5 rounded border-[#e2eae5] text-[#08775A] focus:ring-[#08775A]"
+                    />
+                    <div>
+                      <span>Revenue Commission Eligible</span>
+                      <p className="text-[11px] font-normal text-slate-500">
+                        Configured via canonical service-based rules (Fixed / % per service, Gross / Net after doctor discount).
+                      </p>
+                    </div>
+                  </label>
+                  <span className="text-[11px] text-teal-700 font-semibold shrink-0">
+                    {formData.commissionEnabled ? 'Commission Configured' : 'No Commission'}
+                  </span>
+                </div>
               </div>
 
               {/* v7.2 Doctor-Sponsored Discount Tracking (HMS_V7.2_NEW_REQUIREMENTS.md §2.3/§3.1) */}

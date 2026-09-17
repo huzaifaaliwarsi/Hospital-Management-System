@@ -779,6 +779,8 @@ model ServiceRate {
   discountAllowed           Boolean    @default(true) @map("discount_allowed")
   manualRateOverrideAllowed Boolean    @default(false) @map("manual_rate_override_allowed")
   isActive                  Boolean    @default(true) @map("is_active")
+  encounterType             String?    @default("NONE") @map("encounter_type")
+  isDefaultEncounterService Boolean    @default(false) @map("is_default_encounter_service")
   statusChangedAt           DateTime?  @map("status_changed_at")
   statusChangedBy           String?    @map("status_changed_by")
 

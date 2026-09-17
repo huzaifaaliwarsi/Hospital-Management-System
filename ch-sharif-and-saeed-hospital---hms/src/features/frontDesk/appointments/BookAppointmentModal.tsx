@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { AlertCircle, Search, ShieldCheck, ShieldAlert, Loader2 } from 'lucide-react';
 import { Modal } from '../../../components/common/Modal';
-import { RadioGroup, Select, TextInput, Textarea, NumberInput, Toggle } from '../../../components/forms/FormControls';
+import { RadioGroup, Select, TextInput, Textarea, NumberInput, Toggle, CNICInput } from '../../../components/forms/FormControls';
 import { DepartmentService } from '../../../services/departmentService';
 import { StaffUserService } from '../../../services/staffUserService';
 import { ServiceRatesService } from '../../../services/serviceRatesService';
@@ -333,7 +333,7 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
                 <TextInput label="Full Name" required value={selfPay.fullName} onChange={(e) => setSelfPay({ ...selfPay, fullName: e.target.value })} />
                 <TextInput label="Father / Guardian" value={selfPay.guardianName} onChange={(e) => setSelfPay({ ...selfPay, guardianName: e.target.value })} />
                 <TextInput label="Phone" required value={selfPay.phone} onChange={(e) => setSelfPay({ ...selfPay, phone: e.target.value })} />
-                <TextInput label="CNIC (optional)" value={selfPay.cnicOrPassport} onChange={(e) => setSelfPay({ ...selfPay, cnicOrPassport: e.target.value })} />
+                <CNICInput label="CNIC (optional)" value={selfPay.cnicOrPassport} onChange={(e) => setSelfPay({ ...selfPay, cnicOrPassport: e.target.value })} />
                 <Select
                   label="Gender"
                   options={[{ label: 'Male', value: 'Male' }, { label: 'Female', value: 'Female' }, { label: 'Other', value: 'Other' }]}

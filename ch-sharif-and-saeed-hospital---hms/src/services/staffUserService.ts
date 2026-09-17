@@ -237,6 +237,15 @@ export class StaffUserService {
       });
       const staffId = staffRes.data.data.id;
 
+      // Canonical Salary Profile creation (if enabled)
+      if (values.salaryEnabled && values.baseSalary && Number(values.baseSalary) > 0) {
+        await this.saveSalaryProfile(staffId, {
+          salaryBasis: values.salaryBasis || 'MONTHLY',
+          baseAmount: Number(values.baseSalary),
+          effectiveFrom: values.salaryEffectiveFrom || new Date().toISOString().slice(0, 10),
+        });
+      }
+
       if (values.accessType === 'PORTAL_USER') {
         await apiClient.post('/portal-users', {
           staffId,
@@ -299,6 +308,15 @@ export class StaffUserService {
         isActive: values.status !== 'INACTIVE',
         doctorSponsoredDiscountTrackingEnabled: values.doctorSponsoredDiscountTrackingEnabled,
       });
+
+      // Canonical Salary Profile update/creation (if enabled)
+      if (values.salaryEnabled && values.baseSalary && Number(values.baseSalary) > 0) {
+        await this.saveSalaryProfile(id, {
+          salaryBasis: values.salaryBasis || 'MONTHLY',
+          baseAmount: Number(values.baseSalary),
+          effectiveFrom: values.salaryEffectiveFrom || new Date().toISOString().slice(0, 10),
+        });
+      }
 
       const portalUserId = getPortalUserId(existing);
       if (values.accessType === 'PORTAL_USER') {

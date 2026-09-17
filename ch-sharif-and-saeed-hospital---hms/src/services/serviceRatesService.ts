@@ -76,6 +76,8 @@ function toHospitalService(raw: Record<string, any>): HospitalService {
     manualRateOverrideAllowed: !!raw.manualRateOverrideAllowed,
     discountAllowed: !!raw.discountAllowed,
     status: raw.isActive ? 'Active' : 'Inactive',
+    encounterType: (raw.encounterType as any) || 'NONE',
+    isDefaultEncounterService: !!raw.isDefaultEncounterService,
     linkedInvoiceCount: raw.linkedInvoiceCount ?? 0,
     linkedPanelRuleCount: raw.linkedPanelRuleCount ?? 0,
     createdBy: raw.createdByLabel || 'System',
@@ -100,6 +102,8 @@ function toBackendPayload(values: ServiceFormValues): Record<string, unknown> {
     discountAllowed: values.discountAllowed,
     manualRateOverrideAllowed: values.manualRateOverrideAllowed,
     isActive: values.status === 'Active',
+    encounterType: values.encounterType || 'NONE',
+    isDefaultEncounterService: !!values.isDefaultEncounterService,
   };
 }
 

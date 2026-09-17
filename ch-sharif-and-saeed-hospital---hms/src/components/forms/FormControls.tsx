@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
-import { cn } from '../../utils/formatters';
+import { cn, formatCnicInput } from '../../utils/formatters';
+export { formatCnicInput };
 import { Calendar, ChevronDown, Check, UploadCloud, X, Search, FileText } from 'lucide-react';
 
 export interface BaseInputProps {
@@ -153,6 +154,47 @@ export const PhoneInput: React.FC<PhoneInputProps> = ({
       id={id}
       icon={<span className="text-xs font-bold text-slate-500">+92</span>}
       placeholder="300 1234567"
+      {...props}
+    />
+  );
+};
+
+// 4b. CNIC Input (Auto XXXXX-XXXXXXX-X formatting)
+export interface CNICInputProps extends Omit<TextInputProps, 'onChange'> {
+  value: string;
+  onChange?: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onValueChange?: (formattedValue: string) => void;
+}
+
+export const CNICInput: React.FC<CNICInputProps> = ({
+  value,
+  onChange,
+  onValueChange,
+  label = 'CNIC',
+  placeholder = 'XXXXX-XXXXXXX-X',
+  hint,
+  maxLength = 15,
+  ...props
+}) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const formatted = formatCnicInput(e.target.value);
+    e.target.value = formatted;
+    if (onChange) {
+      onChange(e);
+    }
+    if (onValueChange) {
+      onValueChange(formatted);
+    }
+  };
+
+  return (
+    <TextInput
+      label={label}
+      placeholder={placeholder}
+      hint={hint}
+      value={value}
+      onChange={handleChange}
+      maxLength={maxLength}
       {...props}
     />
   );

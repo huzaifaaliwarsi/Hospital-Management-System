@@ -39,7 +39,7 @@ import {
 } from '../../../services/admissionService';
 import { getHospitalCurrentDate, formatDateISO } from '../../../utils/dateConstants';
 import { useAuth } from '../../../context/AuthContext';
-import { Select, Textarea, NumberInput, TextInput } from '../../../components/forms/FormControls';
+import { Select, Textarea, NumberInput, TextInput, CNICInput } from '../../../components/forms/FormControls';
 import { PanelBadge } from '../../../components/common/PanelBadge';
 
 const emptyForm = (): CreateAdmissionFormValues => ({
@@ -520,7 +520,7 @@ export const NewAdmissionView: React.FC = () => {
                 value={age}
                 onChange={(e) => setAge(e.target.value)}
               />
-              <TextInput
+              <CNICInput
                 label="CNIC (optional)"
                 placeholder="XXXXX-XXXXXXX-X"
                 value={cnic}
