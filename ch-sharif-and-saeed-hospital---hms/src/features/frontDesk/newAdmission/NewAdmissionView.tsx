@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   BedDouble,
   Search,
@@ -41,6 +41,7 @@ import { getHospitalCurrentDate, formatDateISO } from '../../../utils/dateConsta
 import { useAuth } from '../../../context/AuthContext';
 import { Select, Textarea, NumberInput, TextInput, CNICInput } from '../../../components/forms/FormControls';
 import { PanelBadge } from '../../../components/common/PanelBadge';
+import { focusNextFieldOnEnter } from '../../../utils/formNavigation';
 
 const emptyForm = (): CreateAdmissionFormValues => ({
   panelPatientId: '',
@@ -62,6 +63,8 @@ const emptyForm = (): CreateAdmissionFormValues => ({
  */
 export const NewAdmissionView: React.FC = () => {
   const { currentUser } = useAuth();
+  const formContainerRef = useRef<HTMLDivElement>(null);
+  const handleEnterNext = (e: React.KeyboardEvent<HTMLElement>) => focusNextFieldOnEnter(e, formContainerRef.current);
 
   // Intake Mode: Existing vs New
   const [intakeMode, setIntakeMode] = useState<'EXISTING' | 'NEW'>('EXISTING');
@@ -338,7 +341,7 @@ export const NewAdmissionView: React.FC = () => {
   }
 
   return (
-    <div className="max-w-3xl mx-auto space-y-5 animate-in fade-in duration-150 pb-12">
+    <div ref={formContainerRef} className="max-w-3xl mx-auto space-y-5 animate-in fade-in duration-150 pb-12">
       {/* Header Banner */}
       <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
         <div className="flex items-center gap-3">
@@ -438,6 +441,7 @@ export const NewAdmissionView: React.FC = () => {
                     type="text"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
+                    onKeyDown={handleEnterNext}
                     placeholder="Search existing patient by name, MRN, phone or CNIC…"
                     className="w-full text-xs pl-8.5 pr-3 py-2 border border-slate-200 rounded-lg bg-white focus:outline-hidden focus:ring-2 focus:ring-[#149E75]"
                   />
@@ -490,14 +494,16 @@ export const NewAdmissionView: React.FC = () => {
                 required
                 placeholder="Patient's legal name"
                 value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
+                onChange={(e) => setFullName(e.target.value.toUpperCase())}
+                onKeyDown={handleEnterNext}
               />
               <TextInput
                 label="Father / Guardian Name"
                 required
                 placeholder="Father / Husband / Guardian"
                 value={fatherGuardianName}
-                onChange={(e) => setFatherGuardianName(e.target.value)}
+                onChange={(e) => setFatherGuardianName(e.target.value.toUpperCase())}
+                onKeyDown={handleEnterNext}
               />
             </div>
 
@@ -509,6 +515,7 @@ export const NewAdmissionView: React.FC = () => {
                 placeholder="0300-1234567"
                 value={primaryPhone}
                 onChange={(e) => setPrimaryPhone(e.target.value)}
+                onKeyDown={handleEnterNext}
               />
               <TextInput
                 label="Age (Years)"
@@ -519,12 +526,14 @@ export const NewAdmissionView: React.FC = () => {
                 placeholder="e.g. 35"
                 value={age}
                 onChange={(e) => setAge(e.target.value)}
+                onKeyDown={handleEnterNext}
               />
               <CNICInput
                 label="CNIC (optional)"
                 placeholder="XXXXX-XXXXXXX-X"
                 value={cnic}
                 onChange={(e) => setCnic(e.target.value)}
+                onKeyDown={handleEnterNext}
               />
             </div>
 
@@ -622,13 +631,15 @@ export const NewAdmissionView: React.FC = () => {
                       options={corporatePanels.map((p) => ({ label: `${p.name} (${p.code})`, value: p.id }))}
                       value={panelId}
                       onChange={(e) => setPanelId(e.target.value)}
+                      onKeyDown={handleEnterNext}
                     />
                     <TextInput
                       label="Panel Member ID / Card #"
                       required
                       placeholder="e.g. EMP-99214 / CRD-4412"
                       value={panelMemberId}
-                      onChange={(e) => setPanelMemberId(e.target.value)}
+                      onChange={(e) => setPanelMemberId(e.target.value.toUpperCase())}
+                      onKeyDown={handleEnterNext}
                     />
                   </div>
                 </div>
@@ -648,6 +659,7 @@ export const NewAdmissionView: React.FC = () => {
             options={departments.map((d) => ({ label: d.name, value: d.id }))}
             value={formValues.departmentId}
             onChange={(e) => setFormValues({ ...formValues, departmentId: e.target.value })}
+            onKeyDown={handleEnterNext}
           />
           <Select
             label="Admitting Doctor"
@@ -655,6 +667,7 @@ export const NewAdmissionView: React.FC = () => {
             options={departmentDoctors.map((d) => ({ label: `${d.fullName} (${d.designation})`, value: d.id }))}
             value={formValues.doctorStaffId}
             onChange={(e) => setFormValues({ ...formValues, doctorStaffId: e.target.value })}
+            onKeyDown={handleEnterNext}
           />
         </div>
 
@@ -668,6 +681,7 @@ export const NewAdmissionView: React.FC = () => {
             }))}
             value={formValues.preferredBedId}
             onChange={(e) => setFormValues({ ...formValues, preferredBedId: e.target.value })}
+            onKeyDown={handleEnterNext}
           />
           <Select
             label="Fulfillment Mode"
@@ -678,6 +692,7 @@ export const NewAdmissionView: React.FC = () => {
             ]}
             value={formValues.medicationMode}
             onChange={(e) => setFormValues({ ...formValues, medicationMode: e.target.value as MedicationMode })}
+            onKeyDown={handleEnterNext}
           />
         </div>
 
@@ -687,6 +702,7 @@ export const NewAdmissionView: React.FC = () => {
             type="date"
             value={formValues.expectedAt}
             onChange={(e) => setFormValues({ ...formValues, expectedAt: e.target.value })}
+            onKeyDown={handleEnterNext}
           />
           <NumberInput
             label="Estimated Deposit / Amount (PKR, optional)"
@@ -699,6 +715,7 @@ export const NewAdmissionView: React.FC = () => {
                 estimatedAmount: e.target.value === '' ? '' : Number(e.target.value),
               })
             }
+            onKeyDown={handleEnterNext}
           />
         </div>
 
@@ -706,7 +723,7 @@ export const NewAdmissionView: React.FC = () => {
           label="Diagnosis / Admission Reason (optional)"
           rows={2}
           value={formValues.diagnosis}
-          onChange={(e) => setFormValues({ ...formValues, diagnosis: e.target.value })}
+          onChange={(e) => setFormValues({ ...formValues, diagnosis: e.target.value.toUpperCase() })}
         />
         <Textarea
           label="Notes (optional)"

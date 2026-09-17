@@ -44,7 +44,11 @@ export const appointmentsService = {
         throw new NotFoundError('Selected service rate not found or inactive');
       }
 
-      if (serviceRate.departmentId && serviceRate.departmentId !== body.departmentId) {
+      if (
+        serviceRate.departmentId &&
+        serviceRate.departmentId !== body.departmentId &&
+        !serviceRate.isDefaultEncounterService
+      ) {
         throw new ValidationError('Selected service does not belong to the chosen department');
       }
 

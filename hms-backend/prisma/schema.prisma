@@ -363,12 +363,34 @@ model Staff {
   dischargeSummariesAuthorized DischargeSummary[] @relation("DischargeSummaryAuthorizedBy")
   dischargeSummariesFollowUp   DischargeSummary[] @relation("DischargeSummaryFollowUpDoctor")
 
+  // v7.2 Multi-department assignment for Doctors — junction table
+  staffDepartments StaffDepartment[]
+
   createdAt DateTime @default(now()) @map("created_at")
   createdBy String?  @map("created_by")
   updatedAt DateTime @updatedAt @map("updated_at")
   updatedBy String?  @map("updated_by")
 
   @@map("staff")
+}
+
+/// Junction table: allows a Doctor (or any staff) to be assigned to multiple
+/// clinical departments. `departmentId` on Staff remains for backward
+/// compatibility; this table is the authoritative source for multi-assignment.
+model StaffDepartment {
+  id           String     @id @default(uuid())
+  staffId      String     @map("staff_id")
+  staff        Staff      @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  departmentId String     @map("department_id")
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  isPrimary    Boolean    @default(false) @map("is_primary") // mirrors Staff.departmentId for informational use
+  assignedAt   DateTime   @default(now()) @map("assigned_at")
+  assignedBy   String?    @map("assigned_by")
+
+  @@unique([staffId, departmentId])
+  @@index([staffId])
+  @@index([departmentId])
+  @@map("staff_departments")
 }
 
 /// Effective-dated department/designation/shift assignment history (§4.1,
@@ -635,10 +657,11 @@ model Department {
   // the relational source of truth for who created/last edited the row.
   statusChangedBy     String?        @map("status_changed_by")
 
-  staff        Staff[]
-  wards        Ward[]
-  serviceRates ServiceRate[]
-  shifts       Shift[]
+  staff            Staff[]
+  wards            Ward[]
+  serviceRates     ServiceRate[]
+  shifts           Shift[]
+  staffDepartments StaffDepartment[] // junction for multi-department doctor assignment
 
   createdAt              DateTime                 @default(now()) @map("created_at")
   createdById            String?                  @map("created_by")

@@ -24,6 +24,9 @@ export const createStaffBodySchema = z.object({
   cnic: z.string().max(20).optional(),
   category: z.string().min(1).max(50),
   departmentId: z.string().uuid(),
+  // For Doctor category: additional department IDs (junction table). The
+  // primary departmentId above is always the first / default department.
+  departmentIds: z.array(z.string().uuid()).optional(),
   designation: z.string().min(1).max(100),
   phone: phoneSchema,
   alternatePhone: z.string().max(30).optional(),

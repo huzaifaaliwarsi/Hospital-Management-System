@@ -197,11 +197,20 @@ function bedLabel(bed: any): string | null {
 function toAdmissionRecord(raw: Record<string, any>): AdmissionRecord {
   const isPanel = !!raw.panelPatientId;
   const patient = raw.panelPatient || raw.selfPayEncounter;
+  const encounterId = raw.selfPayEncounterId || raw.selfPayEncounter?.id;
+  let resolvedMr = patient?.mrNumber || '';
+  if (!resolvedMr && encounterId) {
+    const rawId = String(encounterId);
+    const cleanId = rawId.replace(/\D/g, '').slice(0, 5) || rawId.replace(/-/g, '').slice(0, 4).toUpperCase();
+    const year = raw.createdAt ? new Date(raw.createdAt).getFullYear().toString().slice(-2) : '26';
+    resolvedMr = `MR-${year}-${cleanId.padStart(4, '0')}`;
+  }
+
   return {
     id: raw.id,
     admissionNumber: raw.admissionNumber,
     patientName: patient?.fullName || 'Unknown',
-    patientMrNumber: isPanel ? patient?.mrNumber || '' : '— (Self-Pay)',
+    patientMrNumber: resolvedMr,
     payerType: isPanel ? 'Corporate / Panel' : 'Self Pay',
     departmentId: raw.departmentId,
     departmentName: raw.department?.name || '',

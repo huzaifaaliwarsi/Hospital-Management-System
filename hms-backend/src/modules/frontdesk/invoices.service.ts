@@ -547,6 +547,9 @@ export const invoicesService = {
         : {
             type: 'SELF_PAY',
             name: invoice.selfPayEncounter?.fullName ?? 'Walk-In Patient',
+            mrNumber: invoice.selfPayEncounterId
+              ? `MR-26-${invoice.selfPayEncounterId.replace(/\D/g, '').slice(0, 5) || invoice.selfPayEncounterId.replace(/-/g, '').slice(0, 4).toUpperCase()}`
+              : '',
             phone: invoice.selfPayEncounter?.phone,
             cnic: invoice.selfPayEncounter?.cnicOrPassport,
           },

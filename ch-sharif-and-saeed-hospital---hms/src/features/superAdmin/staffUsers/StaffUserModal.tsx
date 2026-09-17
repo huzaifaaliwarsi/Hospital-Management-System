@@ -101,6 +101,7 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
         designation: editingStaff.designation,
         departmentId: editingStaff.departmentId,
         departmentName: editingStaff.departmentName,
+        departmentIds: editingStaff.departmentIds ?? [editingStaff.departmentId],
         staffCategory: editingStaff.staffCategory,
         status: editingStaff.status,
         accessType: editingStaff.accessType,
@@ -173,14 +174,38 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Handle department change
+  // Handle department change (single select for non-Doctors)
   const handleDepartmentChange = (deptId: string) => {
     const dept = departments.find((d) => d.id === deptId);
     setFormData((prev) => ({
       ...prev,
       departmentId: deptId,
       departmentName: dept ? dept.name : '',
+      departmentIds: deptId ? [deptId] : [],
     }));
+  };
+
+  // Handle Doctor multi-department checkbox toggle
+  const handleDoctorDeptToggle = (deptId: string) => {
+    setFormData((prev) => {
+      const current = prev.departmentIds ?? (prev.departmentId ? [prev.departmentId] : []);
+      let updated: string[];
+      if (current.includes(deptId)) {
+        // Don't remove if it's the only one
+        if (current.length <= 1) return prev;
+        updated = current.filter((id) => id !== deptId);
+      } else {
+        updated = [...current, deptId];
+      }
+      // Primary = first in list
+      const dept = departments.find((d) => d.id === updated[0]);
+      return {
+        ...prev,
+        departmentIds: updated,
+        departmentId: updated[0] ?? prev.departmentId,
+        departmentName: dept?.name ?? prev.departmentName,
+      };
+    });
   };
 
   // Handle portal change -> auto-select first matching role
@@ -519,29 +544,78 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
                 )}
               </div>
 
-              {/* Department */}
-              <div>
-                <label className="block text-xs font-semibold text-[#52665e] mb-1">
-                  Department <span className="text-red-500">*</span>
-                </label>
-                <select
-                  value={formData.departmentId}
-                  onChange={(e) => handleDepartmentChange(e.target.value)}
-                  className={`w-full px-3 py-2 bg-[#f6f8f7] border rounded-lg text-xs text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#129b70]/20 ${
-                    errors.departmentId ? 'border-red-500' : 'border-[#e2eae5] focus:border-[#129b70]'
-                  }`}
-                >
-                  <option value="">Select Hospital Department</option>
-                  {activeDepartments.map((dept) => (
-                    <option key={dept.id} value={dept.id}>
-                      {dept.name} ({dept.code})
-                    </option>
-                  ))}
-                </select>
-                {errors.departmentId && (
-                  <p className="text-[10px] text-red-500 mt-1">{errors.departmentId}</p>
-                )}
-              </div>
+              {/* Department — single select for non-Doctors, multi-checkbox grid for Doctors */}
+              {formData.staffCategory === 'Doctor' ? (
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-[#52665e] mb-1.5">
+                    Clinical Departments <span className="text-red-500">*</span>
+                    <span className="ml-2 text-[10px] font-normal text-[#8b9e95]">Select all departments this doctor works in</span>
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {activeDepartments.map((dept) => {
+                      const selectedIds = formData.departmentIds ?? (formData.departmentId ? [formData.departmentId] : []);
+                      const isChecked = selectedIds.includes(dept.id);
+                      const isPrimary = selectedIds[0] === dept.id;
+                      return (
+                        <label
+                          key={dept.id}
+                          className={`flex items-start gap-2 p-2.5 rounded-lg border cursor-pointer transition-all ${
+                            isChecked
+                              ? 'bg-[#effaf5] border-[#129b70] text-[#0a6b4d]'
+                              : 'bg-[#f6f8f7] border-[#e2eae5] text-[#52665e] hover:border-[#129b70]/50'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => handleDoctorDeptToggle(dept.id)}
+                            className="mt-0.5 rounded border-[#e2eae5] text-[#129b70] focus:ring-[#129b70]"
+                          />
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-semibold leading-tight truncate">{dept.name}</div>
+                            <div className="text-[10px] text-[#8b9e95] font-mono">{dept.code}</div>
+                            {isPrimary && isChecked && (
+                              <span className="text-[9px] font-bold text-[#129b70] bg-[#d4f5e9] px-1 py-0.5 rounded">Primary</span>
+                            )}
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {(formData.departmentIds ?? []).length > 0 && (
+                    <p className="text-[10px] text-[#52665e] mt-1.5">
+                      ✓ {(formData.departmentIds ?? []).length} department{(formData.departmentIds ?? []).length > 1 ? 's' : ''} selected
+                      {(formData.departmentIds ?? []).length > 1 && ` — first selected is Primary`}
+                    </p>
+                  )}
+                  {errors.departmentId && (
+                    <p className="text-[10px] text-red-500 mt-1">{errors.departmentId}</p>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-xs font-semibold text-[#52665e] mb-1">
+                    Department <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={formData.departmentId}
+                    onChange={(e) => handleDepartmentChange(e.target.value)}
+                    className={`w-full px-3 py-2 bg-[#f6f8f7] border rounded-lg text-xs text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#129b70]/20 ${
+                      errors.departmentId ? 'border-red-500' : 'border-[#e2eae5] focus:border-[#129b70]'
+                    }`}
+                  >
+                    <option value="">Select Hospital Department</option>
+                    {activeDepartments.map((dept) => (
+                      <option key={dept.id} value={dept.id}>
+                        {dept.name} ({dept.code})
+                      </option>
+                    ))}
+                  </select>
+                  {errors.departmentId && (
+                    <p className="text-[10px] text-red-500 mt-1">{errors.departmentId}</p>
+                  )}
+                </div>
+              )}
 
               {/* Staff Category */}
               <div>

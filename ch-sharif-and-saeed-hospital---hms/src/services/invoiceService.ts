@@ -1,5 +1,6 @@
 import apiClient from './apiClient';
 import { formatDisplayDate } from '../utils/dateConstants';
+import { getPatientById } from './patientRegistryService';
 
 /**
  * Live Hospital Invoices / Billing service — backed by `/api/v1/invoices*`
@@ -63,6 +64,11 @@ export interface InvoiceDetail extends InvoiceSummary {
   doctorName: string;
   departmentName: string;
   panelName: string;
+  patientPhone?: string;
+  patientGuardian?: string;
+  patientGender?: string;
+  patientAge?: number | string;
+  patientCnic?: string;
 }
 
 function formatTimestamp(iso?: string | null): string {
@@ -72,6 +78,28 @@ function formatTimestamp(iso?: string | null): string {
   const dateStr = formatDisplayDate(d);
   const timeStr = d.toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' });
   return `${dateStr}, ${timeStr}`;
+}
+
+function resolveMrNumber(raw: Record<string, any>): string {
+  if (raw.panelPatient?.mrNumber) return raw.panelPatient.mrNumber;
+  if (raw.selfPayEncounter?.mrNumber) return raw.selfPayEncounter.mrNumber;
+  if (raw.patient?.mrNumber) return raw.patient.mrNumber;
+  if (raw.mrNumber) return raw.mrNumber;
+
+  const encounterId = raw.panelPatientId || raw.selfPayEncounterId || raw.selfPayEncounter?.id;
+  if (encounterId) {
+    const fromRegistry = getPatientById(encounterId);
+    if (fromRegistry?.mrNumber) return fromRegistry.mrNumber;
+  }
+
+  if (raw.selfPayEncounter?.id || raw.selfPayEncounterId) {
+    const rawId = String(raw.selfPayEncounter?.id || raw.selfPayEncounterId || '');
+    const cleanId = rawId.replace(/\D/g, '').slice(0, 5) || rawId.replace(/-/g, '').slice(0, 4).toUpperCase();
+    const year = raw.createdAt ? new Date(raw.createdAt).getFullYear().toString().slice(-2) : '26';
+    return `MR-${year}-${cleanId.padStart(4, '0')}`;
+  }
+
+  return '';
 }
 
 function toInvoiceSummary(raw: Record<string, any>): InvoiceSummary {
@@ -84,7 +112,7 @@ function toInvoiceSummary(raw: Record<string, any>): InvoiceSummary {
     encounterType: raw.encounterType || null,
     status: raw.status,
     patientName: patient?.fullName || 'Walk-in Patient',
-    patientMr: isPanel ? patient?.mrNumber || '' : '— (Self-Pay)',
+    patientMr: resolveMrNumber(raw),
     payerType: isPanel ? 'Corporate / Panel' : 'Self Pay',
     subtotal: Number(raw.subtotal ?? 0),
     discountTotal: Number(raw.discountTotal ?? 0),
@@ -97,11 +125,21 @@ function toInvoiceSummary(raw: Record<string, any>): InvoiceSummary {
 }
 
 function toInvoiceDetail(raw: Record<string, any>): InvoiceDetail {
+  const firstLineDoctor = raw.lines?.[0]?.performedBy?.fullName;
+  const doctor = raw.appointment?.doctor?.fullName || firstLineDoctor || '';
+  const firstLineDept = raw.lines?.[0]?.serviceRate?.departmentName || raw.lines?.[0]?.serviceRate?.category;
+  const department = raw.appointment?.department?.name || firstLineDept || '';
+
   return {
     ...toInvoiceSummary(raw),
-    doctorName: raw.appointment?.doctor?.fullName || '',
-    departmentName: raw.appointment?.department?.name || '',
-    panelName: raw.panelPatient?.corporatePanel?.organizationName || '',
+    doctorName: doctor,
+    departmentName: department,
+    panelName: raw.panelPatient?.corporatePanel?.name || raw.panelPatient?.corporatePanel?.organizationName || '',
+    patientPhone: raw.panelPatient?.primaryPhone || raw.selfPayEncounter?.phone || '',
+    patientGuardian: raw.panelPatient?.fatherGuardianName || raw.selfPayEncounter?.guardianName || '',
+    patientGender: raw.panelPatient?.gender || raw.selfPayEncounter?.gender || '',
+    patientAge: raw.panelPatient?.age || (raw.selfPayEncounter?.dob ? Math.max(0, new Date().getFullYear() - new Date(raw.selfPayEncounter.dob).getFullYear()) : ''),
+    patientCnic: raw.panelPatient?.cnic || raw.selfPayEncounter?.cnicOrPassport || '',
     lines: (raw.lines || []).map((l: any) => ({
       id: l.id,
       serviceName: l.serviceRate?.name || '',

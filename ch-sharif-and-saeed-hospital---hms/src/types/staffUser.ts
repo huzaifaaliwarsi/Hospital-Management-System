@@ -53,6 +53,10 @@ export interface StaffUser {
 
   departmentId: string;
   departmentName: string;
+  // Multi-department assignment (junction table) — populated for all staff;
+  // only meaningful / editable for Doctor-category staff.
+  departmentIds: string[];     // all assigned dept IDs including primary
+  departmentNames: string[];   // display names in same order
 
   staffCategory: StaffCategory;
 
@@ -115,6 +119,8 @@ export interface StaffUserFormValues {
   designation: string;
   departmentId: string;
   departmentName: string;
+  // For Doctor multi-department assignment
+  departmentIds?: string[];
   staffCategory: StaffCategory;
   status: StaffStatus;
 
