@@ -22,6 +22,7 @@ router.get('/departments', view, asyncHandler(c.listDepartments));
 router.post('/departments', create, validate({ body: s.createDepartmentSchema }), asyncHandler(c.createDepartment));
 router.patch('/departments/:id', write, validate({ params: s.idParamsSchema, body: s.updateDepartmentSchema }), asyncHandler(c.updateDepartment));
 router.post('/departments/:id/deactivate', write, validate({ params: s.idParamsSchema }), asyncHandler(c.deactivateDepartment));
+router.delete('/departments/:id', remove, validate({ params: s.idParamsSchema }), asyncHandler(c.deleteDepartment));
 
 // Services & Rates
 router.get('/services-rates', view, asyncHandler(c.listServiceRates));
@@ -67,5 +68,8 @@ router.put('/high-cost-medicine-policy', write, validate({ body: s.updateHighCos
 // Provider Settlements (HMS_V7.2_NEW_REQUIREMENTS.md §2.8)
 router.get('/provider-settlements', view, validate({ query: s.listProviderSettlementsQuerySchema }), asyncHandler(c.listProviderSettlements));
 router.post('/provider-settlements', create, validate({ body: s.createProviderSettlementSchema }), asyncHandler(c.createProviderSettlement));
+
+// Reset Test / Transactional Data (Super Admin only)
+router.post('/reset-transactional-data', remove, asyncHandler(c.resetTransactionalData));
 
 export default router;

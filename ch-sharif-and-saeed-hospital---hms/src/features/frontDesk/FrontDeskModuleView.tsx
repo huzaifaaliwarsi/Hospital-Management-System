@@ -25,7 +25,11 @@ interface FrontDeskModuleViewProps {
  * `payments_receipts` / `discounts` / `refunds` all point at the same
  * `HospitalInvoicesView` + its `InvoiceDetailModal` — a deliberate
  * consolidation (those actions live per-invoice, not as separate global
- * lists) rather than four near-duplicate pages. `panel_billing` follows the
+ * lists) rather than four near-duplicate pages. Each passes its own
+ * `recordFilter` so the list itself only shows invoices that actually have
+ * a payment / discount / refund on them (server-side, via `GET /invoices?
+ * hasPayment|hasDiscount|hasRefund=true` — see `invoices.service.ts`), not
+ * every invoice in the ledger. `panel_billing` follows the
  * same idea: Panel Verification, Contract Resolution, Interim Statement and
  * Remittance all live as tabs on one `PanelBillingView`. Every Front Desk
  * nav item is now real — see HMS_V7.2_NEW_REQUIREMENTS.md's progress log
@@ -42,10 +46,31 @@ export const FrontDeskModuleView: React.FC<FrontDeskModuleViewProps> = ({ module
     case 'billing_pending_discharges':
       return <BillingPendingDischargesView />;
     case 'hospital_invoices':
-    case 'payments_receipts':
-    case 'discounts':
-    case 'refunds':
       return <HospitalInvoicesView />;
+    case 'payments_receipts':
+      return (
+        <HospitalInvoicesView
+          recordFilter="PAID"
+          title="Payments / Receipts"
+          subtitle="Only invoices with at least one payment receipt — open one to record another payment, add a service, or view its receipt trail."
+        />
+      );
+    case 'discounts':
+      return (
+        <HospitalInvoicesView
+          recordFilter="DISCOUNTED"
+          title="Discounts"
+          subtitle="Only invoices a discount has actually been applied to — panel-rule and manual discounts, with the approval threshold enforced by the server."
+        />
+      );
+    case 'refunds':
+      return (
+        <HospitalInvoicesView
+          recordFilter="REFUNDED"
+          title="Refunds"
+          subtitle="Only invoices with a posted refund — open one to see or extend it, always capped at what was actually collected."
+        />
+      );
     case 'outstanding_balances':
       return (
         <HospitalInvoicesView
@@ -57,25 +82,25 @@ export const FrontDeskModuleView: React.FC<FrontDeskModuleViewProps> = ({ module
     case 'opd':
       return (
         <HospitalInvoicesView
-          encounterTypeFilter="OPD"
-          title="OPD Queue"
-          subtitle="Outpatient encounters — invoices raised via Walk-In Intake or an Appointment Check-In."
+          initialQueueFilter="OPD"
+          title="Hospital Invoices — OPD Queue"
+          subtitle="Outpatient encounters — invoices raised via Walk-In Intake or Appointment Check-In."
         />
       );
     case 'observation':
       return (
         <HospitalInvoicesView
-          encounterTypeFilter="OBSERVATION"
-          title="Observation Queue"
-          subtitle="Observation encounters — invoices raised via Walk-In Intake or an Appointment Check-In."
+          initialQueueFilter="OBS"
+          title="Hospital Invoices — Observation Queue"
+          subtitle="Observation encounters — invoices raised via Walk-In Intake or Appointment Check-In."
         />
       );
     case 'emergency':
       return (
         <HospitalInvoicesView
-          encounterTypeFilter="EMERGENCY"
-          title="Emergency Queue"
-          subtitle="Emergency encounters — invoices raised via Walk-In Intake or an Appointment Check-In."
+          initialQueueFilter="ER"
+          title="Hospital Invoices — Emergency Queue"
+          subtitle="Emergency encounters — triage & acute care invoices raised via Walk-In Intake or Check-In."
         />
       );
     case 'my_balance_sheet':

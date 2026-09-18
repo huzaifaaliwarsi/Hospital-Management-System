@@ -43,6 +43,7 @@ import { focusNextField, focusNextFieldOnEnter } from '../../../utils/formNaviga
 export const WalkInIntakeView: React.FC = () => {
   const { currentPath } = useRouter();
   const formContainerRef = useRef<HTMLDivElement>(null);
+  const submitButtonRef = useRef<HTMLButtonElement>(null);
   const doctorDropdownOpenRef = useRef(false);
   const handleEnterNext = (e: React.KeyboardEvent<HTMLElement>) => focusNextFieldOnEnter(e, formContainerRef.current);
 
@@ -93,10 +94,9 @@ export const WalkInIntakeView: React.FC = () => {
   const [doctorId, setDoctorId] = useState('');
   const [notes, setNotes] = useState('');
 
-  // Additional billable services attached on top of the base Observation fee
-  // (e.g. Nebulization, IV Fluids, Injection, Dressing) — only relevant when
-  // Encounter Service is OBSERVATION.
-  const [obsServiceIds, setObsServiceIds] = useState<string[]>([]);
+  // Additional billable services attached to the encounter (Emergency procedures,
+  // Observation care add-ons, Lab tests, Injections, etc.) loaded live from DB.
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
 
   // Live master data
   const [corporatePanels, setCorporatePanels] = useState<CorporatePanel[]>(getActiveCorporatePanels);
@@ -170,7 +170,15 @@ export const WalkInIntakeView: React.FC = () => {
   const getDoctorDepartments = (doc: StaffUser): Department[] => {
     const ids = doc.departmentIds?.length ? doc.departmentIds : doc.departmentId ? [doc.departmentId] : [];
     if (ids.length === 0) return [];
-    return departments.filter((d) => ids.includes(d.id));
+    const list = departments.filter((d) => ids.includes(d.id));
+    if (doc.departmentId) {
+      list.sort((a, b) => {
+        if (a.id === doc.departmentId) return -1;
+        if (b.id === doc.departmentId) return 1;
+        return 0;
+      });
+    }
+    return list;
   };
 
   const handleDoctorChange = (selectedDocId: string) => {
@@ -240,7 +248,14 @@ export const WalkInIntakeView: React.FC = () => {
     if (scoped.length === 0) return departments;
     if (scoped.length > 1 && encounterDeptFlag) {
       const matchingEncounterType = scoped.filter((d) => d[encounterDeptFlag]);
-      if (matchingEncounterType.length > 0) return matchingEncounterType;
+      if (matchingEncounterType.length > 0) {
+        matchingEncounterType.sort((a, b) => {
+          if (a.id === selectedDoctorObj.departmentId) return -1;
+          if (b.id === selectedDoctorObj.departmentId) return 1;
+          return 0;
+        });
+        return matchingEncounterType;
+      }
     }
     return scoped;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -285,33 +300,31 @@ export const WalkInIntakeView: React.FC = () => {
     return null;
   }, [services, encounterType, departmentId]);
 
-  // Services Front Desk can add on top of the base Observation fee — active
-  // services tagged for OBSERVATION or left generic ('NONE'/untagged),
-  // excluding the base fee itself so it's never double-added.
-  const obsAddOnServices = useMemo<HospitalService[]>(() => {
+  // All active billable services in the database that Front Desk can add to the encounter
+  // (Observation services, Emergency procedures, Lab tests, Injections, etc.)
+  // Excludes only the base encounter service itself so the base fee is not duplicated.
+  const additionalBillableServices = useMemo<HospitalService[]>(() => {
     return services.filter(
       (s) =>
         s.status === 'Active' &&
-        s.id !== defaultEncounterService?.id &&
-        (s.encounterType === 'OBSERVATION' || !s.encounterType || s.encounterType === 'NONE')
+        s.id !== defaultEncounterService?.id
     );
   }, [services, defaultEncounterService]);
 
-  const selectedObsServices = useMemo(
-    () => obsAddOnServices.filter((s) => obsServiceIds.includes(s.id)),
-    [obsAddOnServices, obsServiceIds]
+  const selectedAdditionalServices = useMemo(
+    () => additionalBillableServices.filter((s) => selectedServiceIds.includes(s.id)),
+    [additionalBillableServices, selectedServiceIds]
   );
 
-  const obsAddOnTotal = useMemo(
-    () => selectedObsServices.reduce((sum, s) => sum + s.standardRate, 0),
-    [selectedObsServices]
+  const selectedServicesTotal = useMemo(
+    () => selectedAdditionalServices.reduce((sum, s) => sum + s.standardRate, 0),
+    [selectedAdditionalServices]
   );
 
-  // Drop any selected add-on services when the Encounter Service changes away
-  // from OBSERVATION, so a stale selection never silently carries over.
+  // Clear selected add-on services when Encounter Service changes
   useEffect(() => {
-    if (encounterType !== 'OBSERVATION' && obsServiceIds.length > 0) {
-      setObsServiceIds([]);
+    if (selectedServiceIds.length > 0) {
+      setSelectedServiceIds([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [encounterType]);
@@ -332,7 +345,7 @@ export const WalkInIntakeView: React.FC = () => {
     setDepartmentId('');
     setDoctorId('');
     setNotes('');
-    setObsServiceIds([]);
+    setSelectedServiceIds([]);
     setFormError(null);
     setCreatedInvoiceId(null);
   };
@@ -508,19 +521,19 @@ export const WalkInIntakeView: React.FC = () => {
         }
       }
 
-      // Attach any additional Observation services Front Desk selected (e.g.
-      // Nebulization, IV Fluids) — each becomes its own invoice line, so the
-      // amount adds directly onto the OBS invoice total.
-      if (targetInvoiceId && encounterType === 'OBSERVATION' && obsServiceIds.length > 0) {
-        for (const serviceId of obsServiceIds) {
+      // Attach any additional services Front Desk selected (Emergency procedures,
+      // Observation care add-ons, Lab tests, Injections, etc.) — each becomes its
+      // own invoice line, so the amount adds directly onto the encounter invoice total.
+      if (targetInvoiceId && selectedServiceIds.length > 0) {
+        for (const serviceId of selectedServiceIds) {
           try {
             await addServiceLine(targetInvoiceId, {
               serviceRateId: serviceId,
               quantity: 1,
-              performedByStaffId: doctorId,
+              performedByStaffId: doctorId || undefined,
             });
           } catch (srvErr) {
-            console.warn('Could not attach Observation add-on service line:', srvErr);
+            console.warn('Could not attach additional service line:', srvErr);
           }
         }
       }
@@ -864,7 +877,7 @@ export const WalkInIntakeView: React.FC = () => {
               <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-100">
                 <span>Clinical Department:</span>
                 <span className="font-bold text-[#08775A] bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                  ✓ {doctorScopedDepartments[0]?.name || selectedDoctorObj.departmentName || 'General'}
+                  ✓ {departments.find((d) => d.id === departmentId)?.name || doctorScopedDepartments[0]?.name || selectedDoctorObj.departmentName || 'General'}
                 </span>
               </div>
             ) : (
@@ -874,25 +887,37 @@ export const WalkInIntakeView: React.FC = () => {
             )}
           </div>
 
-          {/* 3b. Observation Add-On Services (only shown when Encounter Service is OBSERVATION) */}
-          {encounterType === 'OBSERVATION' && (
+          {/* 3b. Additional Services / Procedures Selection (OBSERVATION, EMERGENCY, OPD) */}
+          {encounterType && (
             <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-2 animate-in fade-in">
               <MultiSelect
-                label="Observation Services (optional)"
-                placeholder="Add Nebulization, IV Fluids, Injection, etc."
-                options={obsAddOnServices.map((s) => ({
-                  label: `${s.name} — ${formatPKR(s.standardRate)}`,
+                label={
+                  encounterType === 'OBSERVATION'
+                    ? 'Observation Services (optional)'
+                    : encounterType === 'EMERGENCY'
+                    ? 'Emergency Services & Procedures (optional)'
+                    : 'Additional Services / Tests (optional)'
+                }
+                placeholder={
+                  encounterType === 'OBSERVATION'
+                    ? 'Select Observation Services (IV, Nebulization, Labs, Injections, etc.)...'
+                    : encounterType === 'EMERGENCY'
+                    ? 'Select Emergency Services (ECG, Stitches, Injections, Labs, Oxygen, etc.)...'
+                    : 'Select Additional Services (Labs, Procedures, Injections, etc.)...'
+                }
+                options={additionalBillableServices.map((s) => ({
+                  label: `${s.name}${s.category ? ` (${s.category})` : ''} — ${formatPKR(s.standardRate)}`,
                   value: s.id,
                 }))}
-                value={obsServiceIds}
-                onChange={setObsServiceIds}
+                value={selectedServiceIds}
+                onChange={setSelectedServiceIds}
               />
-              {selectedObsServices.length > 0 && (
+              {selectedAdditionalServices.length > 0 && (
                 <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-100">
                   <span>
-                    {selectedObsServices.length} service{selectedObsServices.length > 1 ? 's' : ''} added
+                    {selectedAdditionalServices.length} service{selectedAdditionalServices.length > 1 ? 's' : ''} added
                   </span>
-                  <span className="font-bold text-[#08775A]">+ {formatPKR(obsAddOnTotal)}</span>
+                  <span className="font-bold text-[#08775A]">+ {formatPKR(selectedServicesTotal)}</span>
                 </div>
               )}
             </div>
@@ -946,9 +971,9 @@ export const WalkInIntakeView: React.FC = () => {
                   </div>
                 </div>
 
-                {selectedObsServices.length > 0 && (
+                {selectedAdditionalServices.length > 0 && (
                   <div className="pt-2 border-t border-emerald-200/70 space-y-1">
-                    {selectedObsServices.map((s) => (
+                    {selectedAdditionalServices.map((s) => (
                       <div key={s.id} className="flex items-center justify-between text-[11px] text-slate-600">
                         <span>{s.name}</span>
                         <span className="font-semibold">{formatPKR(s.standardRate)}</span>
@@ -959,7 +984,7 @@ export const WalkInIntakeView: React.FC = () => {
                         Total {payerType === 'Self Pay' ? 'Patient Fee' : 'Billable'}
                       </span>
                       <span className="font-black text-[#08775A]">
-                        {formatPKR(defaultEncounterService.standardRate + obsAddOnTotal)}
+                        {formatPKR(defaultEncounterService.standardRate + selectedServicesTotal)}
                       </span>
                     </div>
                   </div>
@@ -976,23 +1001,53 @@ export const WalkInIntakeView: React.FC = () => {
           </div>
 
           {/* 5. Notes & Clinical Vitals */}
-          <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
-            <Textarea
-              label="Notes & Clinical Vitals (optional)"
-              placeholder="e.g. Presenting complaints, BP, pulse, referral notes..."
+          <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label htmlFor="intake-notes-textarea" className="text-xs font-semibold text-slate-700">
+                Notes &amp; Clinical Vitals (optional)
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  submitButtonRef.current?.focus();
+                  submitButtonRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }}
+                className="inline-flex items-center gap-1 text-[11px] font-bold text-[#08775A] hover:text-[#065f46] hover:underline cursor-pointer"
+                title="Click or press Enter in notes to jump straight to Register button"
+              >
+                <span>Jump to Register Button ➔</span>
+              </button>
+            </div>
+            <textarea
+              id="intake-notes-textarea"
               rows={2}
+              placeholder="e.g. Presenting complaints, BP, pulse, referral notes... (Press Enter to jump to Register button)"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  submitButtonRef.current?.focus();
+                  submitButtonRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }
+              }}
+              className="w-full rounded-lg border bg-white px-3 py-2 text-xs text-slate-900 placeholder:text-slate-400 transition-colors focus:outline-hidden focus:ring-2 focus:ring-[#129b70]/20 focus:border-[#129b70] border-slate-300"
             />
+            <div className="flex items-center justify-between text-[10.5px] text-slate-400 px-0.5">
+              <span>Press <strong className="font-semibold text-slate-600">Enter</strong> to jump straight to Register button</span>
+              <span>Shift+Enter for multi-line</span>
+            </div>
           </div>
 
           {/* 6. Action Submit Card */}
           <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs space-y-2.5">
             <button
+              ref={submitButtonRef}
+              id="btn-register-encounter"
               type="button"
               onClick={handleCreateEncounter}
               disabled={isSaving || !encounterType || !defaultEncounterService}
-              className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] rounded-xl shadow-sm disabled:opacity-60 transition-all cursor-pointer"
+              className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] focus:bg-[#065f46] focus:ring-4 focus:ring-[#08775A]/40 focus:outline-none rounded-xl shadow-sm disabled:opacity-60 transition-all cursor-pointer"
             >
               <Receipt className="h-4 w-4" />
               {isSaving
@@ -1002,12 +1057,12 @@ export const WalkInIntakeView: React.FC = () => {
                   : !defaultEncounterService
                     ? `Missing ${encounterType} Service Configuration`
                     : payerType === 'Self Pay'
-                      ? `Register & Create ${encounterType} Invoice (${formatPKR(defaultEncounterService.standardRate + obsAddOnTotal)})`
+                      ? `Register & Create ${encounterType} Invoice (${formatPKR(defaultEncounterService.standardRate + selectedServicesTotal)})`
                       : `Register Panel & Create ${encounterType} Invoice`}
             </button>
             <div className="flex items-center justify-between text-[11px] text-slate-400 px-1">
               <span>⚡ Fast-billing front desk</span>
-              <span>Press Enter to advance</span>
+              <span>Press Enter to register</span>
             </div>
           </div>
         </div>

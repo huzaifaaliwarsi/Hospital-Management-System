@@ -5,24 +5,36 @@ import { LoadingState, ErrorState, EmptyState } from '../../components/common/St
 import { PanelBadge } from '../../components/common/PanelBadge';
 import { DepartmentService } from '../../services/departmentService';
 import { StaffUserService } from '../../services/staffUserService';
-import { fetchAdmissions, AdmissionRecord } from '../../services/admissionService';
+import { fetchAdmissions, AdmissionRecord, AdmissionStatus } from '../../services/admissionService';
+import { formatPKR } from '../../utils/formatters';
 import { AdmissionDetailModal } from './AdmissionDetailModal';
 
 interface ActiveAdmissionsViewProps {
   title: string;
   subtitle: string;
   initialTab?: 'overview' | 'services' | 'medication' | 'pharmacy' | 'bed' | 'clearances';
+  /** Pass 'ALL' for every admission status (Super Admin/Admin oversight); defaults to 'ACTIVE' for the Admission Portal's own inpatient-stay screens. */
+  statusFilter?: AdmissionStatus | 'ALL';
+  /** Shows an Estimated Amount column — on for Super Admin/Admin oversight pages where the billed amount is the point. */
+  showAmountColumn?: boolean;
 }
 
 /**
- * Shared "every Active admission" list, reused for `active_admissions`,
+ * Shared "every admission" list, reused for `active_admissions`,
  * `hospital_services_procedures`, `medication_fulfillment_mode`,
- * `pharmacy_requests`, and `discharge_clearances` — same consolidation
- * pattern as Front Desk's `HospitalInvoicesView`. Every row opens
- * `AdmissionDetailModal`, pre-selected to the tab relevant to whichever
- * nav item was clicked, but every tab stays reachable.
+ * `pharmacy_requests`, `discharge_clearances` (Admission Portal, ACTIVE-only)
+ * and Super Admin/Admin's `admission_overview` (all statuses, with amounts)
+ * — same consolidation pattern as Front Desk's `HospitalInvoicesView`. Every
+ * row opens `AdmissionDetailModal`, pre-selected to the tab relevant to
+ * whichever nav item was clicked, but every tab stays reachable.
  */
-export const ActiveAdmissionsView: React.FC<ActiveAdmissionsViewProps> = ({ title, subtitle, initialTab = 'overview' }) => {
+export const ActiveAdmissionsView: React.FC<ActiveAdmissionsViewProps> = ({
+  title,
+  subtitle,
+  initialTab = 'overview',
+  statusFilter = 'ACTIVE',
+  showAmountColumn = false,
+}) => {
   const departments = useMemo(() => DepartmentService.getDepartments().filter((d) => d.status === 'Active'), []);
   const doctors = useMemo(() => StaffUserService.getStaffUsers().filter((s) => s.staffCategory === 'Doctor' && s.status === 'ACTIVE'), []);
 
@@ -39,7 +51,8 @@ export const ActiveAdmissionsView: React.FC<ActiveAdmissionsViewProps> = ({ titl
     setIsLoading(true);
     setLoadError(null);
     try {
-      setAdmissions(await fetchAdmissions({ status: 'ACTIVE' }));
+      const params = statusFilter !== 'ALL' ? { status: statusFilter as AdmissionStatus } : undefined;
+      setAdmissions(await fetchAdmissions(params));
     } catch (err: any) {
       setLoadError(err?.message || 'Failed to load admissions.');
     } finally {
@@ -49,7 +62,8 @@ export const ActiveAdmissionsView: React.FC<ActiveAdmissionsViewProps> = ({ titl
 
   useEffect(() => {
     load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter]);
 
   const filtered = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
@@ -69,6 +83,11 @@ export const ActiveAdmissionsView: React.FC<ActiveAdmissionsViewProps> = ({ titl
     setSearchTerm('');
   };
 
+  const totalEstimatedAmount = useMemo(
+    () => filtered.reduce((sum, a) => sum + (a.estimatedAmount || 0), 0),
+    [filtered],
+  );
+
   return (
     <div className="space-y-5 animate-in fade-in duration-150">
       <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex items-center gap-2.5">
@@ -80,6 +99,21 @@ export const ActiveAdmissionsView: React.FC<ActiveAdmissionsViewProps> = ({ titl
           <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>
         </div>
       </div>
+
+      {showAmountColumn && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+            <span className="text-[11px] font-medium text-slate-500">Admissions in View</span>
+            <div className="text-2xl font-black text-slate-900 mt-0.5">{filtered.length}</div>
+            <span className="text-[10px] text-slate-400">Matching current criteria</span>
+          </div>
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+            <span className="text-[11px] font-medium text-slate-500">Estimated Billing (PKR)</span>
+            <div className="text-lg font-bold text-[#08775A] mt-0.5 font-mono">{formatPKR(totalEstimatedAmount)}</div>
+            <span className="text-[10px] text-slate-400">Sum of estimated admission amounts</span>
+          </div>
+        </div>
+      )}
 
       <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -117,17 +151,26 @@ export const ActiveAdmissionsView: React.FC<ActiveAdmissionsViewProps> = ({ titl
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
         {isLoading ? (
-          <LoadingState message="Loading active admissions…" />
+          <LoadingState message="Loading admissions…" />
         ) : loadError ? (
           <ErrorState message={loadError} onRetry={load} />
         ) : filtered.length === 0 ? (
-          <EmptyState title="No active admissions" description="No admissions match the selected filters." />
+          <EmptyState title="No admissions found" description="No admissions match the selected filters." />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
-                  {['Admission #', 'Patient', 'Department', 'Doctor', 'Bed', 'Medication Mode', 'Actions'].map((h) => (
+                  {[
+                    'Admission #',
+                    'Patient',
+                    'Department',
+                    'Doctor',
+                    'Bed',
+                    'Medication Mode',
+                    ...(showAmountColumn ? ['Status', 'Estimated Amount'] : []),
+                    'Actions',
+                  ].map((h) => (
                     <th key={h} className="text-left px-3 py-2.5 font-semibold text-slate-600 whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -155,6 +198,16 @@ export const ActiveAdmissionsView: React.FC<ActiveAdmissionsViewProps> = ({ titl
                         {a.medicationMode === 'HOSPITAL_MANAGED' ? 'Hospital Managed' : 'Self'}
                       </span>
                     </td>
+                    {showAmountColumn && (
+                      <>
+                        <td className="px-3 py-2.5 whitespace-nowrap">
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">{a.status}</span>
+                        </td>
+                        <td className="px-3 py-2.5 whitespace-nowrap font-mono font-semibold text-[#08775A]">
+                          {formatPKR(a.estimatedAmount || 0)}
+                        </td>
+                      </>
+                    )}
                     <td className="px-3 py-2.5 whitespace-nowrap">
                       <button
                         type="button"

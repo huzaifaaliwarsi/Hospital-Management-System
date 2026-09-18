@@ -26,6 +26,12 @@ export const createPlannedAdmissionSchema = z.object({
   estimatedAmount: z.coerce.number().nonnegative().optional(),
   medicationMode: z.enum(['SELF', 'HOSPITAL_MANAGED']).default('SELF'),
   notes: z.string().optional(),
+  // v7.2 §"Admission from Front Desk" step 6 — optional advance collected
+  // at creation time, before any department invoice exists (§2.2). Same
+  // shape as `appointments.schemas.ts`'s `bookAppointmentSchema`.
+  advanceAmount: z.coerce.number().nonnegative().optional(),
+  paymentMethod: z.enum(['CASH', 'CARD', 'BANK', 'ONLINE']).optional().default('CASH'),
+  paymentReference: z.string().optional(),
 }).refine(
   (data) => data.panelPatientId || data.selfPayEncounterId || data.newSelfPayPatient,
   { message: 'Either panelPatientId, selfPayEncounterId, or newSelfPayPatient is required' },

@@ -16,6 +16,8 @@ import { StaffUserService } from '../../../services/staffUserService';
 import { Modal } from '../../../components/common/Modal';
 import { Select, NumberInput, TextInput } from '../../../components/forms/FormControls';
 
+export type InvoiceModalAction = 'addLine' | 'discount' | 'payment' | 'refund';
+
 interface InvoiceDetailModalProps {
   invoiceId: string;
   onClose: () => void;
@@ -25,11 +27,14 @@ interface InvoiceDetailModalProps {
    * straight into the Collect Payment form — same one-continuous-flow
    * pattern as patient registration — with the amount pre-filled to the
    * full balance due, and shows a prominent "Done" action once paid.
+   * Superseded by `initialAction` when both are given.
    */
   autoOpenPayment?: boolean;
+  /** Opens straight into a specific action form — used by the row-level "Add Service" / "Refund" quick actions on the invoices list. */
+  initialAction?: InvoiceModalAction;
 }
 
-type ActiveAction = null | 'addLine' | 'discount' | 'payment' | 'refund';
+type ActiveAction = null | InvoiceModalAction;
 
 const PAYMENT_METHODS: { label: string; value: PaymentMethod }[] = [
   { label: 'Cash', value: 'CASH' },
@@ -46,12 +51,20 @@ const PAYMENT_METHODS: { label: string; value: PaymentMethod }[] = [
  * Desk's real billing surface today is this one invoice model — see
  * `services/invoiceService.ts`'s header comment on the pending §2.2 split).
  */
-export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceId, onClose, onChanged, autoOpenPayment }) => {
+export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
+  invoiceId,
+  onClose,
+  onChanged,
+  autoOpenPayment,
+  initialAction,
+}) => {
   const toast = useToast();
   const [invoice, setInvoice] = useState<InvoiceDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [activeAction, setActiveAction] = useState<ActiveAction>(autoOpenPayment ? 'payment' : null);
+  const [activeAction, setActiveAction] = useState<ActiveAction>(
+    initialAction ?? (autoOpenPayment ? 'payment' : null),
+  );
   const [actionError, setActionError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [paymentAmountTouched, setPaymentAmountTouched] = useState(false);
@@ -230,6 +243,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceI
   };
 
   const isFullyPaid = invoice?.status === 'PAID';
+  const isVoid = invoice?.status === 'VOID';
 
   // Pressing Enter when invoice is fully paid closes modal to immediately take next patient
   useEffect(() => {
@@ -246,8 +260,13 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceI
 
   const handleRefund = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!invoice) return;
     if (!refundAmount || refundAmount <= 0) {
       setActionError('Enter a refund amount greater than zero.');
+      return;
+    }
+    if (Number(refundAmount) > invoice.paidTotal) {
+      setActionError(`Refund amount cannot exceed PKR ${invoice.paidTotal.toFixed(2)} already collected on this invoice.`);
       return;
     }
     if (!refundReason.trim()) {
@@ -514,14 +533,28 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceI
                 <div className="flex flex-wrap gap-2 text-xs">
                   {activeAction === null && (
                     <>
-                      <button
-                        type="button"
-                        onClick={() => setActiveAction('addLine')}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-md transition-colors"
-                      >
-                        <Plus className="h-3 w-3" /> Add Service
-                      </button>
-                      {isFullyPaid && (
+                      {!isVoid && (
+                        <button
+                          type="button"
+                          onClick={() => setActiveAction('addLine')}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-md transition-colors"
+                        >
+                          <Plus className="h-3 w-3" /> Add Service
+                        </button>
+                      )}
+                      {!isVoid && !isFullyPaid && (
+                        <button
+                          type="button"
+                          onClick={() => setActiveAction('discount')}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-md transition-colors"
+                        >
+                          <Tag className="h-3 w-3" /> Discount
+                        </button>
+                      )}
+                      {/* Refunds can only ever return money actually collected — matches the backend's
+                          `refundAmount <= invoice.paidTotal` guard (invoices.service.ts), so this is
+                          available as soon as anything has been paid, not only once fully paid. */}
+                      {invoice.paidTotal > 0 && (
                         <button
                           type="button"
                           onClick={() => setActiveAction('refund')}
@@ -716,8 +749,20 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoiceI
           {/* Refund Form */}
           {activeAction === 'refund' && (
             <form onSubmit={handleRefund} className="space-y-3 p-3 bg-rose-50/60 rounded-xl border border-rose-200 animate-in fade-in">
+              <div className="flex items-center justify-between text-[11px] font-semibold text-rose-800">
+                <span>Refundable (amount collected so far)</span>
+                <span className="font-mono font-bold">{formatPKR(invoice.paidTotal)}</span>
+              </div>
               <div className="grid grid-cols-2 gap-3">
-                <NumberInput label="Refund Amount (PKR)" required min={0} value={refundAmount} onChange={(e) => setRefundAmount(e.target.value === '' ? '' : Number(e.target.value))} />
+                <NumberInput
+                  label="Refund Amount (PKR)"
+                  required
+                  min={0}
+                  max={invoice.paidTotal}
+                  value={refundAmount}
+                  onChange={(e) => setRefundAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                  hint={`Max refundable: ${formatPKR(invoice.paidTotal)}`}
+                />
                 <Select label="Method" options={PAYMENT_METHODS} value={refundMethod} onChange={(e) => setRefundMethod(e.target.value as PaymentMethod)} />
               </div>
               <TextInput label="Reason" required placeholder="Mandatory reason for refund" value={refundReason} onChange={(e) => setRefundReason(e.target.value)} />

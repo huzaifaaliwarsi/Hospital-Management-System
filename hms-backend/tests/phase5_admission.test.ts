@@ -147,7 +147,77 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
       );
       // Confirms bed status was NOT updated to OCCUPIED during planned booking
       expect(prisma.bed.update).not.toHaveBeenCalled();
-      expect(result.status).toBe('PLANNED');
+      expect(result.admission.status).toBe('PLANNED');
+      // No advanceAmount was passed, so no receipt should be created.
+      expect(result.advanceReceipt).toBeNull();
+      expect(prisma.paymentReceipt.create).not.toHaveBeenCalled();
+    });
+
+    it('posts a real advance receipt + cashier ledger entry when advanceAmount is collected at creation', async () => {
+      (prisma.admissionRecord.create as any).mockResolvedValue({
+        id: 'adm-002',
+        admissionNumber: 'ADM-TEST-002',
+        departmentId,
+        doctorStaffId,
+        status: 'PLANNED',
+        medicationMode: 'SELF',
+      });
+      (prisma.paymentReceipt.create as any).mockResolvedValue({
+        id: 'receipt-adv-1',
+        receiptNumber: 'REC-TEST-001',
+        amount: new Decimal(20000),
+        method: 'CASH',
+      });
+
+      const result = await admissionService.createPlannedAdmission(
+        {
+          departmentId,
+          doctorStaffId,
+          medicationMode: 'SELF',
+          advanceAmount: 20000,
+          paymentMethod: 'CASH',
+          notes: 'Patient requested a ground-floor ward.',
+          newSelfPayPatient: {
+            fullName: 'Kamran Akmal',
+            phone: '03211234567',
+          },
+        } as any,
+        staffUserId,
+      );
+
+      // Intake notes must actually be persisted on the AdmissionRecord, not silently dropped.
+      expect(prisma.admissionRecord.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            notes: 'Patient requested a ground-floor ward.',
+          }),
+        }),
+      );
+
+      expect(prisma.paymentReceipt.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            amount: expect.any(Decimal),
+            method: 'CASH',
+            admissionRecordId: 'adm-002',
+            collectedById: staffUserId,
+          }),
+        }),
+      );
+      // Universal Cashier balance ledger (§4.9) must record the same collection.
+      expect(prisma.userCashBalance.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            portalUserId: staffUserId,
+            direction: 'IN',
+            category: 'COLLECTION',
+            isPhysicalCash: true,
+            paymentReceiptId: 'receipt-adv-1',
+          }),
+        }),
+      );
+      expect(result.advanceReceipt).not.toBeNull();
+      expect(result.advanceReceipt?.receiptNumber).toBe('REC-TEST-001');
     });
 
     it('raises payment request to Billing queue without collecting cash in admission', async () => {
@@ -253,6 +323,35 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
       );
 
       expect(updated.status).toBe('ACTIVE');
+    });
+
+    it('appends Check-In notes to any existing intake notes instead of overwriting them', async () => {
+      (prisma.admissionRecord.findUnique as any).mockResolvedValue({
+        id: 'adm-003',
+        status: 'PLANNED',
+        medicationMode: 'SELF',
+        dischargeClearances: [],
+        notes: 'Intake: patient allergic to penicillin.',
+      });
+      (prisma.bed.findUnique as any).mockResolvedValue({ id: bedId1, status: 'AVAILABLE' });
+      (prisma.bed.update as any).mockResolvedValue({ id: bedId1, status: 'OCCUPIED' });
+      (prisma.admissionRecord.update as any).mockResolvedValue({ id: 'adm-003', status: 'ACTIVE' });
+      (prisma.hospitalInvoice.findFirst as any).mockResolvedValue(null);
+      (prisma.hospitalInvoice.create as any).mockResolvedValue({ id: 'inv-adm-003', sourceType: 'ADMISSION' });
+
+      await admissionService.checkInAdmission(
+        'adm-003',
+        { bedId: bedId1, notes: 'Arrived via wheelchair.' },
+        staffUserId,
+      );
+
+      expect(prisma.admissionRecord.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            notes: 'Intake: patient allergic to penicillin.\n[Check-In] Arrived via wheelchair.',
+          }),
+        }),
+      );
     });
 
     it('transfers patient to new bed: frees old bed to AVAILABLE, occupies new bed, and logs transfer history', async () => {
@@ -592,7 +691,14 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
         staffUserId,
       );
 
-      expect(prisma.pharmacyClearance.create).toHaveBeenCalled();
+      // Request-level notes must actually be persisted, not silently dropped.
+      expect(prisma.pharmacyClearance.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            notes: 'Post-op analgesics',
+          }),
+        }),
+      );
       expect(req.status).toBe('REQUESTED');
     });
   });

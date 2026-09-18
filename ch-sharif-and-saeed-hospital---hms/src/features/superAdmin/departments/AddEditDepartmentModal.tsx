@@ -469,7 +469,7 @@ export const AddEditDepartmentModal: React.FC<AddEditDepartmentModalProps> = ({
                               {h.name}
                             </div>
                             <div className="text-[10px] text-slate-500">
-                              {h.designation} • {h.userId}
+                              {h.designation} • {h.department}
                             </div>
                           </div>
                           {formData.headUserId === h.userId && (

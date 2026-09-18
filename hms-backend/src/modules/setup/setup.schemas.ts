@@ -74,7 +74,7 @@ export const createDepartmentSchema = z.object({
   code: z.string().max(20).optional(),
   name: z.string().min(1).max(150),
   description: z.string().max(2000).optional(),
-  headStaffId: z.string().uuid().optional(),
+  headStaffId: z.string().uuid().optional().nullable(),
   departmentType: z.enum([
     'CLINICAL',
     'SURGICAL',

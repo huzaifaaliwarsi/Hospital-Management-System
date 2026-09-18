@@ -88,11 +88,12 @@ export async function generateReceiptNumber(tx?: PrismaClientOrTx): Promise<stri
 }
 
 /**
- * Short MR Number: e.g. `MR-26-0001`
+ * Professional Medical Record Number (MRN): e.g. `MR-000001`
+ * Lifelong patient identifier without year prefix.
  */
 export async function generateMrNumber(tx?: PrismaClientOrTx): Promise<string> {
-  const prefix = `MR-${currentYear2()}-`;
-  return generateSequentialId(tx, 'panelPatient', 'mrNumber', prefix, 4);
+  const prefix = 'MR-';
+  return generateSequentialId(tx, 'panelPatient', 'mrNumber', prefix, 6);
 }
 
 /**

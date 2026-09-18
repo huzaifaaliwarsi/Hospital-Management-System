@@ -93,6 +93,13 @@ export const CANONICAL_HOSPITAL_MANAGEMENT_NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    id: 'hm_patient_management',
+    title: 'PATIENT MANAGEMENT',
+    items: [
+      { id: 'patient_registry', label: 'Patient Registry', icon: 'UserCheck' },
+    ],
+  },
+  {
     id: 'hm_hospital_management',
     title: 'HOSPITAL MANAGEMENT',
     items: [
@@ -127,7 +134,6 @@ export const CANONICAL_HOSPITAL_MANAGEMENT_NAV_GROUPS: NavGroup[] = [
     title: 'PANEL MANAGEMENT',
     items: [
       { id: 'corporate_panels', label: 'Corporate Panels', icon: 'Briefcase' },
-      { id: 'panel_patient_registry', label: 'Panel Patient Registry', icon: 'ClipboardList' },
       { id: 'panel_discounts', label: 'Panel Discounts', icon: 'Tag' },
       { id: 'panel_billing', label: 'Panel Billing', icon: 'Receipt' },
     ],
@@ -216,9 +222,6 @@ export const FRONT_DESK_NAV_GROUPS: NavGroup[] = [
       { id: 'new_admission', label: 'New Admission', icon: 'BedDouble', badge: 'v7.2', badgeVariant: 'success' },
       { id: 'appointments', label: 'Appointments', icon: 'Clock' },
       { id: 'walk_in_intake', label: 'Walk-In / Encounter Intake', icon: 'Users' },
-      { id: 'opd', label: 'OPD', icon: 'Stethoscope', badge: 'Active' },
-      { id: 'observation', label: 'Observation', icon: 'Eye' },
-      { id: 'emergency', label: 'Emergency', icon: 'AlertTriangle', badge: 'Triage', badgeVariant: 'danger' },
     ],
   },
   {

@@ -54,6 +54,10 @@ export interface InvoiceSummary {
   total: number;
   paidTotal: number;
   balanceDue: number;
+  /** True when at least one reversed (refund) receipt has been posted against this invoice. */
+  hasRefund: boolean;
+  /** Sum of reversed receipt amounts — what has actually been refunded, not the current balance. */
+  refundedAmount: number;
   createdAt: string;
   createdAtIso: string;
 }
@@ -94,9 +98,8 @@ function resolveMrNumber(raw: Record<string, any>): string {
 
   if (raw.selfPayEncounter?.id || raw.selfPayEncounterId) {
     const rawId = String(raw.selfPayEncounter?.id || raw.selfPayEncounterId || '');
-    const cleanId = rawId.replace(/\D/g, '').slice(0, 5) || rawId.replace(/-/g, '').slice(0, 4).toUpperCase();
-    const year = raw.createdAt ? new Date(raw.createdAt).getFullYear().toString().slice(-2) : '26';
-    return `MR-${year}-${cleanId.padStart(4, '0')}`;
+    const cleanId = rawId.replace(/\D/g, '').slice(0, 6) || rawId.replace(/-/g, '').slice(0, 6).toUpperCase();
+    return `MR-${cleanId.padStart(6, '0')}`;
   }
 
   return '';
@@ -105,6 +108,8 @@ function resolveMrNumber(raw: Record<string, any>): string {
 function toInvoiceSummary(raw: Record<string, any>): InvoiceSummary {
   const isPanel = !!raw.panelPatientId;
   const patient = raw.panelPatient || raw.selfPayEncounter;
+  const receipts: any[] = Array.isArray(raw.paymentReceipts) ? raw.paymentReceipts : [];
+  const reversedReceipts = receipts.filter((r) => r.isReversed);
   return {
     id: raw.id,
     invoiceNumber: raw.invoiceNumber,
@@ -119,6 +124,8 @@ function toInvoiceSummary(raw: Record<string, any>): InvoiceSummary {
     total: Number(raw.total ?? 0),
     paidTotal: Number(raw.paidTotal ?? 0),
     balanceDue: Number(raw.balanceDue ?? Math.max(0, Number(raw.total ?? 0) - Number(raw.paidTotal ?? 0))),
+    hasRefund: reversedReceipts.length > 0,
+    refundedAmount: reversedReceipts.reduce((sum, r) => sum + Math.abs(Number(r.amount ?? 0)), 0),
     createdAt: formatTimestamp(raw.createdAt),
     createdAtIso: raw.createdAt || '',
   };
@@ -168,8 +175,14 @@ function toInvoiceDetail(raw: Record<string, any>): InvoiceDetail {
 export async function fetchInvoices(params?: {
   status?: InvoiceStatus;
   encounterType?: EncounterType;
+  sourceType?: 'APPOINTMENT' | 'WALK_IN' | 'ADMISSION';
   date?: string;
   search?: string;
+  /** Server-side record-type filters — hold across the whole table, not just the latest-100 default window. */
+  hasDiscount?: boolean;
+  hasRefund?: boolean;
+  hasPayment?: boolean;
+  hasOutstandingBalance?: boolean;
 }): Promise<InvoiceSummary[]> {
   const res = await apiClient.get<{ data: Record<string, any>[] }>('/invoices', { params });
   return res.data.data.map(toInvoiceSummary);

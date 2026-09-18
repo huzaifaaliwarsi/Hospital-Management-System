@@ -127,12 +127,11 @@ function toPatientFromPanel(raw: Record<string, any>): Patient {
 function toPatientFromSelfPay(raw: Record<string, any>, seq?: number): Patient {
   const cnicOrPassport: string = raw.cnicOrPassport || '';
   const looksLikeCnic = isValidCnic(cnicOrPassport);
-  const year = raw.createdAt ? new Date(raw.createdAt).getFullYear() : new Date().getFullYear();
   const mrNumber =
     raw.mrNumber ||
     (seq != null
-      ? `MR-${year}-${String(seq).padStart(6, '0')}`
-      : `MR-${year}-${String(raw.id || '').replace(/-/g, '').slice(0, 6).toUpperCase()}`);
+      ? `MR-${String(seq).padStart(6, '0')}`
+      : `MR-${String(raw.id || '').replace(/-/g, '').slice(0, 6).toUpperCase()}`);
 
   return {
     id: raw.id,
@@ -175,7 +174,7 @@ export async function fetchPatients(): Promise<Patient[]> {
   // Extract all existing numeric sequences used by panel patients to prevent collisions
   const usedNumbers = new Set<number>();
   for (const p of panelPatients) {
-    const match = p.mrNumber?.match(/MR-\d{4}-(\d+)/);
+    const match = p.mrNumber?.match(/MR-(?:\d{2,4}-)?(\d+)/);
     if (match) usedNumbers.add(parseInt(match[1], 10));
   }
 
@@ -221,7 +220,7 @@ export function getPatientByMr(mrNumber: string): Patient | undefined {
 /** Preview only — the real, race-free MR number is assigned server-side on create. */
 export function generateNextMrNumber(): string {
   const totalCount = cachedPatients.length;
-  return `MR-${new Date().getFullYear()}-${String(totalCount + 1).padStart(6, '0')}`;
+  return `MR-${String(totalCount + 1).padStart(6, '0')}`;
 }
 
 export function checkDuplicates(

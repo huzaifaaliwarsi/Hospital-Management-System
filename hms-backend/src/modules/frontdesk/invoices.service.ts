@@ -599,13 +599,26 @@ export const invoicesService = {
       ];
     }
 
+    // Record-type filters (Discounts / Refunds / Payments-Receipts nav items) —
+    // applied in the WHERE clause so they hold across the whole table, not
+    // just whatever lands inside the `take: 100` most-recent window below.
+    if (query.hasDiscount === 'true') where.discountTotal = { gt: 0 };
+    if (query.hasRefund === 'true') where.paymentReceipts = { some: { isReversed: true } };
+    if (query.hasPayment === 'true') where.paymentReceipts = { some: {} };
+    // Outstanding = still owed: UNPAID or PARTIALLY_PAID only (PAID/VOID have
+    // no remaining balance). Only applied when the caller didn't already ask
+    // for a specific status — an explicit `status` filter always wins.
+    if (query.hasOutstandingBalance === 'true' && !query.status) {
+      where.status = { in: ['UNPAID', 'PARTIALLY_PAID'] };
+    }
+
     return prisma.hospitalInvoice.findMany({
       where,
       include: {
         panelPatient: { select: { id: true, fullName: true, mrNumber: true } },
         selfPayEncounter: { select: { id: true, fullName: true } },
         lines: { select: { id: true, lineNet: true, quantity: true } },
-        paymentReceipts: { select: { id: true, receiptNumber: true, amount: true, method: true } },
+        paymentReceipts: { select: { id: true, receiptNumber: true, amount: true, method: true, isReversed: true } },
       },
       orderBy: { createdAt: 'desc' },
       take: 100,

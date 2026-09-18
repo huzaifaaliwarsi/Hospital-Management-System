@@ -137,8 +137,8 @@ function toBackendPayload(payload: DepartmentFormValues): Record<string, unknown
     fulfillmentOwnership: payload.fulfillmentOwnership === 'Outsourced' ? 'OUTSOURCED' : 'INTERNAL',
     outsourcedProviderId: payload.fulfillmentOwnership === 'Outsourced' && payload.outsourcedProviderId ? payload.outsourcedProviderId : null,
     isActive: payload.status === 'Active',
+    headStaffId: isUuid(payload.headUserId) ? payload.headUserId : null,
   };
-  if (isUuid(payload.headUserId)) body.headStaffId = payload.headUserId;
   return body;
 }
 
@@ -300,15 +300,10 @@ export class DepartmentService {
     return updated;
   }
 
-  /**
-   * The backend deliberately offers no hard-delete for departments (same
-   * data-integrity stance as Staff) — this always guides to deactivation
-   * rather than silently succeeding against an endpoint that doesn't exist.
-   */
-  static async deleteDepartment(_id: string, _existingDepartments: Department[]): Promise<void> {
-    throw new Error(
-      'Departments cannot be permanently deleted for data-integrity reasons. Please deactivate it instead.'
-    );
+  /** `DELETE /setup/departments/:id` */
+  static async deleteDepartment(id: string, _existingDepartments?: Department[]): Promise<void> {
+    await apiClient.delete(`/setup/departments/${id}`);
+    cachedDepartments = cachedDepartments.filter((d) => d.id !== id);
   }
 
   /** Persists one already-validated import row against the real backend. */

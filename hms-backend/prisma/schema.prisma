@@ -1258,6 +1258,13 @@ model PaymentReceipt {
   // matching in `appointments.service.ts`'s check-in allocation step.
   appointmentId             String?                  @map("appointment_id")
   appointment               Appointment?             @relation(fields: [appointmentId], references: [id])
+  // Same pattern as `appointmentId` above, for the admission-creation
+  // advance (04/23 PDFs §"Receive optional advance") — no department
+  // invoice exists yet at that point (§2.2 invoices are created on
+  // check-in / first service), so this is the only place that advance can
+  // be recorded as a real receipt.
+  admissionRecordId         String?                  @map("admission_record_id")
+  admissionRecord           AdmissionRecord?         @relation(fields: [admissionRecordId], references: [id])
   amount                    Decimal                  @db.Decimal(14, 2)
   method                    PaymentMethod
   reference                 String?
@@ -1359,6 +1366,10 @@ model AdmissionRecord {
   admittedAt         DateTime?         @map("admitted_at")
   dischargedAt       DateTime?         @map("discharged_at")
   estimatedAmount    Decimal?          @map("estimated_amount") @db.Decimal(14, 2)
+  // Intake notes captured at admission creation (04/23 PDFs' "notes" field on
+  // the New Admission form); Check-In's own notes are appended here too
+  // rather than overwriting, so neither moment's note is lost.
+  notes              String?           @db.Text
 
   hospitalInvoices      HospitalInvoice[]
   bedTransfers          BedTransferHistory[]
@@ -1367,6 +1378,7 @@ model AdmissionRecord {
   dischargeClearances   DualDischargeClearance[]
   pharmacyClearances    PharmacyClearance[]
   dischargeSummary      DischargeSummary?
+  paymentReceipts       PaymentReceipt[]
 
   createdAt     DateTime    @default(now()) @map("created_at")
   createdById   String?     @map("created_by")
@@ -1756,6 +1768,9 @@ model PharmacyClearance {
   admissionRecord       AdmissionRecord         @relation(fields: [admissionRecordId], references: [id])
   status                PharmacyClearanceStatus @default(REQUESTED)
   idempotencyKey        String                  @unique @map("idempotency_key")
+  // Request-level notes (distinct from each line's own `notes`) — the
+  // Pharmacy Requests tab collects this but it was never persisted anywhere.
+  notes                 String?                 @db.Text
 
   lines             PharmacyClearanceLine[]
   pharmacyDispenses PharmacyDispense[]

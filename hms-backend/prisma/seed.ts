@@ -56,7 +56,7 @@ async function seedDepartments() {
       supportsOpd: true,
       supportsAdmission: true,
     },
-    { code: 'ER', name: 'Emergency', departmentType: 'CLINICAL' as const, supportsOpd: true },
+    { code: 'ER', name: 'Emergency', departmentType: 'CLINICAL' as const, supportsEmergency: true },
   ];
 
   const departments: Record<string, { id: string }> = {};
