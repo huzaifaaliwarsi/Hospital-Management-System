@@ -787,25 +787,31 @@ model HighCostMedicinePolicy {
   @@map("high_cost_medicine_policy")
 }
 
+enum ServiceStream {
+  HOSPITAL
+  LAB
+}
+
 /// §4.2 "Services & Rates" (renamed `ServiceRate` for this phase; = §6.5 `services`).
 model ServiceRate {
-  id                        String     @id @default(uuid())
-  code                      String     @unique
+  id                        String        @id @default(uuid())
+  code                      String        @unique
   name                      String
   description               String?
-  departmentId              String     @map("department_id")
-  department                Department @relation(fields: [departmentId], references: [id])
+  departmentId              String        @map("department_id")
+  department                Department    @relation(fields: [departmentId], references: [id])
   category                  String?
-  billingUnit               String     @map("billing_unit")
-  standardRate              Decimal    @map("standard_rate") @db.Decimal(14, 2)
-  panelEligible             Boolean    @default(false) @map("panel_eligible")
-  discountAllowed           Boolean    @default(true) @map("discount_allowed")
-  manualRateOverrideAllowed Boolean    @default(false) @map("manual_rate_override_allowed")
-  isActive                  Boolean    @default(true) @map("is_active")
-  encounterType             String?    @default("NONE") @map("encounter_type")
-  isDefaultEncounterService Boolean    @default(false) @map("is_default_encounter_service")
-  statusChangedAt           DateTime?  @map("status_changed_at")
-  statusChangedBy           String?    @map("status_changed_by")
+  billingUnit               String        @map("billing_unit")
+  standardRate              Decimal       @map("standard_rate") @db.Decimal(14, 2)
+  panelEligible             Boolean       @default(false) @map("panel_eligible")
+  discountAllowed           Boolean       @default(true) @map("discount_allowed")
+  manualRateOverrideAllowed Boolean       @default(false) @map("manual_rate_override_allowed")
+  isActive                  Boolean       @default(true) @map("is_active")
+  encounterType             String?       @default("NONE") @map("encounter_type")
+  isDefaultEncounterService Boolean       @default(false) @map("is_default_encounter_service")
+  serviceStream             ServiceStream @default(HOSPITAL) @map("service_stream")
+  statusChangedAt           DateTime?     @map("status_changed_at")
+  statusChangedBy           String?       @map("status_changed_by")
 
   invoiceLines       InvoiceLineItem[]
   panelDiscountRules PanelDiscountRule[]

@@ -78,6 +78,14 @@ function toHospitalService(raw: Record<string, any>): HospitalService {
     status: raw.isActive ? 'Active' : 'Inactive',
     encounterType: (raw.encounterType as any) || 'NONE',
     isDefaultEncounterService: !!raw.isDefaultEncounterService,
+    serviceStream: raw.serviceStream || (
+      raw.category === 'Laboratory' ||
+      raw.category === 'Diagnostic' ||
+      raw.category === 'Radiology' ||
+      (raw.department?.name || '').toLowerCase().includes('lab')
+        ? 'LAB'
+        : 'HOSPITAL'
+    ),
     linkedInvoiceCount: raw.linkedInvoiceCount ?? 0,
     linkedPanelRuleCount: raw.linkedPanelRuleCount ?? 0,
     createdBy: raw.createdByLabel || 'System',
@@ -104,6 +112,7 @@ function toBackendPayload(values: ServiceFormValues): Record<string, unknown> {
     isActive: values.status === 'Active',
     encounterType: values.encounterType || 'NONE',
     isDefaultEncounterService: !!values.isDefaultEncounterService,
+    serviceStream: values.serviceStream || 'HOSPITAL',
   };
 }
 

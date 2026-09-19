@@ -120,6 +120,7 @@ export const createServiceRateSchema = z.object({
   isActive: z.boolean().optional(),
   encounterType: z.enum(['NONE', 'OPD', 'OBSERVATION', 'EMERGENCY']).optional(),
   isDefaultEncounterService: z.boolean().optional(),
+  serviceStream: z.enum(['HOSPITAL', 'LAB']).optional(),
 });
 export type CreateServiceRateBody = z.infer<typeof createServiceRateSchema>;
 export const updateServiceRateSchema = createServiceRateSchema.partial();

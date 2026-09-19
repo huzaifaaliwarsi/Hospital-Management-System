@@ -457,13 +457,25 @@ export const setupService = {
       }
     >,
   ) {
-    return rows.map((row) => ({
-      ...row,
-      linkedInvoiceCount: row._count.invoiceLines,
-      linkedPanelRuleCount: row._count.panelDiscountRules,
-      createdByLabel: formatActorFromRelation(row.createdByUser),
-      updatedByLabel: formatActorFromRelation(row.updatedByUser),
-    }));
+    return rows.map((row) => {
+      const category = (row.category as string) || '';
+      const fallbackStream =
+        category.toLowerCase().includes('lab') ||
+        category.toLowerCase().includes('diagnostic') ||
+        category.toLowerCase().includes('radiology')
+          ? 'LAB'
+          : 'HOSPITAL';
+      const serviceStream = (row.serviceStream as string) || fallbackStream;
+
+      return {
+        ...row,
+        serviceStream,
+        linkedInvoiceCount: row._count.invoiceLines,
+        linkedPanelRuleCount: row._count.panelDiscountRules,
+        createdByLabel: formatActorFromRelation(row.createdByUser),
+        updatedByLabel: formatActorFromRelation(row.updatedByUser),
+      };
+    });
   },
 
   async listServiceRates(activeOnly = false) {
@@ -485,7 +497,12 @@ export const setupService = {
     }
     try {
       const created = await prisma.serviceRate.create({
-        data: { ...body, code, createdById },
+        data: {
+          ...body,
+          code,
+          createdById,
+          serviceStream: body.serviceStream ?? 'HOSPITAL',
+        },
         include: this.serviceRateInclude,
       });
       return this.decorateServiceRates([created as any])[0];

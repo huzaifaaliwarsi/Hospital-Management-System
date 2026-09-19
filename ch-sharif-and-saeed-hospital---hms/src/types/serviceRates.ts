@@ -53,6 +53,9 @@ export interface HospitalService {
   encounterType?: 'NONE' | 'OPD' | 'OBSERVATION' | 'EMERGENCY';
   isDefaultEncounterService?: boolean;
 
+  // Stream Architecture (Hospital Services vs Laboratory & Diagnostics)
+  serviceStream?: 'HOSPITAL' | 'LAB';
+
   // Mock linked usage counts for deletion safeguards
   linkedInvoiceCount?: number;
   linkedPanelRuleCount?: number;
@@ -72,6 +75,7 @@ export interface ServiceFilterState {
   category: string;
   panelEligible: string; // 'All' | 'Yes' | 'No'
   status: string; // 'All' | 'Active' | 'Inactive'
+  serviceStream?: string; // 'All' | 'HOSPITAL' | 'LAB'
 }
 
 export interface ServiceFormValues {
@@ -88,6 +92,7 @@ export interface ServiceFormValues {
   status: ServiceStatus;
   encounterType?: 'NONE' | 'OPD' | 'OBSERVATION' | 'EMERGENCY';
   isDefaultEncounterService?: boolean;
+  serviceStream?: 'HOSPITAL' | 'LAB';
 }
 
 export interface ServiceImportRow {

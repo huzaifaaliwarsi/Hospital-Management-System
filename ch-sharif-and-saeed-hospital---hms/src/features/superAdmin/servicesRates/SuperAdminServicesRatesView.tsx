@@ -16,7 +16,8 @@ import {
   ServiceFormValues,
 } from '../../../types/serviceRates';
 import { ServiceRatesService, fetchServices } from '../../../services/serviceRatesService';
-import { DepartmentService } from '../../../services/departmentService';
+import { Department } from '../../../types/department';
+import { DepartmentService, fetchDepartments } from '../../../services/departmentService';
 import { ServicesKPIBar } from './ServicesKPIBar';
 import { ServicesFilterBar } from './ServicesFilterBar';
 import { ServicesTable } from './ServicesTable';
@@ -31,6 +32,7 @@ export const SuperAdminServicesRatesView: React.FC = () => {
 
   // Master State
   const [services, setServices] = useState<HospitalService[]>([]);
+  const [departments, setDepartments] = useState<Department[]>(() => DepartmentService.getDepartments());
   const [filters, setFilters] = useState<ServiceFilterState>({
     searchTerm: '',
     departmentId: 'All',
@@ -65,8 +67,12 @@ export const SuperAdminServicesRatesView: React.FC = () => {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const list = await fetchServices();
+      const [list, depts] = await Promise.all([
+        fetchServices(),
+        fetchDepartments(),
+      ]);
       setServices(list);
+      setDepartments(depts);
     } catch (err: any) {
       setLoadError(err?.message || 'Failed to load services from the server.');
     } finally {
@@ -76,10 +82,6 @@ export const SuperAdminServicesRatesView: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, []);
-
-  const departments = useMemo(() => {
-    return DepartmentService.getDepartments();
   }, []);
 
   const filteredServices = useMemo(() => {
