@@ -148,14 +148,12 @@ export const SuperAdminServicesRatesView: React.FC = () => {
   };
 
   const handleDeletePrompt = (service: HospitalService) => {
-    const isLinked =
-      (service.linkedInvoiceCount ?? 0) > 0 ||
-      (service.linkedPanelRuleCount ?? 0) > 0;
+    const isLinked = (service.linkedInvoiceCount ?? 0) > 0;
 
     if (isLinked) {
       showToast(
         'warning',
-        `Cannot delete "${service.name}": It has ${service.linkedInvoiceCount ?? 0} billing invoice(s) and ${service.linkedPanelRuleCount ?? 0} panel agreement(s). Deactivate it instead.`
+        `Cannot delete "${service.name}": It has ${service.linkedInvoiceCount ?? 0} billing invoice(s). Deactivate it instead to preserve financial history.`
       );
       return;
     }
@@ -389,7 +387,7 @@ export const SuperAdminServicesRatesView: React.FC = () => {
               </p>
             </div>
             <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
-              This action cannot be undone. Only services with zero linked invoices and zero panel agreements can be deleted.
+              This action cannot be undone. Services with posted invoices cannot be permanently deleted and must be deactivated instead.
             </div>
             <div className="flex items-center justify-end gap-2 pt-2">
               <button

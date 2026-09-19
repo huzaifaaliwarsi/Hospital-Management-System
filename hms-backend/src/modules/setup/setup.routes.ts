@@ -29,6 +29,7 @@ router.get('/services-rates', view, asyncHandler(c.listServiceRates));
 router.post('/services-rates', create, validate({ body: s.createServiceRateSchema }), asyncHandler(c.createServiceRate));
 router.patch('/services-rates/:id', write, validate({ params: s.idParamsSchema, body: s.updateServiceRateSchema }), asyncHandler(c.updateServiceRate));
 router.post('/services-rates/:id/deactivate', write, validate({ params: s.idParamsSchema }), asyncHandler(c.deactivateServiceRate));
+router.delete('/services-rates/:id', remove, validate({ params: s.idParamsSchema }), asyncHandler(c.deleteServiceRate));
 
 // Wards / Rooms / Beds
 router.get('/wards-rooms-beds', view, asyncHandler(c.listWardHierarchy));

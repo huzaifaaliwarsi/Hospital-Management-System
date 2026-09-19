@@ -51,6 +51,10 @@ export const setupController = {
   deactivateServiceRate: async (req: Request, res: Response) => {
     res.json({ data: await setupService.deactivateServiceRate(req.params.id as string, actorId(req)) });
   },
+  deleteServiceRate: async (req: Request, res: Response) => {
+    await setupService.deleteServiceRate(req.params.id as string);
+    res.status(204).send();
+  },
 
   // Wards / Rooms / Beds
   listWardHierarchy: async (_req: Request, res: Response) => {

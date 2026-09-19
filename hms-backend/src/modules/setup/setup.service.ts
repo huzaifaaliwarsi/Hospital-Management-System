@@ -534,6 +534,48 @@ export const setupService = {
     return this.decorateServiceRates([updated as any])[0];
   },
 
+  async deleteServiceRate(id: string) {
+    const service = (await this.assertExists('serviceRate', id)) as any;
+
+    const invoiceLineCount = await prisma.invoiceLineItem.count({
+      where: { serviceRateId: id },
+    });
+
+    if (invoiceLineCount > 0) {
+      throw new ConflictError(
+        `Cannot delete service "${service.name}": It is used in ${invoiceLineCount} posted billing invoice(s). You can deactivate it instead.`
+      );
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.panelDiscountRule.deleteMany({
+        where: { serviceRateId: id },
+      });
+
+      await tx.doctorCommissionRule.deleteMany({
+        where: { serviceRateId: id },
+      });
+
+      const linkedAppointments = await tx.appointment.count({
+        where: { serviceRateId: id },
+      });
+      if (linkedAppointments > 0) {
+        const fallbackService = await tx.serviceRate.findFirst({
+          where: { id: { not: id }, isActive: true },
+          orderBy: { createdAt: 'asc' },
+        });
+        if (fallbackService) {
+          await tx.appointment.updateMany({
+            where: { serviceRateId: id },
+            data: { serviceRateId: fallbackService.id },
+          });
+        }
+      }
+
+      await tx.serviceRate.delete({ where: { id } });
+    });
+  },
+
   // ── Wards / Rooms / Beds (Department → Ward → Room → Bed, §4.2) ─────
   wardHierarchyInclude: {
     department: { select: { id: true, name: true, code: true } },

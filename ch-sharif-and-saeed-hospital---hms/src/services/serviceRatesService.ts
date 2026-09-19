@@ -187,9 +187,16 @@ export class ServiceRatesService {
     return updated;
   }
 
-  /** The backend has no hard-delete for service rates (same data-integrity stance as Departments). */
-  static async deleteService(_id: string): Promise<{ success: boolean; message?: string }> {
-    return { success: false, message: 'Services cannot be permanently deleted for billing-history integrity. Deactivate it instead.' };
+  /** Permanently deletes an unbilled service from the database. */
+  static async deleteService(id: string): Promise<{ success: boolean; message?: string }> {
+    try {
+      await apiClient.delete(`/setup/services-rates/${id}`);
+      cachedServices = cachedServices.filter((s) => s.id !== id);
+      return { success: true };
+    } catch (err: any) {
+      const msg = err?.response?.data?.error?.message || err?.message || 'Failed to delete service.';
+      return { success: false, message: msg };
+    }
   }
 
   static filterServices(services: HospitalService[], filters: ServiceFilterState): HospitalService[] {

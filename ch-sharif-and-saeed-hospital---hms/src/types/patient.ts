@@ -36,6 +36,7 @@ export interface Patient {
   fullName: string;
   fatherGuardianName: string;
   guardianRelation: GuardianRelation;
+  guardianCnic?: string;
 
   dateOfBirth?: string; // YYYY-MM-DD
   age: number;
@@ -84,6 +85,7 @@ export interface PatientFormData {
   fullName: string;
   fatherGuardianName: string;
   guardianRelation: GuardianRelation;
+  guardianCnic?: string;
 
   dateOfBirth: string;
   age: number | string;

@@ -95,10 +95,11 @@ export const NewAdmissionView: React.FC = () => {
   const [fullName, setFullName] = useState('');
   const [fatherGuardianName, setFatherGuardianName] = useState('');
   const [guardianRelation, setGuardianRelation] = useState<GuardianRelation>('Father');
+  const [guardianCnic, setGuardianCnic] = useState('');
   const [primaryPhone, setPrimaryPhone] = useState('');
   const [age, setAge] = useState('');
   const [gender, setGender] = useState<PatientGender>('Male');
-  const [cnic, setCnic] = useState('');
+  const [address, setAddress] = useState('');
   const [payerType, setPayerType] = useState<PayerType>('Self Pay');
   const [panelId, setPanelId] = useState('');
   const [panelMemberId, setPanelMemberId] = useState('');
@@ -132,10 +133,11 @@ export const NewAdmissionView: React.FC = () => {
     setFullName('');
     setFatherGuardianName('');
     setGuardianRelation('Father');
+    setGuardianCnic('');
     setPrimaryPhone('');
     setAge('');
     setGender('Male');
-    setCnic('');
+    setAddress('');
     setPayerType('Self Pay');
     setPanelId('');
     setPanelMemberId('');
@@ -155,7 +157,11 @@ export const NewAdmissionView: React.FC = () => {
       return;
     }
     if (!fatherGuardianName.trim()) {
-      setFormError('Father / Guardian Name is required.');
+      setFormError('Guardian Name is required.');
+      return;
+    }
+    if (guardianCnic.trim() && !isValidCnic(normalizeCnic(guardianCnic))) {
+      setFormError('Father / Guardian CNIC must follow the Pakistani format: XXXXX-XXXXXXX-X (13 digits).');
       return;
     }
     if (!primaryPhone.trim()) {
@@ -169,10 +175,6 @@ export const NewAdmissionView: React.FC = () => {
     const ageNum = Number(age);
     if (!age.trim() || isNaN(ageNum) || ageNum < 0 || ageNum > 130) {
       setFormError('Please enter a valid age in years.');
-      return;
-    }
-    if (cnic.trim() && !isValidCnic(normalizeCnic(cnic))) {
-      setFormError('CNIC must follow the Pakistani format: XXXXX-XXXXXXX-X (13 digits).');
       return;
     }
     if (payerType === 'Corporate / Panel') {
@@ -207,28 +209,29 @@ export const NewAdmissionView: React.FC = () => {
           fullName: fullName.trim(),
           fatherGuardianName: fatherGuardianName.trim(),
           guardianRelation,
+          guardianCnic: guardianCnic.trim() ? normalizeCnic(guardianCnic) : '',
           dateOfBirth: dob,
           age: ageNum,
           ageIsEstimated: true,
           gender,
-          cnic: normalizeCnic(cnic) || '',
+          cnic: '',
           passportNumber: '',
           primaryPhone: normalizePhone(primaryPhone),
           alternatePhone: '',
           email: '',
-          addressLine1: '',
+          addressLine1: address.trim(),
           addressLine2: '',
-          city: 'Lahore',
-          province: 'Punjab',
+          city: 'Karachi',
+          province: 'Sindh',
           country: 'Pakistan',
           bloodGroup: 'Unknown',
           payerType,
           panelId: payerType === 'Corporate / Panel' ? panelId : '',
           panelName: payerType === 'Corporate / Panel' ? corporatePanels.find((p) => p.id === panelId)?.name || '' : '',
           panelMemberId: payerType === 'Corporate / Panel' ? panelMemberId.trim() : '',
-          emergencyContactName: '',
-          emergencyContactRelation: '',
-          emergencyContactPhone: '',
+          emergencyContactName: fatherGuardianName.trim(),
+          emergencyContactRelation: guardianRelation,
+          emergencyContactPhone: guardianCnic.trim() ? normalizeCnic(guardianCnic) : normalizePhone(primaryPhone),
           status: 'ACTIVE',
         },
         currentUser
@@ -243,8 +246,16 @@ export const NewAdmissionView: React.FC = () => {
       const activePatient = regRes.patient;
 
       // 4. Create Admission
+      const extraNotesParts = [
+        formValues.notes.trim(),
+        guardianCnic.trim() ? `Guardian CNIC: ${normalizeCnic(guardianCnic)}` : '',
+        guardianRelation ? `Guardian Relation: ${guardianRelation}` : '',
+        address.trim() ? `Address: ${address.trim()}` : '',
+      ].filter(Boolean);
+
       const admissionPayload: CreateAdmissionFormValues = {
         ...formValues,
+        notes: extraNotesParts.join(' | '),
         panelPatientId: activePatient.payerType === 'Corporate / Panel' ? activePatient.id : '',
         selfPayEncounterId: activePatient.payerType === 'Self Pay' ? activePatient.id : '',
       };
@@ -291,6 +302,20 @@ export const NewAdmissionView: React.FC = () => {
                 <span className="text-[10px] text-slate-500 uppercase block">Payer Type</span>
                 <span className="font-semibold text-slate-900">{createdAdmission.payerType}</span>
               </div>
+              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                <span className="text-[10px] text-slate-500 uppercase block">Guardian &amp; Relation</span>
+                <span className="font-semibold text-slate-900">{fatherGuardianName} ({guardianRelation})</span>
+              </div>
+              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                <span className="text-[10px] text-slate-500 uppercase block">Father / Guardian CNIC</span>
+                <span className="font-semibold font-mono text-slate-900">{guardianCnic ? normalizeCnic(guardianCnic) : 'Not provided'}</span>
+              </div>
+              {address && (
+                <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 col-span-2">
+                  <span className="text-[10px] text-slate-500 uppercase block">Residential Address</span>
+                  <span className="font-semibold text-slate-900">{address}</span>
+                </div>
+              )}
               <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
                 <span className="text-[10px] text-slate-500 uppercase block">Department</span>
                 <span className="font-semibold text-slate-900">{createdAdmission.departmentName}</span>
@@ -437,14 +462,14 @@ export const NewAdmissionView: React.FC = () => {
                 2. Patient Information
               </label>
               <span className="text-[11px] text-[#08775A] font-semibold bg-[#effaf5] border border-emerald-200 px-2 py-0.5 rounded">
-                Inline Registration
+                Admission Slip Details
               </span>
             </div>
 
             {/* Name & Guardian */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <TextInput
-                label="Full Name"
+                label="Patient Full Name"
                 required
                 placeholder="Patient's legal name"
                 value={fullName}
@@ -454,9 +479,9 @@ export const NewAdmissionView: React.FC = () => {
               <div className="grid grid-cols-3 gap-2">
                 <div className="col-span-2">
                   <TextInput
-                    label="Father / Guardian Name"
+                    label="Guardian Name"
                     required
-                    placeholder="Father / Husband / Guardian"
+                    placeholder="Father / Guardian name"
                     value={fatherGuardianName}
                     onChange={(e) => setFatherGuardianName(e.target.value.toUpperCase())}
                     onKeyDown={handleEnterNext}
@@ -483,8 +508,15 @@ export const NewAdmissionView: React.FC = () => {
               </div>
             </div>
 
-            {/* Phone, Age, CNIC */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {/* Guardian CNIC & Phone */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <CNICInput
+                label="Father / Guardian CNIC"
+                placeholder="XXXXX-XXXXXXX-X"
+                value={guardianCnic}
+                onChange={(e) => setGuardianCnic(e.target.value)}
+                onKeyDown={handleEnterNext}
+              />
               <TextInput
                 label="Contact Phone"
                 required
@@ -493,46 +525,52 @@ export const NewAdmissionView: React.FC = () => {
                 onChange={(e) => setPrimaryPhone(e.target.value)}
                 onKeyDown={handleEnterNext}
               />
-              <TextInput
-                label="Age (Years)"
-                required
-                type="number"
-                min="0"
-                max="130"
-                placeholder="e.g. 35"
-                value={age}
-                onChange={(e) => setAge(e.target.value)}
-                onKeyDown={handleEnterNext}
-              />
-              <CNICInput
-                label="CNIC (optional)"
-                placeholder="XXXXX-XXXXXXX-X"
-                value={cnic}
-                onChange={(e) => setCnic(e.target.value)}
-                onKeyDown={handleEnterNext}
-              />
             </div>
 
-            {/* Gender Selection */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                Gender <span className="text-rose-500">*</span>
-              </label>
-              <div className="flex gap-2">
-                {(['Male', 'Female', 'Other / Not Specified'] as PatientGender[]).map((g) => (
-                  <button
-                    key={g}
-                    type="button"
-                    onClick={() => setGender(g)}
-                    className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg border transition-all cursor-pointer ${
-                      gender === g
-                        ? 'bg-[#08775A] text-white border-[#08775A] shadow-xs'
-                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                    }`}
-                  >
-                    {g === 'Other / Not Specified' ? 'Other' : g}
-                  </button>
-                ))}
+            {/* Age, Gender, Residential Address */}
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-start">
+              <div className="sm:col-span-3">
+                <TextInput
+                  label="Age (Years)"
+                  required
+                  type="number"
+                  min="0"
+                  max="130"
+                  placeholder="e.g. 35"
+                  value={age}
+                  onChange={(e) => setAge(e.target.value)}
+                  onKeyDown={handleEnterNext}
+                />
+              </div>
+              <div className="sm:col-span-4">
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Gender <span className="text-rose-500">*</span>
+                </label>
+                <div className="flex gap-1">
+                  {(['Male', 'Female', 'Other / Not Specified'] as PatientGender[]).map((g) => (
+                    <button
+                      key={g}
+                      type="button"
+                      onClick={() => setGender(g)}
+                      className={`flex-1 py-2 text-xs font-semibold rounded-lg border transition-all cursor-pointer text-center ${
+                        gender === g
+                          ? 'bg-[#08775A] text-white border-[#08775A] shadow-xs'
+                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      {g === 'Other / Not Specified' ? 'Other' : g}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="sm:col-span-5">
+                <TextInput
+                  label="Residential Address"
+                  placeholder="e.g. Landhi Hospital Karachi"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  onKeyDown={handleEnterNext}
+                />
               </div>
             </div>
 

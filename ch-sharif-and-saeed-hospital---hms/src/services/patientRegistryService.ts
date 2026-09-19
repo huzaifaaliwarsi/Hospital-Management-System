@@ -85,12 +85,15 @@ function formatIsoDate(iso?: string | null): string {
 function toPatientFromPanel(raw: Record<string, any>): Patient {
   const cnicOrPassport: string = raw.cnicOrPassport || '';
   const looksLikeCnic = isValidCnic(cnicOrPassport);
+  const phoneCnicMatch = (raw.emergencyContactPhone || '').match(/CNIC:\s*([0-9-]{13,15})/i);
+  const guardianCnic = phoneCnicMatch ? phoneCnicMatch[1] : undefined;
   return {
     id: raw.id,
     mrNumber: raw.mrNumber,
     fullName: raw.fullName,
     fatherGuardianName: raw.guardianName || '',
     guardianRelation: (raw.guardianRelation as GuardianRelation) || 'Father',
+    guardianCnic,
     dateOfBirth: formatIsoDate(raw.dob) || undefined,
     age: raw.dob ? calculateAgeFromDob(raw.dob) : 0,
     ageIsEstimated: !raw.dob,
@@ -133,12 +136,18 @@ function toPatientFromSelfPay(raw: Record<string, any>, seq?: number): Patient {
       ? `MR-${String(seq).padStart(6, '0')}`
       : `MR-${String(raw.id || '').replace(/-/g, '').slice(0, 6).toUpperCase()}`);
 
+  const rawGuardian: string = raw.guardianName || '';
+  const cnicMatch = rawGuardian.match(/\[CNIC:\s*([0-9-]{13,15})\]/i);
+  const guardianCnic = cnicMatch ? cnicMatch[1] : undefined;
+  const cleanGuardianName = rawGuardian.replace(/\s*\[CNIC:.*?\]/i, '').trim();
+
   return {
     id: raw.id,
     mrNumber,
     fullName: raw.fullName,
-    fatherGuardianName: raw.guardianName || '',
+    fatherGuardianName: cleanGuardianName,
     guardianRelation: 'Father',
+    guardianCnic,
     dateOfBirth: formatIsoDate(raw.dob) || undefined,
     age: raw.dob ? calculateAgeFromDob(raw.dob) : 0,
     ageIsEstimated: !raw.dob,
@@ -353,9 +362,11 @@ function toBackendPanelPayload(formData: PatientFormData): Record<string, unknow
     province: formData.province?.trim() || undefined,
     country: formData.country?.trim() || undefined,
     bloodGroup: formData.bloodGroup && formData.bloodGroup !== 'Unknown' ? formData.bloodGroup : undefined,
-    emergencyContactName: formData.emergencyContactName?.trim() || undefined,
-    emergencyContactRelation: formData.emergencyContactRelation?.trim() || undefined,
-    emergencyContactPhone: formData.emergencyContactPhone ? normalizePhone(formData.emergencyContactPhone) : undefined,
+    emergencyContactName: formData.emergencyContactName?.trim() || formData.fatherGuardianName?.trim() || undefined,
+    emergencyContactRelation: formData.emergencyContactRelation?.trim() || formData.guardianRelation || undefined,
+    emergencyContactPhone: formData.guardianCnic
+      ? `CNIC: ${normalizeCnic(formData.guardianCnic)}`
+      : (formData.emergencyContactPhone ? normalizePhone(formData.emergencyContactPhone) : undefined),
     status: formData.status || 'ACTIVE',
     corporatePanelId: formData.panelId,
     panelMemberId: formData.panelMemberId?.trim() || undefined,
@@ -364,9 +375,13 @@ function toBackendPanelPayload(formData: PatientFormData): Record<string, unknow
 
 function toBackendSelfPayPayload(formData: PatientFormData): Record<string, unknown> {
   const address = [formData.addressLine1, formData.addressLine2, formData.city, formData.province, formData.country].filter(Boolean).join(', ');
+  let guardianName = formData.fatherGuardianName?.trim() || undefined;
+  if (guardianName && formData.guardianCnic) {
+    guardianName = `${guardianName} [CNIC: ${normalizeCnic(formData.guardianCnic)}]`;
+  }
   return {
     fullName: formData.fullName.trim(),
-    guardianName: formData.fatherGuardianName?.trim() || undefined,
+    guardianName,
     gender: formData.gender || undefined,
     dob: formData.dateOfBirth || undefined,
     cnicOrPassport: normalizeCnic(formData.cnic) || formData.passportNumber?.trim() || undefined,
