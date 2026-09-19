@@ -224,11 +224,29 @@ export const invoicesService = {
     return prisma.$transaction(async (tx) => {
       const invoice = await tx.hospitalInvoice.findUnique({
         where: { id: invoiceId },
-        include: { lines: true },
+        include: { lines: true, department: true },
       });
 
       if (!invoice) throw new NotFoundError('Invoice not found');
       if (invoice.lines.length === 0) throw new ValidationError('Cannot discount an empty invoice');
+
+      const deptName = (invoice.department?.name || '').toLowerCase();
+      const deptCode = (invoice.department?.code || '').toLowerCase();
+      const isOutsourcedOrLabOrPharm =
+        invoice.department?.fulfillmentOwnership === 'OUTSOURCED' ||
+        invoice.department?.outsourcedProviderId !== null ||
+        invoice.department?.pharmacyRelated ||
+        invoice.department?.departmentType === 'PHARMACY' ||
+        deptName.includes('lab') ||
+        deptName.includes('pharmacy') ||
+        deptCode.includes('lab') ||
+        deptCode.includes('pharm');
+
+      if (isOutsourcedOrLabOrPharm) {
+        throw new ValidationError(
+          `Discounts are strictly restricted to Hospital Services. Invoices for '${invoice.department?.name || 'this department'}' (Outsourced Lab / Pharmacy) cannot receive discounts.`
+        );
+      }
 
       if (body.lineItemId) {
         const line = invoice.lines.find((l) => l.id === body.lineItemId);
@@ -632,6 +650,21 @@ export const invoicesService = {
         panelPatient: { include: { corporatePanel: true } },
         selfPayEncounter: true,
         appointment: { include: { doctor: true, department: true } },
+        admissionRecord: {
+          include: {
+            department: true,
+            doctor: true,
+            bed: {
+              include: {
+                room: {
+                  include: {
+                    ward: true,
+                  },
+                },
+              },
+            },
+          },
+        },
         lines: {
           include: {
             serviceRate: true,

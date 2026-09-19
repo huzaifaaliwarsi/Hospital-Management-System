@@ -12,6 +12,8 @@ import {
   AlertTriangle,
   Wallet,
   Percent,
+  Stethoscope,
+  Wand2,
 } from 'lucide-react';
 import {
   StaffUser,
@@ -80,6 +82,7 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
 
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [showDischargePassword, setShowDischargePassword] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   // Confirmation dialogs for significant changes in edit mode
@@ -112,6 +115,9 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
         confirmPassword: '',
         requirePasswordChange: editingStaff.requirePasswordChange || false,
         doctorSponsoredDiscountTrackingEnabled: editingStaff.doctorSponsoredDiscountTrackingEnabled || false,
+        clinicalAuthUsername: editingStaff.clinicalAuthUsername || '',
+        clinicalAuthPassword: '',
+        clinicalAuthActive: editingStaff.clinicalAuthActive ?? true,
         salaryEnabled: false,
         salaryBasis: 'MONTHLY',
         baseSalary: undefined,
@@ -157,6 +163,9 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
         confirmPassword: '',
         requirePasswordChange: true,
         doctorSponsoredDiscountTrackingEnabled: false,
+        clinicalAuthUsername: '',
+        clinicalAuthPassword: '',
+        clinicalAuthActive: true,
         salaryEnabled: false,
         salaryBasis: 'MONTHLY',
         baseSalary: undefined,
@@ -167,6 +176,7 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
     setErrors({});
     setShowPassword(false);
     setShowConfirmPassword(false);
+    setShowDischargePassword(false);
     setConfirmPortalChange(false);
     setConfirmAccessTypeChange(false);
     setPendingValues(null);
@@ -235,6 +245,25 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
         setFormData((prev) => ({ ...prev, username: parts[0] }));
       }
     }
+
+    // Auto-suggest clinical discharge username if Doctor
+    if (!isEdit && formData.staffCategory === 'Doctor' && !formData.clinicalAuthUsername && formData.fullName) {
+      const parts = formData.fullName
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, '')
+        .split(/\s+/)
+        .filter((p) => p && p !== 'dr' && p !== 'doctor');
+      const docName = parts.length > 1 ? `${parts[0]}.${parts[parts.length - 1]}` : (parts[0] || 'doctor');
+      setFormData((prev) => ({ ...prev, clinicalAuthUsername: `dr.${docName}` }));
+    }
+  };
+
+  const handleGenerateDischargePassword = () => {
+    const chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let generated = 'Dr';
+    for (let i = 0; i < 8; i++) generated += chars.charAt(Math.floor(Math.random() * chars.length));
+    generated += Math.floor(Math.random() * 90 + 10);
+    setFormData((prev) => ({ ...prev, clinicalAuthPassword: generated }));
   };
 
   // Validation
@@ -301,6 +330,19 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
         if (formData.password !== formData.confirmPassword) {
           newErrors.confirmPassword = 'Passwords do not match.';
         }
+      }
+    }
+
+    // Patient Discharge Credentials validations (Doctors only)
+    if (formData.staffCategory === 'Doctor') {
+      if (formData.clinicalAuthPassword && formData.clinicalAuthPassword.length < 8) {
+        newErrors.clinicalAuthPassword = 'Discharge password must be at least 8 characters long.';
+      }
+      if (!isEdit && formData.clinicalAuthUsername && !formData.clinicalAuthPassword) {
+        newErrors.clinicalAuthPassword = 'Password is required when discharge username is entered.';
+      }
+      if (!isEdit && !formData.clinicalAuthUsername && formData.clinicalAuthPassword) {
+        newErrors.clinicalAuthUsername = 'Discharge username is required when password is set.';
       }
     }
 
@@ -1050,6 +1092,127 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
               </div>
             )}
           </div>
+
+          {/* SECTION 4: PATIENT DISCHARGE CREDENTIALS (Clinical Discharge Authorization — Doctors only) */}
+          {formData.staffCategory === 'Doctor' && (
+            <div className="space-y-3 pt-2">
+              <div className="flex items-center gap-2 pb-1.5 border-b border-[#e2eae5]">
+                <Stethoscope className="h-4 w-4 text-[#08775A]" />
+                <h4 className="text-xs font-bold text-[#111827] uppercase tracking-wider">
+                  4. Patient Discharge Credentials (Clinical Discharge Authorization)
+                </h4>
+              </div>
+
+              <div className="p-3.5 bg-[#effaf5] border border-[#c2e7db] rounded-xl text-xs text-[#08775A] space-y-1">
+                <div className="font-bold flex items-center gap-1.5 text-xs text-[#08775A]">
+                  <ShieldCheck className="h-4 w-4 shrink-0" />
+                  <span>Clinical Discharge Signature &amp; Re-Authentication Gate</span>
+                </div>
+                <p className="text-[11px] text-[#2d5c4c] leading-relaxed">
+                  Admission department mein inpatient ko <strong>Clinically Discharge</strong> karte waqt yeh doctor credentials required hotay hain. Yeh credentials portal login se alag hotay hain aur tab bhi kaam karte hain agar doctor ka portal user account na ho (Staff Record Only).
+                </p>
+                {isEdit && editingStaff?.clinicalAuthUsername && (
+                  <p className="text-[10px] text-[#08775A] font-semibold pt-1 border-t border-[#c2e7db]">
+                    Current Status: <span className="font-bold font-mono">{editingStaff.clinicalAuthUsername}</span> ({editingStaff.clinicalAuthActive ? 'Active' : 'Inactive'}). Leave password blank to keep current password.
+                  </p>
+                )}
+              </div>
+
+              <div className="p-4 bg-[#f6f8f7] border border-[#e2eae5] rounded-xl space-y-3.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  {/* Discharge Username */}
+                  <div>
+                    <label className="block text-xs font-semibold text-[#52665e] mb-1">
+                      Discharge Username
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.clinicalAuthUsername || ''}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          clinicalAuthUsername: e.target.value.toLowerCase().trim(),
+                        })
+                      }
+                      placeholder="e.g. dr.ahmed.discharge"
+                      className={`w-full px-3 py-2 bg-white border rounded-lg text-xs font-mono text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#08775A]/20 ${
+                        errors.clinicalAuthUsername ? 'border-red-500' : 'border-[#e2eae5] focus:border-[#08775A]'
+                      }`}
+                    />
+                    {errors.clinicalAuthUsername && (
+                      <p className="text-[10px] text-red-500 mt-1">{errors.clinicalAuthUsername}</p>
+                    )}
+                    <p className="text-[10px] text-[#8b9e95] mt-1">
+                      Used to identify this doctor at discharge authorization.
+                    </p>
+                  </div>
+
+                  {/* Discharge Password */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-[#52665e]">
+                        Discharge Password {(!isEdit && formData.clinicalAuthUsername) && <span className="text-red-500">*</span>}
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleGenerateDischargePassword}
+                        className="text-[10px] font-semibold text-[#08775A] hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <Wand2 className="h-3 w-3" /> Auto-Generate
+                      </button>
+                    </div>
+                    <div className="relative">
+                      <input
+                        type={showDischargePassword ? 'text' : 'password'}
+                        value={formData.clinicalAuthPassword || ''}
+                        onChange={(e) =>
+                          setFormData({ ...formData, clinicalAuthPassword: e.target.value })
+                        }
+                        placeholder={isEdit && editingStaff?.clinicalAuthUsername ? '•••••••• (leave blank to keep unchanged)' : 'Min 8 characters'}
+                        className={`w-full pl-3 pr-8 py-2 bg-white border rounded-lg text-xs font-mono text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#08775A]/20 ${
+                          errors.clinicalAuthPassword ? 'border-red-500' : 'border-[#e2eae5] focus:border-[#08775A]'
+                        }`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowDischargePassword(!showDischargePassword)}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#8b9e95] hover:text-[#111827] cursor-pointer"
+                      >
+                        {showDischargePassword ? (
+                          <EyeOff className="h-3.5 w-3.5" />
+                        ) : (
+                          <Eye className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    </div>
+                    {errors.clinicalAuthPassword && (
+                      <p className="text-[10px] text-red-500 mt-1">{errors.clinicalAuthPassword}</p>
+                    )}
+                    <p className="text-[10px] text-[#8b9e95] mt-1">
+                      Min 8 characters. Doctor enters this when authorizing patient discharge.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Authorization Status Active Toggle */}
+                <div className="pt-2 border-t border-[#e2eae5]/80">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={formData.clinicalAuthActive ?? true}
+                      onChange={(e) =>
+                        setFormData({ ...formData, clinicalAuthActive: e.target.checked })
+                      }
+                      className="rounded text-[#08775A] focus:ring-[#08775A] h-4 w-4"
+                    />
+                    <span className="text-xs text-[#52665e] font-medium">
+                      Patient Discharge Authorization Active (Doctor can sign discharge summaries)
+                    </span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Footer Buttons */}
           <div className="pt-4 border-t border-[#e2eae5] flex items-center justify-end gap-2.5">

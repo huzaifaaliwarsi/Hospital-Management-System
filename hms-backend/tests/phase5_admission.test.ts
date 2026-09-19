@@ -121,6 +121,12 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
         medicationMode: 'SELF',
         diagnosis: 'Acute Appendicitis',
       });
+      (prisma.bed.findUnique as any).mockResolvedValue({
+        id: bedId1,
+        status: 'AVAILABLE',
+        operationalStatus: 'ACTIVE',
+        room: { ward: { departmentId } },
+      });
 
       const result = await admissionService.createPlannedAdmission(
         {
@@ -151,6 +157,97 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
       // No advanceAmount was passed, so no receipt should be created.
       expect(result.advanceReceipt).toBeNull();
       expect(prisma.paymentReceipt.create).not.toHaveBeenCalled();
+    });
+
+    it('creates a planned admission with no doctor assigned (doctor is optional at planning time)', async () => {
+      (prisma.admissionRecord.create as any).mockResolvedValue({
+        id: 'adm-003',
+        admissionNumber: 'ADM-TEST-003',
+        departmentId,
+        doctorStaffId: null,
+        status: 'PLANNED',
+        medicationMode: 'SELF',
+      });
+
+      const result = await admissionService.createPlannedAdmission(
+        {
+          departmentId,
+          medicationMode: 'SELF',
+          newSelfPayPatient: { fullName: 'Kamran Akmal', phone: '03211234567' },
+        } as any,
+        staffUserId,
+      );
+
+      expect(prisma.admissionRecord.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ doctorStaffId: null }),
+        }),
+      );
+      expect(result.admission.doctorStaffId).toBeNull();
+    });
+
+    it('rejects a preferred bed that does not belong to the admitting department', async () => {
+      (prisma.bed.findUnique as any).mockResolvedValue({
+        id: bedId1,
+        status: 'AVAILABLE',
+        operationalStatus: 'ACTIVE',
+        room: { ward: { departmentId: 'dept-cardiology' } },
+      });
+
+      await expect(
+        admissionService.createPlannedAdmission(
+          {
+            departmentId,
+            doctorStaffId,
+            preferredBedId: bedId1,
+            medicationMode: 'SELF',
+            newSelfPayPatient: { fullName: 'Kamran Akmal', phone: '03211234567' },
+          },
+          staffUserId,
+        ),
+      ).rejects.toThrow('does not belong to the chosen admitting department');
+      expect(prisma.admissionRecord.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects a preferred bed that is not currently available', async () => {
+      (prisma.bed.findUnique as any).mockResolvedValue({
+        id: bedId1,
+        status: 'OCCUPIED',
+        operationalStatus: 'ACTIVE',
+        room: { ward: { departmentId } },
+      });
+
+      await expect(
+        admissionService.createPlannedAdmission(
+          {
+            departmentId,
+            doctorStaffId,
+            preferredBedId: bedId1,
+            medicationMode: 'SELF',
+            newSelfPayPatient: { fullName: 'Kamran Akmal', phone: '03211234567' },
+          },
+          staffUserId,
+        ),
+      ).rejects.toThrow('Only AVAILABLE beds can be preferred');
+      expect(prisma.admissionRecord.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects a preferred bed that does not exist', async () => {
+      (prisma.bed.findUnique as any).mockResolvedValue(null);
+
+      await expect(
+        admissionService.createPlannedAdmission(
+          {
+            departmentId,
+            doctorStaffId,
+            preferredBedId: bedId1,
+            medicationMode: 'SELF',
+            newSelfPayPatient: { fullName: 'Kamran Akmal', phone: '03211234567' },
+          },
+          staffUserId,
+        ),
+      ).rejects.toThrow('Selected bed not found');
+      expect(prisma.admissionRecord.create).not.toHaveBeenCalled();
     });
 
     it('posts a real advance receipt + cashier ledger entry when advanceAmount is collected at creation', async () => {

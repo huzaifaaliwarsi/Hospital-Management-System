@@ -393,7 +393,7 @@ export async function createAdmission(
         panelPatientId: values.panelPatientId || undefined,
         selfPayEncounterId: values.selfPayEncounterId || undefined,
         departmentId: values.departmentId,
-        doctorStaffId: values.doctorStaffId,
+        doctorStaffId: values.doctorStaffId || undefined,
         preferredBedId: values.preferredBedId || undefined,
         expectedAt: values.expectedAt || undefined,
         diagnosis: values.diagnosis?.trim() || undefined,

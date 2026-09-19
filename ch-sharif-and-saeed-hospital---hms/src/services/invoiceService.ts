@@ -73,6 +73,9 @@ export interface InvoiceDetail extends InvoiceSummary {
   patientGender?: string;
   patientAge?: number | string;
   patientCnic?: string;
+  admissionNumber?: string;
+  wardName?: string;
+  bedNumber?: string;
 }
 
 function formatTimestamp(iso?: string | null): string {
@@ -107,7 +110,7 @@ function resolveMrNumber(raw: Record<string, any>): string {
 
 function toInvoiceSummary(raw: Record<string, any>): InvoiceSummary {
   const isPanel = !!raw.panelPatientId;
-  const patient = raw.panelPatient || raw.selfPayEncounter;
+  const patient = raw.panelPatient || raw.selfPayEncounter || raw.admissionRecord?.panelPatient || raw.admissionRecord?.selfPayEncounter;
   const receipts: any[] = Array.isArray(raw.paymentReceipts) ? raw.paymentReceipts : [];
   const reversedReceipts = receipts.filter((r) => r.isReversed);
   return {
@@ -132,10 +135,12 @@ function toInvoiceSummary(raw: Record<string, any>): InvoiceSummary {
 }
 
 function toInvoiceDetail(raw: Record<string, any>): InvoiceDetail {
+  const admissionDoc = raw.admissionRecord?.doctor?.fullName;
   const firstLineDoctor = raw.lines?.[0]?.performedBy?.fullName;
-  const doctor = raw.appointment?.doctor?.fullName || firstLineDoctor || '';
+  const doctor = raw.appointment?.doctor?.fullName || admissionDoc || firstLineDoctor || '';
+  const admissionDept = raw.admissionRecord?.department?.name;
   const firstLineDept = raw.lines?.[0]?.serviceRate?.departmentName || raw.lines?.[0]?.serviceRate?.category;
-  const department = raw.appointment?.department?.name || firstLineDept || '';
+  const department = raw.appointment?.department?.name || admissionDept || firstLineDept || '';
 
   return {
     ...toInvoiceSummary(raw),
@@ -147,6 +152,9 @@ function toInvoiceDetail(raw: Record<string, any>): InvoiceDetail {
     patientGender: raw.panelPatient?.gender || raw.selfPayEncounter?.gender || '',
     patientAge: raw.panelPatient?.age || (raw.selfPayEncounter?.dob ? Math.max(0, new Date().getFullYear() - new Date(raw.selfPayEncounter.dob).getFullYear()) : ''),
     patientCnic: raw.panelPatient?.cnic || raw.selfPayEncounter?.cnicOrPassport || '',
+    admissionNumber: raw.admissionRecord?.admissionNumber || undefined,
+    wardName: raw.admissionRecord?.bed?.room?.ward?.name || undefined,
+    bedNumber: raw.admissionRecord?.bed?.bedNumber || undefined,
     lines: (raw.lines || []).map((l: any) => ({
       id: l.id,
       serviceName: l.serviceRate?.name || '',

@@ -122,7 +122,7 @@ export const RoomModal: React.FC<RoomModalProps> = ({
       return;
     }
 
-    onSave(formValues);
+    onSave({ ...formValues, status: 'Active' });
   };
 
   return (
@@ -326,35 +326,6 @@ export const RoomModal: React.FC<RoomModalProps> = ({
                   className="w-full pl-11 pr-3 py-2 text-xs font-bold text-slate-900 rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
                 />
               </div>
-            </div>
-          </div>
-
-          {/* Status */}
-          <div className="flex items-center justify-between pt-2">
-            <span className="text-xs font-semibold text-slate-700">Room Status</span>
-            <div className="flex items-center gap-4">
-              <label className="flex items-center gap-1.5 cursor-pointer">
-                <input
-                  type="radio"
-                  name="roomStatus"
-                  value="Active"
-                  checked={formValues.status === 'Active'}
-                  onChange={() => setFormValues((p) => ({ ...p, status: 'Active' }))}
-                  className="text-[#08775A] focus:ring-[#08775A]"
-                />
-                <span className="text-xs text-slate-700 font-medium">Active (In Use)</span>
-              </label>
-              <label className="flex items-center gap-1.5 cursor-pointer">
-                <input
-                  type="radio"
-                  name="roomStatus"
-                  value="Inactive"
-                  checked={formValues.status === 'Inactive'}
-                  onChange={() => setFormValues((p) => ({ ...p, status: 'Inactive' }))}
-                  className="text-slate-500 focus:ring-slate-400"
-                />
-                <span className="text-xs text-slate-600 font-medium">Inactive (Closed)</span>
-              </label>
             </div>
           </div>
 

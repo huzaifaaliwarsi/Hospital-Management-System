@@ -1,6 +1,7 @@
 import React from 'react';
-import { Trash2, AlertTriangle, Power, X, Loader2, ShieldCheck } from 'lucide-react';
+import { Trash2, AlertTriangle, Power, X, Loader2, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { Department } from '../../../types/department';
+import { isProtectedCoreDepartment } from '../../../services/departmentService';
 
 interface DeleteSafeguardModalProps {
   isOpen: boolean;
@@ -20,6 +21,8 @@ export const DeleteSafeguardModal: React.FC<DeleteSafeguardModalProps> = ({
   isDeleting = false,
 }) => {
   if (!isOpen || !department) return null;
+
+  const isProtected = isProtectedCoreDepartment(department);
 
   const hasLinkedRecords =
     department.doctorCount > 0 ||
@@ -42,27 +45,52 @@ export const DeleteSafeguardModal: React.FC<DeleteSafeguardModalProps> = ({
         </button>
 
         <div className="flex items-start gap-4">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-rose-100 text-rose-600 border border-rose-200">
-            <Trash2 className="h-6 w-6" />
+          <div
+            className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border ${
+              isProtected
+                ? 'bg-amber-100 text-amber-700 border-amber-200'
+                : 'bg-rose-100 text-rose-600 border-rose-200'
+            }`}
+          >
+            {isProtected ? <ShieldAlert className="h-6 w-6" /> : <Trash2 className="h-6 w-6" />}
           </div>
           <div className="pr-4">
             <h3 className="text-base font-bold text-slate-900">
-              Delete Department
+              {isProtected ? 'Protected Department' : 'Delete Department'}
             </h3>
             <p className="mt-1 text-xs text-slate-600 leading-relaxed">
-              Are you sure you want to permanently delete{' '}
-              <strong className="text-slate-900 font-semibold">{department.name}</strong>{' '}
-              <span className="font-mono text-slate-500 font-medium">({department.code})</span>?
+              {isProtected ? (
+                <>
+                  <strong className="text-slate-900 font-semibold">{department.name}</strong>{' '}
+                  <span className="font-mono text-slate-500 font-medium">({department.code})</span> is a core hospital care department (OPD, Emergency, or Observation).
+                </>
+              ) : (
+                <>
+                  Are you sure you want to permanently delete{' '}
+                  <strong className="text-slate-900 font-semibold">{department.name}</strong>{' '}
+                  <span className="font-mono text-slate-500 font-medium">({department.code})</span>?
+                </>
+              )}
             </p>
           </div>
         </div>
 
-        {/* Linked Records Notice */}
-        {hasLinkedRecords ? (
+        {/* Protected Notice vs Linked Records Notice */}
+        {isProtected ? (
+          <div className="mt-4 rounded-xl bg-amber-50 border border-amber-200 p-3.5 text-xs text-amber-950 space-y-1.5">
+            <div className="flex items-center gap-1.5 font-bold text-amber-900">
+              <ShieldAlert className="w-4 h-4 text-amber-700 shrink-0" />
+              <span>System-Protected Core Care Department</span>
+            </div>
+            <p className="text-[11px] text-amber-800 leading-relaxed">
+              OPD, Emergency (ER), aur Observation (OBS) hospital ke fundamental care queues aur billing pipelines se linked hain. Inhe delete karna hospital data integrity ke khilaf hai, is liye yeh system-protected hain aur delete nahi ho saktay.
+            </p>
+          </div>
+        ) : hasLinkedRecords ? (
           <div className="mt-4 rounded-xl bg-emerald-50/80 border border-emerald-200 p-3 text-xs text-emerald-950">
             <div className="flex items-center gap-1.5 font-semibold text-emerald-800 mb-1.5">
               <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>Staff & Doctor Protection Guarantee</span>
+              <span>Staff &amp; Doctor Protection Guarantee</span>
             </div>
             <p className="text-[11px] text-emerald-800 leading-relaxed mb-2">
               Doctors and staff will <strong>not</strong> be deleted. Any assigned personnel will safely remain in the hospital workforce and be preserved.
@@ -98,41 +126,43 @@ export const DeleteSafeguardModal: React.FC<DeleteSafeguardModalProps> = ({
             type="button"
             onClick={onClose}
             disabled={isDeleting}
-            className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-50"
+            className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-50 cursor-pointer"
           >
-            Cancel
+            {isProtected ? 'Close' : 'Cancel'}
           </button>
 
-          {department.status === 'Active' && (
+          {!isProtected && department.status === 'Active' && (
             <button
               type="button"
               onClick={onDeactivateInstead}
               disabled={isDeleting}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100 transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100 transition-colors disabled:opacity-50 cursor-pointer"
             >
               <Power className="h-3.5 w-3.5 text-amber-600" />
               Deactivate Instead
             </button>
           )}
 
-          <button
-            type="button"
-            onClick={onConfirmDelete}
-            disabled={isDeleting}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-700 active:bg-rose-800 transition-colors shadow-xs disabled:opacity-60"
-          >
-            {isDeleting ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Deleting...
-              </>
-            ) : (
-              <>
-                <Trash2 className="h-3.5 w-3.5" />
-                Delete Department
-              </>
-            )}
-          </button>
+          {!isProtected && (
+            <button
+              type="button"
+              onClick={onConfirmDelete}
+              disabled={isDeleting}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-700 active:bg-rose-800 transition-colors shadow-xs disabled:opacity-60 cursor-pointer"
+            >
+              {isDeleting ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Delete Department
+                </>
+              )}
+            </button>
+          )}
         </div>
       </div>
     </div>

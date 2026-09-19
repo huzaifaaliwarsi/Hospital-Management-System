@@ -23,9 +23,10 @@ import {
   getActiveCorporatePanels,
   CorporatePanel,
 } from '../../../services/panelService';
-import { DepartmentService } from '../../../services/departmentService';
-import { StaffUserService } from '../../../services/staffUserService';
-import { WardsRoomsBedsService } from '../../../services/wardsRoomsBedsService';
+import { StaffUserService, fetchStaffUsers } from '../../../services/staffUserService';
+import { StaffUser } from '../../../types/staffUser';
+import { WardsRoomsBedsService, fetchWardHierarchy } from '../../../services/wardsRoomsBedsService';
+import { Ward, Room, Bed } from '../../../types/wardsRoomsBeds';
 import {
   createAdmission,
   CreateAdmissionFormValues,
@@ -71,30 +72,31 @@ export const NewAdmissionView: React.FC = () => {
   const { currentUser } = useAuth();
   const formContainerRef = useRef<HTMLDivElement>(null);
   const submitButtonRef = useRef<HTMLButtonElement>(null);
-  const selectDropdownOpenRef = useRef<HTMLSelectElement | null>(null);
   const handleEnterNext = (e: React.KeyboardEvent<HTMLElement>) => focusNextFieldOnEnter(e, formContainerRef.current);
 
   const handleSelectKeyDown = (e: React.KeyboardEvent<HTMLSelectElement>) => {
     if (e.key !== 'Enter') return;
-    const el = e.currentTarget as HTMLSelectElement & { showPicker?: () => void };
-    if (selectDropdownOpenRef.current === el) return;
     e.preventDefault();
-    selectDropdownOpenRef.current = el;
-    try {
-      if (typeof el.showPicker === 'function') {
-        el.showPicker();
-      } else {
+    const el = e.currentTarget;
+    if (el.value) {
+      focusNextField(el, formContainerRef.current);
+    } else {
+      try {
+        if (typeof (el as any).showPicker === 'function') {
+          (el as any).showPicker();
+        } else {
+          el.click();
+        }
+      } catch {
         el.click();
       }
-    } catch {
-      el.click();
     }
   };
 
   // New Patient Inline Fields
   const [fullName, setFullName] = useState('');
   const [fatherGuardianName, setFatherGuardianName] = useState('');
-  const [guardianRelation, setGuardianRelation] = useState<GuardianRelation>('Father');
+  const [guardianRelation, setGuardianRelation] = useState<GuardianRelation | ''>('');
   const [guardianCnic, setGuardianCnic] = useState('');
   const [primaryPhone, setPrimaryPhone] = useState('');
   const [age, setAge] = useState('');
@@ -111,28 +113,62 @@ export const NewAdmissionView: React.FC = () => {
   const [createdAdmission, setCreatedAdmission] = useState<AdmissionRecord | null>(null);
   const [createdAdvanceReceipt, setCreatedAdvanceReceipt] = useState<AdmissionAdvanceReceipt | null>(null);
 
-  // Panels cache
+  // Live master data caches (re-fetched on mount so direct navigation never gets stuck on an unprimed memory cache)
   const [corporatePanels, setCorporatePanels] = useState<CorporatePanel[]>(getActiveCorporatePanels);
+  const [allWards, setAllWards] = useState<Ward[]>(WardsRoomsBedsService.getWards());
+  const [allRooms, setAllRooms] = useState<Room[]>(WardsRoomsBedsService.getRooms());
+  const [allBeds, setAllBeds] = useState<Bed[]>(WardsRoomsBedsService.getBeds());
+  const [allStaff, setAllStaff] = useState<StaffUser[]>(() => StaffUserService.getStaffUsers());
+
+  // No separate Ward/Room selection is kept in CreateAdmissionFormValues — they only exist here
+  // to narrow the Bed dropdown; the backend only needs the final preferredBedId + departmentId.
+  const [selectedWardId, setSelectedWardId] = useState('');
+  const [selectedRoomId, setSelectedRoomId] = useState('');
+
+  const refreshHierarchy = () => {
+    fetchWardHierarchy().then(({ wards, rooms, beds }) => {
+      setAllWards(wards);
+      setAllRooms(rooms);
+      setAllBeds(beds);
+    }).catch(() => {});
+  };
 
   useEffect(() => {
     fetchCorporatePanels().then(setCorporatePanels).catch(() => {});
+    refreshHierarchy();
+    fetchStaffUsers().then(setAllStaff).catch(() => {});
   }, []);
 
-  const departments = useMemo(() => DepartmentService.getDepartments().filter((d) => d.status === 'Active'), []);
-  const doctors = useMemo(() => StaffUserService.getStaffUsers().filter((s) => s.staffCategory === 'Doctor' && s.status === 'ACTIVE'), []);
-  const availableBeds = useMemo(() => WardsRoomsBedsService.getBeds().filter((b) => b.occupancyStatus === 'Available' && b.operationalStatus === 'Active'), []);
+  const activeWards = useMemo(() => allWards.filter((w) => w.status === 'Active'), [allWards]);
+  const selectedWard = useMemo(() => allWards.find((w) => w.id === selectedWardId), [allWards, selectedWardId]);
 
-  // Department-filtered doctors
-  const departmentDoctors = useMemo(() => {
-    if (!formValues.departmentId) return doctors;
-    const filtered = doctors.filter((d) => d.departmentId === formValues.departmentId);
-    return filtered.length > 0 ? filtered : doctors;
-  }, [doctors, formValues.departmentId]);
+  useEffect(() => {
+    const deptId = selectedWard?.departmentId || '';
+    setFormValues((prev) => (prev.departmentId === deptId ? prev : { ...prev, departmentId: deptId }));
+  }, [selectedWard]);
+
+  // Only show rooms that have at least one currently available, active bed
+  const wardRooms = useMemo(() => {
+    return allRooms.filter((r) => {
+      if (r.wardId !== selectedWardId || r.status !== 'Active') return false;
+      return allBeds.some(
+        (b) => b.roomId === r.id && b.occupancyStatus === 'Available' && b.operationalStatus === 'Active'
+      );
+    });
+  }, [allRooms, allBeds, selectedWardId]);
+
+  const roomBeds = useMemo(
+    () =>
+      allBeds.filter(
+        (b) => b.roomId === selectedRoomId && b.occupancyStatus === 'Available' && b.operationalStatus === 'Active'
+      ),
+    [allBeds, selectedRoomId]
+  );
 
   const handleReset = () => {
     setFullName('');
     setFatherGuardianName('');
-    setGuardianRelation('Father');
+    setGuardianRelation('');
     setGuardianCnic('');
     setPrimaryPhone('');
     setAge('');
@@ -145,6 +181,7 @@ export const NewAdmissionView: React.FC = () => {
     setFormError(null);
     setCreatedAdmission(null);
     setCreatedAdvanceReceipt(null);
+    refreshHierarchy();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -158,6 +195,10 @@ export const NewAdmissionView: React.FC = () => {
     }
     if (!fatherGuardianName.trim()) {
       setFormError('Guardian Name is required.');
+      return;
+    }
+    if (!guardianRelation) {
+      setFormError('Please select Guardian Relation.');
       return;
     }
     if (guardianCnic.trim() && !isValidCnic(normalizeCnic(guardianCnic))) {
@@ -188,13 +229,9 @@ export const NewAdmissionView: React.FC = () => {
       }
     }
 
-    // 2. Admission Fields Validation
-    if (!formValues.departmentId) {
-      setFormError('Select the admitting department.');
-      return;
-    }
-    if (!formValues.doctorStaffId) {
-      setFormError('Select the admitting doctor.');
+    // 2. Admission Fields Validation — Simply pick the ward (room & bed can be chosen now or assigned at portal)
+    if (!selectedWardId) {
+      setFormError('Please select an Inpatient Ward for admission.');
       return;
     }
 
@@ -262,6 +299,7 @@ export const NewAdmissionView: React.FC = () => {
       const { admission, advanceReceipt } = await createAdmission(admissionPayload);
       setCreatedAdmission(admission);
       setCreatedAdvanceReceipt(advanceReceipt);
+      refreshHierarchy();
     } catch (err: any) {
       setFormError(err?.response?.data?.error?.message || err?.message || 'Failed to create admission.');
     } finally {
@@ -322,7 +360,7 @@ export const NewAdmissionView: React.FC = () => {
               </div>
               <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
                 <span className="text-[10px] text-slate-500 uppercase block">Admitting Doctor</span>
-                <span className="font-semibold text-slate-900">{createdAdmission.doctorName}</span>
+                <span className="font-semibold text-slate-900">{createdAdmission.doctorName || 'Not Assigned Yet'}</span>
               </div>
             </div>
             {createdAdvanceReceipt ? (
@@ -490,19 +528,16 @@ export const NewAdmissionView: React.FC = () => {
                 <div>
                   <Select
                     label="Relation"
-                    options={GUARDIAN_RELATIONS.map((r) => ({ label: r, value: r }))}
+                    required
+                    options={[
+                      { label: 'Select Relation', value: '' },
+                      ...GUARDIAN_RELATIONS.map((r) => ({ label: r, value: r })),
+                    ]}
                     value={guardianRelation}
                     onChange={(e) => {
                       setGuardianRelation(e.target.value as GuardianRelation);
-                      selectDropdownOpenRef.current = null;
-                      if (e.target.value) {
-                        focusNextField(e.currentTarget, formContainerRef.current);
-                      }
                     }}
                     onKeyDown={handleSelectKeyDown}
-                    onBlur={() => {
-                      selectDropdownOpenRef.current = null;
-                    }}
                   />
                 </div>
               </div>
@@ -590,17 +625,8 @@ export const NewAdmissionView: React.FC = () => {
                       ...corporatePanels.map((p) => ({ label: `${p.name} (${p.code})`, value: p.id })),
                     ]}
                     value={panelId}
-                    onChange={(e) => {
-                      setPanelId(e.target.value);
-                      selectDropdownOpenRef.current = null;
-                      if (e.target.value) {
-                        focusNextField(e.currentTarget, formContainerRef.current);
-                      }
-                    }}
+                    onChange={(e) => setPanelId(e.target.value)}
                     onKeyDown={handleSelectKeyDown}
-                    onBlur={() => {
-                      selectDropdownOpenRef.current = null;
-                    }}
                   />
                   <TextInput
                     label="Panel Member ID / Card #"
@@ -628,74 +654,70 @@ export const NewAdmissionView: React.FC = () => {
               </span>
             </div>
 
-            {/* Department & Doctor */}
+            {/* Ward → Room → Bed cascade & Fulfillment */}
             <div className="space-y-3">
               <Select
-                label="Admitting Department"
+                label="Ward"
                 required
+                hint={activeWards.length === 0 ? 'No active wards configured.' : undefined}
                 options={[
-                  { label: '-- Select Admitting Department --', value: '' },
-                  ...departments.map((d) => ({ label: d.name, value: d.id })),
+                  { label: '-- Select Ward --', value: '' },
+                  ...activeWards.map((w) => ({ label: w.name, value: w.id })),
                 ]}
-                value={formValues.departmentId}
+                value={selectedWardId}
                 onChange={(e) => {
-                  setFormValues((prev) => ({ ...prev, departmentId: e.target.value }));
-                  selectDropdownOpenRef.current = null;
-                  if (e.target.value) {
-                    focusNextField(e.currentTarget, formContainerRef.current);
-                  }
+                  setSelectedWardId(e.target.value);
+                  setSelectedRoomId('');
+                  setFormValues((prev) => ({ ...prev, preferredBedId: '' }));
                 }}
                 onKeyDown={handleSelectKeyDown}
-                onBlur={() => {
-                  selectDropdownOpenRef.current = null;
-                }}
               />
               <Select
-                label="Admitting Doctor"
-                required
+                label="Room"
+                hint={
+                  !selectedWardId
+                    ? 'Select a ward first.'
+                    : wardRooms.length === 0
+                    ? 'No rooms with available beds in this ward.'
+                    : undefined
+                }
                 options={[
-                  { label: '-- Select Admitting Doctor --', value: '' },
-                  ...departmentDoctors.map((d) => ({ label: `${d.fullName} (${d.designation})`, value: d.id })),
+                  { label: '-- Select Room --', value: '' },
+                  ...wardRooms.map((r) => {
+                    const availCount = allBeds.filter(
+                      (b) => b.roomId === r.id && b.occupancyStatus === 'Available' && b.operationalStatus === 'Active'
+                    ).length;
+                    return {
+                      label: `${r.roomNumber ? `Room ${r.roomNumber} - ` : ''}${r.name} (${availCount} bed${availCount > 1 ? 's' : ''} available)`,
+                      value: r.id,
+                    };
+                  }),
                 ]}
-                value={formValues.doctorStaffId}
+                value={selectedRoomId}
                 onChange={(e) => {
-                  setFormValues((prev) => ({ ...prev, doctorStaffId: e.target.value }));
-                  selectDropdownOpenRef.current = null;
-                  if (e.target.value) {
-                    focusNextField(e.currentTarget, formContainerRef.current);
-                  }
+                  setSelectedRoomId(e.target.value);
+                  setFormValues((prev) => ({ ...prev, preferredBedId: '' }));
                 }}
                 onKeyDown={handleSelectKeyDown}
-                onBlur={() => {
-                  selectDropdownOpenRef.current = null;
-                }}
               />
-            </div>
-
-            {/* Bed Preference & Fulfillment */}
-            <div className="space-y-3">
               <Select
                 label="Bed Preference (optional)"
-                hint="Tentative only — bed becomes occupied at Admission Portal check-in."
+                hint={
+                  !selectedRoomId
+                    ? 'Select a room to see its available beds.'
+                    : roomBeds.length === 0
+                    ? 'No available beds in this room right now.'
+                    : 'Tentative only — bed becomes occupied at Admission Portal check-in.'
+                }
                 options={[
                   { label: '-- Select Bed Preference (optional) --', value: '' },
-                  ...availableBeds.map((b) => ({
-                    label: `${b.wardName} / ${b.roomName} / Bed ${b.bedNumber}${b.departmentName ? ` (${b.departmentName})` : ''}`,
-                    value: b.id,
-                  })),
+                  ...roomBeds.map((b) => ({ label: `Bed ${b.bedNumber}`, value: b.id })),
                 ]}
                 value={formValues.preferredBedId}
                 onChange={(e) => {
                   setFormValues((prev) => ({ ...prev, preferredBedId: e.target.value }));
-                  selectDropdownOpenRef.current = null;
-                  if (e.target.value) {
-                    focusNextField(e.currentTarget, formContainerRef.current);
-                  }
                 }}
                 onKeyDown={handleSelectKeyDown}
-                onBlur={() => {
-                  selectDropdownOpenRef.current = null;
-                }}
               />
               <Select
                 label="Fulfillment Mode"
@@ -707,40 +729,18 @@ export const NewAdmissionView: React.FC = () => {
                 value={formValues.medicationMode}
                 onChange={(e) => {
                   setFormValues((prev) => ({ ...prev, medicationMode: e.target.value as MedicationMode }));
-                  selectDropdownOpenRef.current = null;
-                  if (e.target.value) {
-                    focusNextField(e.currentTarget, formContainerRef.current);
-                  }
                 }}
                 onKeyDown={handleSelectKeyDown}
-                onBlur={() => {
-                  selectDropdownOpenRef.current = null;
-                }}
               />
             </div>
 
-            {/* Expected Date & Estimated Total Cost (planning figure — never collected as cash here) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Expected Date */}
+            <div>
               <TextInput
                 label="Expected Admission Date"
                 type="date"
                 value={formValues.expectedAt}
                 onChange={(e) => setFormValues({ ...formValues, expectedAt: e.target.value })}
-                onKeyDown={handleEnterNext}
-              />
-              <NumberInput
-                label="Estimated Total Cost (PKR, optional)"
-                hint="Planning figure only — not collected as cash."
-                min={0}
-                step={500}
-                placeholder="0"
-                value={formValues.estimatedAmount}
-                onChange={(e) =>
-                  setFormValues({
-                    ...formValues,
-                    estimatedAmount: e.target.value === '' ? '' : Number(e.target.value),
-                  })
-                }
                 onKeyDown={handleEnterNext}
               />
             </div>
@@ -772,15 +772,8 @@ export const NewAdmissionView: React.FC = () => {
                   value={formValues.paymentMethod}
                   onChange={(e) => {
                     setFormValues((prev) => ({ ...prev, paymentMethod: e.target.value as AdmissionPaymentMethod }));
-                    selectDropdownOpenRef.current = null;
-                    if (e.target.value) {
-                      focusNextField(e.currentTarget, formContainerRef.current);
-                    }
                   }}
                   onKeyDown={handleSelectKeyDown}
-                  onBlur={() => {
-                    selectDropdownOpenRef.current = null;
-                  }}
                 />
               </div>
               {Number(formValues.advanceAmount) > 0 && (
@@ -795,27 +788,43 @@ export const NewAdmissionView: React.FC = () => {
             </div>
 
             {/* Diagnosis & Notes */}
-            <Textarea
-              label="Diagnosis / Admission Reason"
-              rows={2}
-              placeholder="Primary admitting complaint or diagnosis…"
-              value={formValues.diagnosis}
-              onChange={(e) => setFormValues({ ...formValues, diagnosis: e.target.value.toUpperCase() })}
-              onKeyDown={handleEnterNext}
-            />
-            <Textarea
-              label="Intake Notes (optional)"
-              rows={2}
-              placeholder="Special instructions, allergies, dietary…"
-              value={formValues.notes}
-              onChange={(e) => setFormValues({ ...formValues, notes: e.target.value })}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  submitButtonRef.current?.focus();
-                }
-              }}
-            />
+            <div className="space-y-1">
+              <Textarea
+                label="Diagnosis / Admission Reason"
+                rows={2}
+                placeholder="Primary admitting complaint or diagnosis… (Press Enter to jump to Register button)"
+                value={formValues.diagnosis}
+                onChange={(e) => setFormValues({ ...formValues, diagnosis: e.target.value.toUpperCase() })}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    submitButtonRef.current?.focus();
+                    submitButtonRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                  }
+                }}
+              />
+              <div className="flex items-center justify-between text-[10.5px] text-slate-400 px-0.5">
+                <span>Press <strong className="font-semibold text-slate-600">Enter</strong> to jump straight to Register button</span>
+                <span>Shift+Enter for multi-line</span>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <Textarea
+                label="Intake Notes (optional)"
+                rows={2}
+                placeholder="Special instructions, allergies, dietary… (Press Enter to jump to Register button)"
+                value={formValues.notes}
+                onChange={(e) => setFormValues({ ...formValues, notes: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    submitButtonRef.current?.focus();
+                    submitButtonRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                  }
+                }}
+              />
+            </div>
 
             {payerType === 'Corporate / Panel' && (
               <div className="p-3 bg-purple-50 border border-purple-200 rounded-lg text-[11px] text-purple-900 flex items-start gap-2">

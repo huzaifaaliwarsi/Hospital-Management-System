@@ -303,6 +303,7 @@ export const Select: React.FC<SelectProps> = ({
   ...props
 }) => {
   const selectId = id || (label ? label.toLowerCase().replace(/\s+/g, '-') : undefined);
+  const hasEmptyOption = options.some((opt) => opt.value === '');
   return (
     <div className={cn('w-full flex flex-col gap-1', className)}>
       {label && (
@@ -322,7 +323,7 @@ export const Select: React.FC<SelectProps> = ({
           )}
           {...props}
         >
-          {placeholder && <option value="">{placeholder}</option>}
+          {placeholder && !hasEmptyOption && <option value="">{placeholder}</option>}
           {options.map((opt) => (
             <option key={opt.value} value={opt.value} disabled={opt.disabled}>
               {opt.label}

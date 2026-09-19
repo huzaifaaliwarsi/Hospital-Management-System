@@ -66,6 +66,41 @@ export const admissionService = {
         }
       }
 
+      let departmentId = body.departmentId;
+
+      if (body.preferredBedId) {
+        const bed = await tx.bed.findUnique({
+          where: { id: body.preferredBedId },
+          include: { room: { include: { ward: true } } },
+        });
+        if (!bed) throw new NotFoundError('Selected bed not found');
+        if (bed.status !== 'AVAILABLE') {
+          throw new ValidationError(`Selected bed is currently ${bed.status}. Only AVAILABLE beds can be assigned.`);
+        }
+        if (bed.operationalStatus !== 'ACTIVE') {
+          throw new ValidationError(`Selected bed is ${bed.operationalStatus} and cannot be assigned.`);
+        }
+        // Auto-align department with the bed's ward
+        departmentId = bed.room.ward.departmentId;
+
+        // Mark bed as OCCUPIED so it cannot be double-assigned to another patient
+        await tx.bed.update({
+          where: { id: bed.id },
+          data: { status: 'OCCUPIED' },
+        });
+      }
+
+      if (!departmentId) {
+        const defaultDept = await tx.department.findFirst({
+          where: { isActive: true },
+          orderBy: { name: 'asc' },
+        });
+        if (!defaultDept) {
+          throw new ValidationError('No active department found for admission.');
+        }
+        departmentId = defaultDept.id;
+      }
+
       const admissionNumber = await generateAdmissionNumber(tx);
 
       const admission = await tx.admissionRecord.create({
@@ -73,8 +108,8 @@ export const admissionService = {
           admissionNumber,
           panelPatientId: body.panelPatientId,
           selfPayEncounterId,
-          departmentId: body.departmentId,
-          doctorStaffId: body.doctorStaffId,
+          departmentId,
+          doctorStaffId: body.doctorStaffId ?? null,
           bedId: body.preferredBedId ?? null,
           status: 'PLANNED',
           medicationMode: body.medicationMode,
@@ -283,11 +318,19 @@ export const admissionService = {
       // Verify target bed is available
       const bed = await tx.bed.findUnique({ where: { id: body.bedId } });
       if (!bed) throw new NotFoundError('Selected bed not found');
-      if (bed.status !== 'AVAILABLE') {
+      if (bed.status !== 'AVAILABLE' && bed.id !== admission.bedId) {
         throw new ValidationError(`Selected bed is currently ${bed.status}. Only AVAILABLE beds can be assigned.`);
       }
 
-      // Mark bed OCCUPIED
+      // If switching to a different bed from previously assigned bed, free the old bed
+      if (admission.bedId && admission.bedId !== bed.id) {
+        await tx.bed.update({
+          where: { id: admission.bedId },
+          data: { status: 'AVAILABLE' },
+        });
+      }
+
+      // Ensure target bed is marked OCCUPIED
       await tx.bed.update({
         where: { id: bed.id },
         data: { status: 'OCCUPIED' },
@@ -1069,7 +1112,7 @@ export const admissionService = {
             name: admission.selfPayEncounter?.fullName ?? 'Inpatient',
             phone: admission.selfPayEncounter?.phone,
           },
-      doctor: admission.doctor.fullName,
+      doctor: admission.doctor?.fullName ?? null,
       department: admission.department.name,
       diagnosis: admission.diagnosis,
       bedSummary: {

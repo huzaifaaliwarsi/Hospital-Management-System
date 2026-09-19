@@ -18,8 +18,12 @@ export const createPlannedAdmissionSchema = z.object({
       address: z.string().optional(),
     })
     .optional(),
+  // Always required — the frontend derives it from either the chosen doctor or the chosen ward
+  // (department is never asked for directly), but the backend still needs a real, non-null value.
   departmentId: z.string().uuid(),
-  doctorStaffId: z.string().uuid(),
+  // Optional at planning time — Front Desk may not always know the attending doctor yet; the
+  // Admission Portal can assign/change one later via `updatePlannedAdmissionSchema`.
+  doctorStaffId: z.string().uuid().optional(),
   preferredBedId: z.string().uuid().optional(),
   expectedAt: z.coerce.date().optional(),
   diagnosis: z.string().optional(),

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Plus, Tag, CreditCard, RotateCcw, Loader2, AlertCircle, CheckCircle2, Printer } from 'lucide-react';
 import { formatPKR } from '../../../utils/formatters';
 import { useToast } from '../../../context/ToastContext';
@@ -42,6 +42,16 @@ const PAYMENT_METHODS: { label: string; value: PaymentMethod }[] = [
   { label: 'Bank Transfer', value: 'BANK' },
   { label: 'Online', value: 'ONLINE' },
 ];
+
+export function getInvoiceEncounterLabel(inv?: InvoiceDetail | null): string {
+  if (!inv) return 'OPD Intake';
+  if (inv.sourceType === 'ADMISSION') return 'Inpatient Admission';
+  if (inv.sourceType === 'APPOINTMENT') return 'Doctor Appointment';
+  if (inv.encounterType === 'EMERGENCY') return 'Emergency Care';
+  if (inv.encounterType === 'OBSERVATION') return 'Observation Stay';
+  if (inv.encounterType === 'OPD') return 'OPD Intake';
+  return inv.encounterType ? `${inv.encounterType} Intake` : 'OPD Intake';
+}
 
 /**
  * Real invoice detail + billing actions (Add Service Line, Discount,
@@ -109,28 +119,35 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoiceId]);
 
+  const isLabOrPharmacy = useMemo(() => {
+    if (!invoice) return false;
+    const dept = (invoice.departmentName || '').toLowerCase();
+    return dept.includes('lab') || dept.includes('pharmacy');
+  }, [invoice]);
+
   // Pre-fill the payment amount with the outstanding balance so Front Desk
   // Pre-fill payment amount and automatically focus the Discount field on open
   useEffect(() => {
     if (activeAction === 'payment' && invoice && !paymentAmountTouched && invoice.balanceDue > 0) {
-      const disc = typeof discountAmount === 'number' ? discountAmount : 0;
+      const disc = (!isLabOrPharmacy && typeof discountAmount === 'number') ? discountAmount : 0;
       setPaymentAmount(Math.max(0, invoice.balanceDue - disc));
     }
-  }, [activeAction, invoice, discountAmount, paymentAmountTouched]);
+  }, [activeAction, invoice, discountAmount, paymentAmountTouched, isLabOrPharmacy]);
 
-  // Focus directly on the Discount input when the payment collector opens
+  // Focus directly on the Discount input (or Payment input if Lab/Pharmacy) when the payment collector opens
   useEffect(() => {
     if (activeAction === 'payment' && invoice && invoice.status !== 'PAID') {
       const timer = setTimeout(() => {
-        const discEl = document.getElementById('modal-discount-input') as HTMLInputElement | null;
-        if (discEl) {
-          discEl.focus();
-          discEl.select();
+        const targetId = isLabOrPharmacy ? 'modal-payment-input' : 'modal-discount-input';
+        const el = document.getElementById(targetId) as HTMLInputElement | null;
+        if (el) {
+          el.focus();
+          el.select();
         }
       }, 120);
       return () => clearTimeout(timer);
     }
-  }, [activeAction, invoice?.id]);
+  }, [activeAction, invoice, isLabOrPharmacy]);
 
   const closeAction = () => {
     setActiveAction(null);
@@ -341,7 +358,9 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
             <div class="meta-col">
               <div class="meta-row"><span class="meta-label">Invoice #:</span> <strong class="meta-val">${invoice?.invoiceNumber}</strong></div>
               <div class="meta-row"><span class="meta-label">Date &amp; Time:</span> <span class="meta-val">${invoice?.createdAt}</span></div>
-              <div class="meta-row"><span class="meta-label">Encounter:</span> <span class="meta-val">${invoice?.encounterType || 'OPD'}</span></div>
+              <div class="meta-row"><span class="meta-label">Encounter:</span> <span class="meta-val">${getInvoiceEncounterLabel(invoice)}</span></div>
+              ${invoice?.admissionNumber ? `<div class="meta-row"><span class="meta-label">Admission #:</span> <strong class="meta-val">${invoice.admissionNumber}</strong></div>` : ''}
+              ${invoice?.wardName || invoice?.bedNumber ? `<div class="meta-row"><span class="meta-label">Ward / Bed:</span> <span class="meta-val">${[invoice.wardName, invoice.bedNumber ? `Bed ${invoice.bedNumber}` : ''].filter(Boolean).join(' - ')}</span></div>` : ''}
               <div class="meta-row"><span class="meta-label">Doctor:</span> <span class="meta-val">${invoice?.doctorName || 'Consultant'}</span></div>
               <div class="meta-row"><span class="meta-label">Status:</span> <span class="badge ${invoice?.status === 'PAID' ? 'badge-paid' : 'badge-unpaid'}">${invoice?.status}</span></div>
             </div>
@@ -437,8 +456,22 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500 font-semibold">Encounter:</span>
-                <span className="font-bold text-slate-900">{invoice.encounterType || 'OPD'} Intake</span>
+                <span className="font-bold text-slate-900">{getInvoiceEncounterLabel(invoice)}</span>
               </div>
+              {invoice.admissionNumber && (
+                <div className="flex justify-between">
+                  <span className="text-slate-500 font-semibold">Admission #:</span>
+                  <span className="font-mono font-bold text-[#08775A]">{invoice.admissionNumber}</span>
+                </div>
+              )}
+              {(invoice.wardName || invoice.bedNumber) && (
+                <div className="flex justify-between">
+                  <span className="text-slate-500 font-semibold">Ward / Bed:</span>
+                  <span className="font-semibold text-slate-800">
+                    {[invoice.wardName, invoice.bedNumber ? `Bed ${invoice.bedNumber}` : ''].filter(Boolean).join(' - ')}
+                  </span>
+                </div>
+              )}
               {invoice.doctorName && (
                 <div className="flex justify-between">
                   <span className="text-slate-500 font-semibold">Consultant:</span>
@@ -542,7 +575,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                           <Plus className="h-3 w-3" /> Add Service
                         </button>
                       )}
-                      {!isVoid && !isFullyPaid && (
+                      {!isVoid && !isFullyPaid && !isLabOrPharmacy && (
                         <button
                           type="button"
                           onClick={() => setActiveAction('discount')}
@@ -620,15 +653,17 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                 </span>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {/* 1. Discount (Cursor lands here first!) */}
+                {/* 1. Discount (Cursor lands here first if not Lab/Pharmacy!) */}
                 <NumberInput
                   id="modal-discount-input"
-                  label="Discount (PKR)"
+                  label={isLabOrPharmacy ? "Discount (Not Permitted)" : "Discount (PKR)"}
                   min={0}
                   max={invoice.subtotal}
-                  placeholder="0"
-                  value={discountAmount}
+                  placeholder={isLabOrPharmacy ? "N/A" : "0"}
+                  value={isLabOrPharmacy ? '' : discountAmount}
+                  disabled={isLabOrPharmacy}
                   onChange={(e) => {
+                    if (isLabOrPharmacy) return;
                     const val = e.target.value === '' ? '' : Number(e.target.value);
                     setDiscountAmount(val);
                     if (!paymentAmountTouched) {
@@ -646,7 +681,11 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                       }
                     }
                   }}
-                  hint="Enter to advance to Amount Paid"
+                  hint={
+                    isLabOrPharmacy
+                      ? "Discounts strictly restricted to Hospital Services (No discount on Lab/Pharmacy)."
+                      : "Enter to advance to Amount Paid"
+                  }
                 />
 
                 {/* 2. Amount Paid (Enter on this triggers payment submission!) */}

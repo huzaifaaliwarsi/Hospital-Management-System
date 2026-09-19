@@ -142,6 +142,11 @@ export interface StaffUserFormValues {
   baseSalary?: number;
   salaryEffectiveFrom?: string;
   commissionEnabled?: boolean;
+
+  // v7.2 Doctor Patient Discharge Credentials (Clinical Discharge Authorization)
+  clinicalAuthUsername?: string;
+  clinicalAuthPassword?: string;
+  clinicalAuthActive?: boolean;
 }
 
 export interface StaffUserFilterState {

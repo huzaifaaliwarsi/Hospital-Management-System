@@ -37,6 +37,7 @@ import {
   DepartmentService,
   VALID_DEPARTMENT_TYPES,
   fetchDepartments,
+  isProtectedCoreDepartment,
 } from '../../../services/departmentService';
 import { fetchStaffUsers } from '../../../services/staffUserService';
 import { StaffUser } from '../../../types/staffUser';
@@ -299,6 +300,12 @@ export const SuperAdminDepartmentsView: React.FC = () => {
 
   const handleConfirmDelete = async () => {
     if (!selectedDeptForDelete) return;
+    if (isProtectedCoreDepartment(selectedDeptForDelete)) {
+      toast.error(`Core hospital care department "${selectedDeptForDelete.name}" (${selectedDeptForDelete.code}) is protected and cannot be deleted.`);
+      setIsDeleteOpen(false);
+      setSelectedDeptForDelete(null);
+      return;
+    }
     try {
       setIsDeletingDept(true);
       await DepartmentService.deleteDepartment(selectedDeptForDelete.id, departments);
@@ -903,18 +910,27 @@ export const SuperAdminDepartmentsView: React.FC = () => {
                           <Power className="h-3.5 w-3.5" />
                         </button>
 
-                        {/* Delete Button (Guarded by Linked Records) */}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedDeptForDelete(dept);
-                            setIsDeleteOpen(true);
-                          }}
-                          title="Delete Department (Checked for linked records)"
-                          className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                        {/* Delete Button (Protected for OPD, ER, OBS; Guarded by Linked Records for others) */}
+                        {isProtectedCoreDepartment(dept) ? (
+                          <span
+                            title="Protected Core Care Department (OPD, Emergency, Observation cannot be deleted)"
+                            className="rounded-lg p-1.5 text-slate-300 cursor-not-allowed inline-flex items-center justify-center opacity-60"
+                          >
+                            <ShieldAlert className="h-3.5 w-3.5 text-slate-400" />
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedDeptForDelete(dept);
+                              setIsDeleteOpen(true);
+                            }}
+                            title="Delete Department (Checked for linked records)"
+                            className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   )}

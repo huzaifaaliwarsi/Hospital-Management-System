@@ -275,6 +275,22 @@ export class StaffUserService {
         await apiClient.post(`/staff/${staffId}/deactivate`);
       }
 
+      // Patient Discharge Credentials (Clinical Discharge Authorization — Doctors only)
+      if (
+        values.staffCategory === 'Doctor' &&
+        values.clinicalAuthUsername?.trim() &&
+        values.clinicalAuthPassword?.trim()
+      ) {
+        await this.setClinicalAuth(
+          staffId,
+          values.clinicalAuthUsername.trim(),
+          values.clinicalAuthPassword.trim()
+        );
+        if (values.clinicalAuthActive === false) {
+          await this.setClinicalAuthActive(staffId, false);
+        }
+      }
+
       await fetchStaffUsers();
       const created = this.getStaffUserById(staffId);
       return { success: true, user: created };
@@ -371,6 +387,27 @@ export class StaffUserService {
             success: false,
             error: err?.message || 'This account has linked activity and its portal access cannot be removed. Suspend it instead.',
           };
+        }
+      }
+
+      // Patient Discharge Credentials (Clinical Discharge Authorization — Doctors only)
+      if (values.staffCategory === 'Doctor') {
+        const docUsername = values.clinicalAuthUsername?.trim();
+        const docPassword = values.clinicalAuthPassword?.trim();
+        if (docUsername && docPassword) {
+          const isConfigured = !!existing.clinicalAuthUsername;
+          if (isConfigured && docUsername === existing.clinicalAuthUsername) {
+            await this.resetClinicalAuthPassword(id, docPassword);
+          } else {
+            await this.setClinicalAuth(id, docUsername, docPassword);
+          }
+        }
+        if (
+          values.clinicalAuthActive !== undefined &&
+          values.clinicalAuthActive !== existing.clinicalAuthActive &&
+          (existing.clinicalAuthUsername || docUsername)
+        ) {
+          await this.setClinicalAuthActive(id, values.clinicalAuthActive);
         }
       }
 

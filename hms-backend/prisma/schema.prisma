@@ -1361,8 +1361,8 @@ model AdmissionRecord {
   selfPayEncounter   SelfPayEncounter? @relation(fields: [selfPayEncounterId], references: [id])
   departmentId       String            @map("department_id")
   department         Department        @relation(fields: [departmentId], references: [id])
-  doctorStaffId      String            @map("doctor_staff_id")
-  doctor             Staff             @relation("AdmissionDoctor", fields: [doctorStaffId], references: [id])
+  doctorStaffId      String?           @map("doctor_staff_id") // optional at planning time — a doctor may be assigned later at the Admission Portal
+  doctor             Staff?            @relation("AdmissionDoctor", fields: [doctorStaffId], references: [id])
   bedId              String?           @map("bed_id") // NULL until bed assignment / confirm arrival
   bed                Bed?              @relation(fields: [bedId], references: [id])
   status             AdmissionStatus   @default(PLANNED)

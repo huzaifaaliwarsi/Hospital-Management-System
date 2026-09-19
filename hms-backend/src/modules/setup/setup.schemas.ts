@@ -129,7 +129,7 @@ export type UpdateServiceRateBody = z.infer<typeof updateServiceRateSchema>;
 // ── Wards / Rooms / Beds ─────────────────────────────────────────────
 export const createWardSchema = z.object({
   code: z.string().max(20).optional(),
-  departmentId: z.string().uuid(),
+  departmentId: z.string().uuid().optional(),
   name: z.string().min(1).max(100),
   wardType: z.string().optional(),
   genderPolicy: z.string().optional(),

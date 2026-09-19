@@ -124,7 +124,7 @@ export const AdmissionPaymentRequestsView: React.FC = () => {
                       )}
                     </td>
                     <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">
-                      {r.departmentName} / {r.doctorName}
+                      {r.departmentName} / {r.doctorName || 'Not Assigned'}
                     </td>
                     <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">{r.requestType}</td>
                     <td className="px-3 py-2.5 whitespace-nowrap font-semibold text-slate-800">{formatPKR(r.requestedAmount)}</td>

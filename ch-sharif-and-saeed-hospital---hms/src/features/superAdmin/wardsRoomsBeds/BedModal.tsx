@@ -140,20 +140,17 @@ export const BedModal: React.FC<BedModalProps> = ({
       newErrors.roomId = 'Room assignment is required.';
     }
 
-    if (formValues.dailyBedRate < 0 || isNaN(formValues.dailyBedRate)) {
-      newErrors.dailyBedRate = 'Daily rate cannot be negative.';
-    }
-
-    if (isOccupied && formValues.operationalStatus === 'Out of Service') {
-      newErrors.operationalStatus = 'Cannot take bed out of service while occupied.';
-    }
-
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors);
       return;
     }
 
-    onSave(formValues);
+    onSave({
+      ...formValues,
+      dailyBedRate: formValues.dailyBedRate ?? 0,
+      occupancyStatus: isOccupied ? bed!.occupancyStatus : 'Available',
+      operationalStatus: 'Active',
+    });
   };
 
   return (
@@ -297,109 +294,25 @@ export const BedModal: React.FC<BedModalProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
             {/* Bed Type */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Bed Type <span className="text-rose-500">*</span>
-              </label>
-              <select
-                id="bed-form-type"
-                value={formValues.bedType}
-                onChange={(e) =>
-                  setFormValues((prev) => ({ ...prev, bedType: e.target.value as any }))
-                }
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
-              >
-                {VALID_BED_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Daily Bed Rate */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Daily Bed Rate (PKR) <span className="text-rose-500">*</span>
-              </label>
-              <div className="relative">
-                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
-                  PKR
-                </span>
-                <input
-                  id="bed-form-rate"
-                  type="number"
-                  min="0"
-                  step="50"
-                  value={formValues.dailyBedRate}
-                  onChange={(e) =>
-                    setFormValues((prev) => ({
-                      ...prev,
-                      dailyBedRate: parseFloat(e.target.value) || 0,
-                    }))
-                  }
-                  className="w-full pl-11 pr-3 py-2 text-xs font-bold text-slate-900 rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Occupancy and Operational Status Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
-            {/* Occupancy Status */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Occupancy Status
-              </label>
-              {isOccupied ? (
-                <div className="px-3 py-2 bg-indigo-50 border border-indigo-200 rounded-lg text-xs font-semibold text-indigo-800">
-                  Occupied (Locked by Active Admission)
-                </div>
-              ) : (
-                <select
-                  id="bed-form-occupancy"
-                  value={formValues.occupancyStatus}
-                  onChange={(e) =>
-                    setFormValues((prev) => ({
-                      ...prev,
-                      occupancyStatus: e.target.value as any,
-                    }))
-                  }
-                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
-                >
-                  <option value="Available">Available for Admission</option>
-                  <option value="Reserved">Reserved for Incoming</option>
-                  <option value="Maintenance">Under Cleaning / Sanitization</option>
-                </select>
-              )}
-            </div>
-
-            {/* Operational Status */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Operational Status
-              </label>
-              <select
-                id="bed-form-operational"
-                value={formValues.operationalStatus}
-                onChange={(e) =>
-                  setFormValues((prev) => ({
-                    ...prev,
-                    operationalStatus: e.target.value as any,
-                  }))
-                }
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
-              >
-                <option value="Active">Active In Service</option>
-                <option value="Out of Service">Out of Service</option>
-                <option value="Decommissioned">Decommissioned</option>
-              </select>
-              {errors.operationalStatus && (
-                <p className="text-[11px] text-rose-600 mt-1">{errors.operationalStatus}</p>
-              )}
-            </div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              Bed Type <span className="text-rose-500">*</span>
+            </label>
+            <select
+              id="bed-form-type"
+              value={formValues.bedType}
+              onChange={(e) =>
+                setFormValues((prev) => ({ ...prev, bedType: e.target.value as any }))
+              }
+              className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
+            >
+              {VALID_BED_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
           </div>
 
           {/* Footer Actions */}

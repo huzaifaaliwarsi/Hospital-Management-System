@@ -191,7 +191,7 @@ export const ActiveAdmissionsView: React.FC<ActiveAdmissionsViewProps> = ({
                       </div>
                     </td>
                     <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">{a.departmentName}</td>
-                    <td className="px-3 py-2.5 whitespace-nowrap text-slate-700">{a.doctorName}</td>
+                    <td className="px-3 py-2.5 whitespace-nowrap text-slate-700">{a.doctorName || 'Not Assigned'}</td>
                     <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">{a.bedLabel || '—'}</td>
                     <td className="px-3 py-2.5 whitespace-nowrap">
                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${a.medicationMode === 'HOSPITAL_MANAGED' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>

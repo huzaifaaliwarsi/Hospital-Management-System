@@ -260,53 +260,21 @@ export const AddEditDepartmentModal: React.FC<AddEditDepartmentModalProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Department Type <span className="text-rose-600">*</span>
-              </label>
-              <select
-                value={formData.type}
-                onChange={(e) => setFormData({ ...formData, type: e.target.value as DepartmentType })}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-[#08775A] focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20"
-              >
-                {VALID_DEPARTMENT_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Status <span className="text-rose-600">*</span>
-              </label>
-              <div className="flex items-center gap-3 pt-1">
-                <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-slate-700">
-                  <input
-                    type="radio"
-                    name="status"
-                    value="Active"
-                    checked={formData.status === 'Active'}
-                    onChange={() => setFormData({ ...formData, status: 'Active' })}
-                    className="h-4 w-4 text-[#08775A] focus:ring-[#08775A]"
-                  />
-                  <span>Active</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-slate-700">
-                  <input
-                    type="radio"
-                    name="status"
-                    value="Inactive"
-                    checked={formData.status === 'Inactive'}
-                    onChange={() => setFormData({ ...formData, status: 'Inactive' })}
-                    className="h-4 w-4 text-slate-500 focus:ring-slate-400"
-                  />
-                  <span>Inactive</span>
-                </label>
-              </div>
-            </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1">
+              Department Type <span className="text-rose-600">*</span>
+            </label>
+            <select
+              value={formData.type}
+              onChange={(e) => setFormData({ ...formData, type: e.target.value as DepartmentType })}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-[#08775A] focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20"
+            >
+              {VALID_DEPARTMENT_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
           </div>
 
           {/* v7.2 Department Billing Config (HMS_V7.2_NEW_REQUIREMENTS.md §2.1) */}

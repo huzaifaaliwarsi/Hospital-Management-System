@@ -328,6 +328,21 @@ export const setupService = {
   async deleteDepartment(id: string) {
     const dept = (await this.assertExists('department', id)) as any;
 
+    const code = (dept.code || '').trim().toUpperCase();
+    const name = (dept.name || '').trim().toUpperCase();
+    const isProtected =
+      ['OPD', 'ER', 'OBS', 'GEN-OPD', 'EMERGENCY', 'OBSERVATION'].includes(code) ||
+      ['OPD', 'ER', 'OBS', 'EMERGENCY', 'OBSERVATION', 'EMERGENCY ROOM', 'OUTPATIENT DEPARTMENT', 'OBSERVATION WARD'].includes(name) ||
+      name.startsWith('OPD ') ||
+      name.startsWith('EMERGENCY ') ||
+      name.startsWith('OBSERVATION ');
+
+    if (isProtected) {
+      throw new ValidationError(
+        `Core care department "${dept.name}" (${dept.code}) is protected by the hospital system and cannot be deleted.`
+      );
+    }
+
     // Find a fallback active department to safely preserve and reassign staff/doctors (Doctors/staff are NEVER deleted)
     let fallbackDept = await prisma.department.findFirst({
       where: { id: { not: id }, isActive: true },
@@ -676,8 +691,19 @@ export const setupService = {
 
   async createWard(body: CreateWardBody, createdById: string) {
     const code = normalizeCode(body.code) ?? (await generateUniqueCode('ward', 'WRD'));
+    let departmentId = body.departmentId;
+    if (!departmentId) {
+      const defaultDept = await prisma.department.findFirst({
+        where: { isActive: true },
+        orderBy: { name: 'asc' },
+      });
+      if (!defaultDept) {
+        throw new ValidationError('No active department found to associate with ward.');
+      }
+      departmentId = defaultDept.id;
+    }
     try {
-      return await prisma.ward.create({ data: { ...body, code, createdById } });
+      return await prisma.ward.create({ data: { ...body, departmentId, code, createdById } });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         throw new ConflictError(`Ward code "${code}" already exists.`);

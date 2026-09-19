@@ -102,16 +102,13 @@ export const WardModal: React.FC<WardModalProps> = ({
       newErrors.name = 'Ward name is required.';
     }
 
-    if (!formValues.departmentId) {
-      newErrors.departmentId = 'Department is required.';
-    }
-
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors);
       return;
     }
 
-    onSave(formValues);
+    const effectiveDeptId = formValues.departmentId || departments.find((d) => d.status === 'Active')?.id || departments[0]?.id || '';
+    onSave({ ...formValues, departmentId: effectiveDeptId, status: 'Active' });
   };
 
   return (
@@ -196,27 +193,6 @@ export const WardModal: React.FC<WardModalProps> = ({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Department */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Department <span className="text-rose-500">*</span>
-              </label>
-              <select
-                id="ward-form-dept"
-                value={formValues.departmentId}
-                onChange={(e) =>
-                  setFormValues((prev) => ({ ...prev, departmentId: e.target.value }))
-                }
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
-              >
-                {departments.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name} {d.status === 'Inactive' ? '(Inactive)' : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-
             {/* Ward Type */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -237,9 +213,32 @@ export const WardModal: React.FC<WardModalProps> = ({
                 ))}
               </select>
             </div>
+
+            {/* Gender Policy */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Gender Policy
+              </label>
+              <select
+                id="ward-form-gender"
+                value={formValues.genderPolicy}
+                onChange={(e) =>
+                  setFormValues((prev) => ({
+                    ...prev,
+                    genderPolicy: e.target.value as any,
+                  }))
+                }
+                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
+              >
+                <option value="None">None (Co-ed / All)</option>
+                <option value="Male Only">Male Only</option>
+                <option value="Female Only">Female Only</option>
+                <option value="Pediatric">Pediatric</option>
+              </select>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* Floor */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -272,58 +271,6 @@ export const WardModal: React.FC<WardModalProps> = ({
                 placeholder="e.g. East Wing"
                 className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
               />
-            </div>
-
-            {/* Gender Policy */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Gender Policy
-              </label>
-              <select
-                id="ward-form-gender"
-                value={formValues.genderPolicy}
-                onChange={(e) =>
-                  setFormValues((prev) => ({
-                    ...prev,
-                    genderPolicy: e.target.value as any,
-                  }))
-                }
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
-              >
-                <option value="None">None (Co-ed / All)</option>
-                <option value="Male Only">Male Only</option>
-                <option value="Female Only">Female Only</option>
-                <option value="Pediatric">Pediatric</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Status */}
-          <div className="flex items-center justify-between pt-2">
-            <span className="text-xs font-semibold text-slate-700">Ward Operational Status</span>
-            <div className="flex items-center gap-4">
-              <label className="flex items-center gap-1.5 cursor-pointer">
-                <input
-                  type="radio"
-                  name="wardStatus"
-                  value="Active"
-                  checked={formValues.status === 'Active'}
-                  onChange={() => setFormValues((p) => ({ ...p, status: 'Active' }))}
-                  className="text-[#08775A] focus:ring-[#08775A]"
-                />
-                <span className="text-xs text-slate-700 font-medium">Active (Operational)</span>
-              </label>
-              <label className="flex items-center gap-1.5 cursor-pointer">
-                <input
-                  type="radio"
-                  name="wardStatus"
-                  value="Inactive"
-                  checked={formValues.status === 'Inactive'}
-                  onChange={() => setFormValues((p) => ({ ...p, status: 'Inactive' }))}
-                  className="text-slate-500 focus:ring-slate-400"
-                />
-                <span className="text-xs text-slate-600 font-medium">Inactive (Suspended)</span>
-              </label>
             </div>
           </div>
 
