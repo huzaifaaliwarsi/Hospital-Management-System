@@ -15,7 +15,8 @@ import { PanelBadge } from '../../components/common/PanelBadge';
 import { Select, NumberInput, TextInput, Textarea, Toggle } from '../../components/forms/FormControls';
 import { formatPKR } from '../../utils/formatters';
 import { useToast } from '../../context/ToastContext';
-import { DepartmentService } from '../../services/departmentService';
+import { DepartmentService, fetchDepartments } from '../../services/departmentService';
+import { Department } from '../../types/department';
 import { StaffUserService } from '../../services/staffUserService';
 import { ServiceRatesService, fetchServices } from '../../services/serviceRatesService';
 import { HospitalService } from '../../types/serviceRates';
@@ -84,26 +85,83 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
 
   const doctors = useMemo(() => StaffUserService.getStaffUsers().filter((s) => s.staffCategory === 'Doctor' && s.status === 'ACTIVE'), []);
 
-  // ── Service Stream Architecture (Hospital Management vs LAB) ──────────
-  const [serviceStream, setServiceStream] = useState<'HOSPITAL' | 'LAB'>('HOSPITAL');
+  // ── Hierarchical Service Selection (Category/Department -> Services) ──────────
+  const [selectedDeptFilter, setSelectedDeptFilter] = useState('HOSPITAL_MGMT');
+  const [allDepartments, setAllDepartments] = useState<Department[]>(() => DepartmentService.getDepartments());
   const [allServices, setAllServices] = useState<HospitalService[]>(() => ServiceRatesService.getServices());
 
   useEffect(() => {
     fetchServices().then(setAllServices).catch(() => {});
+    fetchDepartments().then(setAllDepartments).catch(() => {});
   }, []);
 
+  const departmentDropdownOptions = useMemo(() => {
+    const list: { label: string; value: string }[] = [
+      { label: 'Hospital Management (Hospital Services)', value: 'HOSPITAL_MGMT' },
+      { label: 'Laboratory (LAB Investigations)', value: 'LAB' },
+    ];
+
+    // Other specific departments
+    allDepartments
+      .filter((d) => d.status === 'Active')
+      .forEach((d) => {
+        const nameLower = d.name.toLowerCase();
+        if (
+          nameLower.includes('hospital service') ||
+          nameLower === 'hospital' ||
+          nameLower === 'laboratory' ||
+          nameLower === 'lab'
+        ) {
+          return;
+        }
+        const ownershipTag = d.fulfillmentOwnership === 'Outsourced' ? 'Outsourced' : 'Internal';
+        list.push({
+          label: `${d.name} (${ownershipTag})`,
+          value: d.id,
+        });
+      });
+
+    return list;
+  }, [allDepartments]);
+
   const availableServices = useMemo(() => {
-    return allServices.filter((s) => {
-      if (s.status !== 'Active') return false;
-      const isLab =
-        s.serviceStream === 'LAB' ||
-        s.category === 'Laboratory' ||
-        s.category === 'Diagnostic' ||
-        s.category === 'Radiology' ||
-        (s.departmentName || '').toLowerCase().includes('lab');
-      return serviceStream === 'LAB' ? isLab : !isLab;
-    });
-  }, [allServices, serviceStream]);
+    if (selectedDeptFilter === 'HOSPITAL_MGMT') {
+      return allServices.filter(
+        (s) =>
+          s.status === 'Active' &&
+          s.serviceStream !== 'LAB' &&
+          s.category !== 'Laboratory' &&
+          s.category !== 'Diagnostic' &&
+          !(s.departmentName || '').toLowerCase().includes('lab')
+      );
+    }
+    if (selectedDeptFilter === 'LAB') {
+      return allServices.filter(
+        (s) =>
+          s.status === 'Active' &&
+          (s.serviceStream === 'LAB' ||
+            s.category === 'Laboratory' ||
+            s.category === 'Diagnostic' ||
+            (s.departmentName || '').toLowerCase().includes('lab'))
+      );
+    }
+    // Filter by specific departmentId
+    return allServices.filter(
+      (s) => s.status === 'Active' && (s.departmentId === selectedDeptFilter || s.departmentName === selectedDeptFilter)
+    );
+  }, [allServices, selectedDeptFilter]);
+
+  const selectedDeptObj = useMemo(() => {
+    return allDepartments.find((d) => d.id === selectedDeptFilter) || null;
+  }, [allDepartments, selectedDeptFilter]);
+
+  const isCurrentSelectionOutsourced = useMemo(() => {
+    if (selectedDeptFilter === 'LAB') {
+      const labDept = allDepartments.find((d) => d.name.toLowerCase().includes('lab'));
+      return labDept?.fulfillmentOwnership === 'Outsourced';
+    }
+    return selectedDeptObj?.fulfillmentOwnership === 'Outsourced';
+  }, [selectedDeptFilter, selectedDeptObj, allDepartments]);
 
   const load = async () => {
     setIsLoading(true);
@@ -134,20 +192,25 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
   const [lineQty, setLineQty] = useState(1);
   const [linePerformedBy, setLinePerformedBy] = useState('');
 
+  const selectedService = useMemo(() => {
+    return allServices.find((s) => s.id === lineServiceId) || null;
+  }, [allServices, lineServiceId]);
+
   const handleAddService = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!lineServiceId) {
-      setActionError(`Select a ${serviceStream === 'HOSPITAL' ? 'Hospital' : 'Lab'} service.`);
+      setActionError('Please select a service or procedure.');
       return;
     }
     setIsSaving(true);
     setActionError(null);
     try {
       await addAdmissionService(admissionId, { serviceRateId: lineServiceId, quantity: lineQty, performedByStaffId: linePerformedBy || undefined });
+      const addedName = selectedService?.name || 'Service line';
       setLineServiceId('');
       setLineQty(1);
       setLinePerformedBy('');
-      await refresh(`${serviceStream === 'HOSPITAL' ? 'Hospital service' : 'Lab test'} added to patient invoice.`);
+      await refresh(`${addedName} added to patient invoice.`);
     } catch (err: any) {
       setActionError(err?.message || 'Failed to add service.');
     } finally {
@@ -389,63 +452,61 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                     </span>
                   </div>
 
-                  {/* Compact Stream Selector (No icons, sleek mini segmented card) */}
-                  <div className="flex items-center justify-between bg-white px-3 py-2 rounded-lg border border-slate-200">
-                    <span className="text-xs font-semibold text-slate-700">
-                      Service Stream / Department *
-                    </span>
-                    <div className="inline-flex bg-slate-100 p-0.5 rounded-lg text-xs font-semibold border border-slate-200/60">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setServiceStream('HOSPITAL');
-                          setLineServiceId('');
-                        }}
-                        className={`px-3 py-1 rounded-md transition-all cursor-pointer ${
-                          serviceStream === 'HOSPITAL'
-                            ? 'bg-white text-[#08775A] font-bold shadow-2xs'
-                            : 'text-slate-500 hover:text-slate-800'
-                        }`}
-                      >
-                        Hospital Services
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setServiceStream('LAB');
-                          setLineServiceId('');
-                        }}
-                        className={`px-3 py-1 rounded-md transition-all cursor-pointer ${
-                          serviceStream === 'LAB'
-                            ? 'bg-white text-purple-700 font-bold shadow-2xs'
-                            : 'text-slate-500 hover:text-slate-800'
-                        }`}
-                      >
-                        Laboratory (LAB)
-                      </button>
-                    </div>
+                  {/* 2-Level Cascading Dropdowns: Department / Source -> Service */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <Select
+                      label="1. Department / Source"
+                      options={departmentDropdownOptions}
+                      value={selectedDeptFilter}
+                      onChange={(e) => {
+                        setSelectedDeptFilter(e.target.value);
+                        setLineServiceId('');
+                      }}
+                      hint={
+                        isCurrentSelectionOutsourced
+                          ? 'Outsourced Department — Billed to Outsourced Invoice (No discounts allowed).'
+                          : 'Internal Hospital Management Services'
+                      }
+                    />
+
+                    <Select
+                      label="2. Service / Procedure"
+                      required
+                      placeholder={
+                        availableServices.length === 0
+                          ? 'No services available in this department'
+                          : 'Choose a service / procedure…'
+                      }
+                      options={availableServices.map((s) => ({
+                        label: `${s.name} (${s.code}) — ${formatPKR(s.standardRate)}`,
+                        value: s.id,
+                      }))}
+                      value={lineServiceId}
+                      onChange={(e) => setLineServiceId(e.target.value)}
+                      hint={
+                        selectedService
+                          ? `Rate: ${formatPKR(selectedService.standardRate)} • Billing Unit: ${selectedService.billingUnit || 'One-Time'}`
+                          : 'Select a procedure or test'
+                      }
+                    />
                   </div>
 
-                  <Select
-                    label={serviceStream === 'HOSPITAL' ? 'Hospital Service / Procedure' : 'Laboratory Test / Investigation'}
-                    required
-                    placeholder={
-                      availableServices.length === 0
-                        ? `No active ${serviceStream === 'HOSPITAL' ? 'Hospital' : 'Lab'} services configured`
-                        : `Choose a ${serviceStream === 'HOSPITAL' ? 'Hospital Procedure' : 'Lab Test'}…`
-                    }
-                    options={availableServices.map((s) => ({
-                      label: `${s.name} (${s.code}) — ${formatPKR(s.standardRate)}`,
-                      value: s.id,
-                    }))}
-                    value={lineServiceId}
-                    onChange={(e) => setLineServiceId(e.target.value)}
-                    hint={
-                      serviceStream === 'HOSPITAL'
-                        ? 'Posts directly to the Hospital Services department invoice.'
-                        : 'Posts directly to the Laboratory department invoice.'
-                    }
-                  />
+                  {selectedService && (
+                    <div className="flex items-center justify-between text-[11px] bg-white px-3 py-2 rounded-lg border border-slate-200">
+                      <span className="text-slate-600 font-medium">
+                        Destination: <strong className="text-slate-800">{selectedService.departmentName || 'Hospital Services'} Invoice</strong>
+                      </span>
+                      <span className="text-slate-600 font-medium">
+                        Department Type:{' '}
+                        <strong className={isCurrentSelectionOutsourced ? 'text-amber-800' : 'text-[#08775A]'}>
+                          {isCurrentSelectionOutsourced ? 'Outsourced (No Discount)' : 'Hospital Management'}
+                        </strong>
+                      </span>
+                      <span className="text-slate-900 font-bold">
+                        Line Total: {formatPKR((selectedService.standardRate || 0) * (lineQty || 1))}
+                      </span>
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-2 gap-3">
                     <NumberInput label="Quantity" min={1} value={lineQty} onChange={(e) => setLineQty(Number(e.target.value) || 1)} />
@@ -458,7 +519,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                   </div>
                   <div className="flex justify-end">
                     <button type="submit" disabled={isSaving || !lineServiceId} className="px-5 py-2 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded-xl shadow-xs disabled:opacity-60 cursor-pointer">
-                      {isSaving ? 'Adding…' : `Add ${serviceStream === 'HOSPITAL' ? 'Hospital Service' : 'Lab Test'}`}
+                      {isSaving ? 'Adding…' : 'Add Service to Patient'}
                     </button>
                   </div>
                 </form>

@@ -90,6 +90,29 @@ const OPERATIONAL_TO_BACKEND: Record<BedOperationalStatus, string> = {
   Decommissioned: 'DECOMMISSIONED',
 };
 
+export function getNextBedNumbers(existingBeds: Bed[], count: number, prefix: string = 'Bed '): string[] {
+  let maxNum = 0;
+  for (const b of existingBeds) {
+    const match = b.bedNumber.match(/(\d+)$/);
+    if (match) {
+      const n = parseInt(match[1], 10);
+      if (n > maxNum) maxNum = n;
+    }
+  }
+  const existingSet = new Set(existingBeds.map((b) => b.bedNumber.trim().toLowerCase()));
+  const results: string[] = [];
+  let candidate = maxNum + 1;
+  while (results.length < count) {
+    const name = `${prefix}${candidate}`;
+    if (!existingSet.has(name.toLowerCase())) {
+      results.push(name);
+      existingSet.add(name.toLowerCase());
+    }
+    candidate++;
+  }
+  return results;
+}
+
 function formatTimestamp(iso?: string | null): string {
   if (!iso) return '';
   const d = new Date(iso);
@@ -370,7 +393,20 @@ export class WardsRoomsBedsService {
     }
   }
 
-  // ── Beds ───────────────────────────────────────────────────────────
+  static async createBedsBatch(bedsToCreate: BedFormValues[], _currentUser?: User | null): Promise<void> {
+    for (const values of bedsToCreate) {
+      await apiClient.post('/setup/wards-rooms-beds/beds', {
+        code: values.code?.trim() || undefined,
+        roomId: values.roomId,
+        bedNumber: values.bedNumber.trim(),
+        bedType: values.bedType,
+        dailyRate: values.dailyBedRate ?? values.dailyRate ?? 0,
+        operationalStatus: OPERATIONAL_TO_BACKEND[values.operationalStatus || 'Active'],
+      });
+    }
+    await fetchWardHierarchy();
+  }
+
   static async createBed(values: BedFormValues, _currentUser?: User | null): Promise<Bed> {
     const res = await apiClient.post<{ data: { id: string } }>('/setup/wards-rooms-beds/beds', {
       code: values.code?.trim() || undefined,

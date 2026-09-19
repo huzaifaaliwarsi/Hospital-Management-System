@@ -9,13 +9,24 @@ const router = Router();
 const view = authorize('frontdesk', 'view');
 const create = authorize('frontdesk', 'create');
 
+router.get('/records', view, asyncHandler(c.listRecords));
+
 router.get('/:id/statement', view, validate({ params: s.admissionIdParamsSchema }), asyncHandler(c.getStatement));
+
+router.get('/:id/ledger', view, validate({ params: s.admissionIdParamsSchema }), asyncHandler(c.getLedger));
 
 router.post(
   '/:id/collect-payment',
   create,
   validate({ params: s.admissionIdParamsSchema, body: s.collectAdmissionPaymentSchema }),
   asyncHandler(c.collectPayment),
+);
+
+router.post(
+  '/:id/generate-final-bill',
+  create,
+  validate({ params: s.admissionIdParamsSchema }),
+  asyncHandler(c.generateFinalBill),
 );
 
 export default router;

@@ -228,6 +228,7 @@ export const FRONT_DESK_NAV_GROUPS: NavGroup[] = [
     id: 'fd_billing',
     title: 'BILLING',
     items: [
+      { id: 'admission_patient_records', label: 'Admission Patient Records', icon: 'ClipboardList', badge: 'New', badgeVariant: 'success' },
       { id: 'hospital_invoices', label: 'Hospital Invoices', icon: 'FileSpreadsheet' },
       { id: 'billing_pending_discharges', label: 'Billing Pending Discharges', icon: 'ClipboardCheck', badge: 'v7.2', badgeVariant: 'success' },
       { id: 'admission_payment_requests', label: 'Admission Payment Requests', icon: 'CreditCard' },

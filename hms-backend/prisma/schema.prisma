@@ -565,6 +565,7 @@ model PortalUser {
   dischargeSummariesInitiated DischargeSummary[]        @relation("DischargeSummaryInitiatedBy")
   highCostAttendantConfirmations HighCostMedicineAuthorization[] @relation("HighCostAttendantConfirmedBy")
   highCostManagementApprovals    HighCostMedicineAuthorization[] @relation("HighCostManagementApprovedBy")
+  finalBillsGenerated             AdmissionRecord[]        @relation("AdmissionFinalBillGeneratedBy")
 
   createdAt DateTime @default(now()) @map("created_at")
   createdBy String?  @map("created_by")
@@ -1376,6 +1377,16 @@ model AdmissionRecord {
   // the New Admission form); Check-In's own notes are appended here too
   // rather than overwriting, so neither moment's note is lost.
   notes              String?           @db.Text
+
+  // Admission Patient Records / Running Ledger (Front Desk "Generate Invoice
+  // / Final Bill" action) — set exactly once, on the first call; repeat
+  // calls return the same number instead of generating a new one. Never
+  // touches HospitalInvoice/InvoiceLineItem — the final bill is a frozen
+  // number over the already-accumulated ledger, not a new charge source.
+  finalBillNumber          String?     @unique @map("final_bill_number")
+  finalBillGeneratedAt     DateTime?   @map("final_bill_generated_at")
+  finalBillGeneratedById   String?     @map("final_bill_generated_by")
+  finalBillGeneratedByUser PortalUser? @relation("AdmissionFinalBillGeneratedBy", fields: [finalBillGeneratedById], references: [id])
 
   hospitalInvoices      HospitalInvoice[]
   bedTransfers          BedTransferHistory[]

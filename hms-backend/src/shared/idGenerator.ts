@@ -119,3 +119,12 @@ export async function generateMedicineRequestNumber(tx?: PrismaClientOrTx): Prom
   const prefix = `REQ-${currentYear2()}-`;
   return generateSequentialId(tx, 'medicineRequest', 'requestNumber', prefix, 4);
 }
+
+/**
+ * Short Admission Final Bill Number: e.g. `FBL-26-0001` — generated exactly
+ * once per admission by `admissionBillingService.generateFinalBill`.
+ */
+export async function generateFinalBillNumber(tx?: PrismaClientOrTx): Promise<string> {
+  const prefix = `FBL-${currentYear2()}-`;
+  return generateSequentialId(tx, 'admissionRecord', 'finalBillNumber', prefix, 4);
+}

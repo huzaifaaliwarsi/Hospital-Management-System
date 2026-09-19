@@ -7,6 +7,7 @@ import {
   Info,
   Stethoscope,
   FlaskConical,
+  Scan,
   Pill,
   ExternalLink,
 } from 'lucide-react';
@@ -20,7 +21,7 @@ import {
 import { DepartmentService, fetchDepartments } from '../../../services/departmentService';
 import { useRouter } from '../../../context/RouterContext';
 
-export type ServiceStreamType = 'HOSPITAL' | 'LAB' | 'PHARMACY';
+export type ServiceStreamType = 'HOSPITAL' | 'LAB' | 'RADIOLOGY' | 'PHARMACY';
 
 interface ServiceModalProps {
   isOpen: boolean;
@@ -46,7 +47,13 @@ const HOSPITAL_CATEGORIES: ServiceCategory[] = [
 const LAB_CATEGORIES: ServiceCategory[] = [
   'Laboratory',
   'Diagnostic',
+  'Other',
+];
+
+const RADIOLOGY_CATEGORIES: ServiceCategory[] = [
   'Radiology',
+  'Diagnostic',
+  'Other',
 ];
 
 export const ServiceModal: React.FC<ServiceModalProps> = ({
@@ -77,15 +84,32 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({
   // Determine initial stream
   const determineInitialStream = (svc?: HospitalService | null): ServiceStreamType => {
     if (!svc) return 'HOSPITAL';
-    if (svc.serviceStream === 'LAB') return 'LAB';
-    if (svc.serviceStream === 'HOSPITAL') return 'HOSPITAL';
-
-    // Legacy fallback
     const cat = (svc.category || '').toLowerCase();
     const deptName = (svc.departmentName || '').toLowerCase();
-    if (cat === 'laboratory' || cat === 'diagnostic' || cat === 'radiology' || deptName.includes('lab') || deptName.includes('pathology')) {
+    const nameLower = (svc.name || '').toLowerCase();
+
+    if (
+      cat === 'radiology' ||
+      deptName.includes('radiology') ||
+      deptName.includes('imaging') ||
+      nameLower.includes('x-ray') ||
+      nameLower.includes('ultrasound') ||
+      nameLower.includes('ct scan') ||
+      nameLower.includes('mri')
+    ) {
+      return 'RADIOLOGY';
+    }
+
+    if (
+      svc.serviceStream === 'LAB' ||
+      cat === 'laboratory' ||
+      cat === 'diagnostic' ||
+      deptName.includes('lab') ||
+      deptName.includes('pathology')
+    ) {
       return 'LAB';
     }
+
     return 'HOSPITAL';
   };
 
@@ -166,17 +190,35 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({
     const list = allDepartments;
     if (selectedStream === 'HOSPITAL') {
       const filtered = list.filter(
-        (d) => d.type !== 'Diagnostic' && d.type !== 'Pharmacy' && !d.pharmacyRelated
+        (d) =>
+          d.type !== 'Diagnostic' &&
+          d.type !== 'Pharmacy' &&
+          !d.pharmacyRelated &&
+          !d.name.toLowerCase().includes('lab') &&
+          !d.name.toLowerCase().includes('radiology') &&
+          !d.name.toLowerCase().includes('imaging')
       );
       return filtered.length > 0 ? filtered : list;
     }
     if (selectedStream === 'LAB') {
       const filtered = list.filter(
         (d) =>
-          d.type === 'Diagnostic' ||
           d.name.toLowerCase().includes('lab') ||
           d.name.toLowerCase().includes('pathology') ||
-          d.name.toLowerCase().includes('radiology')
+          (d.type === 'Diagnostic' &&
+            !d.name.toLowerCase().includes('radiology') &&
+            !d.name.toLowerCase().includes('imaging'))
+      );
+      return filtered.length > 0 ? filtered : list;
+    }
+    if (selectedStream === 'RADIOLOGY') {
+      const filtered = list.filter(
+        (d) =>
+          d.name.toLowerCase().includes('radiology') ||
+          d.name.toLowerCase().includes('imaging') ||
+          d.name.toLowerCase().includes('x-ray') ||
+          d.name.toLowerCase().includes('ultrasound') ||
+          d.type === 'Diagnostic'
       );
       return filtered.length > 0 ? filtered : list;
     }
@@ -198,13 +240,18 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({
     }
   }, [availableDepartments, formValues.departmentId]);
 
-  // Handle switching streams via the 3-Way Selector
+  // Handle switching streams via the Classification Selector
   const handleStreamChange = (newStream: ServiceStreamType) => {
     setSelectedStream(newStream);
 
     if (newStream === 'HOSPITAL') {
       const clinicalDepts = allDepartments.filter(
-        (d) => d.type !== 'Diagnostic' && d.type !== 'Pharmacy' && !d.pharmacyRelated
+        (d) =>
+          d.type !== 'Diagnostic' &&
+          d.type !== 'Pharmacy' &&
+          !d.pharmacyRelated &&
+          !d.name.toLowerCase().includes('lab') &&
+          !d.name.toLowerCase().includes('radiology')
       );
       const validDepts = clinicalDepts.length > 0 ? clinicalDepts : allDepartments;
       const isCurrentDeptValid = validDepts.some((d) => d.id === formValues.departmentId);
@@ -223,10 +270,9 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({
     } else if (newStream === 'LAB') {
       const labDepts = allDepartments.filter(
         (d) =>
-          d.type === 'Diagnostic' ||
           d.name.toLowerCase().includes('lab') ||
           d.name.toLowerCase().includes('pathology') ||
-          d.name.toLowerCase().includes('radiology')
+          (d.type === 'Diagnostic' && !d.name.toLowerCase().includes('radiology'))
       );
       const validDepts = labDepts.length > 0 ? labDepts : allDepartments;
       const isCurrentDeptValid = validDepts.some((d) => d.id === formValues.departmentId);
@@ -237,6 +283,24 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({
         serviceStream: 'LAB',
         departmentId: nextDeptId,
         category: 'Laboratory',
+        billingUnit: prev.billingUnit === 'Per Consultation' ? 'Per Test' : prev.billingUnit,
+      }));
+    } else if (newStream === 'RADIOLOGY') {
+      const radDepts = allDepartments.filter(
+        (d) =>
+          d.name.toLowerCase().includes('radiology') ||
+          d.name.toLowerCase().includes('imaging') ||
+          d.type === 'Diagnostic'
+      );
+      const validDepts = radDepts.length > 0 ? radDepts : allDepartments;
+      const isCurrentDeptValid = validDepts.some((d) => d.id === formValues.departmentId);
+      const nextDeptId = isCurrentDeptValid ? formValues.departmentId : (validDepts[0]?.id || '');
+
+      setFormValues((prev) => ({
+        ...prev,
+        serviceStream: 'LAB',
+        departmentId: nextDeptId,
+        category: 'Radiology',
         billingUnit: prev.billingUnit === 'Per Consultation' ? 'Per Test' : prev.billingUnit,
       }));
     }
@@ -298,7 +362,7 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({
 
     onSave({
       ...formValues,
-      serviceStream: selectedStream === 'LAB' ? 'LAB' : 'HOSPITAL',
+      serviceStream: selectedStream === 'LAB' || selectedStream === 'RADIOLOGY' ? 'LAB' : 'HOSPITAL',
     });
   };
 
@@ -332,124 +396,161 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="flex flex-col overflow-hidden grow">
           <div className="p-6 space-y-5 overflow-y-auto grow">
-            {/* 3-Way Selector */}
+            {/* 4-Way Selector */}
             <div className="space-y-1.5">
               <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-              Service Stream / Classification <span className="text-rose-500">*</span>
-            </label>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-              {/* 1. Hospital Services */}
-              <button
-                id="stream-select-hospital"
-                type="button"
-                onClick={() => handleStreamChange('HOSPITAL')}
-                className={`relative flex flex-col items-start p-3 text-left rounded-xl border transition-all ${
-                  selectedStream === 'HOSPITAL'
-                    ? 'border-[#08775A] bg-[#effaf5] shadow-xs ring-1 ring-[#08775A]'
-                    : 'border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center justify-between w-full mb-1">
-                  <div className="flex items-center gap-2 font-bold text-xs text-slate-900">
-                    <Stethoscope
-                      className={`w-4 h-4 ${
-                        selectedStream === 'HOSPITAL' ? 'text-[#08775A]' : 'text-slate-500'
+                Service Stream / Classification <span className="text-rose-500">*</span>
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                {/* 1. Hospital Services */}
+                <button
+                  id="stream-select-hospital"
+                  type="button"
+                  onClick={() => handleStreamChange('HOSPITAL')}
+                  className={`relative flex flex-col items-start p-2.5 text-left rounded-xl border transition-all ${
+                    selectedStream === 'HOSPITAL'
+                      ? 'border-[#08775A] bg-[#effaf5] shadow-xs ring-1 ring-[#08775A]'
+                      : 'border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-center justify-between w-full mb-1">
+                    <div className="flex items-center gap-1.5 font-bold text-xs text-slate-900">
+                      <Stethoscope
+                        className={`w-3.5 h-3.5 ${
+                          selectedStream === 'HOSPITAL' ? 'text-[#08775A]' : 'text-slate-500'
+                        }`}
+                      />
+                      <span>Hospital</span>
+                    </div>
+                    <div
+                      className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
+                        selectedStream === 'HOSPITAL'
+                          ? 'border-[#08775A] bg-[#08775A]'
+                          : 'border-slate-300'
                       }`}
-                    />
-                    <span>Hospital Services</span>
+                    >
+                      {selectedStream === 'HOSPITAL' && (
+                        <div className="w-1 h-1 rounded-full bg-white" />
+                      )}
+                    </div>
                   </div>
-                  <div
-                    className={`w-4 h-4 rounded-full border flex items-center justify-center ${
-                      selectedStream === 'HOSPITAL'
-                        ? 'border-[#08775A] bg-[#08775A]'
-                        : 'border-slate-300'
-                    }`}
-                  >
-                    {selectedStream === 'HOSPITAL' && (
-                      <div className="w-1.5 h-1.5 rounded-full bg-white" />
-                    )}
-                  </div>
-                </div>
-                <p className="text-[11px] text-slate-500 leading-tight">
-                  Consultation, procedure, nursing, bed, surgery
-                </p>
-              </button>
+                  <p className="text-[10px] text-slate-500 leading-tight">
+                    In-house care, ER, OBS, nursing
+                  </p>
+                </button>
 
-              {/* 2. Laboratory & Diagnostics */}
-              <button
-                id="stream-select-lab"
-                type="button"
-                onClick={() => handleStreamChange('LAB')}
-                className={`relative flex flex-col items-start p-3 text-left rounded-xl border transition-all ${
-                  selectedStream === 'LAB'
-                    ? 'border-indigo-600 bg-indigo-50/60 shadow-xs ring-1 ring-indigo-600'
-                    : 'border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center justify-between w-full mb-1">
-                  <div className="flex items-center gap-2 font-bold text-xs text-slate-900">
-                    <FlaskConical
-                      className={`w-4 h-4 ${
-                        selectedStream === 'LAB' ? 'text-indigo-600' : 'text-slate-500'
+                {/* 2. Outsourced Laboratory */}
+                <button
+                  id="stream-select-lab"
+                  type="button"
+                  onClick={() => handleStreamChange('LAB')}
+                  className={`relative flex flex-col items-start p-2.5 text-left rounded-xl border transition-all ${
+                    selectedStream === 'LAB'
+                      ? 'border-indigo-600 bg-indigo-50/60 shadow-xs ring-1 ring-indigo-600'
+                      : 'border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-center justify-between w-full mb-1">
+                    <div className="flex items-center gap-1.5 font-bold text-xs text-slate-900">
+                      <FlaskConical
+                        className={`w-3.5 h-3.5 ${
+                          selectedStream === 'LAB' ? 'text-indigo-600' : 'text-slate-500'
+                        }`}
+                      />
+                      <span>Outsourced Lab</span>
+                    </div>
+                    <div
+                      className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
+                        selectedStream === 'LAB'
+                          ? 'border-indigo-600 bg-indigo-600'
+                          : 'border-slate-300'
                       }`}
-                    />
-                    <span>Laboratory & Diagnostics</span>
+                    >
+                      {selectedStream === 'LAB' && (
+                        <div className="w-1 h-1 rounded-full bg-white" />
+                      )}
+                    </div>
                   </div>
-                  <div
-                    className={`w-4 h-4 rounded-full border flex items-center justify-center ${
-                      selectedStream === 'LAB'
-                        ? 'border-indigo-600 bg-indigo-600'
-                        : 'border-slate-300'
-                    }`}
-                  >
-                    {selectedStream === 'LAB' && (
-                      <div className="w-1.5 h-1.5 rounded-full bg-white" />
-                    )}
-                  </div>
-                </div>
-                <p className="text-[11px] text-slate-500 leading-tight">
-                  Lab tests, pathology, radiology
-                </p>
-              </button>
+                  <p className="text-[10px] text-slate-500 leading-tight">
+                    Pathology, CBC, urine, culture
+                  </p>
+                </button>
 
-              {/* 3. Pharmacy Catalog */}
-              <button
-                id="stream-select-pharmacy"
-                type="button"
-                onClick={() => handleStreamChange('PHARMACY')}
-                className={`relative flex flex-col items-start p-3 text-left rounded-xl border transition-all ${
-                  selectedStream === 'PHARMACY'
-                    ? 'border-amber-600 bg-amber-50/60 shadow-xs ring-1 ring-amber-600'
-                    : 'border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center justify-between w-full mb-1">
-                  <div className="flex items-center gap-2 font-bold text-xs text-slate-900">
-                    <Pill
-                      className={`w-4 h-4 ${
-                        selectedStream === 'PHARMACY' ? 'text-amber-600' : 'text-slate-500'
+                {/* 3. Outsourced Radiology */}
+                <button
+                  id="stream-select-radiology"
+                  type="button"
+                  onClick={() => handleStreamChange('RADIOLOGY')}
+                  className={`relative flex flex-col items-start p-2.5 text-left rounded-xl border transition-all ${
+                    selectedStream === 'RADIOLOGY'
+                      ? 'border-purple-600 bg-purple-50/60 shadow-xs ring-1 ring-purple-600'
+                      : 'border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-center justify-between w-full mb-1">
+                    <div className="flex items-center gap-1.5 font-bold text-xs text-slate-900">
+                      <Scan
+                        className={`w-3.5 h-3.5 ${
+                          selectedStream === 'RADIOLOGY' ? 'text-purple-600' : 'text-slate-500'
+                        }`}
+                      />
+                      <span>Outsourced Rad</span>
+                    </div>
+                    <div
+                      className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
+                        selectedStream === 'RADIOLOGY'
+                          ? 'border-purple-600 bg-purple-600'
+                          : 'border-slate-300'
                       }`}
-                    />
-                    <span>Pharmacy Catalog</span>
+                    >
+                      {selectedStream === 'RADIOLOGY' && (
+                        <div className="w-1 h-1 rounded-full bg-white" />
+                      )}
+                    </div>
                   </div>
-                  <div
-                    className={`w-4 h-4 rounded-full border flex items-center justify-center ${
-                      selectedStream === 'PHARMACY'
-                        ? 'border-amber-600 bg-amber-600'
-                        : 'border-slate-300'
-                    }`}
-                  >
-                    {selectedStream === 'PHARMACY' && (
-                      <div className="w-1.5 h-1.5 rounded-full bg-white" />
-                    )}
+                  <p className="text-[10px] text-slate-500 leading-tight">
+                    X-Ray, Ultrasound, CT, MRI
+                  </p>
+                </button>
+
+                {/* 4. Pharmacy Catalog */}
+                <button
+                  id="stream-select-pharmacy"
+                  type="button"
+                  onClick={() => handleStreamChange('PHARMACY')}
+                  className={`relative flex flex-col items-start p-2.5 text-left rounded-xl border transition-all ${
+                    selectedStream === 'PHARMACY'
+                      ? 'border-amber-600 bg-amber-50/60 shadow-xs ring-1 ring-amber-600'
+                      : 'border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-center justify-between w-full mb-1">
+                    <div className="flex items-center gap-1.5 font-bold text-xs text-slate-900">
+                      <Pill
+                        className={`w-3.5 h-3.5 ${
+                          selectedStream === 'PHARMACY' ? 'text-amber-600' : 'text-slate-500'
+                        }`}
+                      />
+                      <span>Pharmacy</span>
+                    </div>
+                    <div
+                      className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
+                        selectedStream === 'PHARMACY'
+                          ? 'border-amber-600 bg-amber-600'
+                          : 'border-slate-300'
+                      }`}
+                    >
+                      {selectedStream === 'PHARMACY' && (
+                        <div className="w-1 h-1 rounded-full bg-white" />
+                      )}
+                    </div>
                   </div>
-                </div>
-                <p className="text-[11px] text-slate-500 leading-tight">
-                  Medicine, injection, drip, consumables
-                </p>
-              </button>
+                  <p className="text-[10px] text-slate-500 leading-tight">
+                    Medicine &amp; consumables
+                  </p>
+                </button>
+              </div>
             </div>
-          </div>
 
           {/* Conditional Display for PHARMACY stream */}
           {selectedStream === 'PHARMACY' ? (
@@ -542,7 +643,9 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({
                       setFormValues((prev) => ({ ...prev, name: e.target.value }))
                     }
                     placeholder={
-                      selectedStream === 'LAB'
+                      selectedStream === 'RADIOLOGY'
+                        ? 'e.g. Chest X-Ray PA View, Abdominal Ultrasound, CT Scan'
+                        : selectedStream === 'LAB'
                         ? 'e.g. Complete Blood Picture (CP / CBC)'
                         : 'e.g. Executive Cardiology Consultation'
                     }
@@ -599,13 +702,16 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({
                     }
                     className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
                   >
-                    {(selectedStream === 'LAB' ? LAB_CATEGORIES : HOSPITAL_CATEGORIES).map(
-                      (cat) => (
-                        <option key={cat} value={cat}>
-                          {cat}
-                        </option>
-                      )
-                    )}
+                    {(selectedStream === 'RADIOLOGY'
+                      ? RADIOLOGY_CATEGORIES
+                      : selectedStream === 'LAB'
+                      ? LAB_CATEGORIES
+                      : HOSPITAL_CATEGORIES
+                    ).map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
@@ -623,7 +729,9 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({
                     setFormValues((prev) => ({ ...prev, description: e.target.value }))
                   }
                   placeholder={
-                    selectedStream === 'LAB'
+                    selectedStream === 'RADIOLOGY'
+                      ? 'Imaging views, preparation, contrast instructions, turnaround time...'
+                      : selectedStream === 'LAB'
                       ? 'Sample requirements, fasting status, turnaround time...'
                       : 'Clinical indications, equipment used, or billing instructions...'
                   }

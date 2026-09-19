@@ -12,12 +12,13 @@ import {
   Power,
   Stethoscope,
 } from 'lucide-react';
-import { Bed } from '../../../types/wardsRoomsBeds';
+import { Bed, Room } from '../../../types/wardsRoomsBeds';
 
 interface BedDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   bed: Bed | null;
+  rooms?: Room[];
   onEdit: (bed: Bed) => void;
   onToggleOperational: (bed: Bed) => void;
 }
@@ -26,6 +27,7 @@ export const BedDetailModal: React.FC<BedDetailModalProps> = ({
   isOpen,
   onClose,
   bed,
+  rooms = [],
   onEdit,
   onToggleOperational,
 }) => {
@@ -151,13 +153,13 @@ export const BedDetailModal: React.FC<BedDetailModalProps> = ({
 
             <div className="bg-emerald-50/50 border border-emerald-100 rounded-xl p-3.5">
               <span className="text-[11px] font-semibold text-emerald-800 uppercase tracking-wider block">
-                Daily Bed Charge
+                Room Daily Tariff
               </span>
               <div className="text-base font-bold text-emerald-900 mt-1">
-                PKR {(bed.dailyBedRate ?? bed.dailyRate ?? 0).toLocaleString('en-PK')}
+                PKR {((rooms.find((r) => r.id === bed.roomId)?.dailyRoomRate) ?? bed.dailyBedRate ?? bed.dailyRate ?? 0).toLocaleString('en-PK')}
               </div>
               <span className="text-[11px] text-emerald-700 block mt-0.5">
-                Per Inpatient Day
+                Room Inpatient Tariff / Day
               </span>
             </div>
           </div>

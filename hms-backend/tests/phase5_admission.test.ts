@@ -75,6 +75,7 @@ vi.mock('@/db/client', () => {
     },
     paymentReceipt: {
       create: vi.fn(),
+      findMany: vi.fn(),
     },
     userCashBalance: {
       create: vi.fn(),
@@ -1169,6 +1170,7 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
     });
 
     it('auto-allocates one payment proportionally across outstanding department invoices', async () => {
+      (prisma.admissionRecord.findUnique as any).mockResolvedValue({ id: 'adm-alloc-1' });
       (prisma.hospitalInvoice.findMany as any).mockResolvedValue([
         { id: 'inv-hs', invoiceNumber: 'INV-HS-1', total: new Decimal(25000), paidTotal: new Decimal(0) },
         { id: 'inv-lab', invoiceNumber: 'INV-LAB-1', total: new Decimal(12000), paidTotal: new Decimal(0) },
@@ -1186,31 +1188,41 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
       expect(hs.amount.toNumber()).toBeCloseTo((20000 * 25000) / 55000, 1);
     });
 
-    it('honors explicit allocations and rejects a mismatched sum', async () => {
+    it('banks the shortfall as an unallocated advance credit when explicit allocations sum to less than the collected amount, and still rejects when they exceed it', async () => {
+      (prisma.admissionRecord.findUnique as any).mockResolvedValue({ id: 'adm-alloc-2' });
       (prisma.hospitalInvoice.findMany as any).mockResolvedValue([
         { id: 'inv-hs', invoiceNumber: 'INV-HS-2', total: new Decimal(25000), paidTotal: new Decimal(15000) }, // 10,000 outstanding
         { id: 'inv-lab', invoiceNumber: 'INV-LAB-2', total: new Decimal(12000), paidTotal: new Decimal(7000) }, // 5,000 outstanding
         { id: 'inv-pharm', invoiceNumber: 'INV-PHARM-2', total: new Decimal(18000), paidTotal: new Decimal(13000) }, // 5,000 outstanding
       ]);
 
+      // Explicit allocations summing to MORE than the collected amount is
+      // still a hard rejection (typo-guard).
       await expect(
         admissionBillingService.collectPayment(
           'adm-alloc-2',
           {
-            amount: 20000,
+            amount: 19000,
             paymentMethod: 'CASH',
             allocations: [
               { invoiceId: 'inv-hs', amount: 10000 },
               { invoiceId: 'inv-lab', amount: 5000 },
-              { invoiceId: 'inv-pharm', amount: 4999 }, // sums to 19,999, not 20,000
+              { invoiceId: 'inv-pharm', amount: 5000 }, // sums to 20,000 > 19,000 collected
             ],
           },
           staffUserId,
         ),
-      ).rejects.toThrow(/must sum to exactly/);
+      ).rejects.toThrow(/cannot exceed the collected amount/);
 
-      (prisma.paymentReceipt.create as any).mockImplementation((args: any) => ({ id: `rec-${args.data.hospitalInvoiceId}`, ...args.data }));
+      (prisma.paymentReceipt.create as any).mockImplementation((args: any) => ({
+        id: `rec-${args.data.hospitalInvoiceId ?? 'advance'}`,
+        ...args.data,
+      }));
 
+      // Explicit allocations summing to LESS than the collected amount
+      // (19,999 vs 20,000) now banks the 1 PKR shortfall as an unallocated
+      // advance/deposit credit instead of rejecting the whole collection
+      // (§7/§8 — "additional deposit" during the stay).
       const result = await admissionBillingService.collectPayment(
         'adm-alloc-2',
         {
@@ -1219,15 +1231,18 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
           allocations: [
             { invoiceId: 'inv-hs', amount: 10000 },
             { invoiceId: 'inv-lab', amount: 5000 },
-            { invoiceId: 'inv-pharm', amount: 5000 },
+            { invoiceId: 'inv-pharm', amount: 4999 },
           ],
         },
         staffUserId,
       );
-      expect(result.allocations).toHaveLength(3);
+      expect(result.allocations).toHaveLength(4);
+      const advance = result.allocations.find((a: any) => a.invoiceId === null)!;
+      expect(advance.amount).toEqual(new Decimal(1));
     });
 
     it('rejects an explicit allocation that exceeds that invoice\'s own outstanding balance', async () => {
+      (prisma.admissionRecord.findUnique as any).mockResolvedValue({ id: 'adm-alloc-3' });
       (prisma.hospitalInvoice.findMany as any).mockResolvedValue([
         { id: 'inv-hs', invoiceNumber: 'INV-HS-3', total: new Decimal(10000), paidTotal: new Decimal(8000) }, // 2,000 outstanding
       ]);
@@ -1241,14 +1256,162 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
       ).rejects.toThrow(/exceeds its outstanding balance/);
     });
 
-    it('rejects an auto-allocation that exceeds the total outstanding across all department invoices', async () => {
+    it('settles outstanding invoices in full and banks the remainder as an unallocated advance credit when the auto-allocated amount exceeds total outstanding', async () => {
+      (prisma.admissionRecord.findUnique as any).mockResolvedValue({ id: 'adm-alloc-4' });
       (prisma.hospitalInvoice.findMany as any).mockResolvedValue([
         { id: 'inv-hs', invoiceNumber: 'INV-HS-4', total: new Decimal(5000), paidTotal: new Decimal(4000) }, // 1,000 outstanding
       ]);
+      (prisma.paymentReceipt.create as any).mockImplementation((args: any) => ({
+        id: `rec-${args.data.hospitalInvoiceId ?? 'advance'}`,
+        ...args.data,
+      }));
 
-      await expect(
-        admissionBillingService.collectPayment('adm-alloc-4', { amount: 5000, paymentMethod: 'CASH' }, staffUserId),
-      ).rejects.toThrow(/exceeds total outstanding/);
+      // Matches the spec's worked example (§8): guardian pays more than
+      // what's currently outstanding — the outstanding invoice is settled
+      // in full and the rest becomes Patient Credit, not a rejected payment.
+      const result = await admissionBillingService.collectPayment('adm-alloc-4', { amount: 5000, paymentMethod: 'CASH' }, staffUserId);
+
+      expect(result.allocations).toHaveLength(2);
+      const invoiceAlloc = result.allocations.find((a: any) => a.invoiceId === 'inv-hs')!;
+      expect(invoiceAlloc.amount).toEqual(new Decimal(1000));
+      const advance = result.allocations.find((a: any) => a.invoiceId === null)!;
+      expect(advance.amount).toEqual(new Decimal(4000));
+    });
+
+    it('collects a pure advance/deposit before any department invoice exists yet, instead of rejecting', async () => {
+      (prisma.admissionRecord.findUnique as any).mockResolvedValue({ id: 'adm-alloc-5' });
+      (prisma.hospitalInvoice.findMany as any).mockResolvedValue([]);
+      (prisma.paymentReceipt.create as any).mockImplementation((args: any) => ({ id: 'rec-advance', ...args.data }));
+
+      const result = await admissionBillingService.collectPayment('adm-alloc-5', { amount: 3000, paymentMethod: 'CASH' }, staffUserId);
+
+      expect(result.allocations).toEqual([{ invoiceId: null, amount: new Decimal(3000) }]);
+      expect(prisma.paymentReceipt.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ admissionRecordId: 'adm-alloc-5', hospitalInvoiceId: undefined }),
+        }),
+      );
+    });
+  });
+
+  describe('8. Admission Patient Records / Running Ledger (v7.2)', () => {
+    const baseAdmission = {
+      id: 'adm-ledger-1',
+      admissionNumber: 'ADM-26-0099',
+      status: 'ACTIVE',
+      panelPatientId: null,
+      panelPatient: null,
+      selfPayEncounter: { id: 'sp-9', fullName: 'Test Ledger Patient', phone: '0300' },
+      bed: null,
+      admittedAt: new Date('2026-09-01T10:00:00Z'),
+      hospitalInvoices: [] as any[],
+      finalBillNumber: null as string | null,
+      finalBillGeneratedAt: null as Date | null,
+    };
+
+    it('generateFinalBill is idempotent — a second call returns the same number without minting a new one', async () => {
+      (prisma.paymentReceipt.findMany as any).mockResolvedValue([]);
+      (prisma.admissionRecord.update as any).mockResolvedValue({});
+      (prisma.admissionRecord.findUnique as any)
+        .mockResolvedValueOnce({ ...baseAdmission }) // tx check inside generateFinalBill, call 1
+        .mockResolvedValueOnce({ ...baseAdmission }); // getLedger's own read, call 1
+
+      const first = await admissionBillingService.generateFinalBill('adm-ledger-1', staffUserId);
+      expect(first.finalBillNumber).toMatch(/^FBL-\d{2}-/);
+      expect(prisma.admissionRecord.update).toHaveBeenCalledTimes(1);
+
+      (prisma.admissionRecord.findUnique as any)
+        .mockResolvedValueOnce({ ...baseAdmission, finalBillNumber: first.finalBillNumber, finalBillGeneratedAt: first.finalBillGeneratedAt }) // tx check, call 2
+        .mockResolvedValueOnce({ ...baseAdmission, finalBillNumber: first.finalBillNumber }); // getLedger read, call 2
+
+      const second = await admissionBillingService.generateFinalBill('adm-ledger-1', staffUserId);
+
+      expect(second.finalBillNumber).toBe(first.finalBillNumber);
+      // Still only ever called once — the number is never re-minted.
+      expect(prisma.admissionRecord.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('getLedger flattens invoice-line charges and payment receipts into one chronological, running-balance list', async () => {
+      (prisma.admissionRecord.findUnique as any).mockResolvedValueOnce({
+        ...baseAdmission,
+        hospitalInvoices: [
+          {
+            id: 'inv-1',
+            invoiceNumber: 'INV-26-0001',
+            total: new Decimal(1500),
+            patientShare: new Decimal(1500),
+            panelReceivable: new Decimal(0),
+            department: { id: 'dept-1', name: 'Laboratory' },
+            lines: [
+              {
+                id: 'line-1',
+                createdAt: new Date('2026-09-01T11:00:00Z'),
+                serviceRate: { name: 'CBC' },
+                performedBy: null,
+                quantity: new Decimal(1),
+                rateSnapshot: new Decimal(1500),
+                lineNet: new Decimal(1500),
+                discountReason: null,
+              },
+            ],
+          },
+        ],
+      });
+      (prisma.paymentReceipt.findMany as any).mockResolvedValue([
+        {
+          id: 'rec-1',
+          receiptNumber: 'REC-26-0001',
+          amount: new Decimal(5000),
+          method: 'CASH',
+          collectedAt: new Date('2026-09-01T09:00:00Z'), // before the charge — the admission advance
+          hospitalInvoiceId: null,
+          hospitalInvoice: null,
+          collectedBy: { username: 'frontdesk1', displayName: null },
+        },
+      ]);
+
+      const ledger = await admissionBillingService.getLedger('adm-ledger-1');
+
+      expect(ledger.entries).toHaveLength(2);
+      expect(ledger.entries[0].type).toBe('Admission Advance');
+      expect(ledger.entries[0].credit).toEqual(new Decimal(5000));
+      expect(ledger.entries[0].runningBalance).toEqual(new Decimal(-5000));
+      expect(ledger.entries[1].type).toBe('CBC');
+      expect(ledger.entries[1].debit).toEqual(new Decimal(1500));
+      expect(ledger.entries[1].runningBalance).toEqual(new Decimal(-3500));
+      expect(ledger.summary.totalCharges).toEqual(new Decimal(1500));
+      expect(ledger.summary.totalPaid).toEqual(new Decimal(5000));
+      expect(ledger.summary.availableCredit).toEqual(new Decimal(3500));
+      expect(ledger.summary.outstandingBalance).toEqual(new Decimal(0));
+    });
+
+    it('listAdmissionRecords consolidates charges and payments (including unallocated advance receipts) per admission', async () => {
+      (prisma.admissionRecord.findMany as any).mockResolvedValue([
+        {
+          id: 'adm-list-1',
+          admissionNumber: 'ADM-26-0050',
+          panelPatientId: null,
+          panelPatient: null,
+          selfPayEncounter: { fullName: 'List Patient', phone: '0300' },
+          bed: null,
+          status: 'ACTIVE',
+          admittedAt: new Date('2026-09-01'),
+          hospitalInvoices: [{ id: 'inv-list-1', total: new Decimal(14000) }],
+        },
+      ]);
+      (prisma.paymentReceipt.findMany as any).mockResolvedValue([
+        { amount: new Decimal(20000), admissionRecordId: 'adm-list-1', hospitalInvoice: null },
+      ]);
+
+      const rows = await admissionBillingService.listAdmissionRecords();
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].currentCharges).toEqual(new Decimal(14000));
+      expect(rows[0].totalPaid).toEqual(new Decimal(20000));
+      expect(rows[0].outstanding).toEqual(new Decimal(0));
+      // Matches the spec's worked example (§8): 20,000 advance vs 14,000 charges = 6,000 credit.
+      expect(rows[0].availableCredit).toEqual(new Decimal(6000));
+      expect(rows[0].billingStatus).toBe('PAID');
     });
   });
 });

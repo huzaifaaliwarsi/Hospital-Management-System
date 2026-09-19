@@ -10,6 +10,8 @@ import {
   CheckCircle2,
   User,
   RotateCcw,
+  Plus,
+  X,
 } from 'lucide-react';
 import { PatientGender, PayerType, GuardianRelation, GUARDIAN_RELATIONS } from '../../../types/patient';
 import {
@@ -320,6 +322,138 @@ export const WalkInIntakeView: React.FC = () => {
     () => selectedAdditionalServices.reduce((sum, s) => sum + s.standardRate, 0),
     [selectedAdditionalServices]
   );
+
+  // Additional services cascading selection (Department / Source -> Service)
+  const [selectedServiceStream, setSelectedServiceStream] = useState<string>('HOSPITAL_SERVICES');
+  const [candidateServiceId, setCandidateServiceId] = useState<string>('');
+
+  const serviceStreamOptions = useMemo(() => {
+    const list = [
+      { label: '🏥 Hospital Services (Procedures / Clinical Care)', value: 'HOSPITAL_SERVICES' },
+      { label: '🔬 Laboratory (LAB / Pathology) — Outsourced', value: 'LAB' },
+      { label: '🩻 Radiology & Imaging (X-Ray / Ultrasound / CT) — Outsourced', value: 'RADIOLOGY' },
+    ];
+    departments
+      .filter((d) => d.status === 'Active')
+      .forEach((d) => {
+        const nameLower = d.name.toLowerCase();
+        if (
+          nameLower.includes('hospital service') ||
+          nameLower === 'hospital' ||
+          nameLower === 'laboratory' ||
+          nameLower === 'lab' ||
+          nameLower === 'radiology' ||
+          nameLower.includes('imaging')
+        ) {
+          return;
+        }
+        const tag = d.fulfillmentOwnership === 'Outsourced' ? 'Outsourced' : 'Internal';
+        list.push({
+          label: `${d.name} (${tag})`,
+          value: d.id,
+        });
+      });
+    return list;
+  }, [departments]);
+
+  const filteredStreamServices = useMemo(() => {
+    if (selectedServiceStream === 'HOSPITAL_SERVICES') {
+      return additionalBillableServices.filter(
+        (s) =>
+          s.serviceStream !== 'LAB' &&
+          s.category !== 'Laboratory' &&
+          s.category !== 'Diagnostic' &&
+          s.category !== 'Radiology' &&
+          !(s.departmentName || '').toLowerCase().includes('lab') &&
+          !(s.departmentName || '').toLowerCase().includes('radiology') &&
+          !(s.departmentName || '').toLowerCase().includes('imaging') &&
+          !(s.name || '').toLowerCase().includes('x-ray') &&
+          !(s.name || '').toLowerCase().includes('ultrasound') &&
+          !(s.name || '').toLowerCase().includes('ct scan') &&
+          !(s.name || '').toLowerCase().includes('mri')
+      );
+    }
+    if (selectedServiceStream === 'LAB') {
+      return additionalBillableServices.filter(
+        (s) =>
+          (s.serviceStream === 'LAB' ||
+            s.category === 'Laboratory' ||
+            s.category === 'Diagnostic' ||
+            (s.departmentName || '').toLowerCase().includes('lab') ||
+            (s.departmentName || '').toLowerCase().includes('pathology')) &&
+          s.category !== 'Radiology' &&
+          !(s.departmentName || '').toLowerCase().includes('radiology') &&
+          !(s.departmentName || '').toLowerCase().includes('imaging') &&
+          !(s.name || '').toLowerCase().includes('x-ray') &&
+          !(s.name || '').toLowerCase().includes('ultrasound') &&
+          !(s.name || '').toLowerCase().includes('ct scan') &&
+          !(s.name || '').toLowerCase().includes('mri')
+      );
+    }
+    if (selectedServiceStream === 'RADIOLOGY') {
+      return additionalBillableServices.filter(
+        (s) =>
+          s.category === 'Radiology' ||
+          (s.departmentName || '').toLowerCase().includes('radiology') ||
+          (s.departmentName || '').toLowerCase().includes('imaging') ||
+          (s.name || '').toLowerCase().includes('x-ray') ||
+          (s.name || '').toLowerCase().includes('ultrasound') ||
+          (s.name || '').toLowerCase().includes('ct scan') ||
+          (s.name || '').toLowerCase().includes('mri')
+      );
+    }
+    return additionalBillableServices.filter(
+      (s) => s.departmentId === selectedServiceStream || s.departmentName === selectedServiceStream
+    );
+  }, [additionalBillableServices, selectedServiceStream]);
+
+  const handleAddAdditionalService = () => {
+    if (!candidateServiceId) return;
+    if (!selectedServiceIds.includes(candidateServiceId)) {
+      setSelectedServiceIds((prev) => [...prev, candidateServiceId]);
+    }
+    setCandidateServiceId('');
+  };
+
+  const handleRemoveAdditionalService = (idToRemove: string) => {
+    setSelectedServiceIds((prev) => prev.filter((id) => id !== idToRemove));
+  };
+
+  const getServiceStreamBadge = (s: HospitalService) => {
+    const isRad =
+      s.category === 'Radiology' ||
+      (s.departmentName || '').toLowerCase().includes('radiology') ||
+      (s.departmentName || '').toLowerCase().includes('imaging') ||
+      (s.name || '').toLowerCase().includes('x-ray') ||
+      (s.name || '').toLowerCase().includes('ultrasound') ||
+      (s.name || '').toLowerCase().includes('ct scan') ||
+      (s.name || '').toLowerCase().includes('mri');
+    if (isRad) {
+      return (
+        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+          Radiology (Outsourced)
+        </span>
+      );
+    }
+    const isLab =
+      s.serviceStream === 'LAB' ||
+      s.category === 'Laboratory' ||
+      s.category === 'Diagnostic' ||
+      (s.departmentName || '').toLowerCase().includes('lab') ||
+      (s.departmentName || '').toLowerCase().includes('pathology');
+    if (isLab) {
+      return (
+        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+          Laboratory (Outsourced)
+        </span>
+      );
+    }
+    return (
+      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200">
+        Hospital Services
+      </span>
+    );
+  };
 
   // Clear selected add-on services when Encounter Service changes
   useEffect(() => {
@@ -889,35 +1023,133 @@ export const WalkInIntakeView: React.FC = () => {
 
           {/* 3b. Additional Services / Procedures Selection (OBSERVATION, EMERGENCY, OPD) */}
           {encounterType && (
-            <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-2 animate-in fade-in">
-              <MultiSelect
-                label={
-                  encounterType === 'OBSERVATION'
-                    ? 'Observation Services (optional)'
-                    : encounterType === 'EMERGENCY'
-                    ? 'Emergency Services & Procedures (optional)'
-                    : 'Additional Services / Tests (optional)'
-                }
-                placeholder={
-                  encounterType === 'OBSERVATION'
-                    ? 'Select Observation Services (IV, Nebulization, Labs, Injections, etc.)...'
-                    : encounterType === 'EMERGENCY'
-                    ? 'Select Emergency Services (ECG, Stitches, Injections, Labs, Oxygen, etc.)...'
-                    : 'Select Additional Services (Labs, Procedures, Injections, etc.)...'
-                }
-                options={additionalBillableServices.map((s) => ({
-                  label: `${s.name}${s.category ? ` (${s.category})` : ''} — ${formatPKR(s.standardRate)}`,
-                  value: s.id,
-                }))}
-                value={selectedServiceIds}
-                onChange={setSelectedServiceIds}
-              />
-              {selectedAdditionalServices.length > 0 && (
-                <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-100">
-                  <span>
-                    {selectedAdditionalServices.length} service{selectedAdditionalServices.length > 1 ? 's' : ''} added
+            <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-3 animate-in fade-in">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-[#08775A] flex items-center gap-1.5">
+                    <Plus className="h-3.5 w-3.5" />
+                    {encounterType === 'OBSERVATION'
+                      ? 'Observation Services & Investigations'
+                      : encounterType === 'EMERGENCY'
+                      ? 'Emergency Services, Procedures & Investigations'
+                      : 'Additional Services / Tests'}
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Select source (Hospital Services, Outsourced Lab, Radiology) and add required services
+                  </p>
+                </div>
+                {selectedAdditionalServices.length > 0 && (
+                  <span className="text-xs font-bold text-[#08775A] bg-[#effaf5] px-2.5 py-1 rounded-lg border border-[#c2e7db]">
+                    {selectedAdditionalServices.length} Selected • {formatPKR(selectedServicesTotal)}
                   </span>
-                  <span className="font-bold text-[#08775A]">+ {formatPKR(selectedServicesTotal)}</span>
+                )}
+              </div>
+
+              {/* 2-Level Cascading Selector: Stream/Source -> Specific Service */}
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+                {/* 1. Category / Source */}
+                <div className="sm:col-span-5">
+                  <Select
+                    label="1. Service Category / Source"
+                    options={serviceStreamOptions}
+                    value={selectedServiceStream}
+                    onChange={(e) => {
+                      setSelectedServiceStream(e.target.value);
+                      setCandidateServiceId('');
+                    }}
+                    hint={
+                      selectedServiceStream === 'HOSPITAL_SERVICES'
+                        ? 'Internal hospital procedures, clinical care & nursing'
+                        : selectedServiceStream === 'LAB'
+                        ? 'Outsourced Laboratory & Pathology tests'
+                        : selectedServiceStream === 'RADIOLOGY'
+                        ? 'Outsourced X-Ray, Ultrasound, & Imaging'
+                        : 'Departmental clinical services'
+                    }
+                  />
+                </div>
+
+                {/* 2. Specific Service Dropdown */}
+                <div className="sm:col-span-5">
+                  <Select
+                    label="2. Service / Procedure / Test"
+                    placeholder={
+                      filteredStreamServices.length === 0
+                        ? 'No services available in this category'
+                        : 'Choose a service to add…'
+                    }
+                    options={filteredStreamServices.map((s) => ({
+                      label: `${s.name} (${s.code}) — ${formatPKR(s.standardRate)}`,
+                      value: s.id,
+                    }))}
+                    value={candidateServiceId}
+                    onChange={(e) => setCandidateServiceId(e.target.value)}
+                    hint={
+                      candidateServiceId
+                        ? `Standard Rate: ${formatPKR(filteredStreamServices.find((s) => s.id === candidateServiceId)?.standardRate ?? 0)}`
+                        : 'Select service then click Add'
+                    }
+                  />
+                </div>
+
+                {/* Add Service Button */}
+                <div className="sm:col-span-2">
+                  <button
+                    type="button"
+                    onClick={handleAddAdditionalService}
+                    disabled={!candidateServiceId}
+                    className="w-full py-2 px-3 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] disabled:opacity-40 disabled:cursor-not-allowed rounded-lg shadow-2xs transition-colors flex items-center justify-center gap-1.5"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Added Services Table / List */}
+              {selectedAdditionalServices.length > 0 ? (
+                <div className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50/50 mt-2">
+                  <div className="px-3 py-2 bg-slate-100/80 border-b border-slate-200 flex items-center justify-between text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                    <span>Selected Services ({selectedAdditionalServices.length})</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedServiceIds([])}
+                      className="text-[11px] text-rose-600 hover:text-rose-800 font-semibold lowercase"
+                    >
+                      Clear all
+                    </button>
+                  </div>
+                  <div className="divide-y divide-slate-200 max-h-56 overflow-y-auto">
+                    {selectedAdditionalServices.map((s) => (
+                      <div
+                        key={s.id}
+                        className="px-3 py-2.5 flex items-center justify-between bg-white hover:bg-slate-50/80 transition-colors text-xs"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          {getServiceStreamBadge(s)}
+                          <div>
+                            <span className="font-semibold text-slate-800">{s.name}</span>
+                            <span className="font-mono text-[11px] text-slate-400 ml-1.5">({s.code})</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="font-bold text-slate-900">{formatPKR(s.standardRate)}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveAdditionalService(s.id)}
+                            className="text-slate-400 hover:text-rose-600 p-1 rounded transition-colors"
+                            title="Remove Service"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3 bg-slate-50 border border-dashed border-slate-200 rounded-xl text-center text-xs text-slate-400">
+                  No additional services added yet. Select category &amp; service above, then click <strong>Add</strong>.
                 </div>
               )}
             </div>

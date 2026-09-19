@@ -5,6 +5,7 @@ import { AdmissionPaymentRequestsView } from './paymentRequests/AdmissionPayment
 import { FrontDeskBillingReportsView } from './reports/FrontDeskBillingReportsView';
 import { MyAccountSettlementView } from './settlement/MyAccountSettlementView';
 import { HospitalInvoicesView } from './billing/HospitalInvoicesView';
+import { AdmissionPatientRecordsView } from './admissionRecords/AdmissionPatientRecordsView';
 import { BillingPendingDischargesView } from './billing/BillingPendingDischargesView';
 import { MyBalanceSheetView } from './billing/MyBalanceSheetView';
 import { WalkInIntakeView } from './encounterIntake/WalkInIntakeView';
@@ -43,6 +44,8 @@ export const FrontDeskModuleView: React.FC<FrontDeskModuleViewProps> = ({ module
       return <AppointmentsView />;
     case 'walk_in_intake':
       return <WalkInIntakeView />;
+    case 'admission_patient_records':
+      return <AdmissionPatientRecordsView />;
     case 'billing_pending_discharges':
       return <BillingPendingDischargesView />;
     case 'hospital_invoices':
