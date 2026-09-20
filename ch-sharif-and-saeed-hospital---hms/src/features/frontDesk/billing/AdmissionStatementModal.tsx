@@ -147,7 +147,7 @@ export const AdmissionStatementModal: React.FC<AdmissionStatementModalProps> = (
               <span className="font-bold text-slate-800">{formatPKR(statement.consolidated.total)}</span>
             </div>
             <div className="p-2.5 bg-emerald-50 rounded-lg border border-emerald-200">
-              <span className="text-[10px] text-emerald-700 uppercase block">Paid</span>
+              <span className="text-[10px] text-emerald-700 uppercase block">Paid (incl. advance)</span>
               <span className="font-bold text-emerald-800">{formatPKR(statement.consolidated.paidTotal)}</span>
             </div>
             <div className="p-2.5 bg-purple-50 rounded-lg border border-purple-200">
@@ -159,6 +159,19 @@ export const AdmissionStatementModal: React.FC<AdmissionStatementModalProps> = (
               <span className="font-bold text-amber-800">{formatPKR(statement.consolidated.outstanding)}</span>
             </div>
           </div>
+
+          {(statement.unallocatedCreditTotal > 0 || statement.availableCredit > 0) && (
+            <div className="flex flex-wrap items-center gap-4 p-2.5 bg-[#effaf5] rounded-lg border border-[#c2e7db] text-xs">
+              <span className="text-[#08775A] font-semibold">
+                Advance / deposit collected: <strong>{formatPKR(statement.unallocatedCreditTotal)}</strong> (already applied to Outstanding above)
+              </span>
+              {statement.availableCredit > 0 && (
+                <span className="text-[#08775A] font-semibold">
+                  Unused available credit: <strong>{formatPKR(statement.availableCredit)}</strong>
+                </span>
+              )}
+            </div>
+          )}
 
           <div className="border border-slate-200 rounded-lg overflow-hidden">
             <table className="w-full text-xs">

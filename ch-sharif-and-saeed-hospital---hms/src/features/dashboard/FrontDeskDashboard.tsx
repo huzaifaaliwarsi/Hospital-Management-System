@@ -201,7 +201,6 @@ export const FrontDeskDashboard: React.FC = () => {
         <button
           type="button"
           onClick={() => {
-            sessionStorage.setItem('preferred_encounter_type', 'OPD');
             navigate('/front-desk/walk_in_intake?type=OPD');
           }}
           className="group relative p-4 rounded-xl border-2 border-emerald-500/80 bg-gradient-to-br from-emerald-50/80 via-white to-emerald-50/30 hover:from-emerald-100/90 hover:to-white shadow-xs hover:shadow-md transition-all text-left flex flex-col justify-between overflow-hidden cursor-pointer"
@@ -230,7 +229,6 @@ export const FrontDeskDashboard: React.FC = () => {
         <button
           type="button"
           onClick={() => {
-            sessionStorage.setItem('preferred_encounter_type', 'OBSERVATION');
             navigate('/front-desk/walk_in_intake?type=OBSERVATION');
           }}
           className="group relative p-4 rounded-xl border-2 border-indigo-500/80 bg-gradient-to-br from-indigo-50/80 via-white to-indigo-50/30 hover:from-indigo-100/90 hover:to-white shadow-xs hover:shadow-md transition-all text-left flex flex-col justify-between overflow-hidden cursor-pointer"
@@ -259,7 +257,6 @@ export const FrontDeskDashboard: React.FC = () => {
         <button
           type="button"
           onClick={() => {
-            sessionStorage.setItem('preferred_encounter_type', 'EMERGENCY');
             navigate('/front-desk/walk_in_intake?type=EMERGENCY');
           }}
           className="group relative p-4 rounded-xl border-2 border-rose-500/80 bg-gradient-to-br from-rose-50/80 via-white to-rose-50/30 hover:from-rose-100/90 hover:to-white shadow-xs hover:shadow-md transition-all text-left flex flex-col justify-between overflow-hidden cursor-pointer"

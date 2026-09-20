@@ -101,6 +101,7 @@ const EXTENDED_PROFILE_KEYS = [
   'workingMode',
   'opdOpenTime',
   'opdCloseTime',
+  'dayCloseTime',
   'emergencyEnabled',
   'emergencyMode',
   'dateFormat',

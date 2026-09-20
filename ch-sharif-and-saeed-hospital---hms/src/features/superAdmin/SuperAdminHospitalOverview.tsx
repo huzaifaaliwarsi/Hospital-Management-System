@@ -17,6 +17,7 @@ import { HospitalIdentitySection } from './hospitalOverview/HospitalIdentitySect
 import { HospitalContactSection } from './hospitalOverview/HospitalContactSection';
 import { HospitalAddressSection } from './hospitalOverview/HospitalAddressSection';
 import { HospitalOperationsSection } from './hospitalOverview/HospitalOperationsSection';
+import { RoomChargeDayCloseSection } from './hospitalOverview/RoomChargeDayCloseSection';
 import { HospitalBillingSection } from './hospitalOverview/HospitalBillingSection';
 import { HospitalSystemSummarySection } from './hospitalOverview/HospitalSystemSummarySection';
 import { ProfileAuditSection } from './hospitalOverview/ProfileAuditSection';
@@ -149,6 +150,9 @@ export const SuperAdminHospitalOverview: React.FC = () => {
 
       {/* Section 4: Operational Settings & Working Hours */}
       <HospitalOperationsSection profile={profile} />
+
+      {/* Section 4b: Room/Bed Accommodation Charge — Close Day action */}
+      <RoomChargeDayCloseSection profile={profile} />
 
       {/* Section 5: Billing & Legal Information + Document Identity Preview */}
       <HospitalBillingSection profile={profile} />

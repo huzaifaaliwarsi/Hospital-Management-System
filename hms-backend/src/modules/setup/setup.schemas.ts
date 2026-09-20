@@ -46,6 +46,10 @@ export const updateHospitalProfileSchema = z.object({
   workingMode: z.string().optional(),
   opdOpenTime: z.string().optional(),
   opdCloseTime: z.string().optional(),
+  // Hospital-wide business-day boundary (HH:mm) — informational config that
+  // tells Super Admin staff WHEN the day should be closed; the "Close Day"
+  // action itself is a manual trigger, never gated by this time.
+  dayCloseTime: z.string().optional(),
   emergencyEnabled: z.boolean().optional(),
   emergencyMode: z.enum(['24/7', 'Custom Hours', '']).optional(),
   dateFormat: z.string().optional(),

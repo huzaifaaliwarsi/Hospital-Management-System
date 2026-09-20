@@ -172,4 +172,16 @@ router.post(
   asyncHandler(c.rejectHighCostMedicine),
 );
 
+// Super Admin "Close Day" — recurring room/bed accommodation billing
+// (Hospital Overview screen; gated the same as every other admission
+// write since SUPER_ADMIN/ADMIN already hold full `admission` access).
+router.post(
+  '/day-close',
+  write,
+  validate({ body: s.closeHospitalDaySchema }),
+  asyncHandler(c.closeHospitalDay),
+);
+
+router.get('/day-close/history', view, asyncHandler(c.getDayCloseHistory));
+
 export default router;

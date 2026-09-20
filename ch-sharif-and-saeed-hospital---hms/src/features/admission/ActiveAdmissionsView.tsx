@@ -3,8 +3,10 @@ import { Users, Search, RotateCcw, Eye } from 'lucide-react';
 import { Select, TextInput } from '../../components/forms/FormControls';
 import { LoadingState, ErrorState, EmptyState } from '../../components/common/StateViews';
 import { PanelBadge } from '../../components/common/PanelBadge';
-import { DepartmentService } from '../../services/departmentService';
-import { StaffUserService } from '../../services/staffUserService';
+import { DepartmentService, fetchDepartments } from '../../services/departmentService';
+import { StaffUserService, fetchStaffUsers } from '../../services/staffUserService';
+import { Department } from '../../types/department';
+import { StaffUser } from '../../types/staffUser';
 import { fetchAdmissions, AdmissionRecord, AdmissionStatus } from '../../services/admissionService';
 import { formatPKR } from '../../utils/formatters';
 import { AdmissionDetailModal } from './AdmissionDetailModal';
@@ -17,6 +19,8 @@ interface ActiveAdmissionsViewProps {
   statusFilter?: AdmissionStatus | 'ALL';
   /** Shows an Estimated Amount column — on for Super Admin/Admin oversight pages where the billed amount is the point. */
   showAmountColumn?: boolean;
+  /** Optional content rendered between the page header and the filter bar — e.g. a KPI strip specific to the nav item reusing this view (Medication Fulfillment Mode's Self/Hospital-Managed split). */
+  children?: React.ReactNode;
 }
 
 /**
@@ -34,9 +38,16 @@ export const ActiveAdmissionsView: React.FC<ActiveAdmissionsViewProps> = ({
   initialTab = 'overview',
   statusFilter = 'ACTIVE',
   showAmountColumn = false,
+  children,
 }) => {
-  const departments = useMemo(() => DepartmentService.getDepartments().filter((d) => d.status === 'Active'), []);
-  const doctors = useMemo(() => StaffUserService.getStaffUsers().filter((s) => s.staffCategory === 'Doctor' && s.status === 'ACTIVE'), []);
+  const [allDepartments, setAllDepartments] = useState<Department[]>(() => DepartmentService.getDepartments());
+  const [allStaff, setAllStaff] = useState<StaffUser[]>(() => StaffUserService.getStaffUsers());
+  useEffect(() => {
+    fetchDepartments().then(setAllDepartments).catch(() => {});
+    fetchStaffUsers().then(setAllStaff).catch(() => {});
+  }, []);
+  const departments = useMemo(() => allDepartments.filter((d) => d.status === 'Active'), [allDepartments]);
+  const doctors = useMemo(() => allStaff.filter((s) => s.staffCategory === 'Doctor' && s.status === 'ACTIVE'), [allStaff]);
 
   const [departmentFilter, setDepartmentFilter] = useState('');
   const [doctorFilter, setDoctorFilter] = useState('');
@@ -99,6 +110,8 @@ export const ActiveAdmissionsView: React.FC<ActiveAdmissionsViewProps> = ({
           <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>
         </div>
       </div>
+
+      {children}
 
       {showAmountColumn && (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">

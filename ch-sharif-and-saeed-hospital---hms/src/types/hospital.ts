@@ -40,6 +40,8 @@ export interface HospitalProfile {
   workingMode: string;
   opdOpenTime: string;
   opdCloseTime: string;
+  /** Hospital-wide business-day boundary (HH:mm) — when Super Admin should run "Close Day" to re-post room/bed accommodation charges for every active admission. Informational only; the Close Day action itself is a manual trigger. */
+  dayCloseTime: string;
   emergencyEnabled: boolean;
   emergencyMode: '24/7' | 'Custom Hours' | '';
   dateFormat: string;
@@ -117,6 +119,7 @@ export const DEFAULT_HOSPITAL_PROFILE: HospitalProfile = {
   workingMode: '',
   opdOpenTime: '',
   opdCloseTime: '',
+  dayCloseTime: '',
   emergencyEnabled: false,
   emergencyMode: '',
   dateFormat: 'DD/MM/YYYY',

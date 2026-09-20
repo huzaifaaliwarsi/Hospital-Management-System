@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { cn, formatCnicInput } from '../../utils/formatters';
 export { formatCnicInput };
-import { Calendar, ChevronDown, Check, UploadCloud, X, Search, FileText } from 'lucide-react';
+import { Calendar, ChevronDown, Check, UploadCloud, X, Search, FileText, Clock } from 'lucide-react';
 
 export interface BaseInputProps {
   label?: string;
@@ -224,6 +224,167 @@ export const DatePicker: React.FC<DatePickerProps> = ({
       icon={<Calendar className="h-4 w-4" />}
       {...props}
     />
+  );
+};
+
+// 5b. Time Picker Input (Calendar/Clock style selection)
+export interface TimePickerInputProps extends BaseInputProps {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  presets?: string[];
+  use12Hour?: boolean;
+}
+
+export function parseTimeTo24(timeStr?: string): string {
+  if (!timeStr || !timeStr.trim()) return '';
+  const trimmed = timeStr.trim();
+  const match24 = trimmed.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+  if (match24) {
+    return `${match24[1]!.padStart(2, '0')}:${match24[2]!}`;
+  }
+  const match12 = trimmed.match(/^(\d{1,2}):([0-5]\d)\s*(AM|PM)$/i);
+  if (match12) {
+    let hours = parseInt(match12[1]!, 10);
+    const minutes = match12[2]!;
+    const period = match12[3]!.toUpperCase();
+    if (period === 'PM' && hours < 12) hours += 12;
+    if (period === 'AM' && hours === 12) hours = 0;
+    return `${String(hours).padStart(2, '0')}:${minutes}`;
+  }
+  return '';
+}
+
+export function formatTimeFrom24(time24: string, use12Hour = true): string {
+  if (!time24) return '';
+  const match = time24.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+  if (!match) return time24;
+  if (!use12Hour) return time24;
+  let hours = parseInt(match[1]!, 10);
+  const minutes = match[2]!;
+  const period = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12 || 12;
+  return `${String(hours).padStart(2, '0')}:${minutes} ${period}`;
+}
+
+export const TimePickerInput: React.FC<TimePickerInputProps> = ({
+  label,
+  value,
+  onChange,
+  placeholder = 'Select time…',
+  presets,
+  use12Hour = true,
+  error,
+  hint,
+  required,
+  className,
+  id,
+  disabled,
+}) => {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const val24 = parseTimeTo24(value);
+  const displayVal = value ? (use12Hour ? formatTimeFrom24(val24, true) || value : val24) : '';
+
+  const handleNativeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw24 = e.target.value;
+    if (!raw24) {
+      onChange('');
+      return;
+    }
+    const formatted = use12Hour ? formatTimeFrom24(raw24, true) : raw24;
+    onChange(formatted);
+  };
+
+  const openPicker = () => {
+    if (disabled) return;
+    if (inputRef.current) {
+      if ('showPicker' in HTMLInputElement.prototype) {
+        try {
+          inputRef.current.showPicker();
+        } catch {
+          inputRef.current.focus();
+        }
+      } else {
+        inputRef.current.focus();
+      }
+    }
+  };
+
+  return (
+    <div className={cn('w-full flex flex-col gap-1', className)}>
+      {label && (
+        <label className="text-xs font-semibold text-slate-700 flex items-center justify-between">
+          <span>
+            {label} {required && <span className="text-rose-500">*</span>}
+          </span>
+          {displayVal && (
+            <span className="text-[10px] font-mono text-[#08775A] font-semibold bg-[#08775A]/10 px-1.5 py-0.2 rounded">
+              {displayVal}
+            </span>
+          )}
+        </label>
+      )}
+      <div
+        onClick={openPicker}
+        className={cn(
+          'relative flex items-center rounded-lg border bg-white px-3 py-2 text-xs transition-colors cursor-pointer group',
+          'focus-within:ring-2 focus-within:ring-[#129b70]/20 focus-within:border-[#129b70]',
+          error ? 'border-rose-400' : 'border-slate-300 hover:border-slate-400',
+          disabled && 'bg-slate-50 opacity-60 cursor-not-allowed'
+        )}
+      >
+        <Clock className="h-4 w-4 text-slate-400 group-hover:text-[#08775A] mr-2 shrink-0 transition-colors" />
+        <span className={cn('flex-1 font-mono text-xs', displayVal ? 'text-slate-900 font-bold' : 'text-slate-400')}>
+          {displayVal || placeholder}
+        </span>
+        <input
+          ref={inputRef}
+          type="time"
+          value={val24}
+          onChange={handleNativeChange}
+          disabled={disabled}
+          className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+          tabIndex={-1}
+        />
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            openPicker();
+          }}
+          className="text-[11px] font-semibold text-[#08775A] hover:underline px-1.5 py-0.5 rounded hover:bg-emerald-50 transition-colors cursor-pointer"
+        >
+          Pick
+        </button>
+      </div>
+
+      {presets && presets.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+          <span className="text-[10px] text-slate-400 font-medium">Quick:</span>
+          {presets.map((p) => {
+            const isSelected = value === p;
+            return (
+              <button
+                key={p}
+                type="button"
+                onClick={() => onChange(p)}
+                className={cn(
+                  'px-2 py-0.5 rounded text-[10px] font-mono font-medium border transition-colors cursor-pointer',
+                  isSelected
+                    ? 'bg-[#08775A] text-white border-[#08775A]'
+                    : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200'
+                )}
+              >
+                {p}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {error && <span className="text-[11px] text-rose-600 font-medium">{error}</span>}
+      {!error && hint && <span className="text-[11px] text-slate-500">{hint}</span>}
+    </div>
   );
 };
 

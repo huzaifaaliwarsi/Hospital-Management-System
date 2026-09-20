@@ -575,16 +575,78 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
       expect(line.lineNet).toEqual(new Decimal(3000));
     });
 
-    it('creates a SEPARATE department invoice when the service belongs to a different department than the admitting one (v7.2 §2.2)', async () => {
+    it('records a SELF arranged service with PKR 0 charge (no hospital ledger debt)', async () => {
+      (prisma.admissionRecord.findUnique as any).mockResolvedValue({
+        id: 'adm-001',
+        status: 'ACTIVE',
+        doctorStaffId,
+        hospitalInvoices: [
+          {
+            id: 'inv-adm-1',
+            departmentId,
+            subtotal: new Decimal(0),
+            total: new Decimal(0),
+            paidTotal: new Decimal(0),
+            patientShare: new Decimal(0),
+            panelReceivable: new Decimal(0),
+            lines: [],
+          },
+        ],
+        panelPatient: null,
+      });
+
+      (prisma.serviceRate.findUnique as any).mockResolvedValue({
+        id: 'srv-rate-outside-lab',
+        standardRate: new Decimal(5000),
+        isActive: true,
+        departmentId,
+      });
+
+      (prisma.invoiceLineItem.create as any).mockResolvedValue({
+        id: 'line-self-1',
+        hospitalInvoiceId: 'inv-adm-1',
+        serviceRateId: 'srv-rate-outside-lab',
+        rateSnapshot: new Decimal(0),
+        quantity: new Decimal(1),
+        lineGross: new Decimal(0),
+        discountAmount: new Decimal(0),
+        discountReason: '[Self-Arranged]',
+        lineNet: new Decimal(0),
+        patientShare: new Decimal(0),
+        panelReceivable: new Decimal(0),
+      });
+
+      const line = await admissionService.addAdmissionService(
+        'adm-001',
+        { serviceRateId: 'srv-rate-outside-lab', quantity: 1, arrangementMode: 'SELF' },
+        staffUserId,
+      );
+
+      expect(prisma.invoiceLineItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            hospitalInvoiceId: 'inv-adm-1',
+            rateSnapshot: new Decimal(0),
+            lineGross: new Decimal(0),
+            lineNet: new Decimal(0),
+            discountReason: '[Self-Arranged]',
+          }),
+        }),
+      );
+      expect(line.lineNet).toEqual(new Decimal(0));
+    });
+
+    it('adds services from any department to the existing admission invoice (1 invoice per admission)', async () => {
       const labDeptId = 'dept-laboratory';
       (prisma.admissionRecord.findUnique as any).mockResolvedValue({
         id: 'adm-002',
         status: 'ACTIVE',
         doctorStaffId,
+        departmentId,
         hospitalInvoices: [
           {
             id: 'inv-hospital-services',
-            departmentId, // the admitting department's invoice already exists
+            departmentId,
             subtotal: new Decimal(5000),
             total: new Decimal(5000),
             paidTotal: new Decimal(0),
@@ -603,12 +665,6 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
         departmentId: labDeptId, // Lab, NOT the admitting department
       });
 
-      (prisma.hospitalInvoice.create as any).mockResolvedValue({
-        id: 'inv-laboratory',
-        departmentId: labDeptId,
-        paidTotal: new Decimal(0),
-        lines: [],
-      });
       (prisma.invoiceLineItem.create as any).mockResolvedValue({
         id: 'line-cbc-1',
         lineGross: new Decimal(1500),
@@ -624,15 +680,10 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
         staffUserId,
       );
 
-      // A brand-new invoice is created for Laboratory — the existing
-      // Hospital Services invoice is left untouched (never merged).
-      expect(prisma.hospitalInvoice.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ departmentId: labDeptId, admissionRecordId: 'adm-002' }),
-        }),
-      );
+      // Reuses the admission's single invoice — no new invoice is created
+      expect(prisma.hospitalInvoice.create).not.toHaveBeenCalled();
       expect(prisma.invoiceLineItem.create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ hospitalInvoiceId: 'inv-laboratory' }) }),
+        expect.objectContaining({ data: expect.objectContaining({ hospitalInvoiceId: 'inv-hospital-services' }) }),
       );
     });
 

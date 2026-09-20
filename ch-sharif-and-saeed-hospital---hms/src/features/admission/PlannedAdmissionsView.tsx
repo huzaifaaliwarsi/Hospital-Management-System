@@ -3,7 +3,8 @@ import { Clock, Search, RotateCcw, LogIn, Eye } from 'lucide-react';
 import { Select, TextInput } from '../../components/forms/FormControls';
 import { LoadingState, ErrorState, EmptyState } from '../../components/common/StateViews';
 import { PanelBadge } from '../../components/common/PanelBadge';
-import { DepartmentService } from '../../services/departmentService';
+import { DepartmentService, fetchDepartments } from '../../services/departmentService';
+import { Department } from '../../types/department';
 import { fetchAdmissions, AdmissionRecord } from '../../services/admissionService';
 import { CheckInAdmissionModal } from './CheckInAdmissionModal';
 import { AdmissionDetailModal } from './AdmissionDetailModal';
@@ -22,7 +23,11 @@ interface PlannedAdmissionsViewProps {
  * consolidation pattern used throughout the Front Desk build.
  */
 export const PlannedAdmissionsView: React.FC<PlannedAdmissionsViewProps> = ({ title, subtitle, showCheckIn = false }) => {
-  const departments = useMemo(() => DepartmentService.getDepartments().filter((d) => d.status === 'Active'), []);
+  const [allDepartments, setAllDepartments] = useState<Department[]>(() => DepartmentService.getDepartments());
+  useEffect(() => {
+    fetchDepartments().then(setAllDepartments).catch(() => {});
+  }, []);
+  const departments = useMemo(() => allDepartments.filter((d) => d.status === 'Active'), [allDepartments]);
   const [departmentFilter, setDepartmentFilter] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
 

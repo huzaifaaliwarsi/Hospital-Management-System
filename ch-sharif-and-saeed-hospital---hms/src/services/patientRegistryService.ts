@@ -232,6 +232,61 @@ export function generateNextMrNumber(): string {
   return `MR-${String(totalCount + 1).padStart(6, '0')}`;
 }
 
+export interface PanelPatientSearchResult {
+  id: string;
+  fullName: string;
+  mrNumber: string;
+  cnicOrPassport?: string;
+  phone?: string;
+  guardianName?: string;
+  guardianRelation?: string;
+  dob?: string;
+  gender?: string;
+  addressLine1?: string;
+  city?: string;
+  province?: string;
+  country?: string;
+  bloodGroup?: string;
+  panelId: string;
+  panelName: string;
+  panelMemberId?: string;
+  status: string;
+}
+
+/**
+ * Live search of the permanent Panel Patient Registry (§2.1 point 2,
+ * `admission.md`) by name/MR#/CNIC/phone — backed by `GET /patients/panel`.
+ * Lets New Admission reuse an existing panel patient instead of always
+ * inline-registering a brand-new record for the same real person.
+ */
+export async function searchPanelPatients(query: string): Promise<PanelPatientSearchResult[]> {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+  const res = await apiClient.get<{ data: Record<string, any>[] }>('/patients/panel', {
+    params: { search: trimmed, pageSize: 10 },
+  });
+  return res.data.data.map((raw) => ({
+    id: raw.id,
+    fullName: raw.fullName,
+    mrNumber: raw.mrNumber,
+    cnicOrPassport: raw.cnicOrPassport || undefined,
+    phone: raw.phone || undefined,
+    guardianName: raw.guardianName || undefined,
+    guardianRelation: raw.guardianRelation || undefined,
+    dob: raw.dob ? formatIsoDate(raw.dob) : undefined,
+    gender: raw.gender || undefined,
+    addressLine1: raw.addressLine1 || raw.address || undefined,
+    city: raw.city || undefined,
+    province: raw.province || undefined,
+    country: raw.country || undefined,
+    bloodGroup: raw.bloodGroup || undefined,
+    panelId: raw.corporatePanelId,
+    panelName: raw.corporatePanel?.organizationName || '',
+    panelMemberId: raw.panelMemberId || undefined,
+    status: raw.status || 'ACTIVE',
+  }));
+}
+
 export function checkDuplicates(
   candidate: { cnic?: string; passportNumber?: string; primaryPhone?: string; fullName?: string; fatherGuardianName?: string; dateOfBirth?: string },
   excludePatientId?: string

@@ -207,26 +207,42 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoiceId]);
 
-  const isLabOrPharmacy = useMemo(() => {
-    if (!invoice) return false;
-    const dept = (invoice.departmentName || '').toLowerCase();
-    return dept.includes('lab') || dept.includes('pharmacy');
+  const eligibleHospitalServicesGross = useMemo(() => {
+    if (!invoice) return 0;
+    if (!invoice.lines || invoice.lines.length === 0) {
+      const dept = (invoice.departmentName || '').toLowerCase();
+      if (dept.includes('lab') || dept.includes('pharmacy')) return 0;
+      return invoice.subtotal || 0;
+    }
+    return invoice.lines
+      .filter((l: any) => {
+        const cat = (l.serviceCategory || '').toLowerCase();
+        const dept = (l.departmentName || '').toLowerCase();
+        const srvStream = (l.serviceStream || '').toUpperCase();
+        const isLab = srvStream === 'LAB' || cat.includes('lab') || dept.includes('lab') || cat.includes('pathology') || dept.includes('pathology');
+        const isPharm = cat.includes('pharmacy') || dept.includes('pharmacy');
+        const isRad = cat.includes('radiology') || dept.includes('radiology') || dept.includes('imaging');
+        return !isLab && !isPharm && !isRad && l.discountAllowed !== false;
+      })
+      .reduce((sum: number, l: any) => sum + (l.lineGross || 0), 0);
   }, [invoice]);
 
-  // Pre-fill the payment amount with the outstanding balance so Front Desk
+  const hasHospitalServices = eligibleHospitalServicesGross > 0;
+  const isDiscountDisabled = !hasHospitalServices;
+
   // Pre-fill payment amount and automatically focus the Discount field on open
   useEffect(() => {
     if (activeAction === 'payment' && invoice && !paymentAmountTouched && invoice.balanceDue > 0) {
-      const disc = (!isLabOrPharmacy && typeof discountAmount === 'number') ? discountAmount : 0;
+      const disc = (!isDiscountDisabled && typeof discountAmount === 'number') ? discountAmount : 0;
       setPaymentAmount(Math.max(0, invoice.balanceDue - disc));
     }
-  }, [activeAction, invoice, discountAmount, paymentAmountTouched, isLabOrPharmacy]);
+  }, [activeAction, invoice, discountAmount, paymentAmountTouched, isDiscountDisabled]);
 
-  // Focus directly on the Discount input (or Payment input if Lab/Pharmacy) when the payment collector opens
+  // Focus directly on the Discount input (or Payment input if no Hospital Services) when the payment collector opens
   useEffect(() => {
     if (activeAction === 'payment' && invoice && invoice.status !== 'PAID') {
       const timer = setTimeout(() => {
-        const targetId = isLabOrPharmacy ? 'modal-payment-input' : 'modal-discount-input';
+        const targetId = isDiscountDisabled ? 'modal-payment-input' : 'modal-discount-input';
         const el = document.getElementById(targetId) as HTMLInputElement | null;
         if (el) {
           el.focus();
@@ -235,7 +251,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
       }, 120);
       return () => clearTimeout(timer);
     }
-  }, [activeAction, invoice, isLabOrPharmacy]);
+  }, [activeAction, invoice, isDiscountDisabled]);
 
   const closeAction = () => {
     setActiveAction(null);
@@ -663,7 +679,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                           <Plus className="h-3 w-3" /> Add Service
                         </button>
                       )}
-                      {!isVoid && !isFullyPaid && !isLabOrPharmacy && (
+                      {!isVoid && !isFullyPaid && hasHospitalServices && (
                         <button
                           type="button"
                           onClick={() => setActiveAction('discount')}
@@ -744,14 +760,14 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                 {/* 1. Discount (Cursor lands here first if not Lab/Pharmacy!) */}
                 <NumberInput
                   id="modal-discount-input"
-                  label={isLabOrPharmacy ? "Discount (Not Permitted)" : "Discount (PKR)"}
+                  label={isDiscountDisabled ? "Discount (Not Permitted)" : "Discount (PKR)"}
                   min={0}
-                  max={invoice.subtotal}
-                  placeholder={isLabOrPharmacy ? "N/A" : "0"}
-                  value={isLabOrPharmacy ? '' : discountAmount}
-                  disabled={isLabOrPharmacy}
+                  max={eligibleHospitalServicesGross}
+                  placeholder={isDiscountDisabled ? "N/A" : "0"}
+                  value={isDiscountDisabled ? '' : discountAmount}
+                  disabled={isDiscountDisabled}
                   onChange={(e) => {
-                    if (isLabOrPharmacy) return;
+                    if (isDiscountDisabled) return;
                     const val = e.target.value === '' ? '' : Number(e.target.value);
                     setDiscountAmount(val);
                     if (!paymentAmountTouched) {
@@ -770,9 +786,11 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                     }
                   }}
                   hint={
-                    isLabOrPharmacy
+                    isDiscountDisabled
                       ? "Discounts strictly restricted to Hospital Services (No discount on Lab/Pharmacy)."
-                      : "Enter to advance to Amount Paid"
+                      : eligibleHospitalServicesGross < invoice.subtotal
+                        ? `Discount applies to Hospital Services only (Max ${formatPKR(eligibleHospitalServicesGross)}). Outsourced Lab/Pharmacy cannot be discounted.`
+                        : "Enter to advance to Amount Paid"
                   }
                 />
 

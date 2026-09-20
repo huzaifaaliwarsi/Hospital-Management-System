@@ -17,6 +17,46 @@ import { generateInvoiceNumber, generateReceiptNumber } from '@/shared/idGenerat
 const DISCOUNT_APPROVAL_PERCENT_THRESHOLD = 15; // > 15% requires Admin approval
 const DISCOUNT_APPROVAL_AMOUNT_THRESHOLD = 1500; // > PKR 1,500 requires Admin approval
 
+function isEligibleHospitalService(serviceRate: any): boolean {
+  if (!serviceRate) return true;
+  if (serviceRate.discountAllowed === false) return false;
+  if (serviceRate.serviceStream === 'LAB') return false;
+
+  const cat = (serviceRate.category || '').toLowerCase();
+  if (
+    cat.includes('lab') ||
+    cat.includes('pathology') ||
+    cat.includes('pharmacy') ||
+    cat.includes('radiology') ||
+    cat.includes('diagnostic')
+  ) {
+    return false;
+  }
+
+  const dept = serviceRate.department;
+  if (dept) {
+    if (dept.fulfillmentOwnership === 'OUTSOURCED') return false;
+    if (Boolean(dept.outsourcedProviderId)) return false;
+    if (dept.pharmacyRelated) return false;
+    const deptName = (dept.name || '').toLowerCase();
+    const deptCode = (dept.code || '').toLowerCase();
+    if (
+      deptName.includes('lab') ||
+      deptName.includes('pathology') ||
+      deptName.includes('pharmacy') ||
+      deptName.includes('radiology') ||
+      deptName.includes('imaging') ||
+      deptCode.includes('lab') ||
+      deptCode.includes('pharm') ||
+      deptCode.includes('rad')
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 export const invoicesService = {
   /**
    * Create immediate encounter (Walk-In, OPD, Observation, Emergency) — §4.6 Sub-flow B
@@ -51,6 +91,7 @@ export const invoicesService = {
           encounterType: body.encounterType,
           panelPatientId: body.panelPatientId,
           selfPayEncounterId,
+          departmentId: body.departmentId || null,
           subtotal: new Decimal(0),
           discountTotal: new Decimal(0),
           total: new Decimal(0),
@@ -196,6 +237,7 @@ export const invoicesService = {
           discountTotal: newDiscountTotal,
           total: newTotal,
           status: newStatus,
+          ...(invoice.departmentId ? {} : { departmentId: serviceRate.departmentId }),
         },
       });
 
@@ -214,6 +256,8 @@ export const invoicesService = {
 
   /**
    * Request / apply line or invoice-level discount — §4.6, §8.7
+   * Strictly restricted to Hospital Services; Outsourced Lab / Radiology / Pharmacy
+   * cannot receive discounts.
    */
   async applyDiscount(
     invoiceId: string,
@@ -224,39 +268,42 @@ export const invoicesService = {
     return prisma.$transaction(async (tx) => {
       const invoice = await tx.hospitalInvoice.findUnique({
         where: { id: invoiceId },
-        include: { lines: true, department: true },
+        include: {
+          lines: {
+            include: {
+              serviceRate: {
+                include: { department: true },
+              },
+            },
+          },
+          department: true,
+        },
       });
 
       if (!invoice) throw new NotFoundError('Invoice not found');
       if (invoice.lines.length === 0) throw new ValidationError('Cannot discount an empty invoice');
 
-      const deptName = (invoice.department?.name || '').toLowerCase();
-      const deptCode = (invoice.department?.code || '').toLowerCase();
-      const isOutsourcedOrLabOrPharm =
-        invoice.department?.fulfillmentOwnership === 'OUTSOURCED' ||
-        invoice.department?.outsourcedProviderId !== null ||
-        invoice.department?.pharmacyRelated ||
-        invoice.department?.departmentType === 'PHARMACY' ||
-        deptName.includes('lab') ||
-        deptName.includes('pharmacy') ||
-        deptCode.includes('lab') ||
-        deptCode.includes('pharm');
-
-      if (isOutsourcedOrLabOrPharm) {
-        throw new ValidationError(
-          `Discounts are strictly restricted to Hospital Services. Invoices for '${invoice.department?.name || 'this department'}' (Outsourced Lab / Pharmacy) cannot receive discounts.`
-        );
-      }
-
       if (body.lineItemId) {
         const line = invoice.lines.find((l) => l.id === body.lineItemId);
         if (!line) throw new NotFoundError('Invoice line item not found');
+
+        if (!isEligibleHospitalService(line.serviceRate)) {
+          throw new ValidationError(
+            `Discounts are strictly restricted to Hospital Services. '${line.serviceRate?.name || 'This service'}' (Outsourced Lab / Radiology / Pharmacy) cannot receive discounts.`
+          );
+        }
 
         let discAmt = new Decimal(0);
         if (body.discountPercent !== undefined) {
           discAmt = line.lineGross.mul(body.discountPercent).div(100);
         } else if (body.discountAmount !== undefined) {
           discAmt = new Decimal(body.discountAmount);
+        }
+
+        if (discAmt.greaterThan(line.lineGross)) {
+          throw new ValidationError(
+            `Discount of PKR ${discAmt.toFixed(2)} exceeds line gross of PKR ${line.lineGross.toFixed(2)}.`
+          );
         }
 
         const discPct = line.lineGross.greaterThan(0)
@@ -269,7 +316,7 @@ export const invoicesService = {
           !['SUPER_ADMIN', 'ADMIN'].includes(actorRole)
         ) {
           throw new AuthorizationError(
-            `Discount of PKR ${discAmt.toFixed(2)} (${discPct.toFixed(1)}%) requires Admin approval.`,
+            `Discount of PKR ${discAmt.toFixed(2)} (${discPct.toFixed(1)}%) requires Admin approval.`
           );
         }
 
@@ -284,17 +331,32 @@ export const invoicesService = {
           },
         });
       } else {
-        // Invoice-wide discount distributed across lines
-        const totalGross = invoice.subtotal;
+        // Invoice-wide discount distributed across eligible Hospital Services lines ONLY
+        const eligibleLines = invoice.lines.filter((l) => isEligibleHospitalService(l.serviceRate));
+        const nonEligibleLines = invoice.lines.filter((l) => !isEligibleHospitalService(l.serviceRate));
+
+        if (eligibleLines.length === 0) {
+          throw new ValidationError(
+            `Discounts are strictly restricted to Hospital Services. Invoices without eligible Hospital Services (Outsourced Lab / Pharmacy) cannot receive discounts.`
+          );
+        }
+
+        const eligibleGross = eligibleLines.reduce((acc, l) => acc.plus(l.lineGross), new Decimal(0));
         let totalDiscAmt = new Decimal(0);
         if (body.discountPercent !== undefined) {
-          totalDiscAmt = totalGross.mul(body.discountPercent).div(100);
+          totalDiscAmt = eligibleGross.mul(body.discountPercent).div(100);
         } else if (body.discountAmount !== undefined) {
           totalDiscAmt = new Decimal(body.discountAmount);
         }
 
-        const discPct = totalGross.greaterThan(0)
-          ? totalDiscAmt.mul(100).div(totalGross).toNumber()
+        if (totalDiscAmt.greaterThan(eligibleGross)) {
+          throw new ValidationError(
+            `Discount of PKR ${totalDiscAmt.toFixed(2)} exceeds total eligible Hospital Services charges of PKR ${eligibleGross.toFixed(2)}. Outsourced Lab, Radiology, and Pharmacy services cannot receive discounts.`
+          );
+        }
+
+        const discPct = eligibleGross.greaterThan(0)
+          ? totalDiscAmt.mul(100).div(eligibleGross).toNumber()
           : 0;
 
         if (
@@ -303,14 +365,24 @@ export const invoicesService = {
           !['SUPER_ADMIN', 'ADMIN'].includes(actorRole)
         ) {
           throw new AuthorizationError(
-            `Total discount of PKR ${totalDiscAmt.toFixed(2)} requires Admin approval.`,
+            `Total discount of PKR ${totalDiscAmt.toFixed(2)} requires Admin approval.`
           );
         }
 
-        // Distribute proportionally across lines
-        for (const line of invoice.lines) {
-          const ratio = totalGross.greaterThan(0) ? line.lineGross.div(totalGross) : new Decimal(0);
-          const lineDisc = totalDiscAmt.mul(ratio);
+        // Distribute discount proportionally across ELIGIBLE Hospital Services lines only!
+        // Round to whole rupees so line amounts stay clean integer PKR (no fractional paisas).
+        let remainingDiscAmt = totalDiscAmt;
+        for (let i = 0; i < eligibleLines.length; i++) {
+          const line = eligibleLines[i];
+          if (!line) continue;
+          let lineDisc: Decimal;
+          if (i === eligibleLines.length - 1) {
+            lineDisc = remainingDiscAmt;
+          } else {
+            const ratio = eligibleGross.greaterThan(0) ? line.lineGross.div(eligibleGross) : new Decimal(0);
+            lineDisc = totalDiscAmt.mul(ratio).round();
+            remainingDiscAmt = remainingDiscAmt.minus(lineDisc);
+          }
           const lineNet = line.lineGross.minus(lineDisc);
           await tx.invoiceLineItem.update({
             where: { id: line.id },
@@ -320,6 +392,19 @@ export const invoicesService = {
               lineNet,
             },
           });
+        }
+
+        // Ensure non-eligible lines (Lab / Radiology / Pharmacy) receive 0 discount
+        for (const line of nonEligibleLines) {
+          if (!line.discountAmount.isZero()) {
+            await tx.invoiceLineItem.update({
+              where: { id: line.id },
+              data: {
+                discountAmount: new Decimal(0),
+                lineNet: line.lineGross,
+              },
+            });
+          }
         }
       }
 
@@ -338,6 +423,8 @@ export const invoicesService = {
           ? 'PARTIALLY_PAID'
           : 'UNPAID';
 
+      const resolvedDeptId = invoice.departmentId || invoice.lines[0]?.serviceRate?.departmentId || null;
+
       return tx.hospitalInvoice.update({
         where: { id: invoice.id },
         data: {
@@ -345,10 +432,12 @@ export const invoicesService = {
           discountTotal: newDiscountTotal,
           total: newTotal,
           status: newStatus,
+          ...(resolvedDeptId && !invoice.departmentId ? { departmentId: resolvedDeptId } : {}),
         },
         include: {
-          lines: { include: { serviceRate: true, performedBy: true } },
+          lines: { include: { serviceRate: { include: { department: true } }, performedBy: true } },
           paymentReceipts: true,
+          department: true,
         },
       });
     });
@@ -649,6 +738,7 @@ export const invoicesService = {
       include: {
         panelPatient: { include: { corporatePanel: true } },
         selfPayEncounter: true,
+        department: true,
         appointment: { include: { doctor: true, department: true } },
         admissionRecord: {
           include: {
@@ -667,7 +757,11 @@ export const invoicesService = {
         },
         lines: {
           include: {
-            serviceRate: true,
+            serviceRate: {
+              include: {
+                department: true,
+              },
+            },
             performedBy: true,
             commissionAccrual: true,
           },

@@ -81,6 +81,7 @@ export const addAdmissionServiceSchema = z.object({
   quantity: z.coerce.number().positive().default(1),
   notes: z.string().optional(),
   performedByStaffId: z.string().uuid().optional(),
+  arrangementMode: z.enum(['HOSPITAL_MANAGED', 'SELF']).default('HOSPITAL_MANAGED').optional(),
 });
 
 export type AddAdmissionServiceBody = z.infer<typeof addAdmissionServiceSchema>;
@@ -167,3 +168,15 @@ export const listAdmissionsQuerySchema = z.object({
 });
 
 export type ListAdmissionsQuery = z.infer<typeof listAdmissionsQuerySchema>;
+
+// Super Admin "Close Day" action (Hospital Overview) — posts one room/bed
+// accommodation charge per ACTIVE, bed-assigned admission for this date.
+// `businessDate` defaults to the server's current date when omitted.
+export const closeHospitalDaySchema = z.object({
+  businessDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'businessDate must be in YYYY-MM-DD format')
+    .optional(),
+});
+
+export type CloseHospitalDayBody = z.infer<typeof closeHospitalDaySchema>;

@@ -96,6 +96,7 @@ export interface AdmissionServiceLine {
   lineNet: number;
   patientShare: number;
   panelReceivable: number;
+  discountReason?: string | null;
   performedByName: string;
 }
 
@@ -190,6 +191,10 @@ export interface AdmissionDetail extends AdmissionRecord {
   medicationModeHistory: AdmissionMedicationModeHistoryEntry[];
   paymentRequests: AdmissionPaymentRequestSummary[];
   dischargeSummary?: AdmissionDischargeSummary | null;
+  /** Advance/deposit money collected for this admission but not tied to any one department invoice (e.g. the deposit taken at admission creation) — already netted into each `AdmissionInvoiceRow.outstanding` below (oldest invoice first), but exposed here too so a summary total can show it was applied rather than silently vanishing. */
+  unallocatedAdvanceTotal: number;
+  /** Sum of every invoice's `outstanding` AFTER the advance/deposit above has been netted in — the actual amount still owed, never `sum(total) - sum(paidTotal)` alone (that ignores the advance). */
+  totalOutstanding: number;
 }
 
 function formatTimestamp(iso?: string | null): string {
@@ -292,10 +297,23 @@ function toPharmacyRequestRecord(r: Record<string, any>): AdmissionPharmacyReque
 }
 
 function toAdmissionDetail(raw: Record<string, any>): AdmissionDetail {
-  return {
-    ...toAdmissionRecord(raw),
-    clearances: (raw.dischargeClearances || []).map(toClearance),
-    invoices: (raw.hospitalInvoices || []).map((inv: any) => ({
+  // An advance/deposit receipt not tied to any one department invoice
+  // (`raw.unallocatedAdvanceTotal`, e.g. the deposit collected at admission
+  // creation) sits outside every invoice's own `paidTotal` — netting it
+  // here (oldest invoice first) means the "Outstanding" a Front Desk/
+  // Admission user sees while adding services is money still actually
+  // owed, not `total - paidTotal` alone, which ignored the advance
+  // entirely and overstated the balance.
+  let remainingCredit = toNumber(raw.unallocatedAdvanceTotal);
+  const sortedInvoices = [...(raw.hospitalInvoices || [])].sort(
+    (a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+  );
+
+  const invoices = sortedInvoices.map((inv: any) => {
+    const rawOutstanding = Math.max(0, toNumber(inv.total) - toNumber(inv.paidTotal));
+    const creditApplied = Math.min(remainingCredit, rawOutstanding);
+    remainingCredit -= creditApplied;
+    return {
       id: inv.id,
       invoiceNumber: inv.invoiceNumber,
       departmentName: inv.department?.name || 'Unassigned',
@@ -303,7 +321,7 @@ function toAdmissionDetail(raw: Record<string, any>): AdmissionDetail {
       discountTotal: toNumber(inv.discountTotal),
       total: toNumber(inv.total),
       paidTotal: toNumber(inv.paidTotal),
-      outstanding: toNumber(inv.total) - toNumber(inv.paidTotal),
+      outstanding: rawOutstanding - creditApplied,
       status: inv.status,
       lines: (inv.lines || []).map((l: any) => ({
         id: l.id,
@@ -312,12 +330,21 @@ function toAdmissionDetail(raw: Record<string, any>): AdmissionDetail {
         quantity: toNumber(l.quantity) || 1,
         lineGross: toNumber(l.lineGross),
         discountAmount: toNumber(l.discountAmount),
+        discountReason: l.discountReason || null,
         lineNet: toNumber(l.lineNet),
         patientShare: toNumber(l.patientShare),
         panelReceivable: toNumber(l.panelReceivable),
         performedByName: l.performedBy?.fullName || '',
       })),
-    })),
+    };
+  });
+
+  return {
+    ...toAdmissionRecord(raw),
+    clearances: (raw.dischargeClearances || []).map(toClearance),
+    invoices,
+    unallocatedAdvanceTotal: toNumber(raw.unallocatedAdvanceTotal),
+    totalOutstanding: invoices.reduce((sum, inv) => sum + inv.outstanding, 0),
     pharmacyRequests: (raw.pharmacyClearances || []).map(toPharmacyRequestRecord),
     bedTransfers: (raw.bedTransfers || []).map((t: any) => ({
       id: t.id,
@@ -385,9 +412,9 @@ export async function fetchAdmissionDetail(id: string): Promise<AdmissionDetail>
  */
 export async function createAdmission(
   values: CreateAdmissionFormValues,
-): Promise<{ admission: AdmissionRecord; advanceReceipt: AdmissionAdvanceReceipt | null }> {
+): Promise<{ admission: AdmissionRecord; advanceReceipt: AdmissionAdvanceReceipt | null; invoice: { id: string; invoiceNumber: string } | null }> {
   try {
-    const res = await apiClient.post<{ data: { admission: Record<string, any>; advanceReceipt: Record<string, any> | null } }>(
+    const res = await apiClient.post<{ data: { admission: Record<string, any>; advanceReceipt: Record<string, any> | null; invoice: Record<string, any> | null } }>(
       '/admissions',
       {
         panelPatientId: values.panelPatientId || undefined,
@@ -405,7 +432,7 @@ export async function createAdmission(
         paymentReference: values.paymentReference?.trim() || undefined,
       },
     );
-    const { admission, advanceReceipt } = res.data.data;
+    const { admission, advanceReceipt, invoice } = res.data.data;
     return {
       admission: toAdmissionRecord(admission),
       advanceReceipt: advanceReceipt
@@ -416,6 +443,12 @@ export async function createAdmission(
             method: advanceReceipt.method,
             reference: advanceReceipt.reference || '',
             collectedAt: formatTimestamp(advanceReceipt.collectedAt),
+          }
+        : null,
+      invoice: invoice
+        ? {
+            id: invoice.id,
+            invoiceNumber: invoice.invoiceNumber,
           }
         : null,
     };
@@ -443,7 +476,7 @@ export async function transferAdmissionBed(id: string, values: { targetBedId: st
 
 export async function addAdmissionService(
   id: string,
-  values: { serviceRateId: string; quantity: number; notes?: string; performedByStaffId?: string },
+  values: { serviceRateId: string; quantity: number; notes?: string; performedByStaffId?: string; arrangementMode?: 'HOSPITAL_MANAGED' | 'SELF' },
 ): Promise<void> {
   try {
     await apiClient.post(`/admissions/${id}/add-service`, values);
@@ -549,6 +582,46 @@ export async function clinicalDischarge(
   try {
     const res = await apiClient.post<{ data: { admission: Record<string, any> } }>(`/admissions/${id}/clinical-discharge`, values);
     return toAdmissionRecord(res.data.data.admission);
+  } catch (err) {
+    throw new Error(toErrorMessage(err));
+  }
+}
+
+// ── Super Admin "Close Day" — recurring room/bed accommodation billing ────
+export interface HospitalDayCloseRecord {
+  id: string;
+  businessDate: string;
+  admissionsCharged: number;
+  totalAmountPosted: number;
+  closedByLabel: string;
+  closedAt: string;
+}
+
+function toDayCloseRecord(raw: any): HospitalDayCloseRecord {
+  return {
+    id: raw.id,
+    businessDate: (raw.businessDate || '').slice(0, 10),
+    admissionsCharged: raw.admissionsCharged || 0,
+    totalAmountPosted: Number(raw.totalAmountPosted || 0),
+    closedByLabel: raw.closedBy?.staff?.fullName || raw.closedBy?.username || '',
+    closedAt: formatTimestamp(raw.closedAt),
+  };
+}
+
+/** Posts today's (or a given date's) room/bed accommodation charge to every ACTIVE, bed-assigned admission. Idempotent server-side — see `admission.service.ts`'s `closeHospitalDay`. */
+export async function closeHospitalDay(businessDate?: string): Promise<HospitalDayCloseRecord> {
+  try {
+    const res = await apiClient.post<{ data: Record<string, any> }>('/admissions/day-close', businessDate ? { businessDate } : {});
+    return toDayCloseRecord(res.data.data);
+  } catch (err) {
+    throw new Error(toErrorMessage(err));
+  }
+}
+
+export async function fetchDayCloseHistory(limit = 10): Promise<HospitalDayCloseRecord[]> {
+  try {
+    const res = await apiClient.get<{ data: Record<string, any>[] }>('/admissions/day-close/history', { params: { limit } });
+    return res.data.data.map(toDayCloseRecord);
   } catch (err) {
     throw new Error(toErrorMessage(err));
   }

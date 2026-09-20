@@ -53,6 +53,10 @@ export interface AdmissionStatement {
     panelReceivable: number;
     outstanding: number;
   };
+  /** Advance/deposit receipts collected for this admission but not tied to any one department invoice (e.g. the deposit taken at admission creation) — already netted into `departmentInvoices[].outstanding` and `consolidated.outstanding` (oldest invoice first). */
+  unallocatedCreditTotal: number;
+  /** Portion of `unallocatedCreditTotal` not yet consumed by any outstanding invoice — a genuine available credit for this admission. */
+  availableCredit: number;
 }
 
 function toNumber(v: any): number {
@@ -98,6 +102,8 @@ function normalize(raw: Record<string, any>): AdmissionStatement {
       panelReceivable: toNumber(raw.consolidated?.panelReceivable),
       outstanding: toNumber(raw.consolidated?.outstanding),
     },
+    unallocatedCreditTotal: toNumber(raw.unallocatedCreditTotal),
+    availableCredit: toNumber(raw.availableCredit),
   };
 }
 
@@ -166,11 +172,27 @@ export interface AdmissionLedgerEntry {
   description: string;
   qty: number | null;
   rate: number | null;
+  grossAmount?: number;
+  discountAmount?: number;
+  discountReason?: string | null;
   debit: number;
   credit: number;
+  paidAmount?: number;
+  dueAmount?: number;
+  status?: 'PAID' | 'UNPAID' | 'PARTIAL' | 'SELF';
   runningBalance: number;
   reference: string;
   postedBy: string | null;
+}
+
+export interface AdmissionReceiptSummary {
+  id: string;
+  receiptNumber: string;
+  amount: number;
+  method: string;
+  reference?: string | null;
+  collectedAt: string;
+  collectedByName?: string | null;
 }
 
 export interface AdmissionLedgerPanelFigures {
@@ -198,6 +220,7 @@ export interface AdmissionLedger {
   finalBillNumber: string | null;
   finalBillGeneratedAt: string | null;
   entries: AdmissionLedgerEntry[];
+  receipts?: AdmissionReceiptSummary[];
   summary: {
     totalCharges: number;
     totalPaid: number;
@@ -249,11 +272,26 @@ function toLedger(raw: Record<string, any>): AdmissionLedger {
       description: e.description,
       qty: e.qty != null ? toNumber(e.qty) : null,
       rate: e.rate != null ? toNumber(e.rate) : null,
+      grossAmount: e.grossAmount != null ? toNumber(e.grossAmount) : undefined,
+      discountAmount: e.discountAmount != null ? toNumber(e.discountAmount) : undefined,
+      discountReason: e.discountReason ?? null,
       debit: toNumber(e.debit),
       credit: toNumber(e.credit),
+      paidAmount: e.paidAmount != null ? toNumber(e.paidAmount) : toNumber(e.credit),
+      dueAmount: e.dueAmount != null ? toNumber(e.dueAmount) : Math.max(0, toNumber(e.debit) - toNumber(e.credit)),
+      status: e.status || (toNumber(e.dueAmount) <= 0 ? 'PAID' : 'UNPAID'),
       runningBalance: toNumber(e.runningBalance),
       reference: e.reference,
       postedBy: e.postedBy ?? null,
+    })),
+    receipts: (raw.receipts || []).map((r: any) => ({
+      id: r.id,
+      receiptNumber: r.receiptNumber,
+      amount: toNumber(r.amount),
+      method: r.method,
+      reference: r.reference ?? null,
+      collectedAt: r.collectedAt,
+      collectedByName: r.collectedByName ?? null,
     })),
     summary: {
       totalCharges: toNumber(raw.summary?.totalCharges),

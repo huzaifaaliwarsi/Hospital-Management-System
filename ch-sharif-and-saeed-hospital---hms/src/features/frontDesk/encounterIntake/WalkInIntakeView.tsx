@@ -42,6 +42,94 @@ import { useRouter } from '../../../context/RouterContext';
 import { formatPKR } from '../../../utils/formatters';
 import { focusNextField, focusNextFieldOnEnter } from '../../../utils/formNavigation';
 
+export function departmentSupportsEncounter(dept: Department, type: EncounterType | ''): boolean {
+  if (!type) return true;
+  const code = (dept.code || '').trim().toUpperCase();
+  const name = (dept.name || '').trim().toUpperCase();
+
+  if (type === 'OPD') {
+    return (
+      dept.opdEnabled ||
+      code === 'OPD' ||
+      code === 'GEN-OPD' ||
+      code === 'GMED' ||
+      name.includes('OPD') ||
+      name.includes('OUTPATIENT') ||
+      name.includes('MEDICINE') ||
+      name.includes('CLINIC')
+    );
+  }
+  if (type === 'OBSERVATION') {
+    return (
+      dept.observationEnabled ||
+      code === 'OBS' ||
+      code === 'OBSERVATION' ||
+      name.includes('OBS') ||
+      name.includes('OBSERVATION')
+    );
+  }
+  if (type === 'EMERGENCY') {
+    return (
+      dept.emergencyEnabled ||
+      code === 'ER' ||
+      code === 'EMERGENCY' ||
+      name.includes('EMERGENCY') ||
+      name.includes('ER')
+    );
+  }
+  return true;
+}
+
+export function resolveDoctorDepartmentForEncounter(
+  doc: StaffUser | null | undefined,
+  allDepts: Department[],
+  type: EncounterType | ''
+): Department | null {
+  if (!type) return null;
+
+  if (doc) {
+    const docDeptIds = doc.departmentIds?.length ? doc.departmentIds : doc.departmentId ? [doc.departmentId] : [];
+    const docDepts = allDepts.filter((d) => docDeptIds.includes(d.id));
+
+    // Check matching departments in doctor's assignments
+    const matching = docDepts.filter((d) => departmentSupportsEncounter(d, type));
+    if (matching.length > 0) {
+      if (type === 'OPD') {
+        const exactOpd = matching.find((d) => (d.code || '').toUpperCase() === 'OPD' || d.name.toUpperCase().includes('OPD'));
+        if (exactOpd) return exactOpd;
+      } else if (type === 'EMERGENCY') {
+        const exactEr = matching.find((d) => (d.code || '').toUpperCase() === 'ER' || d.name.toUpperCase().includes('EMERGENCY'));
+        if (exactEr) return exactEr;
+      } else if (type === 'OBSERVATION') {
+        const exactObs = matching.find((d) => (d.code || '').toUpperCase() === 'OBS' || d.name.toUpperCase().includes('OBSERVATION'));
+        if (exactObs) return exactObs;
+      }
+      return matching[0];
+    }
+
+    if (docDepts.length > 0) {
+      return docDepts[0];
+    }
+  }
+
+  // Fallback: general department matching this encounter type across hospital
+  if (type === 'EMERGENCY') {
+    return allDepts.find((d) => (d.code || '').toUpperCase() === 'ER' || d.name.toUpperCase().includes('EMERGENCY')) || null;
+  }
+  if (type === 'OBSERVATION') {
+    return allDepts.find((d) => (d.code || '').toUpperCase() === 'OBS' || d.name.toUpperCase().includes('OBSERVATION')) || null;
+  }
+  if (type === 'OPD') {
+    return (
+      allDepts.find((d) => (d.code || '').toUpperCase() === 'OPD' || d.name.toUpperCase().includes('OPD')) ||
+      allDepts.find((d) => d.opdEnabled) ||
+      null
+    );
+  }
+
+  return null;
+}
+
 export const WalkInIntakeView: React.FC = () => {
   const { currentPath } = useRouter();
   const formContainerRef = useRef<HTMLDivElement>(null);
@@ -57,10 +145,6 @@ export const WalkInIntakeView: React.FC = () => {
       const val = (urlParams.get('type') || urlParams.get('encounterType') || '').toUpperCase();
       if (val === 'OPD' || val === 'OBSERVATION' || val === 'EMERGENCY') {
         return val as EncounterType;
-      }
-      const fromStorage = sessionStorage.getItem('preferred_encounter_type');
-      if (fromStorage && (fromStorage === 'OPD' || fromStorage === 'OBSERVATION' || fromStorage === 'EMERGENCY')) {
-        return fromStorage as EncounterType;
       }
     } catch {
       // fallback
@@ -116,12 +200,11 @@ export const WalkInIntakeView: React.FC = () => {
     fetchDepartments().then((depts) => {
       const active = depts.filter((d) => d.status === 'Active');
       setDepartments(active);
-      if (encounterType === 'EMERGENCY') {
-        const er = active.find((d) => d.code === 'ER' || d.name.toLowerCase().includes('emergency'));
-        if (er) setDepartmentId(er.id);
-      }
     }).catch(() => { });
     fetchServices().then(setServices).catch(() => { });
+    try {
+      sessionStorage.removeItem('preferred_encounter_type');
+    } catch { }
   }, []);
 
   useEffect(() => {
@@ -137,17 +220,12 @@ export const WalkInIntakeView: React.FC = () => {
     nameInput?.focus();
   }, []);
 
-  // When encounter type switches to EMERGENCY and no doctor is chosen yet,
-  // auto-switch to the hospital's ER department as a starting point.
-  // (Once a doctor is selected, the doctor-scoped effect below takes over.)
+  // When switching to OPD, clear additional services because OPD is consultation only
   useEffect(() => {
-    if (encounterType === 'EMERGENCY' && !doctorId) {
-      const er = departments.find((d) => d.code === 'ER' || d.name.toLowerCase().includes('emergency'));
-      if (er && er.id !== departmentId) {
-        setDepartmentId(er.id);
-      }
+    if (encounterType === 'OPD') {
+      setSelectedServiceIds([]);
     }
-  }, [encounterType, departments, doctorId]);
+  }, [encounterType]);
 
   // All active doctors across the hospital
   const allActiveDoctors = useMemo(
@@ -160,27 +238,11 @@ export const WalkInIntakeView: React.FC = () => {
     [allActiveDoctors, doctorId]
   );
 
-  // Which Department flag corresponds to the currently selected Encounter Service.
-  const encounterDeptFlag = useMemo<'opdEnabled' | 'observationEnabled' | 'emergencyEnabled' | null>(() => {
-    if (encounterType === 'OPD') return 'opdEnabled';
-    if (encounterType === 'OBSERVATION') return 'observationEnabled';
-    if (encounterType === 'EMERGENCY') return 'emergencyEnabled';
-    return null;
-  }, [encounterType]);
-
   // Resolves a doctor's own assigned Department records (never the full hospital list).
   const getDoctorDepartments = (doc: StaffUser): Department[] => {
     const ids = doc.departmentIds?.length ? doc.departmentIds : doc.departmentId ? [doc.departmentId] : [];
     if (ids.length === 0) return [];
-    const list = departments.filter((d) => ids.includes(d.id));
-    if (doc.departmentId) {
-      list.sort((a, b) => {
-        if (a.id === doc.departmentId) return -1;
-        if (b.id === doc.departmentId) return 1;
-        return 0;
-      });
-    }
-    return list;
+    return departments.filter((d) => ids.includes(d.id));
   };
 
   const handleDoctorChange = (selectedDocId: string) => {
@@ -210,73 +272,33 @@ export const WalkInIntakeView: React.FC = () => {
   };
 
   // Consulting Doctor list, filtered down to doctors who have at least one
-  // department that supports the currently selected Encounter Service — e.g.
-  // selecting "OPD" shows only doctors who see OPD patients (a doctor who
-  // sits ONLY in OPD, or a doctor who also covers ER/Observation elsewhere,
-  // both qualify; a doctor with NO OPD department at all is hidden).
-  // A doctor with no department data at all is kept visible — we can't tell,
-  // so we don't hide them outright.
+  // department that supports the currently selected Encounter Service.
   const doctorsForEncounterType = useMemo(() => {
-    if (!encounterDeptFlag) return allActiveDoctors;
+    if (!encounterType) return allActiveDoctors;
     return allActiveDoctors.filter((doc) => {
       const depts = getDoctorDepartments(doc);
       if (depts.length === 0) return true;
-      return depts.some((d) => d[encounterDeptFlag]);
+      return depts.some((d) => departmentSupportsEncounter(d, encounterType));
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allActiveDoctors, departments, encounterDeptFlag]);
+  }, [allActiveDoctors, departments, encounterType]);
 
   // If the selected doctor no longer supports the (newly changed) Encounter
-  // Service, clear the doctor & department so Front Desk re-picks a doctor
-  // who actually sees that type of patient.
+  // Service, clear the doctor so Front Desk re-picks an authorized doctor.
   useEffect(() => {
     if (doctorId && !doctorsForEncounterType.some((d) => d.id === doctorId)) {
       setDoctorId('');
-      setDepartmentId('');
     }
   }, [doctorsForEncounterType, doctorId]);
 
-  // Departments scoped to the selected doctor (for the Clinical Dept dropdown) —
-  // only that doctor's own assigned department(s), never the full hospital list.
-  // If the doctor works in more than one department (e.g. sits in both OPD &
-  // ER), narrow further to the department(s) that support the currently
-  // selected Encounter Service — so picking "OPD" for a doctor who works in
-  // both OPD & ER resolves straight to their OPD department instead of
-  // asking Front Desk to disambiguate. This applies the same way for
-  // Observation and Emergency.
-  const doctorScopedDepartments = useMemo(() => {
-    if (!selectedDoctorObj) return departments;
-    const scoped = getDoctorDepartments(selectedDoctorObj);
-    if (scoped.length === 0) return departments;
-    if (scoped.length > 1 && encounterDeptFlag) {
-      const matchingEncounterType = scoped.filter((d) => d[encounterDeptFlag]);
-      if (matchingEncounterType.length > 0) {
-        matchingEncounterType.sort((a, b) => {
-          if (a.id === selectedDoctorObj.departmentId) return -1;
-          if (b.id === selectedDoctorObj.departmentId) return 1;
-          return 0;
-        });
-        return matchingEncounterType;
-      }
-    }
-    return scoped;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDoctorObj, departments, encounterDeptFlag]);
-
-  // Keep Clinical Department in sync with the (possibly Encounter-Service-narrowed)
-  // doctor-scoped list: auto-select when only one candidate remains, otherwise
-  // clear a stale selection that's no longer in scope.
+  // Keep Clinical Department strictly synchronized with the current Encounter Type
+  // and the doctor's assigned departments (e.g. OPD when on OPD, ER when on Emergency).
   useEffect(() => {
-    if (!selectedDoctorObj) return;
-    if (doctorScopedDepartments.length === 1) {
-      if (departmentId !== doctorScopedDepartments[0].id) {
-        setDepartmentId(doctorScopedDepartments[0].id);
-      }
-    } else if (!doctorScopedDepartments.some((d) => d.id === departmentId)) {
-      setDepartmentId('');
+    if (!encounterType) return;
+    const targetDept = resolveDoctorDepartmentForEncounter(selectedDoctorObj, departments, encounterType);
+    if (targetDept && targetDept.id !== departmentId) {
+      setDepartmentId(targetDept.id);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDoctorObj, doctorScopedDepartments]);
+  }, [encounterType, selectedDoctorObj, departments, departmentId]);
 
   // Resolve configured default encounter service (Services & Rates)
   const defaultEncounterService = useMemo<HospitalService | null>(() => {
@@ -295,10 +317,7 @@ export const WalkInIntakeView: React.FC = () => {
     );
     if (globalDefault) return globalDefault;
 
-    // 3. Fallback to any active service mapped to this encounterType
-    const encMatch = active.find((s) => s.encounterType === encounterType);
-    if (encMatch) return encMatch;
-
+    // Strict rule: only services explicitly flagged as isDefaultEncounterService are used
     return null;
   }, [services, encounterType, departmentId]);
 
@@ -329,9 +348,9 @@ export const WalkInIntakeView: React.FC = () => {
 
   const serviceStreamOptions = useMemo(() => {
     const list = [
-      { label: '🏥 Hospital Services (Procedures / Clinical Care)', value: 'HOSPITAL_SERVICES' },
-      { label: '🔬 Laboratory (LAB / Pathology) — Outsourced', value: 'LAB' },
-      { label: '🩻 Radiology & Imaging (X-Ray / Ultrasound / CT) — Outsourced', value: 'RADIOLOGY' },
+      { label: 'Hospital Services (Procedures & Care)', value: 'HOSPITAL_SERVICES' },
+      { label: 'Laboratory (Pathology Tests)', value: 'LAB' },
+      { label: 'Radiology & Imaging (X-Ray, USG, CT)', value: 'RADIOLOGY' },
     ];
     departments
       .filter((d) => d.status === 'Active')
@@ -534,25 +553,21 @@ export const WalkInIntakeView: React.FC = () => {
       return;
     }
 
-    let effectiveDeptId = departmentId;
+    const targetDept = resolveDoctorDepartmentForEncounter(selectedDoctorObj, departments, encounterType);
+    let effectiveDeptId = targetDept?.id || departmentId;
     if (!effectiveDeptId) {
       const doc = allActiveDoctors.find((s) => s.id === doctorId);
-      if (doc?.departmentId) {
+      const fallbackTarget = resolveDoctorDepartmentForEncounter(doc, departments, encounterType);
+      if (fallbackTarget?.id) {
+        effectiveDeptId = fallbackTarget.id;
+        setDepartmentId(fallbackTarget.id);
+      } else if (doc?.departmentId) {
         effectiveDeptId = doc.departmentId;
         setDepartmentId(doc.departmentId);
-      } else if (doc?.departmentName) {
-        const match = departments.find(
-          (d) =>
-            d.name.toLowerCase() === doc.departmentName.toLowerCase() ||
-            d.code.toLowerCase() === doc.departmentName.toLowerCase()
-        );
-        if (match) {
-          effectiveDeptId = match.id;
-          setDepartmentId(match.id);
-        }
       } else if (departments.length > 0) {
-        effectiveDeptId = departments[0].id;
-        setDepartmentId(departments[0].id);
+        const streamDept = departments.find((d) => departmentSupportsEncounter(d, encounterType));
+        effectiveDeptId = streamDept ? streamDept.id : departments[0].id;
+        setDepartmentId(effectiveDeptId);
       }
     }
 
@@ -561,9 +576,14 @@ export const WalkInIntakeView: React.FC = () => {
       return;
     }
 
-    // 4. Default Encounter Service Validation (Must be configured in Services & Rates)
-    if (!defaultEncounterService) {
-      setFormError(`No default ${encounterType} service is configured. Please ask Admin to configure Services & Rates.`);
+    // 4. Default Encounter Service Validation
+    if (encounterType === 'OPD' && !defaultEncounterService) {
+      setFormError('No default OPD Consultation service is configured. Please ask Admin to configure Services & Rates.');
+      return;
+    }
+
+    if (!defaultEncounterService && selectedServiceIds.length === 0) {
+      setFormError(`No default rate configured for ${encounterType} and no services selected. Please add at least one service above or configure Services & Rates.`);
       return;
     }
 
@@ -658,7 +678,7 @@ export const WalkInIntakeView: React.FC = () => {
       // Attach any additional services Front Desk selected (Emergency procedures,
       // Observation care add-ons, Lab tests, Injections, etc.) — each becomes its
       // own invoice line, so the amount adds directly onto the encounter invoice total.
-      if (targetInvoiceId && selectedServiceIds.length > 0) {
+      if ((encounterType === 'OBSERVATION' || encounterType === 'EMERGENCY') && targetInvoiceId && selectedServiceIds.length > 0) {
         for (const serviceId of selectedServiceIds) {
           try {
             await addServiceLine(targetInvoiceId, {
@@ -697,8 +717,8 @@ export const WalkInIntakeView: React.FC = () => {
                 {encounterType === 'OPD'
                   ? 'OPD'
                   : encounterType === 'OBSERVATION'
-                  ? 'Observation'
-                  : 'Emergency'}
+                    ? 'Observation'
+                    : 'Emergency'}
               </span>
             </>
           )}
@@ -706,12 +726,12 @@ export const WalkInIntakeView: React.FC = () => {
         <div className="flex items-center gap-2">
           <span
             className={`px-2.5 py-1 rounded-md text-xs font-bold border uppercase tracking-wide ${encounterType === 'OPD'
-                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                : encounterType === 'OBSERVATION'
-                  ? 'bg-indigo-50 text-indigo-800 border-indigo-200'
-                  : encounterType === 'EMERGENCY'
-                    ? 'bg-rose-50 text-rose-800 border-rose-200'
-                    : 'bg-slate-100 text-slate-600 border-slate-200'
+              ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+              : encounterType === 'OBSERVATION'
+                ? 'bg-indigo-50 text-indigo-800 border-indigo-200'
+                : encounterType === 'EMERGENCY'
+                  ? 'bg-rose-50 text-rose-800 border-rose-200'
+                  : 'bg-slate-100 text-slate-600 border-slate-200'
               }`}
           >
             {encounterType ? `${encounterType} Intake` : 'Walk-In Intake'}
@@ -735,25 +755,152 @@ export const WalkInIntakeView: React.FC = () => {
         </div>
       )}
 
-      {/* Encounter Service — only shown for a direct Walk-In visit (no type
-          pre-selected from the Dashboard); the Dashboard already fixes the
-          service (OPD / Observation / Emergency) before landing here. */}
+      {/* 0. Encounter Service Selector (OPD, Observation, Emergency) — only shown when arriving without pre-selection */}
       {!queryType && (
-        <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5 shadow-xs">
-          <Select
-            label="Encounter Service"
-            required
-            options={[
-              { label: '-- Select Encounter Service --', value: '' },
-              { label: 'OPD Consultation', value: 'OPD' },
-              { label: 'Observation Care', value: 'OBSERVATION' },
-              { label: 'Emergency Triage', value: 'EMERGENCY' },
-            ]}
-            value={encounterType}
-            onChange={(e) => setEncounterType(e.target.value as EncounterType | '')}
-            onKeyDown={handleEnterNext}
-            hint="Choose OPD, Observation, or Emergency for this walk-in patient."
-          />
+        <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
+                Select Encounter Service <span className="text-rose-500">*</span>
+              </label>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Choose the care stream for this walk-in patient: OPD, Observation, or Emergency
+              </p>
+            </div>
+            {encounterType ? (
+              <span
+                className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border uppercase tracking-wide ${
+                  encounterType === 'OPD'
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                    : encounterType === 'OBSERVATION'
+                    ? 'bg-indigo-50 text-indigo-800 border-indigo-200'
+                    : 'bg-rose-50 text-rose-800 border-rose-200'
+                }`}
+              >
+                Active: {encounterType}
+              </span>
+            ) : (
+              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                Selection Required
+              </span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {/* 1. OPD Consultation Button */}
+            <button
+              type="button"
+              onClick={() => setEncounterType('OPD')}
+              className={`p-3.5 rounded-xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${
+                encounterType === 'OPD'
+                  ? 'border-[#08775A] bg-[#effaf5] shadow-xs ring-1 ring-[#08775A]/20'
+                  : 'border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 text-slate-700'
+              }`}
+            >
+              <div
+                className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
+                  encounterType === 'OPD'
+                    ? 'bg-[#08775A] text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-500'
+                }`}
+              >
+                <Stethoscope className="h-5 w-5" />
+              </div>
+              <div className="grow min-w-0">
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-xs font-bold text-slate-900">OPD Consultation</span>
+                  <div
+                    className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 ${
+                      encounterType === 'OPD'
+                        ? 'border-[#08775A] bg-[#08775A]'
+                        : 'border-slate-300'
+                    }`}
+                  >
+                    {encounterType === 'OPD' && <div className="h-1.5 w-1.5 rounded-full bg-white" />}
+                  </div>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-0.5 leading-tight">
+                  Outpatient clinic, specialist consult &amp; prescriptions
+                </p>
+              </div>
+            </button>
+
+            {/* 2. Observation Care Button */}
+            <button
+              type="button"
+              onClick={() => setEncounterType('OBSERVATION')}
+              className={`p-3.5 rounded-xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${
+                encounterType === 'OBSERVATION'
+                  ? 'border-indigo-600 bg-indigo-50/70 shadow-xs ring-1 ring-indigo-500/20'
+                  : 'border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 text-slate-700'
+              }`}
+            >
+              <div
+                className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
+                  encounterType === 'OBSERVATION'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-500'
+                }`}
+              >
+                <Eye className="h-5 w-5" />
+              </div>
+              <div className="grow min-w-0">
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-xs font-bold text-slate-900">Observation Care</span>
+                  <div
+                    className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 ${
+                      encounterType === 'OBSERVATION'
+                        ? 'border-indigo-600 bg-indigo-600'
+                        : 'border-slate-300'
+                    }`}
+                  >
+                    {encounterType === 'OBSERVATION' && <div className="h-1.5 w-1.5 rounded-full bg-white" />}
+                  </div>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-0.5 leading-tight">
+                  Short-stay monitoring, IV drip therapy &amp; vitals check
+                </p>
+              </div>
+            </button>
+
+            {/* 3. Emergency Triage Button */}
+            <button
+              type="button"
+              onClick={() => setEncounterType('EMERGENCY')}
+              className={`p-3.5 rounded-xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${
+                encounterType === 'EMERGENCY'
+                  ? 'border-rose-600 bg-rose-50/70 shadow-xs ring-1 ring-rose-500/20'
+                  : 'border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 text-slate-700'
+              }`}
+            >
+              <div
+                className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
+                  encounterType === 'EMERGENCY'
+                    ? 'bg-rose-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-500'
+                }`}
+              >
+                <AlertTriangle className="h-5 w-5" />
+              </div>
+              <div className="grow min-w-0">
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-xs font-bold text-slate-900">Emergency Triage</span>
+                  <div
+                    className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 ${
+                      encounterType === 'EMERGENCY'
+                        ? 'border-rose-600 bg-rose-600'
+                        : 'border-slate-300'
+                    }`}
+                  >
+                    {encounterType === 'EMERGENCY' && <div className="h-1.5 w-1.5 rounded-full bg-white" />}
+                  </div>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-0.5 leading-tight">
+                  24/7 urgent resuscitation, acute trauma &amp; triage care
+                </p>
+              </div>
+            </button>
+          </div>
         </div>
       )}
 
@@ -772,8 +919,8 @@ export const WalkInIntakeView: React.FC = () => {
                 type="button"
                 onClick={() => setPayerType('Self Pay')}
                 className={`p-3 rounded-xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${payerType === 'Self Pay'
-                    ? 'border-[#08775A] bg-[#effaf5] shadow-xs ring-1 ring-[#08775A]/20'
-                    : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                  ? 'border-[#08775A] bg-[#effaf5] shadow-xs ring-1 ring-[#08775A]/20'
+                  : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
                   }`}
               >
                 <div
@@ -801,8 +948,8 @@ export const WalkInIntakeView: React.FC = () => {
                 type="button"
                 onClick={() => setPayerType('Corporate / Panel')}
                 className={`p-3 rounded-xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${payerType === 'Corporate / Panel'
-                    ? 'border-amber-500 bg-amber-50/70 shadow-xs ring-1 ring-amber-500/20'
-                    : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                  ? 'border-amber-500 bg-amber-50/70 shadow-xs ring-1 ring-amber-500/20'
+                  : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
                   }`}
               >
                 <div
@@ -904,8 +1051,8 @@ export const WalkInIntakeView: React.FC = () => {
                     type="button"
                     onClick={() => setGender(g)}
                     className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all cursor-pointer ${gender === g
-                        ? 'bg-[#08775A] text-white border-[#08775A] shadow-xs'
-                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                      ? 'bg-[#08775A] text-white border-[#08775A] shadow-xs'
+                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                       }`}
                   >
                     {g === 'Other / Not Specified' ? 'Other' : g}
@@ -975,10 +1122,10 @@ export const WalkInIntakeView: React.FC = () => {
                 {encounterType === 'OPD'
                   ? 'OPD Consultation'
                   : encounterType === 'OBSERVATION'
-                  ? 'Observation Care'
-                  : encounterType === 'EMERGENCY'
-                  ? 'Emergency Triage'
-                  : 'Encounter'}
+                    ? 'Observation Care'
+                    : encounterType === 'EMERGENCY'
+                      ? 'Emergency Triage'
+                      : 'Encounter'}
               </span>
             </div>
 
@@ -988,10 +1135,13 @@ export const WalkInIntakeView: React.FC = () => {
               required
               options={[
                 { label: '-- Select Consulting Doctor --', value: '' },
-                ...doctorsForEncounterType.map((d) => ({
-                  label: `${d.fullName} (${d.departmentName || d.designation || 'Doctor'})`,
-                  value: d.id,
-                })),
+                ...doctorsForEncounterType.map((d) => {
+                  const resolvedDept = resolveDoctorDepartmentForEncounter(d, departments, encounterType);
+                  return {
+                    label: `${d.fullName} (${resolvedDept?.name || d.departmentName || d.designation || 'Doctor'})`,
+                    value: d.id,
+                  };
+                }),
               ]}
               value={doctorId}
               onChange={(e) => {
@@ -1011,7 +1161,7 @@ export const WalkInIntakeView: React.FC = () => {
               <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-100">
                 <span>Clinical Department:</span>
                 <span className="font-bold text-[#08775A] bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                  ✓ {departments.find((d) => d.id === departmentId)?.name || doctorScopedDepartments[0]?.name || selectedDoctorObj.departmentName || 'General'}
+                  ✓ {departments.find((d) => d.id === departmentId)?.name || resolveDoctorDepartmentForEncounter(selectedDoctorObj, departments, encounterType)?.name || selectedDoctorObj.departmentName || 'General'}
                 </span>
               </div>
             ) : (
@@ -1021,8 +1171,8 @@ export const WalkInIntakeView: React.FC = () => {
             )}
           </div>
 
-          {/* 3b. Additional Services / Procedures Selection (OBSERVATION, EMERGENCY, OPD) */}
-          {encounterType && (
+          {/* 3b. Additional Services / Procedures Selection (OBSERVATION & EMERGENCY ONLY - Removed from OPD) */}
+          {(encounterType === 'OBSERVATION' || encounterType === 'EMERGENCY') && (
             <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-3 animate-in fade-in">
               <div className="flex items-center justify-between border-b border-slate-100 pb-2">
                 <div>
@@ -1031,8 +1181,8 @@ export const WalkInIntakeView: React.FC = () => {
                     {encounterType === 'OBSERVATION'
                       ? 'Observation Services & Investigations'
                       : encounterType === 'EMERGENCY'
-                      ? 'Emergency Services, Procedures & Investigations'
-                      : 'Additional Services / Tests'}
+                        ? 'Emergency Services, Procedures & Investigations'
+                        : 'Additional Services / Tests'}
                   </h3>
                   <p className="text-[11px] text-slate-500 mt-0.5">
                     Select source (Hospital Services, Outsourced Lab, Radiology) and add required services
@@ -1045,10 +1195,10 @@ export const WalkInIntakeView: React.FC = () => {
                 )}
               </div>
 
-              {/* 2-Level Cascading Selector: Stream/Source -> Specific Service */}
-              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-                {/* 1. Category / Source */}
-                <div className="sm:col-span-5">
+              {/* Clean, well-aligned controls: Category on top, Service + Add button on row 2 */}
+              <div className="space-y-3 pt-1">
+                {/* 1. Category / Source Selection */}
+                <div>
                   <Select
                     label="1. Service Category / Source"
                     options={serviceStreamOptions}
@@ -1057,53 +1207,53 @@ export const WalkInIntakeView: React.FC = () => {
                       setSelectedServiceStream(e.target.value);
                       setCandidateServiceId('');
                     }}
-                    hint={
-                      selectedServiceStream === 'HOSPITAL_SERVICES'
-                        ? 'Internal hospital procedures, clinical care & nursing'
-                        : selectedServiceStream === 'LAB'
+                    onKeyDown={handleEnterNext}
+                  />
+                  <p className="text-[11px] text-slate-500 mt-1 pl-0.5">
+                    {selectedServiceStream === 'HOSPITAL_SERVICES'
+                      ? 'Internal hospital procedures, clinical care & nursing'
+                      : selectedServiceStream === 'LAB'
                         ? 'Outsourced Laboratory & Pathology tests'
                         : selectedServiceStream === 'RADIOLOGY'
-                        ? 'Outsourced X-Ray, Ultrasound, & Imaging'
-                        : 'Departmental clinical services'
-                    }
-                  />
+                          ? 'Outsourced X-Ray, Ultrasound, & Imaging'
+                          : 'Departmental clinical services'}
+                  </p>
                 </div>
 
-                {/* 2. Specific Service Dropdown */}
-                <div className="sm:col-span-5">
-                  <Select
-                    label="2. Service / Procedure / Test"
-                    placeholder={
-                      filteredStreamServices.length === 0
-                        ? 'No services available in this category'
-                        : 'Choose a service to add…'
-                    }
-                    options={filteredStreamServices.map((s) => ({
-                      label: `${s.name} (${s.code}) — ${formatPKR(s.standardRate)}`,
-                      value: s.id,
-                    }))}
-                    value={candidateServiceId}
-                    onChange={(e) => setCandidateServiceId(e.target.value)}
-                    hint={
-                      candidateServiceId
-                        ? `Standard Rate: ${formatPKR(filteredStreamServices.find((s) => s.id === candidateServiceId)?.standardRate ?? 0)}`
-                        : 'Select service then click Add'
-                    }
-                  />
-                </div>
-
-                {/* Add Service Button */}
-                <div className="sm:col-span-2">
+                {/* 2. Service / Procedure / Test + Add Button (Pixel-perfect horizontal alignment) */}
+                <div className="flex items-end gap-2.5">
+                  <div className="flex-1 min-w-0">
+                    <Select
+                      label="2. Service / Procedure / Test"
+                      placeholder={
+                        filteredStreamServices.length === 0
+                          ? 'No services available in this category'
+                          : 'Select service...'
+                      }
+                      options={filteredStreamServices.map((s) => ({
+                        label: `${s.name} (${formatPKR(s.standardRate)})`,
+                        value: s.id,
+                      }))}
+                      value={candidateServiceId}
+                      onChange={(e) => setCandidateServiceId(e.target.value)}
+                      onKeyDown={handleEnterNext}
+                    />
+                  </div>
                   <button
                     type="button"
                     onClick={handleAddAdditionalService}
                     disabled={!candidateServiceId}
-                    className="w-full py-2 px-3 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] disabled:opacity-40 disabled:cursor-not-allowed rounded-lg shadow-2xs transition-colors flex items-center justify-center gap-1.5"
+                    className="h-9 px-4 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] disabled:opacity-40 disabled:cursor-not-allowed rounded-lg shadow-2xs transition-colors flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
                   >
                     <Plus className="w-3.5 h-3.5" />
                     <span>Add</span>
                   </button>
                 </div>
+                {candidateServiceId && (
+                  <p className="text-[11px] font-medium text-[#08775A] pl-0.5">
+                    Standard Rate: {formatPKR(filteredStreamServices.find((s) => s.id === candidateServiceId)?.standardRate ?? 0)}
+                  </p>
+                )}
               </div>
 
               {/* Added Services Table / List */}
@@ -1161,11 +1311,15 @@ export const WalkInIntakeView: React.FC = () => {
               <span className="flex items-center gap-1.5">
                 <Receipt className="h-3.5 w-3.5 text-[#08775A]" /> Billing Summary
               </span>
-              {defaultEncounterService && (
+              {defaultEncounterService ? (
                 <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
                   {defaultEncounterService.code}
                 </span>
-              )}
+              ) : selectedAdditionalServices.length > 0 ? (
+                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                  {selectedAdditionalServices.length} {selectedAdditionalServices.length === 1 ? 'Service' : 'Services'}
+                </span>
+              ) : null}
             </div>
 
             {!encounterType ? (
@@ -1203,7 +1357,7 @@ export const WalkInIntakeView: React.FC = () => {
                   </div>
                 </div>
 
-                {selectedAdditionalServices.length > 0 && (
+                {encounterType !== 'OPD' && selectedAdditionalServices.length > 0 && (
                   <div className="pt-2 border-t border-emerald-200/70 space-y-1">
                     {selectedAdditionalServices.map((s) => (
                       <div key={s.id} className="flex items-center justify-between text-[11px] text-slate-600">
@@ -1222,11 +1376,58 @@ export const WalkInIntakeView: React.FC = () => {
                   </div>
                 )}
               </div>
+            ) : selectedAdditionalServices.length > 0 ? (
+              <div className="p-3.5 rounded-xl bg-[#effaf5] border border-[#c2e7db] space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="font-bold text-xs text-slate-900">Encounter Services &amp; Procedures</div>
+                    <div className="text-[10.5px] text-slate-500 mt-0.5">
+                      No base {encounterType} consultation configured — billing selected services directly
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    {payerType === 'Self Pay' ? (
+                      <div>
+                        <div className="text-lg font-black text-[#08775A]">
+                          {formatPKR(selectedServicesTotal)}
+                        </div>
+                        <div className="text-[10px] text-slate-500 font-medium">Total Patient Fee</div>
+                      </div>
+                    ) : (
+                      <div>
+                        <span className="text-[11px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded border border-amber-300 inline-block">
+                          Panel Credit
+                        </span>
+                        <div className="text-[10px] text-slate-500 mt-0.5">
+                          Total: {formatPKR(selectedServicesTotal)}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-emerald-200/70 space-y-1">
+                  {selectedAdditionalServices.map((s) => (
+                    <div key={s.id} className="flex items-center justify-between text-[11px] text-slate-600">
+                      <span>{s.name}</span>
+                      <span className="font-semibold">{formatPKR(s.standardRate)}</span>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between pt-1.5 border-t border-emerald-200/70 text-xs">
+                    <span className="font-bold text-slate-800">
+                      Total {payerType === 'Self Pay' ? 'Patient Fee' : 'Billable'}
+                    </span>
+                    <span className="font-black text-[#08775A]">
+                      {formatPKR(selectedServicesTotal)}
+                    </span>
+                  </div>
+                </div>
+              </div>
             ) : (
               <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 flex items-center gap-2 text-xs text-amber-800">
                 <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" />
                 <span>
-                  No default rate configured for <strong>{encounterType}</strong> in Services &amp; Rates.
+                  No default rate configured for <strong>{encounterType}</strong> in Services &amp; Rates. Please select services above to bill this encounter.
                 </span>
               </div>
             )}
@@ -1278,7 +1479,12 @@ export const WalkInIntakeView: React.FC = () => {
               id="btn-register-encounter"
               type="button"
               onClick={handleCreateEncounter}
-              disabled={isSaving || !encounterType || !defaultEncounterService}
+              disabled={
+                isSaving ||
+                !encounterType ||
+                (encounterType === 'OPD' && !defaultEncounterService) ||
+                (!defaultEncounterService && selectedServiceIds.length === 0)
+              }
               className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] focus:bg-[#065f46] focus:ring-4 focus:ring-[#08775A]/40 focus:outline-none rounded-xl shadow-sm disabled:opacity-60 transition-all cursor-pointer"
             >
               <Receipt className="h-4 w-4" />
@@ -1286,11 +1492,13 @@ export const WalkInIntakeView: React.FC = () => {
                 ? 'Creating Encounter…'
                 : !encounterType
                   ? 'Select Encounter Service to Proceed'
-                  : !defaultEncounterService
-                    ? `Missing ${encounterType} Service Configuration`
-                    : payerType === 'Self Pay'
-                      ? `Register & Create ${encounterType} Invoice (${formatPKR(defaultEncounterService.standardRate + selectedServicesTotal)})`
-                      : `Register Panel & Create ${encounterType} Invoice`}
+                  : encounterType === 'OPD' && !defaultEncounterService
+                    ? 'Missing OPD Consultation Service'
+                    : !defaultEncounterService && selectedServiceIds.length === 0
+                      ? `Select Services for ${encounterType}`
+                      : payerType === 'Self Pay'
+                        ? `Register & Create ${encounterType} Invoice (${formatPKR((defaultEncounterService?.standardRate || 0) + selectedServicesTotal)})`
+                        : `Register Panel & Create ${encounterType} Invoice`}
             </button>
             <div className="flex items-center justify-between text-[11px] text-slate-400 px-1">
               <span>⚡ Fast-billing front desk</span>

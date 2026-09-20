@@ -2,6 +2,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '@/db/client';
 import { NotFoundError, ValidationError } from '@/shared/errors/AppError';
 import type { CollectAdmissionPaymentBody } from './admissionBilling.schemas';
+import { admissionService } from '@/modules/admission/admission.service';
 
 import { generateReceiptNumber, generateFinalBillNumber } from '@/shared/idGenerator';
 
@@ -38,7 +39,25 @@ function bedLabel(bed: any): { ward: string | null; room: string | null; bed: st
  * a credit instead of being rejected.
  */
 export const admissionBillingService = {
-  /** Running Bill / Interim Statement (§2.10) — explicitly not a final discharge invoice. */
+  /**
+   * Running Bill / Interim Statement (§2.10) — explicitly not a final
+   * discharge invoice.
+   *
+   * FIX (billing correctness): a payment collected when nothing was yet
+   * outstanding (§2.11's overpayment/pure-advance case — e.g. the deposit
+   * taken at admission creation, or an "additional deposit" collected
+   * later) is stored as an UNALLOCATED `PaymentReceipt`
+   * (`hospitalInvoiceId: null`, `admissionRecordId` set) — it was never
+   * added to any specific department invoice's `paidTotal`. Every prior
+   * version of this function computed outstanding as plain
+   * `invoice.total - invoice.paidTotal`, which completely ignored that
+   * credit and overstated what the patient still owes by exactly the
+   * unallocated amount. `getLedger`/`listAdmissionRecords` already summed
+   * ALL receipts (allocated + unallocated) correctly — this brings
+   * `getStatement` in line with them, netting the credit against the
+   * oldest outstanding invoice(s) first (FIFO) so the per-invoice numbers
+   * shown here still sum to the corrected consolidated total.
+   */
   async getStatement(admissionId: string) {
     const admission = await prisma.admissionRecord.findUnique({
       where: { id: admissionId },
@@ -50,10 +69,23 @@ export const admissionBillingService = {
     });
     if (!admission) throw new NotFoundError('Admission record not found');
 
-    const departmentInvoices = admission.hospitalInvoices.map((inv) => ({
-      ...inv,
-      outstanding: inv.total.minus(inv.paidTotal),
-    }));
+    const unallocated = await prisma.paymentReceipt.aggregate({
+      where: { admissionRecordId: admissionId, hospitalInvoiceId: null, isReversed: false },
+      _sum: { amount: true },
+    });
+    let remainingCredit = unallocated._sum.amount ?? new Decimal(0);
+    const unallocatedCreditTotal = remainingCredit;
+
+    const departmentInvoices = admission.hospitalInvoices.map((inv) => {
+      const rawOutstanding = Decimal.max(0, inv.total.minus(inv.paidTotal));
+      const creditApplied = Decimal.min(remainingCredit, rawOutstanding);
+      remainingCredit = remainingCredit.minus(creditApplied);
+      return {
+        ...inv,
+        outstanding: rawOutstanding.minus(creditApplied),
+        creditApplied,
+      };
+    });
 
     const consolidated = departmentInvoices.reduce(
       (acc, inv) => ({
@@ -76,6 +108,12 @@ export const admissionBillingService = {
       },
     );
 
+    // Real money collected includes the unallocated advance/deposit that
+    // isn't sitting in any invoice's own `paidTotal`; any of it not yet
+    // consumed by an outstanding invoice (`remainingCredit`) is a genuine
+    // available credit, same concept as `getLedger`'s `availableCredit`.
+    consolidated.paidTotal = consolidated.paidTotal.plus(unallocatedCreditTotal).minus(remainingCredit);
+
     return {
       admissionId: admission.id,
       admissionNumber: admission.admissionNumber,
@@ -83,6 +121,8 @@ export const admissionBillingService = {
       isNotFinalDischargeInvoice: true,
       departmentInvoices,
       consolidated,
+      unallocatedCreditTotal,
+      availableCredit: remainingCredit,
     };
   },
 
@@ -204,56 +244,107 @@ export const admissionBillingService = {
       orderBy: { collectedAt: 'asc' },
     });
 
-    const debitEntries = admission.hospitalInvoices.flatMap((inv) =>
-      inv.lines.map((l) => ({
-        date: l.createdAt,
-        type: l.serviceRate.name,
-        department: inv.department?.name ?? null,
-        description: l.discountReason ? `${l.serviceRate.name} (${l.discountReason})` : l.serviceRate.name,
-        qty: l.quantity,
-        rate: l.rateSnapshot,
-        debit: l.lineNet,
-        credit: new Decimal(0),
-        reference: inv.invoiceNumber,
-        postedBy: l.performedBy?.fullName ?? null,
-      })),
-    );
-
-    const firstUnallocatedReceiptId = receipts.find((r) => !r.hospitalInvoiceId)?.id ?? null;
-
-    const creditEntries = receipts.map((r) => {
-      const isUnallocated = !r.hospitalInvoiceId;
-      const type = isUnallocated
-        ? r.id === firstUnallocatedReceiptId
-          ? 'Admission Advance'
-          : 'Additional Deposit'
-        : `Payment — ${r.hospitalInvoice?.department?.name ?? 'Department'}`;
-      return {
-        date: r.collectedAt,
-        type,
-        department: r.hospitalInvoice?.department?.name ?? null,
-        description: `${type} (${r.method})`,
-        qty: null as Decimal | null,
-        rate: null as Decimal | null,
-        debit: new Decimal(0),
-        credit: r.amount,
-        reference: r.receiptNumber,
-        postedBy: r.collectedBy?.displayName ?? r.collectedBy?.username ?? null,
-      };
-    });
-
-    const allEntries = [...debitEntries, ...creditEntries].sort((a, b) => a.date.getTime() - b.date.getTime());
-
-    let running = new Decimal(0);
-    const entries = allEntries.map((e) => {
-      running = running.plus(e.debit).minus(e.credit);
-      return { ...e, runningBalance: running };
-    });
-
     const totalCharges = admission.hospitalInvoices.reduce((sum, inv) => sum.plus(inv.total), new Decimal(0));
     const totalPaid = receipts.reduce((sum, r) => sum.plus(r.amount), new Decimal(0));
     const outstandingBalance = Decimal.max(0, totalCharges.minus(totalPaid));
     const availableCredit = Decimal.max(0, totalPaid.minus(totalCharges));
+
+    // If clinically discharged and balance is now 0, reconcile discharge
+    if (admission.status === 'DISCHARGE_PENDING' && outstandingBalance.lessThanOrEqualTo(0)) {
+      const reconcile = await admissionService.reconcileAdmissionDischarge(prisma, admissionId);
+      if (reconcile.isDischarged) {
+        admission.status = 'DISCHARGED';
+      }
+    }
+
+    // Flatten all service lines across invoices and sort chronologically
+    const allLines = admission.hospitalInvoices
+      .flatMap((inv) =>
+        inv.lines.map((l) => {
+          const isSelf =
+            l.discountReason?.includes('Self-Arranged') ||
+            l.discountReason?.includes('Self Arranged') ||
+            (l.lineNet.equals(0) && l.lineGross.equals(0));
+
+          return {
+            id: l.id,
+            date: l.createdAt,
+            type: l.serviceRate.name,
+            department: inv.department?.name ?? null,
+            description: isSelf ? '[Self-Arranged]' : l.serviceRate.name,
+            qty: l.quantity,
+            rate: l.rateSnapshot,
+            grossAmount: l.lineGross,
+            discountAmount: l.discountAmount,
+            discountReason: l.discountReason,
+            amount: l.lineNet,
+            reference: inv.invoiceNumber,
+            postedBy: l.performedBy?.fullName ?? null,
+          };
+        }),
+      )
+      .sort((a, b) => a.date.getTime() - b.date.getTime());
+
+    // Settle payments against services in FIFO order so each service row shows its exact paid & due amounts
+    let remainingPaymentPool = new Decimal(totalPaid);
+
+    const entries = allLines.map((l) => {
+      let paidForLine = new Decimal(0);
+      if (remainingPaymentPool.greaterThan(0)) {
+        if (remainingPaymentPool.greaterThanOrEqualTo(l.amount)) {
+          paidForLine = l.amount;
+          remainingPaymentPool = remainingPaymentPool.minus(l.amount);
+        } else {
+          paidForLine = remainingPaymentPool;
+          remainingPaymentPool = new Decimal(0);
+        }
+      }
+
+      const dueForLine = Decimal.max(0, l.amount.minus(paidForLine));
+      const isSelfArranged =
+        l.description?.includes('Self-Arranged') ||
+        l.description?.includes('Self Arranged') ||
+        (l.amount.equals(0) && l.rate.equals(0));
+
+      const lineStatus: 'PAID' | 'UNPAID' | 'PARTIAL' | 'SELF' =
+        isSelfArranged
+          ? 'SELF'
+          : dueForLine.equals(0) && l.amount.greaterThan(0)
+            ? 'PAID'
+            : paidForLine.greaterThan(0)
+              ? 'PARTIAL'
+              : 'UNPAID';
+
+      return {
+        date: l.date,
+        type: l.type,
+        department: l.department,
+        description: l.description,
+        qty: l.qty,
+        rate: l.rate,
+        grossAmount: l.grossAmount,
+        discountAmount: l.discountAmount,
+        discountReason: l.discountReason,
+        debit: l.amount,
+        credit: paidForLine,
+        paidAmount: paidForLine,
+        dueAmount: dueForLine,
+        status: lineStatus,
+        runningBalance: dueForLine,
+        reference: l.reference,
+        postedBy: l.postedBy,
+      };
+    });
+
+    const receiptSummaries = receipts.map((r) => ({
+      id: r.id,
+      receiptNumber: r.receiptNumber,
+      amount: r.amount,
+      method: r.method,
+      reference: r.reference,
+      collectedAt: r.collectedAt,
+      collectedByName: r.collectedBy?.displayName ?? r.collectedBy?.username ?? null,
+    }));
 
     let panel: Record<string, Decimal> | null = null;
     if (admission.panelPatientId) {
@@ -295,6 +386,7 @@ export const admissionBillingService = {
       finalBillNumber: admission.finalBillNumber,
       finalBillGeneratedAt: admission.finalBillGeneratedAt,
       entries,
+      receipts: receiptSummaries,
       summary: { totalCharges, totalPaid, outstandingBalance, availableCredit },
       panel,
     };
@@ -385,38 +477,42 @@ export const admissionBillingService = {
         }
       }
 
-      const receipts = [];
+      // 1 single customer receipt for the payment transaction (one payment = one receipt record)
+      const primaryInvoice = allocations.find((a) => a.invoiceId)?.invoiceId
+        ? invoices.find((i) => i.id === allocations.find((a) => a.invoiceId)!.invoiceId)
+        : null;
+
+      const receipt = await tx.paymentReceipt.create({
+        data: {
+          receiptNumber: await generateReceiptNumber(tx),
+          amount: amountDecimal,
+          method: body.paymentMethod,
+          reference:
+            body.reference ??
+            `Payment for admission ${admission.admissionNumber}`,
+          hospitalInvoiceId: allocations.length === 1 ? primaryInvoice?.id : null,
+          admissionRecordId: admissionId,
+          collectedById: actorId,
+        },
+      });
+
+      // 1 single cash drawer entry for the cashier
+      await tx.userCashBalance.create({
+        data: {
+          portalUserId: actorId,
+          moduleScope: 'BILLING',
+          direction: 'IN',
+          amount: amountDecimal,
+          category: 'COLLECTION',
+          isPhysicalCash: body.paymentMethod === 'CASH',
+          paymentReceiptId: receipt.id,
+        },
+      });
+
+      // Update paidTotal & status for each allocated invoice
       for (const alloc of allocations) {
-        if (alloc.amount.lessThanOrEqualTo(0)) continue;
-        const invoice = alloc.invoiceId ? invoices.find((i) => i.id === alloc.invoiceId)! : null;
-
-        const receipt = await tx.paymentReceipt.create({
-          data: {
-            receiptNumber: await generateReceiptNumber(tx),
-            amount: alloc.amount,
-            method: body.paymentMethod,
-            reference:
-              body.reference ??
-              (invoice ? `Admission ${admissionId} payment allocation` : `Admission ${admissionId} advance / deposit`),
-            hospitalInvoiceId: invoice?.id,
-            admissionRecordId: invoice ? undefined : admissionId,
-            collectedById: actorId,
-          },
-        });
-        receipts.push(receipt);
-
-        await tx.userCashBalance.create({
-          data: {
-            portalUserId: actorId,
-            moduleScope: 'BILLING',
-            direction: 'IN',
-            amount: alloc.amount,
-            category: 'COLLECTION',
-            isPhysicalCash: body.paymentMethod === 'CASH',
-            paymentReceiptId: receipt.id,
-          },
-        });
-
+        if (alloc.amount.lessThanOrEqualTo(0) || !alloc.invoiceId) continue;
+        const invoice = invoices.find((i) => i.id === alloc.invoiceId);
         if (invoice) {
           const newPaidTotal = invoice.paidTotal.plus(alloc.amount);
           const newStatus = newPaidTotal.greaterThanOrEqualTo(invoice.total)
@@ -431,7 +527,14 @@ export const admissionBillingService = {
         }
       }
 
-      return { receipts, allocations: allocations.map((a) => ({ invoiceId: a.invoiceId, amount: a.amount })) };
+      // Reconcile discharge status: if doctor already clinically discharged and balance is now 0, auto-discharge & free bed
+      const reconcile = await admissionService.reconcileAdmissionDischarge(tx, admissionId, actorId);
+
+      return {
+        receipts: [receipt],
+        allocations: allocations.map((a) => ({ invoiceId: a.invoiceId, amount: a.amount })),
+        isDischarged: reconcile.isDischarged,
+      };
     });
   },
 
