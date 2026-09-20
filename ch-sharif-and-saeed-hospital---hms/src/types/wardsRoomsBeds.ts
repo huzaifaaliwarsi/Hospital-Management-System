@@ -192,6 +192,7 @@ export interface RoomFormValues {
   capacity: number;
   dailyRoomRate: number;
   status: 'Active' | 'Inactive';
+  autoGenerateBeds?: boolean;
 }
 
 export interface BedFormValues {
@@ -203,6 +204,9 @@ export interface BedFormValues {
   dailyRate?: number;
   occupancyStatus: BedOccupancyStatus;
   operationalStatus: BedOperationalStatus;
+  quantity?: number;
+  additionalBeds?: number;
+  numberingPrefix?: string;
 }
 
 export interface WardImportRow {

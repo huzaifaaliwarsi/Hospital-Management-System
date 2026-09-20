@@ -74,7 +74,7 @@ export const createDepartmentSchema = z.object({
   code: z.string().max(20).optional(),
   name: z.string().min(1).max(150),
   description: z.string().max(2000).optional(),
-  headStaffId: z.string().uuid().optional(),
+  headStaffId: z.string().uuid().optional().nullable(),
   departmentType: z.enum([
     'CLINICAL',
     'SURGICAL',
@@ -118,6 +118,9 @@ export const createServiceRateSchema = z.object({
   discountAllowed: z.boolean().optional(),
   manualRateOverrideAllowed: z.boolean().optional(),
   isActive: z.boolean().optional(),
+  encounterType: z.enum(['NONE', 'OPD', 'OBSERVATION', 'EMERGENCY']).optional(),
+  isDefaultEncounterService: z.boolean().optional(),
+  serviceStream: z.enum(['HOSPITAL', 'LAB']).optional(),
 });
 export type CreateServiceRateBody = z.infer<typeof createServiceRateSchema>;
 export const updateServiceRateSchema = createServiceRateSchema.partial();
@@ -126,7 +129,7 @@ export type UpdateServiceRateBody = z.infer<typeof updateServiceRateSchema>;
 // ── Wards / Rooms / Beds ─────────────────────────────────────────────
 export const createWardSchema = z.object({
   code: z.string().max(20).optional(),
-  departmentId: z.string().uuid(),
+  departmentId: z.string().uuid().optional(),
   name: z.string().min(1).max(100),
   wardType: z.string().optional(),
   genderPolicy: z.string().optional(),

@@ -39,6 +39,37 @@ export const formatAuditTimestamp = (): string => {
   return `${dateStr}, ${timeStr}`;
 };
 
+/**
+ * System-protected core hospital care departments (OPD, Emergency/ER, Observation/OBS).
+ * These cannot be deleted as they are foundational to the hospital billing and care queues.
+ */
+export function isProtectedCoreDepartment(dept?: { code?: string | null; name?: string | null } | null): boolean {
+  if (!dept) return false;
+  const code = (dept.code || '').trim().toUpperCase();
+  const name = (dept.name || '').trim().toUpperCase();
+
+  const protectedCodes = ['OPD', 'ER', 'OBS', 'GEN-OPD', 'EMERGENCY', 'OBSERVATION'];
+  if (protectedCodes.includes(code)) return true;
+
+  if (
+    name === 'OPD' ||
+    name === 'ER' ||
+    name === 'OBS' ||
+    name === 'EMERGENCY' ||
+    name === 'OBSERVATION' ||
+    name === 'EMERGENCY ROOM' ||
+    name === 'OUTPATIENT DEPARTMENT' ||
+    name === 'OBSERVATION WARD' ||
+    name.startsWith('OPD ') ||
+    name.startsWith('EMERGENCY ') ||
+    name.startsWith('OBSERVATION ')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 /** Valid department types list */
 export const VALID_DEPARTMENT_TYPES: DepartmentType[] = [
   'Clinical',
@@ -137,8 +168,8 @@ function toBackendPayload(payload: DepartmentFormValues): Record<string, unknown
     fulfillmentOwnership: payload.fulfillmentOwnership === 'Outsourced' ? 'OUTSOURCED' : 'INTERNAL',
     outsourcedProviderId: payload.fulfillmentOwnership === 'Outsourced' && payload.outsourcedProviderId ? payload.outsourcedProviderId : null,
     isActive: payload.status === 'Active',
+    headStaffId: isUuid(payload.headUserId) ? payload.headUserId : null,
   };
-  if (isUuid(payload.headUserId)) body.headStaffId = payload.headUserId;
   return body;
 }
 
@@ -300,15 +331,14 @@ export class DepartmentService {
     return updated;
   }
 
-  /**
-   * The backend deliberately offers no hard-delete for departments (same
-   * data-integrity stance as Staff) — this always guides to deactivation
-   * rather than silently succeeding against an endpoint that doesn't exist.
-   */
-  static async deleteDepartment(_id: string, _existingDepartments: Department[]): Promise<void> {
-    throw new Error(
-      'Departments cannot be permanently deleted for data-integrity reasons. Please deactivate it instead.'
-    );
+  /** `DELETE /setup/departments/:id` */
+  static async deleteDepartment(id: string, existingDepartments?: Department[]): Promise<void> {
+    const dept = (existingDepartments || cachedDepartments).find((d) => d.id === id);
+    if (dept && isProtectedCoreDepartment(dept)) {
+      throw new Error(`Core hospital care department "${dept.name}" (${dept.code}) is protected by the hospital system and cannot be deleted.`);
+    }
+    await apiClient.delete(`/setup/departments/${id}`);
+    cachedDepartments = cachedDepartments.filter((d) => d.id !== id);
   }
 
   /** Persists one already-validated import row against the real backend. */

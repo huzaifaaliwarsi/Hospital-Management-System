@@ -13,7 +13,12 @@ import {
   AlertCircle,
   FileSpreadsheet,
   Loader2,
+  Clock,
 } from 'lucide-react';
+import {
+  formatDateISO,
+  getHospitalCurrentDate,
+} from '../../../utils/dateConstants';
 import {
   Patient,
   PatientFormData,
@@ -42,6 +47,7 @@ import { PatientDossierModal } from './PatientDossierModal';
 
 interface PatientRegistryViewProps {
   currentUser: User | null;
+  initialDateFilter?: 'ALL' | 'TODAY';
 }
 
 const DEFAULT_FILTERS: PatientFilterState = {
@@ -52,9 +58,31 @@ const DEFAULT_FILTERS: PatientFilterState = {
   status: 'ALL',
 };
 
-export const PatientRegistryView: React.FC<PatientRegistryViewProps> = ({ currentUser }) => {
+export const PatientRegistryView: React.FC<PatientRegistryViewProps> = ({
+  currentUser,
+  initialDateFilter = 'ALL',
+}) => {
   // Master patient records
   const [patients, setPatients] = useState<Patient[]>([]);
+
+  // Time Filter State
+  const [timeFilter, setTimeFilter] = useState<'ALL' | 'TODAY'>(initialDateFilter);
+
+  useEffect(() => {
+    if (initialDateFilter) {
+      setTimeFilter(initialDateFilter);
+    }
+  }, [initialDateFilter]);
+
+  const todayISO = useMemo(() => formatDateISO(getHospitalCurrentDate()), []);
+
+  const todayCount = useMemo(() => {
+    return patients.filter((p) => {
+      const reg = p.registrationDate || '';
+      const created = p.createdAt ? p.createdAt.slice(0, 10) : '';
+      return reg === todayISO || created === todayISO;
+    }).length;
+  }, [patients, todayISO]);
 
   // Filter State
   const [filters, setFilters] = useState<PatientFilterState>(DEFAULT_FILTERS);
@@ -111,8 +139,16 @@ export const PatientRegistryView: React.FC<PatientRegistryViewProps> = ({ curren
 
   // Filtered dataset
   const filteredPatients = useMemo(() => {
-    return filterPatients(patients, filters);
-  }, [patients, filters]);
+    let list = filterPatients(patients, filters);
+    if (timeFilter === 'TODAY') {
+      list = list.filter((p) => {
+        const reg = p.registrationDate || '';
+        const created = p.createdAt ? p.createdAt.slice(0, 10) : '';
+        return reg === todayISO || created === todayISO;
+      });
+    }
+    return list;
+  }, [patients, filters, timeFilter, todayISO]);
 
   // Overall KPIs
   const kpis = useMemo(() => {
@@ -380,6 +416,57 @@ export const PatientRegistryView: React.FC<PatientRegistryViewProps> = ({ curren
           <div className="text-xl font-bold text-purple-700">{kpis.newThisMonth}</div>
           <div className="text-[11px] text-slate-400 mt-0.5">September 2026 intake</div>
         </div>
+      </div>
+
+      {/* Time Filter Tabs (All Patients vs Today's Patients) */}
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setTimeFilter('TODAY')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+              timeFilter === 'TODAY'
+                ? 'bg-[#08775A] text-white shadow-xs'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            <Clock className="w-3.5 h-3.5" />
+            <span>Today's Patients</span>
+            <span
+              className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                timeFilter === 'TODAY' ? 'bg-white/20 text-white' : 'bg-emerald-100 text-[#08775A]'
+              }`}
+            >
+              {todayCount}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setTimeFilter('ALL')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+              timeFilter === 'ALL'
+                ? 'bg-[#08775A] text-white shadow-xs'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>All Registered Patients</span>
+            <span
+              className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                timeFilter === 'ALL' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'
+              }`}
+            >
+              {patients.length}
+            </span>
+          </button>
+        </div>
+
+        {timeFilter === 'TODAY' && (
+          <span className="text-xs text-slate-500 font-medium italic">
+            Showing all patients registered or visiting hospital today ({todayISO})
+          </span>
+        )}
       </div>
 
       {/* Filter Bar */}

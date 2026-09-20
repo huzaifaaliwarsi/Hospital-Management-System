@@ -185,7 +185,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         else if (selectedPreset === 'this_week') title = "Patients This Week";
         else if (selectedPreset === 'this_month') title = "Patients This Month";
         else if (selectedPreset === 'custom') title = "Patients";
-        return { ...kpi, title };
+        return { ...kpi, title, navModule: 'today_patients' };
       }
       if (kpi.id === 'kpi_today_billing') {
         let title = "Today's Billing";
@@ -193,7 +193,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         else if (selectedPreset === 'this_week') title = "Billing This Week";
         else if (selectedPreset === 'this_month') title = "Billing This Month";
         else if (selectedPreset === 'custom') title = "Billing";
-        return { ...kpi, title };
+        return { ...kpi, title, navModule: 'billing_overview' };
       }
       if (kpi.id === 'kpi_today_collections') {
         let title = "Today's Collections";

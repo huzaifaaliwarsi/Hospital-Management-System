@@ -10,6 +10,10 @@ import {
   KeyRound,
   Building,
   AlertTriangle,
+  Wallet,
+  Percent,
+  Stethoscope,
+  Wand2,
 } from 'lucide-react';
 import {
   StaffUser,
@@ -25,6 +29,7 @@ import {
 } from '../../../types/staffUser';
 import { Department } from '../../../types/department';
 import { StaffUserService } from '../../../services/staffUserService';
+import { formatCnicInput } from '../../../utils/formatters';
 
 interface StaffUserModalProps {
   isOpen: boolean;
@@ -68,10 +73,16 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
     confirmPassword: '',
     requirePasswordChange: false,
     doctorSponsoredDiscountTrackingEnabled: false,
+    salaryEnabled: false,
+    salaryBasis: 'MONTHLY',
+    baseSalary: undefined,
+    salaryEffectiveFrom: new Date().toISOString().slice(0, 10),
+    commissionEnabled: false,
   });
 
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [showDischargePassword, setShowDischargePassword] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   // Confirmation dialogs for significant changes in edit mode
@@ -93,6 +104,7 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
         designation: editingStaff.designation,
         departmentId: editingStaff.departmentId,
         departmentName: editingStaff.departmentName,
+        departmentIds: editingStaff.departmentIds ?? [editingStaff.departmentId],
         staffCategory: editingStaff.staffCategory,
         status: editingStaff.status,
         accessType: editingStaff.accessType,
@@ -103,7 +115,31 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
         confirmPassword: '',
         requirePasswordChange: editingStaff.requirePasswordChange || false,
         doctorSponsoredDiscountTrackingEnabled: editingStaff.doctorSponsoredDiscountTrackingEnabled || false,
+        clinicalAuthUsername: editingStaff.clinicalAuthUsername || '',
+        clinicalAuthPassword: '',
+        clinicalAuthActive: editingStaff.clinicalAuthActive ?? true,
+        salaryEnabled: false,
+        salaryBasis: 'MONTHLY',
+        baseSalary: undefined,
+        salaryEffectiveFrom: new Date().toISOString().slice(0, 10),
+        commissionEnabled: false,
       });
+
+      // Fetch canonical Staff 360 profile to prefill active Salary and Commission state
+      StaffUserService.fetchFullProfile(editingStaff.id)
+        .then((profile) => {
+          const currentSalary = profile?.salary?.current;
+          const commissionRules = profile?.commissionRules;
+          setFormData((prev) => ({
+            ...prev,
+            salaryEnabled: Boolean(currentSalary),
+            salaryBasis: currentSalary?.salaryBasis === 'PER_DAY' ? 'PER_DAY' : 'MONTHLY',
+            baseSalary: currentSalary?.baseAmount != null ? Number(currentSalary.baseAmount) : undefined,
+            salaryEffectiveFrom: currentSalary?.effectiveFrom ? String(currentSalary.effectiveFrom).slice(0, 10) : new Date().toISOString().slice(0, 10),
+            commissionEnabled: Array.isArray(commissionRules) && commissionRules.length > 0,
+          }));
+        })
+        .catch(() => {});
     } else {
       const defaultDept = activeDepartments[0] || departments[0];
       setFormData({
@@ -127,11 +163,20 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
         confirmPassword: '',
         requirePasswordChange: true,
         doctorSponsoredDiscountTrackingEnabled: false,
+        clinicalAuthUsername: '',
+        clinicalAuthPassword: '',
+        clinicalAuthActive: true,
+        salaryEnabled: false,
+        salaryBasis: 'MONTHLY',
+        baseSalary: undefined,
+        salaryEffectiveFrom: new Date().toISOString().slice(0, 10),
+        commissionEnabled: false,
       });
     }
     setErrors({});
     setShowPassword(false);
     setShowConfirmPassword(false);
+    setShowDischargePassword(false);
     setConfirmPortalChange(false);
     setConfirmAccessTypeChange(false);
     setPendingValues(null);
@@ -139,14 +184,38 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Handle department change
+  // Handle department change (single select for non-Doctors)
   const handleDepartmentChange = (deptId: string) => {
     const dept = departments.find((d) => d.id === deptId);
     setFormData((prev) => ({
       ...prev,
       departmentId: deptId,
       departmentName: dept ? dept.name : '',
+      departmentIds: deptId ? [deptId] : [],
     }));
+  };
+
+  // Handle Doctor multi-department checkbox toggle
+  const handleDoctorDeptToggle = (deptId: string) => {
+    setFormData((prev) => {
+      const current = prev.departmentIds ?? (prev.departmentId ? [prev.departmentId] : []);
+      let updated: string[];
+      if (current.includes(deptId)) {
+        // Don't remove if it's the only one
+        if (current.length <= 1) return prev;
+        updated = current.filter((id) => id !== deptId);
+      } else {
+        updated = [...current, deptId];
+      }
+      // Primary = first in list
+      const dept = departments.find((d) => d.id === updated[0]);
+      return {
+        ...prev,
+        departmentIds: updated,
+        departmentId: updated[0] ?? prev.departmentId,
+        departmentName: dept?.name ?? prev.departmentName,
+      };
+    });
   };
 
   // Handle portal change -> auto-select first matching role
@@ -176,6 +245,25 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
         setFormData((prev) => ({ ...prev, username: parts[0] }));
       }
     }
+
+    // Auto-suggest clinical discharge username if Doctor
+    if (!isEdit && formData.staffCategory === 'Doctor' && !formData.clinicalAuthUsername && formData.fullName) {
+      const parts = formData.fullName
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, '')
+        .split(/\s+/)
+        .filter((p) => p && p !== 'dr' && p !== 'doctor');
+      const docName = parts.length > 1 ? `${parts[0]}.${parts[parts.length - 1]}` : (parts[0] || 'doctor');
+      setFormData((prev) => ({ ...prev, clinicalAuthUsername: `dr.${docName}` }));
+    }
+  };
+
+  const handleGenerateDischargePassword = () => {
+    const chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let generated = 'Dr';
+    for (let i = 0; i < 8; i++) generated += chars.charAt(Math.floor(Math.random() * chars.length));
+    generated += Math.floor(Math.random() * 90 + 10);
+    setFormData((prev) => ({ ...prev, clinicalAuthPassword: generated }));
   };
 
   // Validation
@@ -242,6 +330,19 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
         if (formData.password !== formData.confirmPassword) {
           newErrors.confirmPassword = 'Passwords do not match.';
         }
+      }
+    }
+
+    // Patient Discharge Credentials validations (Doctors only)
+    if (formData.staffCategory === 'Doctor') {
+      if (formData.clinicalAuthPassword && formData.clinicalAuthPassword.length < 8) {
+        newErrors.clinicalAuthPassword = 'Discharge password must be at least 8 characters long.';
+      }
+      if (!isEdit && formData.clinicalAuthUsername && !formData.clinicalAuthPassword) {
+        newErrors.clinicalAuthPassword = 'Password is required when discharge username is entered.';
+      }
+      if (!isEdit && !formData.clinicalAuthUsername && formData.clinicalAuthPassword) {
+        newErrors.clinicalAuthUsername = 'Discharge username is required when password is set.';
       }
     }
 
@@ -399,7 +500,8 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
                 <input
                   type="text"
                   value={formData.cnic}
-                  onChange={(e) => setFormData({ ...formData, cnic: e.target.value })}
+                  onChange={(e) => setFormData({ ...formData, cnic: formatCnicInput(e.target.value) })}
+                  maxLength={15}
                   placeholder="35201-1234567-1"
                   className={`w-full px-3 py-2 bg-[#f6f8f7] border rounded-lg text-xs font-mono text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#129b70]/20 ${
                     errors.cnic ? 'border-red-500' : 'border-[#e2eae5] focus:border-[#129b70]'
@@ -484,29 +586,78 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
                 )}
               </div>
 
-              {/* Department */}
-              <div>
-                <label className="block text-xs font-semibold text-[#52665e] mb-1">
-                  Department <span className="text-red-500">*</span>
-                </label>
-                <select
-                  value={formData.departmentId}
-                  onChange={(e) => handleDepartmentChange(e.target.value)}
-                  className={`w-full px-3 py-2 bg-[#f6f8f7] border rounded-lg text-xs text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#129b70]/20 ${
-                    errors.departmentId ? 'border-red-500' : 'border-[#e2eae5] focus:border-[#129b70]'
-                  }`}
-                >
-                  <option value="">Select Hospital Department</option>
-                  {activeDepartments.map((dept) => (
-                    <option key={dept.id} value={dept.id}>
-                      {dept.name} ({dept.code})
-                    </option>
-                  ))}
-                </select>
-                {errors.departmentId && (
-                  <p className="text-[10px] text-red-500 mt-1">{errors.departmentId}</p>
-                )}
-              </div>
+              {/* Department — single select for non-Doctors, multi-checkbox grid for Doctors */}
+              {formData.staffCategory === 'Doctor' ? (
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-[#52665e] mb-1.5">
+                    Clinical Departments <span className="text-red-500">*</span>
+                    <span className="ml-2 text-[10px] font-normal text-[#8b9e95]">Select all departments this doctor works in</span>
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {activeDepartments.map((dept) => {
+                      const selectedIds = formData.departmentIds ?? (formData.departmentId ? [formData.departmentId] : []);
+                      const isChecked = selectedIds.includes(dept.id);
+                      const isPrimary = selectedIds[0] === dept.id;
+                      return (
+                        <label
+                          key={dept.id}
+                          className={`flex items-start gap-2 p-2.5 rounded-lg border cursor-pointer transition-all ${
+                            isChecked
+                              ? 'bg-[#effaf5] border-[#129b70] text-[#0a6b4d]'
+                              : 'bg-[#f6f8f7] border-[#e2eae5] text-[#52665e] hover:border-[#129b70]/50'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => handleDoctorDeptToggle(dept.id)}
+                            className="mt-0.5 rounded border-[#e2eae5] text-[#129b70] focus:ring-[#129b70]"
+                          />
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-semibold leading-tight truncate">{dept.name}</div>
+                            <div className="text-[10px] text-[#8b9e95] font-mono">{dept.code}</div>
+                            {isPrimary && isChecked && (
+                              <span className="text-[9px] font-bold text-[#129b70] bg-[#d4f5e9] px-1 py-0.5 rounded">Primary</span>
+                            )}
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {(formData.departmentIds ?? []).length > 0 && (
+                    <p className="text-[10px] text-[#52665e] mt-1.5">
+                      ✓ {(formData.departmentIds ?? []).length} department{(formData.departmentIds ?? []).length > 1 ? 's' : ''} selected
+                      {(formData.departmentIds ?? []).length > 1 && ` — first selected is Primary`}
+                    </p>
+                  )}
+                  {errors.departmentId && (
+                    <p className="text-[10px] text-red-500 mt-1">{errors.departmentId}</p>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-xs font-semibold text-[#52665e] mb-1">
+                    Department <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={formData.departmentId}
+                    onChange={(e) => handleDepartmentChange(e.target.value)}
+                    className={`w-full px-3 py-2 bg-[#f6f8f7] border rounded-lg text-xs text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#129b70]/20 ${
+                      errors.departmentId ? 'border-red-500' : 'border-[#e2eae5] focus:border-[#129b70]'
+                    }`}
+                  >
+                    <option value="">Select Hospital Department</option>
+                    {activeDepartments.map((dept) => (
+                      <option key={dept.id} value={dept.id}>
+                        {dept.name} ({dept.code})
+                      </option>
+                    ))}
+                  </select>
+                  {errors.departmentId && (
+                    <p className="text-[10px] text-red-500 mt-1">{errors.departmentId}</p>
+                  )}
+                </div>
+              )}
 
               {/* Staff Category */}
               <div>
@@ -526,6 +677,131 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
                     </option>
                   ))}
                 </select>
+              </div>
+
+              {/* Canonical Payroll & Compensation Section */}
+              <div className="sm:col-span-2 p-4 bg-[#f8faf9] border border-[#e2eae5] rounded-xl space-y-3">
+                <div className="flex items-center gap-2 pb-2 border-b border-[#e2eae5]">
+                  <div className="h-7 w-7 rounded-lg bg-teal-50 text-[#08775A] flex items-center justify-center">
+                    <Wallet className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wide">
+                      Payroll Compensation & Commission
+                    </h4>
+                    <p className="text-[11px] text-slate-500">
+                      Configures canonical salary basis and service-based revenue commission eligibility
+                    </p>
+                  </div>
+                </div>
+
+                {/* Salary Profile Shortcut */}
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formData.salaryEnabled || false}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            salaryEnabled: e.target.checked,
+                            baseSalary: e.target.checked ? formData.baseSalary || 50000 : undefined,
+                          })
+                        }
+                        className="rounded border-[#e2eae5] text-[#08775A] focus:ring-[#08775A]"
+                      />
+                      <span>Enable Payroll Salary Profile</span>
+                    </label>
+                    <span className="text-[11px] text-slate-500 font-medium">Independent of Commission</span>
+                  </div>
+
+                  {formData.salaryEnabled && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 bg-white border border-[#e2eae5] rounded-lg animate-in fade-in">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                          Salary Basis
+                        </label>
+                        <select
+                          value={formData.salaryBasis || 'MONTHLY'}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              salaryBasis: e.target.value as 'MONTHLY' | 'PER_DAY',
+                            })
+                          }
+                          className="w-full px-2.5 py-1.5 bg-[#f6f8f7] border border-[#e2eae5] rounded-lg text-xs text-slate-900 focus:outline-none focus:border-[#08775A]"
+                        >
+                          <option value="MONTHLY">Monthly Fixed</option>
+                          <option value="PER_DAY">Daily Rate (Per Day)</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                          Base Amount (PKR) <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="500"
+                          value={formData.baseSalary ?? ''}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              baseSalary: e.target.value ? Number(e.target.value) : undefined,
+                            })
+                          }
+                          placeholder={formData.salaryBasis === 'PER_DAY' ? '2500' : '50000'}
+                          className="w-full px-2.5 py-1.5 bg-[#f6f8f7] border border-[#e2eae5] rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:border-[#08775A]"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                          Effective From
+                        </label>
+                        <input
+                          type="date"
+                          value={formData.salaryEffectiveFrom || ''}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              salaryEffectiveFrom: e.target.value,
+                            })
+                          }
+                          className="w-full px-2.5 py-1.5 bg-[#f6f8f7] border border-[#e2eae5] rounded-lg text-xs text-slate-900 focus:outline-none focus:border-[#08775A]"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Service Commission Eligibility */}
+                <div className="pt-2 border-t border-[#e2eae5]/80 flex items-start justify-between gap-4">
+                  <label className="flex items-start gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.commissionEnabled || false}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          commissionEnabled: e.target.checked,
+                        })
+                      }
+                      className="mt-0.5 rounded border-[#e2eae5] text-[#08775A] focus:ring-[#08775A]"
+                    />
+                    <div>
+                      <span>Revenue Commission Eligible</span>
+                      <p className="text-[11px] font-normal text-slate-500">
+                        Configured via canonical service-based rules (Fixed / % per service, Gross / Net after doctor discount).
+                      </p>
+                    </div>
+                  </label>
+                  <span className="text-[11px] text-teal-700 font-semibold shrink-0">
+                    {formData.commissionEnabled ? 'Commission Configured' : 'No Commission'}
+                  </span>
+                </div>
               </div>
 
               {/* v7.2 Doctor-Sponsored Discount Tracking (HMS_V7.2_NEW_REQUIREMENTS.md §2.3/§3.1) */}
@@ -816,6 +1092,127 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
               </div>
             )}
           </div>
+
+          {/* SECTION 4: PATIENT DISCHARGE CREDENTIALS (Clinical Discharge Authorization — Doctors only) */}
+          {formData.staffCategory === 'Doctor' && (
+            <div className="space-y-3 pt-2">
+              <div className="flex items-center gap-2 pb-1.5 border-b border-[#e2eae5]">
+                <Stethoscope className="h-4 w-4 text-[#08775A]" />
+                <h4 className="text-xs font-bold text-[#111827] uppercase tracking-wider">
+                  4. Patient Discharge Credentials (Clinical Discharge Authorization)
+                </h4>
+              </div>
+
+              <div className="p-3.5 bg-[#effaf5] border border-[#c2e7db] rounded-xl text-xs text-[#08775A] space-y-1">
+                <div className="font-bold flex items-center gap-1.5 text-xs text-[#08775A]">
+                  <ShieldCheck className="h-4 w-4 shrink-0" />
+                  <span>Clinical Discharge Signature &amp; Re-Authentication Gate</span>
+                </div>
+                <p className="text-[11px] text-[#2d5c4c] leading-relaxed">
+                  Admission department mein inpatient ko <strong>Clinically Discharge</strong> karte waqt yeh doctor credentials required hotay hain. Yeh credentials portal login se alag hotay hain aur tab bhi kaam karte hain agar doctor ka portal user account na ho (Staff Record Only).
+                </p>
+                {isEdit && editingStaff?.clinicalAuthUsername && (
+                  <p className="text-[10px] text-[#08775A] font-semibold pt-1 border-t border-[#c2e7db]">
+                    Current Status: <span className="font-bold font-mono">{editingStaff.clinicalAuthUsername}</span> ({editingStaff.clinicalAuthActive ? 'Active' : 'Inactive'}). Leave password blank to keep current password.
+                  </p>
+                )}
+              </div>
+
+              <div className="p-4 bg-[#f6f8f7] border border-[#e2eae5] rounded-xl space-y-3.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  {/* Discharge Username */}
+                  <div>
+                    <label className="block text-xs font-semibold text-[#52665e] mb-1">
+                      Discharge Username
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.clinicalAuthUsername || ''}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          clinicalAuthUsername: e.target.value.toLowerCase().trim(),
+                        })
+                      }
+                      placeholder="e.g. dr.ahmed.discharge"
+                      className={`w-full px-3 py-2 bg-white border rounded-lg text-xs font-mono text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#08775A]/20 ${
+                        errors.clinicalAuthUsername ? 'border-red-500' : 'border-[#e2eae5] focus:border-[#08775A]'
+                      }`}
+                    />
+                    {errors.clinicalAuthUsername && (
+                      <p className="text-[10px] text-red-500 mt-1">{errors.clinicalAuthUsername}</p>
+                    )}
+                    <p className="text-[10px] text-[#8b9e95] mt-1">
+                      Used to identify this doctor at discharge authorization.
+                    </p>
+                  </div>
+
+                  {/* Discharge Password */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-[#52665e]">
+                        Discharge Password {(!isEdit && formData.clinicalAuthUsername) && <span className="text-red-500">*</span>}
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleGenerateDischargePassword}
+                        className="text-[10px] font-semibold text-[#08775A] hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <Wand2 className="h-3 w-3" /> Auto-Generate
+                      </button>
+                    </div>
+                    <div className="relative">
+                      <input
+                        type={showDischargePassword ? 'text' : 'password'}
+                        value={formData.clinicalAuthPassword || ''}
+                        onChange={(e) =>
+                          setFormData({ ...formData, clinicalAuthPassword: e.target.value })
+                        }
+                        placeholder={isEdit && editingStaff?.clinicalAuthUsername ? '•••••••• (leave blank to keep unchanged)' : 'Min 8 characters'}
+                        className={`w-full pl-3 pr-8 py-2 bg-white border rounded-lg text-xs font-mono text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#08775A]/20 ${
+                          errors.clinicalAuthPassword ? 'border-red-500' : 'border-[#e2eae5] focus:border-[#08775A]'
+                        }`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowDischargePassword(!showDischargePassword)}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#8b9e95] hover:text-[#111827] cursor-pointer"
+                      >
+                        {showDischargePassword ? (
+                          <EyeOff className="h-3.5 w-3.5" />
+                        ) : (
+                          <Eye className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    </div>
+                    {errors.clinicalAuthPassword && (
+                      <p className="text-[10px] text-red-500 mt-1">{errors.clinicalAuthPassword}</p>
+                    )}
+                    <p className="text-[10px] text-[#8b9e95] mt-1">
+                      Min 8 characters. Doctor enters this when authorizing patient discharge.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Authorization Status Active Toggle */}
+                <div className="pt-2 border-t border-[#e2eae5]/80">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={formData.clinicalAuthActive ?? true}
+                      onChange={(e) =>
+                        setFormData({ ...formData, clinicalAuthActive: e.target.checked })
+                      }
+                      className="rounded text-[#08775A] focus:ring-[#08775A] h-4 w-4"
+                    />
+                    <span className="text-xs text-[#52665e] font-medium">
+                      Patient Discharge Authorization Active (Doctor can sign discharge summaries)
+                    </span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Footer Buttons */}
           <div className="pt-4 border-t border-[#e2eae5] flex items-center justify-end gap-2.5">

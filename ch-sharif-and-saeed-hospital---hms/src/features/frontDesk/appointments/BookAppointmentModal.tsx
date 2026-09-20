@@ -1,16 +1,34 @@
-import React, { useMemo, useState } from 'react';
-import { AlertCircle, Search, ShieldCheck, ShieldAlert, Loader2 } from 'lucide-react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
+import {
+  AlertCircle,
+  Loader2,
+  UserPlus,
+  Building2,
+  CheckCircle2,
+  Stethoscope,
+  Calendar,
+  Wallet,
+  User,
+} from 'lucide-react';
 import { Modal } from '../../../components/common/Modal';
-import { RadioGroup, Select, TextInput, Textarea, NumberInput, Toggle } from '../../../components/forms/FormControls';
+import { Select, TextInput, Textarea, NumberInput, Toggle, CNICInput } from '../../../components/forms/FormControls';
 import { DepartmentService } from '../../../services/departmentService';
 import { StaffUserService } from '../../../services/staffUserService';
 import { ServiceRatesService } from '../../../services/serviceRatesService';
-import { getAllPatients } from '../../../services/patientRegistryService';
-import { getPanelById } from '../../../services/panelService';
-import { Patient } from '../../../types/patient';
+import { normalizePhone, createPatient } from '../../../services/patientRegistryService';
+import {
+  fetchCorporatePanels,
+  getActiveCorporatePanels,
+  getPanelById,
+  CorporatePanel,
+} from '../../../services/panelService';
+import { PatientGender, GuardianRelation } from '../../../types/patient';
+import { Department } from '../../../types/department';
+import { StaffUser } from '../../../types/staffUser';
 import { formatDateISO, getHospitalCurrentDate } from '../../../utils/dateConstants';
 import { formatPKR } from '../../../utils/formatters';
 import { useToast } from '../../../context/ToastContext';
+import { focusNextField, focusNextFieldOnEnter } from '../../../utils/formNavigation';
 import {
   appointmentsApiService,
   AppointmentPaymentMethod,
@@ -31,7 +49,7 @@ interface BookAppointmentModalProps {
   rescheduleAppointment?: AppointmentRecord;
 }
 
-/** Resolves Panel Service coverage for a service — the only tier that exists today; else NOT_COVERED (§2.5/§5 CRITICAL rule). */
+/** Resolves Panel Service coverage for a service */
 function resolvePanelCoverage(panelId: string, serviceRateId: string, grossFee: number) {
   const panel = getPanelById(panelId);
   const now = new Date();
@@ -59,32 +77,88 @@ function resolvePanelCoverage(panelId: string, serviceRateId: string, grossFee: 
 export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onClose, onBooked, rescheduleAppointment }) => {
   const toast = useToast();
   const isReschedule = !!rescheduleAppointment;
+
+  const formContainerRef = useRef<HTMLDivElement>(null);
+  const serviceTypeDropdownOpenRef = useRef(false);
+  const doctorDropdownOpenRef = useRef(false);
+  const panelDropdownOpenRef = useRef(false);
+  const paymentMethodDropdownOpenRef = useRef(false);
+
+  const handleEnterNext = (e: React.KeyboardEvent<HTMLElement>) => {
+    focusNextFieldOnEnter(e, formContainerRef.current);
+  };
+
+  const handleSelectKeyDown = (
+    e: React.KeyboardEvent<HTMLSelectElement>,
+    dropdownRef: React.MutableRefObject<boolean>
+  ) => {
+    if (e.key !== 'Enter') return;
+    if (dropdownRef.current) return;
+    e.preventDefault();
+    dropdownRef.current = true;
+    const el = e.currentTarget as HTMLSelectElement & { showPicker?: () => void };
+    try {
+      if (typeof el.showPicker === 'function') {
+        el.showPicker();
+      } else {
+        el.click();
+      }
+    } catch {
+      el.click();
+    }
+  };
+
   const departments = useMemo(() => DepartmentService.getDepartments().filter((d) => d.status === 'Active'), []);
   const activeServices = useMemo(() => ServiceRatesService.getServices().filter((s) => s.status === 'Active'), []);
   const activeDoctors = useMemo(
     () => StaffUserService.getStaffUsers().filter((s) => s.staffCategory === 'Doctor' && s.status === 'ACTIVE'),
-    [],
+    []
   );
 
-  const [patientType, setPatientType] = useState<'SELF_PAY' | 'PANEL'>('SELF_PAY');
-  const [panelSearch, setPanelSearch] = useState('');
-  const [selectedPanelPatient, setSelectedPanelPatient] = useState<Patient | null>(null);
-  const [selfPay, setSelfPay] = useState({
-    fullName: '',
-    guardianName: '',
-    phone: '',
-    cnicOrPassport: '',
-    gender: '',
-    dob: '',
-  });
+  // Corporate Panels list
+  const [corporatePanels, setCorporatePanels] = useState<CorporatePanel[]>(() => getActiveCorporatePanels());
+  useEffect(() => {
+    fetchCorporatePanels().then(setCorporatePanels).catch(() => {});
+  }, []);
 
-  const [departmentId, setDepartmentId] = useState(rescheduleAppointment?.departmentId || '');
+  // 1. Patient Category: 'Self Pay' vs 'Corporate / Panel'
+  const [payerType, setPayerType] = useState<'Self Pay' | 'Corporate / Panel'>(
+    rescheduleAppointment?.payerType === 'Corporate / Panel' ? 'Corporate / Panel' : 'Self Pay'
+  );
+
+  // 2. Patient Demographics (Uppercase text inputs)
+  const [fullName, setFullName] = useState('');
+  const [fatherGuardianName, setFatherGuardianName] = useState('');
+  const [primaryPhone, setPrimaryPhone] = useState('');
+  const [age, setAge] = useState<string>('');
+  const [gender, setGender] = useState<PatientGender>('Male');
+  const [cnic, setCnic] = useState('');
+
+  // Panel specific fields (when Corporate / Panel is selected)
+  const [panelId, setPanelId] = useState('');
+  const [panelMemberId, setPanelMemberId] = useState('');
+
+  // 3. Encounter Service / Type (No default OPD — user must choose)
+  const initialEncounterType = rescheduleAppointment?.notes?.includes('[EMERGENCY]')
+    ? 'EMERGENCY'
+    : rescheduleAppointment?.notes?.includes('[OBSERVATION]')
+    ? 'OBSERVATION'
+    : rescheduleAppointment?.notes?.includes('[OPD]')
+    ? 'OPD'
+    : '';
+  const [encounterType, setEncounterType] = useState<'OPD' | 'OBSERVATION' | 'EMERGENCY' | ''>(initialEncounterType);
+
+  // 4. Doctor, Department & Service
   const [doctorStaffId, setDoctorStaffId] = useState(rescheduleAppointment?.doctorId || '');
+  const [departmentId, setDepartmentId] = useState(rescheduleAppointment?.departmentId || '');
   const [serviceRateId, setServiceRateId] = useState(rescheduleAppointment?.serviceRateId || '');
+
+  // 5. Slot
   const [date, setDate] = useState(formatDateISO(getHospitalCurrentDate()));
-  const [time, setTime] = useState('09:00');
+  const [time, setTime] = useState('10:00');
   const [notes, setNotes] = useState('');
 
+  // 6. Advance
   const [collectAdvance, setCollectAdvance] = useState(false);
   const [advanceAmount, setAdvanceAmount] = useState<number | ''>('');
   const [advanceMethod, setAdvanceMethod] = useState<AppointmentPaymentMethod>('CASH');
@@ -93,40 +167,95 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
   const [formError, setFormError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  const departmentServices = useMemo(
-    () => (departmentId ? activeServices.filter((s) => s.departmentId === departmentId) : activeServices),
-    [activeServices, departmentId],
-  );
-  const departmentDoctors = useMemo(() => {
-    const scoped = departmentId ? activeDoctors.filter((d) => d.departmentId === departmentId) : [];
-    return scoped.length > 0 ? scoped : activeDoctors;
-  }, [activeDoctors, departmentId]);
+  // Helper: extract doctor's assigned departments
+  const getDoctorDepts = (doc: StaffUser): Department[] => {
+    const ids = doc.departmentIds?.length ? doc.departmentIds : doc.departmentId ? [doc.departmentId] : [];
+    if (ids.length === 0) return [];
+    return departments.filter((d) => ids.includes(d.id));
+  };
 
-  const selectedService = departmentServices.find((s) => s.id === serviceRateId) || activeServices.find((s) => s.id === serviceRateId);
+  // Capability flag corresponding to selected encounter service
+  const encounterDeptFlag = useMemo<'opdEnabled' | 'observationEnabled' | 'emergencyEnabled' | null>(() => {
+    if (encounterType === 'OPD') return 'opdEnabled';
+    if (encounterType === 'OBSERVATION') return 'observationEnabled';
+    if (encounterType === 'EMERGENCY') return 'emergencyEnabled';
+    return null;
+  }, [encounterType]);
+
+  // Doctors filtered down to those who belong to a department supporting the selected service
+  const doctorsForEncounterType = useMemo(() => {
+    if (!encounterDeptFlag) return [];
+    return activeDoctors.filter((doc) => {
+      const depts = getDoctorDepts(doc);
+      if (depts.length === 0) return true;
+      return depts.some((d) => d[encounterDeptFlag]);
+    });
+  }, [activeDoctors, departments, encounterDeptFlag]);
+
+  // If encounter type changes and current doctor is no longer in scope, clear doctor & dept
+  useEffect(() => {
+    if (doctorStaffId && !doctorsForEncounterType.some((d) => d.id === doctorStaffId)) {
+      setDoctorStaffId('');
+      setDepartmentId('');
+      setServiceRateId('');
+    }
+  }, [doctorsForEncounterType, doctorStaffId]);
+
+  // When doctor is selected, auto-resolve department matching the encounter service & service rate
+  const handleDoctorChange = (selectedDocId: string) => {
+    setDoctorStaffId(selectedDocId);
+    if (!selectedDocId) {
+      setDepartmentId('');
+      setServiceRateId('');
+      return;
+    }
+
+    const docObj = activeDoctors.find((d) => d.id === selectedDocId);
+    if (!docObj) return;
+
+    const docDepts = getDoctorDepts(docObj);
+    const matchingDept = encounterDeptFlag
+      ? docDepts.find((d) => d[encounterDeptFlag]) || docDepts[0] || departments[0]
+      : docDepts[0] || departments[0];
+
+    if (matchingDept) {
+      setDepartmentId(matchingDept.id);
+    }
+
+    // Auto-resolve Consultation / Service Rate based on encounter type and department
+    const encService =
+      (matchingDept
+        ? activeServices.find(
+            (s) => s.encounterType === encounterType && s.isDefaultEncounterService && s.departmentId === matchingDept.id
+          )
+        : null) ||
+      activeServices.find((s) => s.encounterType === encounterType && s.isDefaultEncounterService) ||
+      activeServices.find((s) => s.encounterType === encounterType) ||
+      (matchingDept
+        ? activeServices.find(
+            (s) => s.departmentId === matchingDept.id && (s.code === 'OPD-CONSULT' || s.name.toLowerCase().includes('consult'))
+          )
+        : null) ||
+      activeServices.find((s) => s.code === 'OPD-CONSULT' || s.name.toLowerCase().includes('consult')) ||
+      activeServices[0];
+
+    if (encService) {
+      setServiceRateId(encService.id);
+    }
+  };
+
+  const selectedDoctor = activeDoctors.find((d) => d.id === doctorStaffId);
+  const selectedDept = departments.find((d) => d.id === departmentId);
+  const selectedService = activeServices.find((s) => s.id === serviceRateId);
   const grossFee = selectedService?.standardRate ?? 0;
 
   const panelPreview =
-    patientType === 'PANEL' && selectedPanelPatient?.panelId && selectedService
-      ? resolvePanelCoverage(selectedPanelPatient.panelId, selectedService.id, grossFee)
+    payerType === 'Corporate / Panel' && panelId && selectedService
+      ? resolvePanelCoverage(panelId, selectedService.id, grossFee)
       : null;
 
-  const patientPayable = patientType === 'PANEL' ? (panelPreview ? panelPreview.patientShare : grossFee) : grossFee;
-
-  const panelSearchResults = useMemo(() => {
-    if (!panelSearch.trim()) return [];
-    const q = panelSearch.trim().toLowerCase();
-    return getAllPatients()
-      .filter((p) => p.payerType === 'Corporate / Panel')
-      .filter((p) => p.fullName.toLowerCase().includes(q) || p.mrNumber.toLowerCase().includes(q) || p.primaryPhone.includes(q))
-      .slice(0, 10);
-  }, [panelSearch]);
-
-  const handleDepartmentChange = (id: string) => {
-    setDepartmentId(id);
-    // Clear invalid Doctor/Service selections when Department changes (§12).
-    setServiceRateId('');
-    setDoctorStaffId('');
-  };
+  const patientPayable =
+    payerType === 'Corporate / Panel' ? (panelPreview ? panelPreview.patientShare : grossFee) : grossFee;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -152,20 +281,48 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
       return;
     }
 
-    if (patientType === 'PANEL' && !selectedPanelPatient) {
-      setFormError('Search and select a Panel patient.');
+    // Demographics validation (same 5 fields)
+    if (!fullName.trim()) {
+      setFormError('Patient Full Name is required.');
       return;
     }
-    if (patientType === 'PANEL' && selectedPanelPatient?.status !== 'ACTIVE') {
-      setFormError('This Panel membership is not Active — cannot book against an inactive membership.');
+    if (!fatherGuardianName.trim()) {
+      setFormError('Father / Guardian Name is required.');
       return;
     }
-    if (patientType === 'SELF_PAY' && (!selfPay.fullName.trim() || !selfPay.phone.trim())) {
-      setFormError('Full Name and Phone are required for a Self-Pay patient.');
+    if (!primaryPhone.trim()) {
+      setFormError('Primary Phone number is required.');
       return;
     }
-    if (!departmentId || !doctorStaffId || !serviceRateId) {
-      setFormError('Department, Doctor and Service are all required.');
+    const ageNum = Number(age);
+    if (!age || isNaN(ageNum) || ageNum < 0) {
+      setFormError('Valid Patient Age in years is required.');
+      return;
+    }
+
+    // Corporate / Panel validation
+    if (payerType === 'Corporate / Panel') {
+      if (!panelId) {
+        setFormError('Please select a Corporate Panel company.');
+        return;
+      }
+      if (!panelMemberId.trim()) {
+        setFormError('Panel Member ID / Card # is required.');
+        return;
+      }
+    }
+
+    if (!encounterType) {
+      setFormError('Please select an Encounter Service Type (OPD, Observation, or Emergency).');
+      return;
+    }
+
+    if (!doctorStaffId) {
+      setFormError('Please select a Consulting Doctor.');
+      return;
+    }
+    if (!departmentId || !serviceRateId) {
+      setFormError('Doctor department or consultation service could not be resolved.');
       return;
     }
     if (collectAdvance) {
@@ -174,7 +331,7 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
         return;
       }
       if (Number(advanceAmount) > patientPayable) {
-        setFormError(`Advance (${formatPKR(Number(advanceAmount))}) cannot exceed the patient payable amount (${formatPKR(patientPayable)}).`);
+        setFormError(`Advance (${formatPKR(Number(advanceAmount))}) cannot exceed the payable fee (${formatPKR(patientPayable)}).`);
         return;
       }
     }
@@ -182,30 +339,88 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
     setIsSaving(true);
     try {
       const slotAt = new Date(`${date}T${time}:00`).toISOString();
+      const birthYear = new Date().getFullYear() - Math.max(0, Math.floor(ageNum));
+      const computedDob = `${birthYear}-01-01`;
+
+      let finalPanelPatientId: string | undefined = undefined;
+
+      if (payerType === 'Corporate / Panel') {
+        // Register panel patient in master registry (matching Walk-In)
+        const selectedPanelObj = corporatePanels.find((p) => p.id === panelId);
+        const regRes = await createPatient(
+          {
+            fullName: fullName.trim().toUpperCase(),
+            fatherGuardianName: fatherGuardianName.trim().toUpperCase(),
+            guardianRelation: 'Father' as GuardianRelation,
+            dateOfBirth: computedDob,
+            age: ageNum,
+            ageIsEstimated: true,
+            gender: gender === 'Other / Not Specified' ? 'Other / Not Specified' : gender,
+            cnic: cnic.trim(),
+            passportNumber: '',
+            primaryPhone: normalizePhone(primaryPhone),
+            alternatePhone: '',
+            email: '',
+            addressLine1: '',
+            addressLine2: '',
+            city: 'Lahore',
+            province: 'Punjab',
+            country: 'Pakistan',
+            bloodGroup: 'Unknown',
+            payerType: 'Corporate / Panel',
+            panelId,
+            panelName: selectedPanelObj?.name || '',
+            panelMemberId: panelMemberId.trim().toUpperCase(),
+            emergencyContactName: '',
+            emergencyContactRelation: '',
+            emergencyContactPhone: '',
+            status: 'ACTIVE',
+          },
+          null
+        );
+
+        if (!regRes.success || !regRes.patient) {
+          setFormError(regRes.error || 'Failed to register panel patient.');
+          setIsSaving(false);
+          return;
+        }
+
+        finalPanelPatientId = regRes.patient.id;
+      }
+
+      const userNotes = notes.trim().toUpperCase();
+      const formattedNotes = encounterType
+        ? (userNotes ? `[${encounterType}] ${userNotes}` : `[${encounterType}]`)
+        : (userNotes || undefined);
+
       await appointmentsApiService.bookAppointment({
-        panelPatientId: patientType === 'PANEL' ? selectedPanelPatient!.id : undefined,
+        panelPatientId: finalPanelPatientId,
         newSelfPayPatient:
-          patientType === 'SELF_PAY'
+          payerType === 'Self Pay'
             ? {
-                fullName: selfPay.fullName.trim(),
-                guardianName: selfPay.guardianName.trim() || undefined,
-                phone: selfPay.phone.trim(),
-                cnicOrPassport: selfPay.cnicOrPassport.trim() || undefined,
-                gender: selfPay.gender || undefined,
-                dob: selfPay.dob || undefined,
+                fullName: fullName.trim().toUpperCase(),
+                guardianName: fatherGuardianName.trim().toUpperCase() || undefined,
+                phone: normalizePhone(primaryPhone),
+                cnicOrPassport: cnic.trim() || undefined,
+                gender: gender === 'Other / Not Specified' ? 'Other' : gender,
+                dob: computedDob,
               }
             : undefined,
-        departmentId,
+        departmentId:
+          selectedService?.departmentId && !selectedService.isDefaultEncounterService
+            ? selectedService.departmentId
+            : departmentId,
         doctorStaffId,
         serviceRateId,
         slotAt,
         estimatedAmount: grossFee || undefined,
         advanceAmount: collectAdvance ? Number(advanceAmount) : undefined,
         paymentMethod: collectAdvance ? advanceMethod : undefined,
-        paymentReference: collectAdvance ? advanceReference.trim() || undefined : undefined,
-        notes: notes.trim() || undefined,
+        paymentReference: collectAdvance ? advanceReference.trim().toUpperCase() || undefined : undefined,
+        notes: formattedNotes,
       });
-      toast.success('Appointment booked.');
+
+      toast.success('Appointment booked successfully.');
       onBooked();
     } catch (err: any) {
       setFormError(err?.message || 'Failed to book appointment.');
@@ -220,218 +435,439 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
       onClose={onClose}
       maxWidth="3xl"
       title={isReschedule ? 'Reschedule Appointment' : 'Book Appointment'}
-      subtitle={isReschedule ? `${rescheduleAppointment!.patientName} — ${rescheduleAppointment!.serviceName}` : 'Self-Pay or Corporate / Panel patient'}
+      subtitle={isReschedule ? `${rescheduleAppointment!.patientName} — ${rescheduleAppointment!.serviceName}` : 'Fast patient booking & doctor scheduling'}
       footer={
-        <>
-          <button type="button" onClick={onClose} className="px-4 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50">
-            Cancel
-          </button>
-          <button
-            type="submit"
-            form="book-appointment-form"
-            disabled={isSaving}
-            className="px-5 py-2 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg shadow-xs disabled:opacity-60 inline-flex items-center gap-1.5"
-          >
-            {isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            {isReschedule ? 'Save Changes' : 'Book Appointment'}
-          </button>
-        </>
+        <div className="flex items-center justify-between w-full font-sans">
+          <div className="text-xs text-slate-500 font-semibold">
+            {selectedDoctor && (
+              <span>
+                Doctor: <strong className="text-slate-800">{selectedDoctor.fullName}</strong> • Fee:{' '}
+                <strong className="text-[#08775A]">{formatPKR(patientPayable)}</strong>
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              form="book-appointment-form"
+              disabled={isSaving || !doctorStaffId}
+              className="px-6 py-2 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg shadow-xs disabled:opacity-60 inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Calendar className="h-4 w-4" />}
+              <span>{isReschedule ? 'Save Rescheduled Slot' : 'Confirm & Book Appointment'}</span>
+            </button>
+          </div>
+        </div>
       }
     >
-      <form id="book-appointment-form" onSubmit={handleSubmit} className="space-y-4">
-        {formError && (
-          <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg flex items-center gap-2 text-xs text-rose-700 font-medium">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            <span>{formError}</span>
-          </div>
-        )}
+      <div ref={formContainerRef}>
+        <form id="book-appointment-form" onSubmit={handleSubmit} className="space-y-4 font-sans font-medium text-slate-800">
+          {formError && (
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg flex items-center gap-2 text-xs text-rose-700 font-semibold animate-in fade-in">
+              <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
+              <span>{formError}</span>
+            </div>
+          )}
 
-        {!isReschedule && (
-          <div className="space-y-3">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-[#08775A]">Patient</h3>
-            <RadioGroup
-              name="patientType"
-              inline
-              value={patientType}
-              onChange={(v) => {
-                setPatientType(v as 'SELF_PAY' | 'PANEL');
-                setSelectedPanelPatient(null);
-                setPanelSearch('');
-              }}
-              options={[
-                { value: 'SELF_PAY', label: 'Self-Pay' },
-                { value: 'PANEL', label: 'Corporate / Panel' },
-              ]}
-            />
-
-            {patientType === 'PANEL' ? (
-              selectedPanelPatient ? (
-                <div className="flex items-center justify-between p-3 bg-[#effaf5] border border-[#c2e7db] rounded-lg">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-slate-900 text-sm">{selectedPanelPatient.fullName}</span>
-                      {selectedPanelPatient.status === 'ACTIVE' ? (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-100 text-emerald-800">
-                          <ShieldCheck className="h-3 w-3" /> Active Membership
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-100 text-rose-800">
-                          <ShieldAlert className="h-3 w-3" /> {selectedPanelPatient.status}
-                        </span>
-                      )}
+          {!isReschedule && (
+            <div className="space-y-4">
+              {/* 1. Category Selection: 2 Large Prominent Cards */}
+              <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs space-y-2.5">
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
+                  1. Patient Category &amp; Billing
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* New Patient (Self Pay) Card */}
+                  <button
+                    type="button"
+                    onClick={() => setPayerType('Self Pay')}
+                    className={`p-3 rounded-xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${
+                      payerType === 'Self Pay'
+                        ? 'border-[#08775A] bg-[#effaf5] shadow-xs ring-1 ring-[#08775A]/20'
+                        : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                    }`}
+                  >
+                    <div
+                      className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
+                        payerType === 'Self Pay' ? 'bg-[#08775A] text-white shadow-xs' : 'bg-slate-100 text-slate-500'
+                      }`}
+                    >
+                      <UserPlus className="h-4 w-4" />
                     </div>
-                    <span className="text-[11px] text-slate-500">
-                      {selectedPanelPatient.mrNumber} • {selectedPanelPatient.primaryPhone} • {selectedPanelPatient.panelName} (
-                      {selectedPanelPatient.panelMemberId || 'no member ID'})
-                    </span>
-                  </div>
-                  <button type="button" onClick={() => setSelectedPanelPatient(null)} className="text-xs font-semibold text-slate-500 hover:text-rose-600">
-                    Change
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-xs text-slate-900">New Patient</span>
+                        {payerType === 'Self Pay' && <CheckCircle2 className="h-4 w-4 text-[#08775A] shrink-0" />}
+                      </div>
+                      <p className="text-[11px] font-semibold text-[#08775A] mt-0.5">Self Pay / General Appointment</p>
+                      <span className="text-[10px] text-slate-500 block mt-0.5 leading-tight">
+                        Cash or Card. Immediate consultation booking.
+                      </span>
+                    </div>
+                  </button>
+
+                  {/* Panel Patient Card */}
+                  <button
+                    type="button"
+                    onClick={() => setPayerType('Corporate / Panel')}
+                    className={`p-3 rounded-xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${
+                      payerType === 'Corporate / Panel'
+                        ? 'border-amber-500 bg-amber-50/70 shadow-xs ring-1 ring-amber-500/20'
+                        : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                    }`}
+                  >
+                    <div
+                      className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
+                        payerType === 'Corporate / Panel' ? 'bg-amber-600 text-white shadow-xs' : 'bg-slate-100 text-slate-500'
+                      }`}
+                    >
+                      <Building2 className="h-4 w-4" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-xs text-slate-900">Panel Patient</span>
+                        {payerType === 'Corporate / Panel' && <CheckCircle2 className="h-4 w-4 text-amber-600 shrink-0" />}
+                      </div>
+                      <p className="text-[11px] font-semibold text-amber-800 mt-0.5">Corporate / Insurance</p>
+                      <span className="text-[10px] text-slate-500 block mt-0.5 leading-tight">
+                        Credit encounter backed by company tariff.
+                      </span>
+                    </div>
                   </button>
                 </div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" />
-                    <input
-                      type="text"
-                      value={panelSearch}
-                      onChange={(e) => setPanelSearch(e.target.value)}
-                      placeholder="Search Panel Patient Registry — name, MRN or phone…"
-                      className="w-full text-xs pl-8.5 pr-3 py-2 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-[#149E75]"
-                    />
-                  </div>
-                  {panelSearchResults.length > 0 && (
-                    <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-48 overflow-y-auto">
-                      {panelSearchResults.map((p) => (
-                        <button
-                          key={p.id}
-                          type="button"
-                          onClick={() => {
-                            setSelectedPanelPatient(p);
-                            setPanelSearch('');
-                          }}
-                          className="w-full text-left px-3 py-2 hover:bg-slate-50 text-xs flex items-center justify-between"
-                        >
-                          <div>
-                            <span className="font-semibold text-slate-900">{p.fullName}</span>
-                            <span className="text-slate-400 ml-2">
-                              {p.mrNumber} • {p.panelName}
-                            </span>
-                          </div>
-                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${p.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
-                            {p.status}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <TextInput label="Full Name" required value={selfPay.fullName} onChange={(e) => setSelfPay({ ...selfPay, fullName: e.target.value })} />
-                <TextInput label="Father / Guardian" value={selfPay.guardianName} onChange={(e) => setSelfPay({ ...selfPay, guardianName: e.target.value })} />
-                <TextInput label="Phone" required value={selfPay.phone} onChange={(e) => setSelfPay({ ...selfPay, phone: e.target.value })} />
-                <TextInput label="CNIC (optional)" value={selfPay.cnicOrPassport} onChange={(e) => setSelfPay({ ...selfPay, cnicOrPassport: e.target.value })} />
-                <Select
-                  label="Gender"
-                  options={[{ label: 'Male', value: 'Male' }, { label: 'Female', value: 'Female' }, { label: 'Other', value: 'Other' }]}
-                  value={selfPay.gender}
-                  onChange={(e) => setSelfPay({ ...selfPay, gender: e.target.value })}
-                />
-                <TextInput label="Date of Birth" type="date" value={selfPay.dob} onChange={(e) => setSelfPay({ ...selfPay, dob: e.target.value })} />
-                <p className="sm:col-span-2 text-[11px] text-slate-500">
-                  This is a temporary, per-visit identity — no permanent Patient Registry record is created for Self-Pay.
-                </p>
               </div>
-            )}
-          </div>
-        )}
 
-        <div className="space-y-3 pt-2 border-t border-slate-100">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-[#08775A]">Appointment</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Select
-              label="Department"
-              required
-              options={departments.map((d) => ({ label: d.name, value: d.id }))}
-              value={departmentId}
-              onChange={(e) => handleDepartmentChange(e.target.value)}
-            />
-            <Select
-              label="Doctor"
-              required
-              hint="Active doctors, preferring the selected department"
-              options={departmentDoctors.map((d) => ({ label: `${d.fullName} (${d.designation})`, value: d.id }))}
-              value={doctorStaffId}
-              onChange={(e) => setDoctorStaffId(e.target.value)}
-            />
-            <Select
-              label="Service"
-              required
-              options={departmentServices.map((s) => ({ label: `${s.name} — ${formatPKR(s.standardRate)}`, value: s.id }))}
-              value={serviceRateId}
-              onChange={(e) => setServiceRateId(e.target.value)}
-            />
-            <div className="grid grid-cols-2 gap-2">
-              <TextInput label="Date" type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
-              <TextInput label="Time" type="time" required value={time} onChange={(e) => setTime(e.target.value)} />
-            </div>
-          </div>
-          <Textarea label="Reason / Notes (optional)" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
-        </div>
-
-        {selectedService && (
-          <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-1.5">
-            <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Billing Preview</h4>
-            <div className="flex justify-between text-xs">
-              <span className="text-slate-500">Standard Service Fee</span>
-              <span className="font-semibold text-slate-800">{formatPKR(grossFee)}</span>
-            </div>
-            {patientType === 'PANEL' && selectedPanelPatient && (
-              <>
-                <div className="flex justify-between text-xs">
-                  <span className="text-slate-500">Panel Coverage</span>
-                  <span className="font-semibold text-slate-800">
-                    {panelPreview?.covered ? `${panelPreview.coveragePercent}% (${formatPKR(panelPreview.panelReceivable)})` : 'Not Covered'}
+              {/* 2. Patient Demographics Form (All fields auto-capitalized + Enter advances) */}
+              <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-3.5">
+                <div className="flex items-center justify-between pb-2.5 border-b border-slate-100">
+                  <span className="text-xs font-bold text-slate-800 uppercase tracking-wide flex items-center gap-1.5">
+                    <User className="h-3.5 w-3.5 text-[#08775A]" /> 2. Patient Information
+                  </span>
+                  <span className="text-[10.5px] text-slate-500 font-semibold bg-slate-100 px-2 py-0.5 rounded">
+                    {payerType === 'Corporate / Panel' ? 'Panel Registration' : 'Fast Entry'}
                   </span>
                 </div>
-                {panelPreview?.preauthRequired && (
-                  <p className="text-[10px] text-amber-700 font-medium">⚠ Preauthorization required by panel contract.</p>
-                )}
-                <div className="flex justify-between text-xs">
-                  <span className="text-slate-500">Panel Receivable</span>
-                  <span className="font-semibold text-purple-700">{formatPKR(panelPreview?.panelReceivable ?? 0)}</span>
-                </div>
-              </>
-            )}
-            <div className="flex justify-between text-xs pt-1.5 border-t border-slate-200">
-              <span className="font-semibold text-slate-700">{patientType === 'PANEL' ? 'Patient Share' : 'Patient Payable'}</span>
-              <span className="font-bold text-[#08775A]">{formatPKR(patientPayable)}</span>
-            </div>
-          </div>
-        )}
 
-        {!isReschedule && (
-          <div className="space-y-3 pt-2 border-t border-slate-100">
-            <Toggle label="Collect Advance Now?" checked={collectAdvance} onChange={setCollectAdvance} />
-            {collectAdvance && (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <NumberInput
-                  label="Amount"
+                {/* Full Name & Father / Guardian */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <TextInput
+                    label="Patient Full Name"
+                    required
+                    placeholder="Patient's legal name"
+                    className="uppercase"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value.toUpperCase())}
+                    onKeyDown={handleEnterNext}
+                  />
+                  <TextInput
+                    label="Father / Guardian Name"
+                    required
+                    placeholder="Father / Husband / Guardian"
+                    className="uppercase"
+                    value={fatherGuardianName}
+                    onChange={(e) => setFatherGuardianName(e.target.value.toUpperCase())}
+                    onKeyDown={handleEnterNext}
+                  />
+                </div>
+
+                {/* Contact Phone, Age, and CNIC */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <TextInput
+                    label="Contact Phone"
+                    required
+                    placeholder="0300-1234567"
+                    value={primaryPhone}
+                    onChange={(e) => setPrimaryPhone(e.target.value)}
+                    onKeyDown={handleEnterNext}
+                  />
+                  <TextInput
+                    label="Age (Years)"
+                    required
+                    type="number"
+                    min="0"
+                    max="130"
+                    placeholder="e.g. 28"
+                    value={age}
+                    onChange={(e) => setAge(e.target.value)}
+                    onKeyDown={handleEnterNext}
+                  />
+                  <CNICInput
+                    label="CNIC (optional)"
+                    placeholder="XXXXX-XXXXXXX-X"
+                    value={cnic}
+                    onChange={(e) => setCnic(e.target.value)}
+                    onKeyDown={handleEnterNext}
+                  />
+                </div>
+
+                {/* Gender Pills */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Gender <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="flex gap-2">
+                    {(['Male', 'Female', 'Other / Not Specified'] as PatientGender[]).map((g) => (
+                      <button
+                        key={g}
+                        type="button"
+                        onClick={() => setGender(g)}
+                        className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all cursor-pointer ${
+                          gender === g
+                            ? 'bg-[#08775A] text-white border-[#08775A] shadow-xs font-bold'
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        {g === 'Other / Not Specified' ? 'Other' : g}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Corporate / Panel Specific Fields (Amber box, auto-capitalized) */}
+                {payerType === 'Corporate / Panel' && (
+                  <div className="pt-3 border-t border-amber-200 space-y-3 bg-amber-50/40 p-3.5 rounded-xl animate-in fade-in">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-amber-900">
+                      <Building2 className="h-3.5 w-3.5 text-amber-600" />
+                      <span>Panel Contract &amp; Card Information</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <Select
+                        label="Corporate Panel"
+                        required
+                        options={[
+                          { label: '-- Select Corporate Panel --', value: '' },
+                          ...corporatePanels.map((p) => ({ label: `${p.name} (${p.code})`, value: p.id })),
+                        ]}
+                        value={panelId}
+                        onChange={(e) => {
+                          setPanelId(e.target.value);
+                          panelDropdownOpenRef.current = false;
+                          if (e.target.value) {
+                            focusNextField(e.currentTarget, formContainerRef.current);
+                          }
+                        }}
+                        onKeyDown={(e) => handleSelectKeyDown(e, panelDropdownOpenRef)}
+                        onBlur={() => {
+                          panelDropdownOpenRef.current = false;
+                        }}
+                      />
+                      <TextInput
+                        label="Panel Member ID / Card #"
+                        required
+                        placeholder="e.g. EMP-99214 / CRD-4412"
+                        className="uppercase"
+                        value={panelMemberId}
+                        onChange={(e) => setPanelMemberId(e.target.value.toUpperCase())}
+                        onKeyDown={handleEnterNext}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 3. Encounter Service & Consulting Doctor */}
+          <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 space-y-3.5 shadow-xs">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                <Stethoscope className="h-4 w-4 text-[#08775A]" /> 3. Service Type &amp; Consulting Doctor
+              </span>
+              <div className="flex items-center gap-2">
+                {encounterType && (
+                  <span className="text-[10.5px] text-[#08775A] font-semibold bg-[#effaf5] border border-emerald-200 px-2 py-0.5 rounded">
+                    {encounterType === 'OPD'
+                      ? 'OPD Consultation'
+                      : encounterType === 'OBSERVATION'
+                      ? 'Observation Care'
+                      : 'Emergency Triage'}
+                  </span>
+                )}
+                {selectedDept && (
+                  <span className="text-[11px] font-semibold text-slate-500">
+                    Dept: <strong className="text-slate-800">{selectedDept.name}</strong>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Encounter Service Dropdown (User must select first) */}
+              <div className="sm:col-span-2">
+                <Select
+                  label="Encounter Service"
                   required
-                  min={1}
-                  value={advanceAmount}
-                  onChange={(e) => setAdvanceAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                  options={[
+                    { label: '-- Select Service Type --', value: '' },
+                    { label: 'OPD Consultation', value: 'OPD' },
+                    { label: 'Observation Care', value: 'OBSERVATION' },
+                    { label: 'Emergency Triage', value: 'EMERGENCY' },
+                  ]}
+                  value={encounterType}
+                  onChange={(e) => {
+                    const newType = e.target.value as 'OPD' | 'OBSERVATION' | 'EMERGENCY' | '';
+                    setEncounterType(newType);
+                    serviceTypeDropdownOpenRef.current = false;
+                    if (newType) {
+                      focusNextField(e.currentTarget, formContainerRef.current);
+                    }
+                  }}
+                  onKeyDown={(e) => handleSelectKeyDown(e, serviceTypeDropdownOpenRef)}
+                  onBlur={() => {
+                    serviceTypeDropdownOpenRef.current = false;
+                  }}
+                  hint="Select service first so only doctors from that department appear below."
                 />
-                <Select label="Payment Method" required options={PAYMENT_METHODS} value={advanceMethod} onChange={(e) => setAdvanceMethod(e.target.value as AppointmentPaymentMethod)} />
-                <TextInput label="Reference (optional)" value={advanceReference} onChange={(e) => setAdvanceReference(e.target.value)} />
+              </div>
+
+              {/* Consulting Doctor Dropdown (Filtered to doctors with matching department capability) */}
+              <div className="sm:col-span-2">
+                <Select
+                  label="Consulting Doctor"
+                  required
+                  disabled={!encounterType}
+                  options={
+                    !encounterType
+                      ? [{ label: '-- Please Select Service Type Above First --', value: '' }]
+                      : doctorsForEncounterType.length === 0
+                      ? [{ label: '-- No Doctors Found for this Department/Service --', value: '' }]
+                      : [
+                          { label: '-- Select Consulting Doctor --', value: '' },
+                          ...doctorsForEncounterType.map((d) => {
+                            const depts = getDoctorDepts(d);
+                            const matching = encounterDeptFlag ? depts.filter((dp) => dp[encounterDeptFlag]) : depts;
+                            const deptStr = (matching.length > 0 ? matching : depts).map((dep) => dep.name).join(', ');
+                            return {
+                              label: `${d.fullName} (${d.designation || 'Consultant'}${deptStr ? ` — ${deptStr}` : ''})`,
+                              value: d.id,
+                            };
+                          }),
+                        ]
+                  }
+                  value={doctorStaffId}
+                  onChange={(e) => {
+                    handleDoctorChange(e.target.value);
+                    doctorDropdownOpenRef.current = false;
+                    if (e.target.value) {
+                      focusNextField(e.currentTarget, formContainerRef.current);
+                    }
+                  }}
+                  onKeyDown={(e) => handleSelectKeyDown(e, doctorDropdownOpenRef)}
+                  onBlur={() => {
+                    doctorDropdownOpenRef.current = false;
+                  }}
+                />
+              </div>
+
+              {/* Date & Time Slot */}
+              <TextInput
+                label="Appointment Date"
+                type="date"
+                required
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                onKeyDown={handleEnterNext}
+              />
+              <TextInput
+                label="Time Slot"
+                type="time"
+                required
+                value={time}
+                onChange={(e) => setTime(e.target.value)}
+                onKeyDown={handleEnterNext}
+              />
+            </div>
+
+            {/* Fee & Department Auto-Resolution Summary Box */}
+            {selectedDoctor && selectedService && (
+              <div className="p-3 bg-[#effaf5] border border-[#c2e7db] rounded-lg flex items-center justify-between text-xs">
+                <div className="space-y-0.5">
+                  <span className="text-slate-500 font-semibold block">Consultation Service:</span>
+                  <span className="font-bold text-slate-900 text-sm">{selectedService.name}</span>
+                  {panelPreview && (
+                    <span className="text-[11px] text-amber-800 font-semibold block">
+                      {panelPreview.covered ? `Panel Coverage: ${panelPreview.coveragePercent}%` : 'Not Covered by Panel Tariff'}
+                    </span>
+                  )}
+                </div>
+                <div className="text-right">
+                  <span className="text-slate-500 font-semibold block">
+                    {payerType === 'Corporate / Panel' ? 'Patient Payable Share:' : 'Consultation Fee:'}
+                  </span>
+                  <span className="font-extrabold text-[#08775A] text-base">{formatPKR(patientPayable)}</span>
+                </div>
               </div>
             )}
+
+            <Textarea
+              label="Notes / Reason for Visit (optional)"
+              rows={2}
+              placeholder="e.g. Follow-up consultation, fever, BP review, referral note..."
+              className="uppercase"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value.toUpperCase())}
+            />
           </div>
-        )}
-      </form>
+
+          {/* 4. Optional Advance Collection */}
+          {!isReschedule && (
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <Wallet className="h-4 w-4 text-[#08775A]" /> Collect Advance / Token Fee?
+                </span>
+                <Toggle checked={collectAdvance} onChange={setCollectAdvance} />
+              </div>
+
+              {collectAdvance && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-200/80 animate-in fade-in">
+                  <NumberInput
+                    label="Advance Amount (PKR)"
+                    required
+                    min={1}
+                    placeholder={`Max ${patientPayable}`}
+                    value={advanceAmount}
+                    onChange={(e) => setAdvanceAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                    onKeyDown={handleEnterNext}
+                  />
+                  <Select
+                    label="Payment Method"
+                    required
+                    options={PAYMENT_METHODS}
+                    value={advanceMethod}
+                    onChange={(e) => {
+                      setAdvanceMethod(e.target.value as AppointmentPaymentMethod);
+                      paymentMethodDropdownOpenRef.current = false;
+                      if (e.target.value) {
+                        focusNextField(e.currentTarget, formContainerRef.current);
+                      }
+                    }}
+                    onKeyDown={(e) => handleSelectKeyDown(e, paymentMethodDropdownOpenRef)}
+                    onBlur={() => {
+                      paymentMethodDropdownOpenRef.current = false;
+                    }}
+                  />
+                  <TextInput
+                    label="Reference (optional)"
+                    placeholder="Receipt # / Auth code"
+                    className="uppercase"
+                    value={advanceReference}
+                    onChange={(e) => setAdvanceReference(e.target.value.toUpperCase())}
+                    onKeyDown={handleEnterNext}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+        </form>
+      </div>
     </Modal>
   );
 };

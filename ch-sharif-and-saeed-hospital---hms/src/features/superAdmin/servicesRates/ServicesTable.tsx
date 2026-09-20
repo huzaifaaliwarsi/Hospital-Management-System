@@ -99,9 +99,7 @@ export const ServicesTable: React.FC<ServicesTableProps> = ({
           </thead>
           <tbody className="divide-y divide-slate-100 text-xs">
             {services.map((service) => {
-              const isLinked =
-                (service.linkedInvoiceCount ?? 0) > 0 ||
-                (service.linkedPanelRuleCount ?? 0) > 0;
+              const isLinked = (service.linkedInvoiceCount ?? 0) > 0;
 
               return (
                 <tr

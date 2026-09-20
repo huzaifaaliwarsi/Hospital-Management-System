@@ -31,11 +31,12 @@ export const GUARDIAN_RELATIONS: GuardianRelation[] = [
 
 export interface Patient {
   id: string;
-  mrNumber: string; // Permanent, unique (e.g. MR-2026-000001)
+  mrNumber: string; // Permanent, unique (e.g. MR-000001)
 
   fullName: string;
   fatherGuardianName: string;
   guardianRelation: GuardianRelation;
+  guardianCnic?: string;
 
   dateOfBirth?: string; // YYYY-MM-DD
   age: number;
@@ -84,6 +85,7 @@ export interface PatientFormData {
   fullName: string;
   fatherGuardianName: string;
   guardianRelation: GuardianRelation;
+  guardianCnic?: string;
 
   dateOfBirth: string;
   age: number | string;

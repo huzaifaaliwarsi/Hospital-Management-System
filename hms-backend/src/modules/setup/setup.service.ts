@@ -325,6 +325,136 @@ export const setupService = {
     return (await this.decorateDepartments([updated as any]))[0];
   },
 
+  async deleteDepartment(id: string) {
+    const dept = (await this.assertExists('department', id)) as any;
+
+    const code = (dept.code || '').trim().toUpperCase();
+    const name = (dept.name || '').trim().toUpperCase();
+    const isProtected =
+      ['OPD', 'ER', 'OBS', 'GEN-OPD', 'EMERGENCY', 'OBSERVATION'].includes(code) ||
+      ['OPD', 'ER', 'OBS', 'EMERGENCY', 'OBSERVATION', 'EMERGENCY ROOM', 'OUTPATIENT DEPARTMENT', 'OBSERVATION WARD'].includes(name) ||
+      name.startsWith('OPD ') ||
+      name.startsWith('EMERGENCY ') ||
+      name.startsWith('OBSERVATION ');
+
+    if (isProtected) {
+      throw new ValidationError(
+        `Core care department "${dept.name}" (${dept.code}) is protected by the hospital system and cannot be deleted.`
+      );
+    }
+
+    // Find a fallback active department to safely preserve and reassign staff/doctors (Doctors/staff are NEVER deleted)
+    let fallbackDept = await prisma.department.findFirst({
+      where: { id: { not: id }, isActive: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!fallbackDept) {
+      fallbackDept = await prisma.department.findFirst({
+        where: { id: { not: id } },
+        orderBy: { createdAt: 'asc' },
+      });
+    }
+    if (!fallbackDept) {
+      fallbackDept = await prisma.department.create({
+        data: {
+          name: 'General OPD',
+          code: 'GEN-OPD',
+          departmentType: 'CLINICAL',
+          supportsOpd: true,
+          isActive: true,
+        },
+      });
+    }
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        // 1. Reassign all staff and doctors to the fallback department (DO NOT DELETE STAFF/DOCTORS)
+        await tx.staff.updateMany({
+          where: { departmentId: id },
+          data: { departmentId: fallbackDept.id },
+        });
+
+        // 2. Reassign any wards to fallback department
+        await tx.ward.updateMany({
+          where: { departmentId: id },
+          data: { departmentId: fallbackDept.id },
+        });
+
+        // 3. Reassign any appointments to fallback department
+        await tx.appointment.updateMany({
+          where: { departmentId: id },
+          data: { departmentId: fallbackDept.id },
+        });
+
+        // 4. Reassign any admissions to fallback department
+        await tx.admissionRecord.updateMany({
+          where: { departmentId: id },
+          data: { departmentId: fallbackDept.id },
+        });
+
+        // 5. Reassign service rates to fallback department
+        await tx.serviceRate.updateMany({
+          where: { departmentId: id },
+          data: { departmentId: fallbackDept.id },
+        });
+
+        // 6. Unlink hospital invoices
+        await tx.hospitalInvoice.updateMany({
+          where: { departmentId: id },
+          data: { departmentId: null },
+        });
+
+        // 7. Unlink provider settlements
+        await tx.providerSettlement.updateMany({
+          where: { departmentId: id },
+          data: { departmentId: null },
+        });
+
+        // 8. Clean up requisitions
+        const reqs = await tx.departmentRequisition.findMany({
+          where: { departmentId: id },
+          select: { id: true },
+        });
+        if (reqs.length > 0) {
+          const reqIds = reqs.map((r) => r.id);
+          await tx.departmentRequisitionLine.deleteMany({
+            where: { departmentRequisitionId: { in: reqIds } },
+          });
+          await tx.departmentRequisition.deleteMany({
+            where: { id: { in: reqIds } },
+          });
+        }
+
+        // 9. Clean up department-specific history & assignments
+        await tx.staffEmploymentHistory.deleteMany({
+          where: { departmentId: id },
+        });
+
+        await tx.staffDepartment.deleteMany({
+          where: { departmentId: id },
+        });
+
+        await tx.shift.deleteMany({
+          where: { departmentId: id },
+        });
+
+        // 10. Clear headStaff link on this department before deletion
+        await tx.department.update({
+          where: { id },
+          data: { headStaffId: null },
+        });
+
+        // 11. Delete the department itself
+        await tx.department.delete({ where: { id } });
+      });
+    } catch (error: any) {
+      this.rethrowFkError(
+        error,
+        `Department "${dept.name}" could not be deleted due to active database constraints.`
+      );
+    }
+  },
+
   // ── Service Rates ────────────────────────────────────────────────────
   serviceRateInclude: {
     department: { select: { id: true, name: true, code: true } },
@@ -342,13 +472,25 @@ export const setupService = {
       }
     >,
   ) {
-    return rows.map((row) => ({
-      ...row,
-      linkedInvoiceCount: row._count.invoiceLines,
-      linkedPanelRuleCount: row._count.panelDiscountRules,
-      createdByLabel: formatActorFromRelation(row.createdByUser),
-      updatedByLabel: formatActorFromRelation(row.updatedByUser),
-    }));
+    return rows.map((row) => {
+      const category = (row.category as string) || '';
+      const fallbackStream =
+        category.toLowerCase().includes('lab') ||
+        category.toLowerCase().includes('diagnostic') ||
+        category.toLowerCase().includes('radiology')
+          ? 'LAB'
+          : 'HOSPITAL';
+      const serviceStream = (row.serviceStream as string) || fallbackStream;
+
+      return {
+        ...row,
+        serviceStream,
+        linkedInvoiceCount: row._count.invoiceLines,
+        linkedPanelRuleCount: row._count.panelDiscountRules,
+        createdByLabel: formatActorFromRelation(row.createdByUser),
+        updatedByLabel: formatActorFromRelation(row.updatedByUser),
+      };
+    });
   },
 
   async listServiceRates(activeOnly = false) {
@@ -362,9 +504,20 @@ export const setupService = {
 
   async createServiceRate(body: CreateServiceRateBody, createdById: string) {
     const code = normalizeCode(body.code) ?? (await generateUniqueCode('serviceRate', 'SRV'));
+    if (body.isDefaultEncounterService && body.encounterType && body.encounterType !== 'NONE') {
+      await prisma.serviceRate.updateMany({
+        where: { encounterType: body.encounterType },
+        data: { isDefaultEncounterService: false },
+      });
+    }
     try {
       const created = await prisma.serviceRate.create({
-        data: { ...body, code, createdById },
+        data: {
+          ...body,
+          code,
+          createdById,
+          serviceStream: body.serviceStream ?? 'HOSPITAL',
+        },
         include: this.serviceRateInclude,
       });
       return this.decorateServiceRates([created as any])[0];
@@ -378,6 +531,13 @@ export const setupService = {
 
   async updateServiceRate(id: string, body: UpdateServiceRateBody, updatedById: string) {
     const existing = await this.assertExists('serviceRate', id);
+    if (body.isDefaultEncounterService && (body.encounterType ?? (existing as any).encounterType) && (body.encounterType ?? (existing as any).encounterType) !== 'NONE') {
+      const encType = body.encounterType ?? (existing as any).encounterType;
+      await prisma.serviceRate.updateMany({
+        where: { encounterType: encType, id: { not: id } },
+        data: { isDefaultEncounterService: false },
+      });
+    }
     const data: Prisma.ServiceRateUncheckedUpdateInput = { ...body, code: normalizeCode(body.code), updatedById };
     if (body.isActive !== undefined && body.isActive !== (existing as { isActive: boolean }).isActive) {
       data.statusChangedAt = new Date();
@@ -404,6 +564,48 @@ export const setupService = {
       include: this.serviceRateInclude,
     });
     return this.decorateServiceRates([updated as any])[0];
+  },
+
+  async deleteServiceRate(id: string) {
+    const service = (await this.assertExists('serviceRate', id)) as any;
+
+    const invoiceLineCount = await prisma.invoiceLineItem.count({
+      where: { serviceRateId: id },
+    });
+
+    if (invoiceLineCount > 0) {
+      throw new ConflictError(
+        `Cannot delete service "${service.name}": It is used in ${invoiceLineCount} posted billing invoice(s). You can deactivate it instead.`
+      );
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.panelDiscountRule.deleteMany({
+        where: { serviceRateId: id },
+      });
+
+      await tx.doctorCommissionRule.deleteMany({
+        where: { serviceRateId: id },
+      });
+
+      const linkedAppointments = await tx.appointment.count({
+        where: { serviceRateId: id },
+      });
+      if (linkedAppointments > 0) {
+        const fallbackService = await tx.serviceRate.findFirst({
+          where: { id: { not: id }, isActive: true },
+          orderBy: { createdAt: 'asc' },
+        });
+        if (fallbackService) {
+          await tx.appointment.updateMany({
+            where: { serviceRateId: id },
+            data: { serviceRateId: fallbackService.id },
+          });
+        }
+      }
+
+      await tx.serviceRate.delete({ where: { id } });
+    });
   },
 
   // ── Wards / Rooms / Beds (Department → Ward → Room → Bed, §4.2) ─────
@@ -489,8 +691,19 @@ export const setupService = {
 
   async createWard(body: CreateWardBody, createdById: string) {
     const code = normalizeCode(body.code) ?? (await generateUniqueCode('ward', 'WRD'));
+    let departmentId = body.departmentId;
+    if (!departmentId) {
+      const defaultDept = await prisma.department.findFirst({
+        where: { isActive: true },
+        orderBy: { name: 'asc' },
+      });
+      if (!defaultDept) {
+        throw new ValidationError('No active department found to associate with ward.');
+      }
+      departmentId = defaultDept.id;
+    }
     try {
-      return await prisma.ward.create({ data: { ...body, code, createdById } });
+      return await prisma.ward.create({ data: { ...body, departmentId, code, createdById } });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         throw new ConflictError(`Ward code "${code}" already exists.`);

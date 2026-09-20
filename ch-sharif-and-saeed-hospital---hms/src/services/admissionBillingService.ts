@@ -118,13 +118,185 @@ export async function collectAdmissionPayment(
     reference?: string;
     allocations?: { invoiceId: string; amount: number }[];
   },
-): Promise<{ allocations: { invoiceId: string; amount: number }[] }> {
+): Promise<{ allocations: { invoiceId: string | null; amount: number }[] }> {
   try {
-    const res = await apiClient.post<{ data: { allocations: { invoiceId: string; amount: string | number }[] } }>(
+    const res = await apiClient.post<{ data: { allocations: { invoiceId: string | null; amount: string | number }[] } }>(
       `/admission-billing/${admissionId}/collect-payment`,
       values,
     );
     return { allocations: res.data.data.allocations.map((a) => ({ invoiceId: a.invoiceId, amount: Number(a.amount) })) };
+  } catch (err) {
+    throw new Error(toErrorMessage(err));
+  }
+}
+
+/**
+ * Admission Patient Records + Running Ledger (Front Desk) — one row per
+ * checked-in admission (not per department invoice), and one flattened
+ * chronological ledger per admission across every department invoice's
+ * lines AND every payment receipt (allocated or unallocated advance/
+ * deposit) — backed by `/api/v1/admission-billing/records` and
+ * `/api/v1/admission-billing/:id/ledger`.
+ */
+
+export type AdmissionBillingStatus = 'NO_CHARGES' | 'UNPAID' | 'PARTIALLY_PAID' | 'PAID';
+
+export interface AdmissionPatientRecordRow {
+  id: string;
+  admissionNumber: string;
+  patientName: string;
+  patientMrNumber: string | null;
+  payerType: 'PANEL' | 'SELF_PAY';
+  admittedAt: string | null;
+  ward: string | null;
+  room: string | null;
+  bed: string | null;
+  currentCharges: number;
+  totalPaid: number;
+  outstanding: number;
+  availableCredit: number;
+  clinicalStatus: string;
+  billingStatus: AdmissionBillingStatus;
+}
+
+export interface AdmissionLedgerEntry {
+  date: string;
+  type: string;
+  department: string | null;
+  description: string;
+  qty: number | null;
+  rate: number | null;
+  debit: number;
+  credit: number;
+  runningBalance: number;
+  reference: string;
+  postedBy: string | null;
+}
+
+export interface AdmissionLedgerPanelFigures {
+  grossCharges: number;
+  patientShare: number;
+  panelReceivable: number;
+  patientPaid: number;
+  panelRealized: number;
+  patientOutstanding: number;
+  panelOutstanding: number;
+}
+
+export interface AdmissionLedger {
+  admissionId: string;
+  admissionNumber: string;
+  status: string;
+  payerType: 'PANEL' | 'SELF_PAY';
+  patientName: string;
+  patientMrNumber: string | null;
+  panelName: string | null;
+  admittedAt: string | null;
+  ward: string | null;
+  room: string | null;
+  bed: string | null;
+  finalBillNumber: string | null;
+  finalBillGeneratedAt: string | null;
+  entries: AdmissionLedgerEntry[];
+  summary: {
+    totalCharges: number;
+    totalPaid: number;
+    outstandingBalance: number;
+    availableCredit: number;
+  };
+  panel: AdmissionLedgerPanelFigures | null;
+}
+
+function toRecordRow(raw: Record<string, any>): AdmissionPatientRecordRow {
+  return {
+    id: raw.id,
+    admissionNumber: raw.admissionNumber,
+    patientName: raw.patientName,
+    patientMrNumber: raw.patientMrNumber ?? null,
+    payerType: raw.payerType,
+    admittedAt: raw.admittedAt,
+    ward: raw.ward ?? null,
+    room: raw.room ?? null,
+    bed: raw.bed ?? null,
+    currentCharges: toNumber(raw.currentCharges),
+    totalPaid: toNumber(raw.totalPaid),
+    outstanding: toNumber(raw.outstanding),
+    availableCredit: toNumber(raw.availableCredit),
+    clinicalStatus: raw.clinicalStatus,
+    billingStatus: raw.billingStatus,
+  };
+}
+
+function toLedger(raw: Record<string, any>): AdmissionLedger {
+  return {
+    admissionId: raw.admissionId,
+    admissionNumber: raw.admissionNumber,
+    status: raw.status,
+    payerType: raw.payerType,
+    patientName: raw.patientName,
+    patientMrNumber: raw.patientMrNumber ?? null,
+    panelName: raw.panelName ?? null,
+    admittedAt: raw.admittedAt,
+    ward: raw.ward ?? null,
+    room: raw.room ?? null,
+    bed: raw.bed ?? null,
+    finalBillNumber: raw.finalBillNumber ?? null,
+    finalBillGeneratedAt: raw.finalBillGeneratedAt ?? null,
+    entries: (raw.entries || []).map((e: any) => ({
+      date: e.date,
+      type: e.type,
+      department: e.department ?? null,
+      description: e.description,
+      qty: e.qty != null ? toNumber(e.qty) : null,
+      rate: e.rate != null ? toNumber(e.rate) : null,
+      debit: toNumber(e.debit),
+      credit: toNumber(e.credit),
+      runningBalance: toNumber(e.runningBalance),
+      reference: e.reference,
+      postedBy: e.postedBy ?? null,
+    })),
+    summary: {
+      totalCharges: toNumber(raw.summary?.totalCharges),
+      totalPaid: toNumber(raw.summary?.totalPaid),
+      outstandingBalance: toNumber(raw.summary?.outstandingBalance),
+      availableCredit: toNumber(raw.summary?.availableCredit),
+    },
+    panel: raw.panel
+      ? {
+          grossCharges: toNumber(raw.panel.grossCharges),
+          patientShare: toNumber(raw.panel.patientShare),
+          panelReceivable: toNumber(raw.panel.panelReceivable),
+          patientPaid: toNumber(raw.panel.patientPaid),
+          panelRealized: toNumber(raw.panel.panelRealized),
+          patientOutstanding: toNumber(raw.panel.patientOutstanding),
+          panelOutstanding: toNumber(raw.panel.panelOutstanding),
+        }
+      : null,
+  };
+}
+
+export async function fetchAdmissionRecords(): Promise<AdmissionPatientRecordRow[]> {
+  try {
+    const res = await apiClient.get<{ data: Record<string, any>[] }>('/admission-billing/records');
+    return res.data.data.map(toRecordRow);
+  } catch (err) {
+    throw new Error(toErrorMessage(err));
+  }
+}
+
+export async function fetchAdmissionLedger(admissionId: string): Promise<AdmissionLedger> {
+  try {
+    const res = await apiClient.get<{ data: Record<string, any> }>(`/admission-billing/${admissionId}/ledger`);
+    return toLedger(res.data.data);
+  } catch (err) {
+    throw new Error(toErrorMessage(err));
+  }
+}
+
+export async function generateFinalBill(admissionId: string): Promise<AdmissionLedger> {
+  try {
+    const res = await apiClient.post<{ data: Record<string, any> }>(`/admission-billing/${admissionId}/generate-final-bill`, {});
+    return toLedger(res.data.data);
   } catch (err) {
     throw new Error(toErrorMessage(err));
   }

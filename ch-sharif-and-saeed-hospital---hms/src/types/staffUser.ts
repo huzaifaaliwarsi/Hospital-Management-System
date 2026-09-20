@@ -53,6 +53,10 @@ export interface StaffUser {
 
   departmentId: string;
   departmentName: string;
+  // Multi-department assignment (junction table) — populated for all staff;
+  // only meaningful / editable for Doctor-category staff.
+  departmentIds: string[];     // all assigned dept IDs including primary
+  departmentNames: string[];   // display names in same order
 
   staffCategory: StaffCategory;
 
@@ -90,6 +94,8 @@ export interface StaffUser {
 
   linkedActivityCount: number;
   notes?: string;
+  baseSalary?: number;
+  commissionEnabled?: boolean;
 }
 
 export interface StaffCredential {
@@ -113,6 +119,8 @@ export interface StaffUserFormValues {
   designation: string;
   departmentId: string;
   departmentName: string;
+  // For Doctor multi-department assignment
+  departmentIds?: string[];
   staffCategory: StaffCategory;
   status: StaffStatus;
 
@@ -127,6 +135,18 @@ export interface StaffUserFormValues {
 
   // v7.2 (HMS_V7.2_NEW_REQUIREMENTS.md §2.3/§3.1) — only meaningful when staffCategory === 'Doctor'.
   doctorSponsoredDiscountTrackingEnabled: boolean;
+
+  // Canonical Salary & Commission compensation integration
+  salaryEnabled?: boolean;
+  salaryBasis?: 'MONTHLY' | 'PER_DAY';
+  baseSalary?: number;
+  salaryEffectiveFrom?: string;
+  commissionEnabled?: boolean;
+
+  // v7.2 Doctor Patient Discharge Credentials (Clinical Discharge Authorization)
+  clinicalAuthUsername?: string;
+  clinicalAuthPassword?: string;
+  clinicalAuthActive?: boolean;
 }
 
 export interface StaffUserFilterState {

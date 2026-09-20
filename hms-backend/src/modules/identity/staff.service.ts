@@ -60,6 +60,13 @@ export const staffService = {
     for (let attempt = 0; attempt < MAX_EMPLOYEE_ID_RETRIES; attempt += 1) {
       const employeeId = await generateNumericEmployeeId(attempt);
       try {
+        // Determine the full list of departments for this staff member.
+        // For Doctors, `body.departmentIds` may include additional depts;
+        // for everyone else it defaults to just the primary departmentId.
+        const allDeptIds: string[] = body.departmentIds && body.departmentIds.length > 0
+          ? Array.from(new Set([body.departmentId, ...body.departmentIds]))
+          : [body.departmentId];
+
         const data: Prisma.StaffCreateInput = {
           employeeId,
           fullName: body.fullName,
@@ -76,6 +83,14 @@ export const staffService = {
           doctorSponsoredDiscountTrackingEnabled: body.doctorSponsoredDiscountTrackingEnabled ?? false,
           createdBy: actorLabel,
           updatedBy: actorLabel,
+          // Populate junction table inline
+          staffDepartments: {
+            create: allDeptIds.map((deptId) => ({
+              departmentId: deptId,
+              isPrimary: deptId === body.departmentId,
+              assignedBy: actorLabel,
+            })),
+          },
         };
         return await staffRepository.create(data);
       } catch (error: unknown) {
@@ -97,6 +112,34 @@ export const staffService = {
       data.department = { connect: { id: body.departmentId } };
       delete (data as Record<string, unknown>).departmentId;
     }
+    // Remove departmentIds from the raw data object (not a Staff column)
+    delete (data as Record<string, unknown>).departmentIds;
+
+    // If departmentIds is supplied, sync the junction table inside a transaction
+    if (body.departmentIds !== undefined || body.departmentId) {
+      const primaryId = body.departmentId;
+      const allDeptIds: string[] = body.departmentIds && body.departmentIds.length > 0
+        ? Array.from(new Set(primaryId ? [primaryId, ...body.departmentIds] : body.departmentIds))
+        : primaryId ? [primaryId] : [];
+
+      return prisma.$transaction(async (tx) => {
+        const updated = await tx.staff.update({ where: { id }, data, include: { department: true, staffDepartments: { select: { id: true, departmentId: true, isPrimary: true, department: { select: { id: true, name: true, code: true } } } }, portalUser: { select: { id: true, username: true, email: true, role: true, status: true, mustResetPassword: true, lastLoginAt: true, passwordResetAt: true, passwordResetBy: true } } } });
+        if (allDeptIds.length > 0) {
+          // Replace all junction rows for this staff member
+          await tx.staffDepartment.deleteMany({ where: { staffId: id } });
+          await tx.staffDepartment.createMany({
+            data: allDeptIds.map((deptId) => ({
+              staffId: id,
+              departmentId: deptId,
+              isPrimary: deptId === (primaryId ?? allDeptIds[0]),
+              assignedBy: actorLabel,
+            })),
+          });
+        }
+        return updated;
+      });
+    }
+
     return staffRepository.update(id, data);
   },
 

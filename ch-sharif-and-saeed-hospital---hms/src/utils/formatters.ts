@@ -44,3 +44,20 @@ export function formatPhone(phone: string): string {
   }
   return phone;
 }
+
+/**
+ * Automatically formats a CNIC string into the standard Pakistani format:
+ * XXXXX-XXXXXXX-X (13 digits with dashes auto-inserted as user types)
+ */
+export function formatCnicInput(raw?: string | null): string {
+  if (!raw) return '';
+  const cleanDigits = raw.replace(/\D/g, '').slice(0, 13);
+  if (cleanDigits.length > 12) {
+    return `${cleanDigits.slice(0, 5)}-${cleanDigits.slice(5, 12)}-${cleanDigits.slice(12)}`;
+  }
+  if (cleanDigits.length > 5) {
+    return `${cleanDigits.slice(0, 5)}-${cleanDigits.slice(5)}`;
+  }
+  return cleanDigits;
+}
+

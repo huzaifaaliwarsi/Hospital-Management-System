@@ -148,7 +148,12 @@ export const AppointmentsView: React.FC = () => {
   const handleCheckIn = async (a: AppointmentRecord) => {
     setCheckingInId(a.id);
     try {
-      const result = await appointmentsApiService.checkInAppointment(a.id, { encounterType: 'OPD' });
+      const encType: 'OPD' | 'OBSERVATION' | 'EMERGENCY' = a.notes?.includes('[EMERGENCY]')
+        ? 'EMERGENCY'
+        : a.notes?.includes('[OBSERVATION]')
+        ? 'OBSERVATION'
+        : 'OPD';
+      const result = await appointmentsApiService.checkInAppointment(a.id, { encounterType: encType });
       toast.success(`${a.patientName} checked in — invoice created.`);
       await load();
       if (result.invoiceId) setInvoiceModalId(result.invoiceId);

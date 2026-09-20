@@ -90,6 +90,14 @@ export const listInvoicesQuerySchema = z.object({
   selfPayEncounterId: z.string().uuid().optional(),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   search: z.string().optional(),
+  // Record-type filters for the Discounts / Refunds / Payments-Receipts nav
+  // items — server-side, not client-side, so a discounted/refunded invoice
+  // outside the latest-100 default window still shows up (§ correctness).
+  hasDiscount: z.enum(['true', 'false']).optional(),
+  hasRefund: z.enum(['true', 'false']).optional(),
+  hasPayment: z.enum(['true', 'false']).optional(),
+  /** Outstanding Balances nav item — UNPAID or PARTIALLY_PAID only (PAID/VOID carry no remaining balance). */
+  hasOutstandingBalance: z.enum(['true', 'false']).optional(),
 });
 
 export type ListInvoicesQuery = z.infer<typeof listInvoicesQuerySchema>;

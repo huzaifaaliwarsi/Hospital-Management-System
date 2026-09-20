@@ -76,6 +76,16 @@ function toHospitalService(raw: Record<string, any>): HospitalService {
     manualRateOverrideAllowed: !!raw.manualRateOverrideAllowed,
     discountAllowed: !!raw.discountAllowed,
     status: raw.isActive ? 'Active' : 'Inactive',
+    encounterType: (raw.encounterType as any) || 'NONE',
+    isDefaultEncounterService: !!raw.isDefaultEncounterService,
+    serviceStream: raw.serviceStream || (
+      raw.category === 'Laboratory' ||
+      raw.category === 'Diagnostic' ||
+      raw.category === 'Radiology' ||
+      (raw.department?.name || '').toLowerCase().includes('lab')
+        ? 'LAB'
+        : 'HOSPITAL'
+    ),
     linkedInvoiceCount: raw.linkedInvoiceCount ?? 0,
     linkedPanelRuleCount: raw.linkedPanelRuleCount ?? 0,
     createdBy: raw.createdByLabel || 'System',
@@ -100,6 +110,9 @@ function toBackendPayload(values: ServiceFormValues): Record<string, unknown> {
     discountAllowed: values.discountAllowed,
     manualRateOverrideAllowed: values.manualRateOverrideAllowed,
     isActive: values.status === 'Active',
+    encounterType: values.encounterType || 'NONE',
+    isDefaultEncounterService: !!values.isDefaultEncounterService,
+    serviceStream: values.serviceStream || 'HOSPITAL',
   };
 }
 
@@ -183,9 +196,16 @@ export class ServiceRatesService {
     return updated;
   }
 
-  /** The backend has no hard-delete for service rates (same data-integrity stance as Departments). */
-  static async deleteService(_id: string): Promise<{ success: boolean; message?: string }> {
-    return { success: false, message: 'Services cannot be permanently deleted for billing-history integrity. Deactivate it instead.' };
+  /** Permanently deletes an unbilled service from the database. */
+  static async deleteService(id: string): Promise<{ success: boolean; message?: string }> {
+    try {
+      await apiClient.delete(`/setup/services-rates/${id}`);
+      cachedServices = cachedServices.filter((s) => s.id !== id);
+      return { success: true };
+    } catch (err: any) {
+      const msg = err?.response?.data?.error?.message || err?.message || 'Failed to delete service.';
+      return { success: false, message: msg };
+    }
   }
 
   static filterServices(services: HospitalService[], filters: ServiceFilterState): HospitalService[] {

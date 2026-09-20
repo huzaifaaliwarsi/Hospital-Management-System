@@ -16,7 +16,8 @@ import {
   ServiceFormValues,
 } from '../../../types/serviceRates';
 import { ServiceRatesService, fetchServices } from '../../../services/serviceRatesService';
-import { DepartmentService } from '../../../services/departmentService';
+import { Department } from '../../../types/department';
+import { DepartmentService, fetchDepartments } from '../../../services/departmentService';
 import { ServicesKPIBar } from './ServicesKPIBar';
 import { ServicesFilterBar } from './ServicesFilterBar';
 import { ServicesTable } from './ServicesTable';
@@ -31,6 +32,7 @@ export const SuperAdminServicesRatesView: React.FC = () => {
 
   // Master State
   const [services, setServices] = useState<HospitalService[]>([]);
+  const [departments, setDepartments] = useState<Department[]>(() => DepartmentService.getDepartments());
   const [filters, setFilters] = useState<ServiceFilterState>({
     searchTerm: '',
     departmentId: 'All',
@@ -65,8 +67,12 @@ export const SuperAdminServicesRatesView: React.FC = () => {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const list = await fetchServices();
+      const [list, depts] = await Promise.all([
+        fetchServices(),
+        fetchDepartments(),
+      ]);
       setServices(list);
+      setDepartments(depts);
     } catch (err: any) {
       setLoadError(err?.message || 'Failed to load services from the server.');
     } finally {
@@ -76,10 +82,6 @@ export const SuperAdminServicesRatesView: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, []);
-
-  const departments = useMemo(() => {
-    return DepartmentService.getDepartments();
   }, []);
 
   const filteredServices = useMemo(() => {
@@ -148,14 +150,12 @@ export const SuperAdminServicesRatesView: React.FC = () => {
   };
 
   const handleDeletePrompt = (service: HospitalService) => {
-    const isLinked =
-      (service.linkedInvoiceCount ?? 0) > 0 ||
-      (service.linkedPanelRuleCount ?? 0) > 0;
+    const isLinked = (service.linkedInvoiceCount ?? 0) > 0;
 
     if (isLinked) {
       showToast(
         'warning',
-        `Cannot delete "${service.name}": It has ${service.linkedInvoiceCount ?? 0} billing invoice(s) and ${service.linkedPanelRuleCount ?? 0} panel agreement(s). Deactivate it instead.`
+        `Cannot delete "${service.name}": It has ${service.linkedInvoiceCount ?? 0} billing invoice(s). Deactivate it instead to preserve financial history.`
       );
       return;
     }
@@ -389,7 +389,7 @@ export const SuperAdminServicesRatesView: React.FC = () => {
               </p>
             </div>
             <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
-              This action cannot be undone. Only services with zero linked invoices and zero panel agreements can be deleted.
+              This action cannot be undone. Services with posted invoices cannot be permanently deleted and must be deactivated instead.
             </div>
             <div className="flex items-center justify-end gap-2 pt-2">
               <button

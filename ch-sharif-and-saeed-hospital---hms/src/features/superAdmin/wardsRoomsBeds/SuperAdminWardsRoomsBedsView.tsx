@@ -20,7 +20,11 @@ import {
   RoomFormValues,
   BedFormValues,
 } from '../../../types/wardsRoomsBeds';
-import { WardsRoomsBedsService, fetchWardHierarchy } from '../../../services/wardsRoomsBedsService';
+import {
+  WardsRoomsBedsService,
+  fetchWardHierarchy,
+  getNextBedNumbers,
+} from '../../../services/wardsRoomsBedsService';
 import { DepartmentService } from '../../../services/departmentService';
 import { WardsRoomsBedsTopSummary } from './WardsRoomsBedsTopSummary';
 import { WardTab } from './WardTab';
@@ -188,10 +192,48 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
     try {
       if (selectedRoom) {
         await WardsRoomsBedsService.updateRoom(selectedRoom.id, values, currentUser);
-        showToast('success', `Room "${values.name}" updated successfully.`);
+
+        // If autoGenerateBeds was selected and capacity was increased:
+        const existingRoomBeds = beds.filter((b) => b.roomId === selectedRoom.id);
+        const missingCount = values.capacity - existingRoomBeds.length;
+        if (values.autoGenerateBeds && missingCount > 0) {
+          const newBedNames = getNextBedNumbers(existingRoomBeds, missingCount, 'Bed ');
+          const ratePerBed = values.dailyRoomRate ?? 0;
+          const bedsToCreate: BedFormValues[] = newBedNames.map((bName) => ({
+            code: '',
+            bedNumber: bName,
+            roomId: selectedRoom.id,
+            bedType: 'Standard',
+            dailyBedRate: ratePerBed,
+            occupancyStatus: 'Available',
+            operationalStatus: 'Active',
+          }));
+          await WardsRoomsBedsService.createBedsBatch(bedsToCreate, currentUser);
+          showToast('success', `Room "${values.name}" updated and ${missingCount} bed(s) auto-generated.`);
+        } else {
+          showToast('success', `Room "${values.name}" updated successfully.`);
+        }
       } else {
-        await WardsRoomsBedsService.createRoom(values, currentUser);
-        showToast('success', `Room "${values.name}" created successfully.`);
+        const createdRoom = await WardsRoomsBedsService.createRoom(values, currentUser);
+
+        // If autoGenerateBeds was selected on new room:
+        if (values.autoGenerateBeds && values.capacity > 0) {
+          const ratePerBed = values.dailyRoomRate ?? 0;
+          const newBedNames = getNextBedNumbers([], values.capacity, 'Bed ');
+          const bedsToCreate: BedFormValues[] = newBedNames.map((bName) => ({
+            code: '',
+            bedNumber: bName,
+            roomId: createdRoom.id,
+            bedType: 'Standard',
+            dailyBedRate: ratePerBed,
+            occupancyStatus: 'Available',
+            operationalStatus: 'Active',
+          }));
+          await WardsRoomsBedsService.createBedsBatch(bedsToCreate, currentUser);
+          showToast('success', `Room "${values.name}" created with ${values.capacity} beds configured.`);
+        } else {
+          showToast('success', `Room "${values.name}" created successfully.`);
+        }
       }
       setIsRoomModalOpen(false);
       setSelectedRoom(null);
@@ -228,12 +270,102 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
   // Bed CRUD
   const handleSaveBed = async (values: BedFormValues) => {
     try {
+      const targetRoom = rooms.find((r) => r.id === values.roomId);
+      const existingRoomBeds = beds.filter((b) => b.roomId === values.roomId);
+
       if (selectedBed) {
+        // 1. Update the existing bed
         await WardsRoomsBedsService.updateBed(selectedBed.id, values, currentUser);
-        showToast('success', `Bed "${values.bedNumber}" updated successfully.`);
+
+        // 2. Check if user wanted to expand quantity with additional beds
+        const addCount = values.additionalBeds || 0;
+        if (addCount > 0) {
+          const newBedNames = getNextBedNumbers(existingRoomBeds, addCount, 'Bed ');
+          const bedsToCreate: BedFormValues[] = newBedNames.map((bName) => ({
+            code: '',
+            bedNumber: bName,
+            roomId: values.roomId,
+            bedType: values.bedType || 'Standard',
+            dailyBedRate: targetRoom?.dailyRoomRate ?? values.dailyBedRate ?? 0,
+            occupancyStatus: 'Available',
+            operationalStatus: 'Active',
+          }));
+          await WardsRoomsBedsService.createBedsBatch(bedsToCreate, currentUser);
+
+          // If new total beds exceed room capacity, auto-expand room capacity
+          if (targetRoom && existingRoomBeds.length + addCount > targetRoom.capacity) {
+            await WardsRoomsBedsService.updateRoom(
+              targetRoom.id,
+              {
+                ...targetRoom,
+                capacity: existingRoomBeds.length + addCount,
+              },
+              currentUser
+            );
+          }
+
+          showToast(
+            'success',
+            `Bed "${values.bedNumber}" updated and ${addCount} additional bed(s) created successfully.`
+          );
+        } else {
+          showToast('success', `Bed "${values.bedNumber}" updated successfully.`);
+        }
       } else {
-        await WardsRoomsBedsService.createBed(values, currentUser);
-        showToast('success', `Bed "${values.bedNumber}" created successfully.`);
+        // Adding new bed(s)
+        const qty = values.quantity && values.quantity > 1 ? values.quantity : 1;
+
+        if (qty === 1) {
+          await WardsRoomsBedsService.createBed(
+            {
+              ...values,
+              dailyBedRate: targetRoom?.dailyRoomRate ?? values.dailyBedRate ?? 0,
+            },
+            currentUser
+          );
+
+          // If total beds now exceed room capacity, auto-expand room capacity
+          if (targetRoom && existingRoomBeds.length + 1 > targetRoom.capacity) {
+            await WardsRoomsBedsService.updateRoom(
+              targetRoom.id,
+              {
+                ...targetRoom,
+                capacity: existingRoomBeds.length + 1,
+              },
+              currentUser
+            );
+          }
+          showToast('success', `Bed "${values.bedNumber}" created successfully.`);
+        } else {
+          // Batch creation
+          const prefix = values.numberingPrefix || 'Bed ';
+          const newBedNames = getNextBedNumbers(existingRoomBeds, qty, prefix);
+          const bedsToCreate: BedFormValues[] = newBedNames.map((bName) => ({
+            code: '',
+            bedNumber: bName,
+            roomId: values.roomId,
+            bedType: values.bedType || 'Standard',
+            dailyBedRate: targetRoom?.dailyRoomRate ?? values.dailyBedRate ?? 0,
+            occupancyStatus: 'Available',
+            operationalStatus: 'Active',
+          }));
+
+          await WardsRoomsBedsService.createBedsBatch(bedsToCreate, currentUser);
+
+          // If new total beds exceed room capacity, auto-expand room capacity
+          if (targetRoom && existingRoomBeds.length + qty > targetRoom.capacity) {
+            await WardsRoomsBedsService.updateRoom(
+              targetRoom.id,
+              {
+                ...targetRoom,
+                capacity: existingRoomBeds.length + qty,
+              },
+              currentUser
+            );
+          }
+
+          showToast('success', `${qty} beds created successfully for room "${targetRoom?.name || ''}".`);
+        }
       }
       setIsBedModalOpen(false);
       setSelectedBed(null);
@@ -592,6 +724,7 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
         onSave={handleSaveRoom}
         room={selectedRoom}
         wards={wards}
+        beds={beds}
       />
 
       <BedModal
@@ -604,6 +737,7 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
         bed={selectedBed}
         wards={wards}
         rooms={rooms}
+        beds={beds}
       />
 
       <WardDetailModal
@@ -643,6 +777,7 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
           setSelectedBed(null);
         }}
         bed={selectedBed}
+        rooms={rooms}
         onEdit={(b) => {
           setSelectedBed(b);
           setIsBedModalOpen(true);

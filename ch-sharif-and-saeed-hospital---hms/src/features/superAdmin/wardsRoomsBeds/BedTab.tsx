@@ -291,7 +291,7 @@ export const BedTab: React.FC<BedTabProps> = ({
                   <th className="py-3 px-4">Room</th>
                   <th className="py-3 px-4">Ward</th>
                   <th className="py-3 px-4">Bed Type</th>
-                  <th className="py-3 px-4 text-right">Daily Rate</th>
+                  <th className="py-3 px-4 text-right">Room Tariff</th>
                   <th className="py-3 px-4 text-center">Occupancy Status</th>
                   <th className="py-3 px-4 text-center">Operational Status</th>
                   <th className="py-3 px-4">Current Admitted Patient</th>
@@ -302,6 +302,8 @@ export const BedTab: React.FC<BedTabProps> = ({
                 {filteredBeds.map((b) => {
                   const isOccupied = b.occupancyStatus === 'Occupied';
                   const hasHistory = (b.historicalAdmissionCount ?? 0) > 0;
+                  const parentRoom = rooms.find((r) => r.id === b.roomId);
+                  const roomRate = parentRoom?.dailyRoomRate ?? b.dailyBedRate ?? b.dailyRate ?? 0;
 
                   return (
                     <tr
@@ -325,7 +327,7 @@ export const BedTab: React.FC<BedTabProps> = ({
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right font-bold text-slate-900 whitespace-nowrap">
-                        PKR {(b.dailyBedRate ?? b.dailyRate ?? 0).toLocaleString('en-PK')}
+                        PKR {roomRate.toLocaleString('en-PK')}
                       </td>
                       <td className="py-3 px-4 text-center whitespace-nowrap">
                         {getOccupancyBadge(b.occupancyStatus)}

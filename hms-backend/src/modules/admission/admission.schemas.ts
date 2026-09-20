@@ -18,14 +18,24 @@ export const createPlannedAdmissionSchema = z.object({
       address: z.string().optional(),
     })
     .optional(),
+  // Always required — the frontend derives it from either the chosen doctor or the chosen ward
+  // (department is never asked for directly), but the backend still needs a real, non-null value.
   departmentId: z.string().uuid(),
-  doctorStaffId: z.string().uuid(),
+  // Optional at planning time — Front Desk may not always know the attending doctor yet; the
+  // Admission Portal can assign/change one later via `updatePlannedAdmissionSchema`.
+  doctorStaffId: z.string().uuid().optional(),
   preferredBedId: z.string().uuid().optional(),
   expectedAt: z.coerce.date().optional(),
   diagnosis: z.string().optional(),
   estimatedAmount: z.coerce.number().nonnegative().optional(),
   medicationMode: z.enum(['SELF', 'HOSPITAL_MANAGED']).default('SELF'),
   notes: z.string().optional(),
+  // v7.2 §"Admission from Front Desk" step 6 — optional advance collected
+  // at creation time, before any department invoice exists (§2.2). Same
+  // shape as `appointments.schemas.ts`'s `bookAppointmentSchema`.
+  advanceAmount: z.coerce.number().nonnegative().optional(),
+  paymentMethod: z.enum(['CASH', 'CARD', 'BANK', 'ONLINE']).optional().default('CASH'),
+  paymentReference: z.string().optional(),
 }).refine(
   (data) => data.panelPatientId || data.selfPayEncounterId || data.newSelfPayPatient,
   { message: 'Either panelPatientId, selfPayEncounterId, or newSelfPayPatient is required' },

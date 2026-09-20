@@ -30,20 +30,24 @@ import {
   Department,
   DepartmentFilterState,
   DepartmentFormValues,
+  DepartmentHeadOption,
   DepartmentType,
 } from '../../../types/department';
-import { MOCK_DEPARTMENT_HEAD_OPTIONS } from './departmentMockData';
 import {
   DepartmentService,
   VALID_DEPARTMENT_TYPES,
   fetchDepartments,
+  isProtectedCoreDepartment,
 } from '../../../services/departmentService';
+import { fetchStaffUsers } from '../../../services/staffUserService';
+import { StaffUser } from '../../../types/staffUser';
 import {
   downloadDepartmentPDF,
   downloadDepartmentExcel,
 } from '../../../services/departmentExportService';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
+import { toErrorMessage } from '../../../utils/apiErrors';
 import { AddEditDepartmentModal } from './AddEditDepartmentModal';
 import { ViewDepartmentDrawer } from './ViewDepartmentDrawer';
 import { DeactivateConfirmModal } from './DeactivateConfirmModal';
@@ -57,6 +61,7 @@ export const SuperAdminDepartmentsView: React.FC = () => {
 
   // State: Departments master list — loaded from the real backend
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [staffUsers, setStaffUsers] = useState<StaffUser[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -64,8 +69,12 @@ export const SuperAdminDepartmentsView: React.FC = () => {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const data = await fetchDepartments();
-      setDepartments(data);
+      const [deptData, staffData] = await Promise.all([
+        fetchDepartments(),
+        fetchStaffUsers().catch(() => []),
+      ]);
+      setDepartments(deptData);
+      setStaffUsers(staffData);
     } catch (err: any) {
       setLoadError(err?.message || 'Failed to load departments from the server.');
     } finally {
@@ -76,6 +85,19 @@ export const SuperAdminDepartmentsView: React.FC = () => {
   useEffect(() => {
     loadDepartments();
   }, [loadDepartments]);
+
+  // Real database staff options for Head / In-charge assignment (no mock data)
+  const headOptions = useMemo<DepartmentHeadOption[]>(() => {
+    return staffUsers
+      .filter((s) => s.status === 'ACTIVE')
+      .map((s) => ({
+        userId: s.id, // Real Staff UUID from Postgres DB
+        name: s.fullName,
+        designation: s.designation || (s.staffCategory === 'Doctor' ? 'Consultant' : s.staffCategory),
+        department: s.departmentName || 'General',
+        role: s.staffCategory === 'Doctor' ? 'Doctor' : s.staffCategory === 'Admin' ? 'Admin' : 'Staff',
+      }));
+  }, [staffUsers]);
 
   // State: Filters
   const [filters, setFilters] = useState<DepartmentFilterState>({
@@ -101,6 +123,7 @@ export const SuperAdminDepartmentsView: React.FC = () => {
 
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [selectedDeptForDelete, setSelectedDeptForDelete] = useState<Department | null>(null);
+  const [isDeletingDept, setIsDeletingDept] = useState(false);
 
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [isExportDossierOpen, setIsExportDossierOpen] = useState(false);
@@ -277,7 +300,14 @@ export const SuperAdminDepartmentsView: React.FC = () => {
 
   const handleConfirmDelete = async () => {
     if (!selectedDeptForDelete) return;
+    if (isProtectedCoreDepartment(selectedDeptForDelete)) {
+      toast.error(`Core hospital care department "${selectedDeptForDelete.name}" (${selectedDeptForDelete.code}) is protected and cannot be deleted.`);
+      setIsDeleteOpen(false);
+      setSelectedDeptForDelete(null);
+      return;
+    }
     try {
+      setIsDeletingDept(true);
       await DepartmentService.deleteDepartment(selectedDeptForDelete.id, departments);
       setDepartments((prev) =>
         prev.filter((d) => d.id !== selectedDeptForDelete.id)
@@ -289,7 +319,9 @@ export const SuperAdminDepartmentsView: React.FC = () => {
       setIsDeleteOpen(false);
       setSelectedDeptForDelete(null);
     } catch (err: any) {
-      toast.error(err.message || 'Cannot delete department.');
+      toast.error(toErrorMessage(err));
+    } finally {
+      setIsDeletingDept(false);
     }
   };
 
@@ -878,18 +910,27 @@ export const SuperAdminDepartmentsView: React.FC = () => {
                           <Power className="h-3.5 w-3.5" />
                         </button>
 
-                        {/* Delete Button (Guarded by Linked Records) */}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedDeptForDelete(dept);
-                            setIsDeleteOpen(true);
-                          }}
-                          title="Delete Department (Checked for linked records)"
-                          className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                        {/* Delete Button (Protected for OPD, ER, OBS; Guarded by Linked Records for others) */}
+                        {isProtectedCoreDepartment(dept) ? (
+                          <span
+                            title="Protected Core Care Department (OPD, Emergency, Observation cannot be deleted)"
+                            className="rounded-lg p-1.5 text-slate-300 cursor-not-allowed inline-flex items-center justify-center opacity-60"
+                          >
+                            <ShieldAlert className="h-3.5 w-3.5 text-slate-400" />
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedDeptForDelete(dept);
+                              setIsDeleteOpen(true);
+                            }}
+                            title="Delete Department (Checked for linked records)"
+                            className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   )}
@@ -974,7 +1015,7 @@ export const SuperAdminDepartmentsView: React.FC = () => {
         onSave={handleSaveDepartment}
         departmentToEdit={selectedDeptForEdit}
         existingDepartments={departments}
-        headOptions={MOCK_DEPARTMENT_HEAD_OPTIONS}
+        headOptions={headOptions}
       />
 
       {/* View Detail Drawer */}
@@ -1002,12 +1043,15 @@ export const SuperAdminDepartmentsView: React.FC = () => {
         department={selectedDeptForDeactivate}
       />
 
-      {/* Delete Safeguard Modal (Blocks deletion if linked records exist) */}
+      {/* Delete Confirmation Modal */}
       <DeleteSafeguardModal
         isOpen={isDeleteOpen}
+        isDeleting={isDeletingDept}
         onClose={() => {
-          setIsDeleteOpen(false);
-          setSelectedDeptForDelete(null);
+          if (!isDeletingDept) {
+            setIsDeleteOpen(false);
+            setSelectedDeptForDelete(null);
+          }
         }}
         onConfirmDelete={handleConfirmDelete}
         onDeactivateInstead={() => {
@@ -1026,7 +1070,7 @@ export const SuperAdminDepartmentsView: React.FC = () => {
         onClose={() => setIsImportOpen(false)}
         onImportSuccess={handleImportBatch}
         existingDepartments={departments}
-        headOptions={MOCK_DEPARTMENT_HEAD_OPTIONS}
+        headOptions={headOptions}
       />
 
       {/* Export Dossier / Print Preview Modal */}

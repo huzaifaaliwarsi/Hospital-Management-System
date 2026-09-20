@@ -1,5 +1,6 @@
 import apiClient from './apiClient';
 import { formatDisplayDate } from '../utils/dateConstants';
+import { getPatientById } from './patientRegistryService';
 
 /**
  * Live Hospital Invoices / Billing service — backed by `/api/v1/invoices*`
@@ -53,6 +54,10 @@ export interface InvoiceSummary {
   total: number;
   paidTotal: number;
   balanceDue: number;
+  /** True when at least one reversed (refund) receipt has been posted against this invoice. */
+  hasRefund: boolean;
+  /** Sum of reversed receipt amounts — what has actually been refunded, not the current balance. */
+  refundedAmount: number;
   createdAt: string;
   createdAtIso: string;
 }
@@ -63,6 +68,14 @@ export interface InvoiceDetail extends InvoiceSummary {
   doctorName: string;
   departmentName: string;
   panelName: string;
+  patientPhone?: string;
+  patientGuardian?: string;
+  patientGender?: string;
+  patientAge?: number | string;
+  patientCnic?: string;
+  admissionNumber?: string;
+  wardName?: string;
+  bedNumber?: string;
 }
 
 function formatTimestamp(iso?: string | null): string {
@@ -74,9 +87,32 @@ function formatTimestamp(iso?: string | null): string {
   return `${dateStr}, ${timeStr}`;
 }
 
+function resolveMrNumber(raw: Record<string, any>): string {
+  if (raw.panelPatient?.mrNumber) return raw.panelPatient.mrNumber;
+  if (raw.selfPayEncounter?.mrNumber) return raw.selfPayEncounter.mrNumber;
+  if (raw.patient?.mrNumber) return raw.patient.mrNumber;
+  if (raw.mrNumber) return raw.mrNumber;
+
+  const encounterId = raw.panelPatientId || raw.selfPayEncounterId || raw.selfPayEncounter?.id;
+  if (encounterId) {
+    const fromRegistry = getPatientById(encounterId);
+    if (fromRegistry?.mrNumber) return fromRegistry.mrNumber;
+  }
+
+  if (raw.selfPayEncounter?.id || raw.selfPayEncounterId) {
+    const rawId = String(raw.selfPayEncounter?.id || raw.selfPayEncounterId || '');
+    const cleanId = rawId.replace(/\D/g, '').slice(0, 6) || rawId.replace(/-/g, '').slice(0, 6).toUpperCase();
+    return `MR-${cleanId.padStart(6, '0')}`;
+  }
+
+  return '';
+}
+
 function toInvoiceSummary(raw: Record<string, any>): InvoiceSummary {
   const isPanel = !!raw.panelPatientId;
-  const patient = raw.panelPatient || raw.selfPayEncounter;
+  const patient = raw.panelPatient || raw.selfPayEncounter || raw.admissionRecord?.panelPatient || raw.admissionRecord?.selfPayEncounter;
+  const receipts: any[] = Array.isArray(raw.paymentReceipts) ? raw.paymentReceipts : [];
+  const reversedReceipts = receipts.filter((r) => r.isReversed);
   return {
     id: raw.id,
     invoiceNumber: raw.invoiceNumber,
@@ -84,24 +120,41 @@ function toInvoiceSummary(raw: Record<string, any>): InvoiceSummary {
     encounterType: raw.encounterType || null,
     status: raw.status,
     patientName: patient?.fullName || 'Walk-in Patient',
-    patientMr: isPanel ? patient?.mrNumber || '' : '— (Self-Pay)',
+    patientMr: resolveMrNumber(raw),
     payerType: isPanel ? 'Corporate / Panel' : 'Self Pay',
     subtotal: Number(raw.subtotal ?? 0),
     discountTotal: Number(raw.discountTotal ?? 0),
     total: Number(raw.total ?? 0),
     paidTotal: Number(raw.paidTotal ?? 0),
     balanceDue: Number(raw.balanceDue ?? Math.max(0, Number(raw.total ?? 0) - Number(raw.paidTotal ?? 0))),
+    hasRefund: reversedReceipts.length > 0,
+    refundedAmount: reversedReceipts.reduce((sum, r) => sum + Math.abs(Number(r.amount ?? 0)), 0),
     createdAt: formatTimestamp(raw.createdAt),
     createdAtIso: raw.createdAt || '',
   };
 }
 
 function toInvoiceDetail(raw: Record<string, any>): InvoiceDetail {
+  const admissionDoc = raw.admissionRecord?.doctor?.fullName;
+  const firstLineDoctor = raw.lines?.[0]?.performedBy?.fullName;
+  const doctor = raw.appointment?.doctor?.fullName || admissionDoc || firstLineDoctor || '';
+  const admissionDept = raw.admissionRecord?.department?.name;
+  const firstLineDept = raw.lines?.[0]?.serviceRate?.departmentName || raw.lines?.[0]?.serviceRate?.category;
+  const department = raw.appointment?.department?.name || admissionDept || firstLineDept || '';
+
   return {
     ...toInvoiceSummary(raw),
-    doctorName: raw.appointment?.doctor?.fullName || '',
-    departmentName: raw.appointment?.department?.name || '',
-    panelName: raw.panelPatient?.corporatePanel?.organizationName || '',
+    doctorName: doctor,
+    departmentName: department,
+    panelName: raw.panelPatient?.corporatePanel?.name || raw.panelPatient?.corporatePanel?.organizationName || '',
+    patientPhone: raw.panelPatient?.primaryPhone || raw.selfPayEncounter?.phone || '',
+    patientGuardian: raw.panelPatient?.fatherGuardianName || raw.selfPayEncounter?.guardianName || '',
+    patientGender: raw.panelPatient?.gender || raw.selfPayEncounter?.gender || '',
+    patientAge: raw.panelPatient?.age || (raw.selfPayEncounter?.dob ? Math.max(0, new Date().getFullYear() - new Date(raw.selfPayEncounter.dob).getFullYear()) : ''),
+    patientCnic: raw.panelPatient?.cnic || raw.selfPayEncounter?.cnicOrPassport || '',
+    admissionNumber: raw.admissionRecord?.admissionNumber || undefined,
+    wardName: raw.admissionRecord?.bed?.room?.ward?.name || undefined,
+    bedNumber: raw.admissionRecord?.bed?.bedNumber || undefined,
     lines: (raw.lines || []).map((l: any) => ({
       id: l.id,
       serviceName: l.serviceRate?.name || '',
@@ -130,8 +183,14 @@ function toInvoiceDetail(raw: Record<string, any>): InvoiceDetail {
 export async function fetchInvoices(params?: {
   status?: InvoiceStatus;
   encounterType?: EncounterType;
+  sourceType?: 'APPOINTMENT' | 'WALK_IN' | 'ADMISSION';
   date?: string;
   search?: string;
+  /** Server-side record-type filters — hold across the whole table, not just the latest-100 default window. */
+  hasDiscount?: boolean;
+  hasRefund?: boolean;
+  hasPayment?: boolean;
+  hasOutstandingBalance?: boolean;
 }): Promise<InvoiceSummary[]> {
   const res = await apiClient.get<{ data: Record<string, any>[] }>('/invoices', { params });
   return res.data.data.map(toInvoiceSummary);

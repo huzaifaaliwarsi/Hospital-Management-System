@@ -793,7 +793,7 @@ export const dashboardService = {
         contextText: `${opdAppointmentsCount} OPD, ${emergencyInvoicesCount} ER, ${admissionsCount} IPD`,
         colorClass: 'text-[#08775A]',
         accentBg: 'bg-emerald-50',
-        navModule: 'appointments_operations_overview',
+        navModule: 'today_patients',
       },
       {
         id: 'kpi_today_billing',

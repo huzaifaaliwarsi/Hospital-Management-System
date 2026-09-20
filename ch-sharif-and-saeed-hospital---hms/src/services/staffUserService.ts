@@ -59,6 +59,14 @@ function toStaffUser(raw: Record<string, any>): StaffUser {
   const isSuspended = pu?.status === 'SUSPENDED' || (raw.notes && String(raw.notes).startsWith('[SUSPENDED]'));
   const status: StaffStatus = isSuspended ? 'SUSPENDED' : !raw.isActive ? 'INACTIVE' : 'ACTIVE';
 
+  // Multi-department assignment: use junction table data if present, else fall back to primary dept
+  const staffDepts: Array<{ departmentId: string; department: { id: string; name: string } }> =
+    raw.staffDepartments ?? [];
+  const departmentIds: string[] =
+    staffDepts.length > 0 ? staffDepts.map((sd: any) => sd.departmentId) : raw.departmentId ? [raw.departmentId] : [];
+  const departmentNames: string[] =
+    staffDepts.length > 0 ? staffDepts.map((sd: any) => sd.department?.name ?? '') : raw.department?.name ? [raw.department.name] : [];
+
   return {
     id: raw.id,
     employeeCode: raw.employeeId,
@@ -71,6 +79,8 @@ function toStaffUser(raw: Record<string, any>): StaffUser {
     designation: raw.designation,
     departmentId: raw.departmentId,
     departmentName: raw.department?.name || '',
+    departmentIds,
+    departmentNames,
     staffCategory: raw.category as StaffCategory,
     accessType: pu ? 'PORTAL_USER' : 'STAFF_RECORD_ONLY',
     assignedPortal,
@@ -228,6 +238,10 @@ export class StaffUserService {
         cnic: values.cnic?.trim() || undefined,
         category: values.staffCategory,
         departmentId: values.departmentId,
+        // Doctor multi-department: send the full list so the junction table is populated
+        ...(values.staffCategory === 'Doctor' && values.departmentIds && values.departmentIds.length > 0
+          ? { departmentIds: values.departmentIds }
+          : {}),
         designation: values.designation.trim(),
         phone: values.phone.trim(),
         alternatePhone: values.alternatePhone?.trim() || undefined,
@@ -236,6 +250,15 @@ export class StaffUserService {
         doctorSponsoredDiscountTrackingEnabled: values.doctorSponsoredDiscountTrackingEnabled,
       });
       const staffId = staffRes.data.data.id;
+
+      // Canonical Salary Profile creation (if enabled)
+      if (values.salaryEnabled && values.baseSalary && Number(values.baseSalary) > 0) {
+        await this.saveSalaryProfile(staffId, {
+          salaryBasis: values.salaryBasis || 'MONTHLY',
+          baseAmount: Number(values.baseSalary),
+          effectiveFrom: values.salaryEffectiveFrom || new Date().toISOString().slice(0, 10),
+        });
+      }
 
       if (values.accessType === 'PORTAL_USER') {
         await apiClient.post('/portal-users', {
@@ -250,6 +273,22 @@ export class StaffUserService {
       }
       if (values.status === 'INACTIVE') {
         await apiClient.post(`/staff/${staffId}/deactivate`);
+      }
+
+      // Patient Discharge Credentials (Clinical Discharge Authorization — Doctors only)
+      if (
+        values.staffCategory === 'Doctor' &&
+        values.clinicalAuthUsername?.trim() &&
+        values.clinicalAuthPassword?.trim()
+      ) {
+        await this.setClinicalAuth(
+          staffId,
+          values.clinicalAuthUsername.trim(),
+          values.clinicalAuthPassword.trim()
+        );
+        if (values.clinicalAuthActive === false) {
+          await this.setClinicalAuthActive(staffId, false);
+        }
       }
 
       await fetchStaffUsers();
@@ -292,6 +331,10 @@ export class StaffUserService {
         cnic: values.cnic?.trim() || undefined,
         category: values.staffCategory,
         departmentId: values.departmentId,
+        // Doctor multi-department: sync the junction table on every update
+        ...(values.staffCategory === 'Doctor' && values.departmentIds && values.departmentIds.length > 0
+          ? { departmentIds: values.departmentIds }
+          : {}),
         designation: values.designation.trim(),
         phone: values.phone.trim(),
         alternatePhone: values.alternatePhone?.trim() || undefined,
@@ -299,6 +342,15 @@ export class StaffUserService {
         isActive: values.status !== 'INACTIVE',
         doctorSponsoredDiscountTrackingEnabled: values.doctorSponsoredDiscountTrackingEnabled,
       });
+
+      // Canonical Salary Profile update/creation (if enabled)
+      if (values.salaryEnabled && values.baseSalary && Number(values.baseSalary) > 0) {
+        await this.saveSalaryProfile(id, {
+          salaryBasis: values.salaryBasis || 'MONTHLY',
+          baseAmount: Number(values.baseSalary),
+          effectiveFrom: values.salaryEffectiveFrom || new Date().toISOString().slice(0, 10),
+        });
+      }
 
       const portalUserId = getPortalUserId(existing);
       if (values.accessType === 'PORTAL_USER') {
@@ -335,6 +387,27 @@ export class StaffUserService {
             success: false,
             error: err?.message || 'This account has linked activity and its portal access cannot be removed. Suspend it instead.',
           };
+        }
+      }
+
+      // Patient Discharge Credentials (Clinical Discharge Authorization — Doctors only)
+      if (values.staffCategory === 'Doctor') {
+        const docUsername = values.clinicalAuthUsername?.trim();
+        const docPassword = values.clinicalAuthPassword?.trim();
+        if (docUsername && docPassword) {
+          const isConfigured = !!existing.clinicalAuthUsername;
+          if (isConfigured && docUsername === existing.clinicalAuthUsername) {
+            await this.resetClinicalAuthPassword(id, docPassword);
+          } else {
+            await this.setClinicalAuth(id, docUsername, docPassword);
+          }
+        }
+        if (
+          values.clinicalAuthActive !== undefined &&
+          values.clinicalAuthActive !== existing.clinicalAuthActive &&
+          (existing.clinicalAuthUsername || docUsername)
+        ) {
+          await this.setClinicalAuthActive(id, values.clinicalAuthActive);
         }
       }
 

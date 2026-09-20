@@ -8,16 +8,20 @@ import {
   ArrowLeftRight,
   ShieldCheck,
   Plus,
+  FileText,
 } from 'lucide-react';
 import { Modal } from '../../components/common/Modal';
 import { PanelBadge } from '../../components/common/PanelBadge';
 import { Select, NumberInput, TextInput, Textarea, Toggle } from '../../components/forms/FormControls';
 import { formatPKR } from '../../utils/formatters';
 import { useToast } from '../../context/ToastContext';
-import { DepartmentService } from '../../services/departmentService';
+import { DepartmentService, fetchDepartments } from '../../services/departmentService';
+import { Department } from '../../types/department';
 import { StaffUserService } from '../../services/staffUserService';
-import { ServiceRatesService } from '../../services/serviceRatesService';
-import { WardsRoomsBedsService } from '../../services/wardsRoomsBedsService';
+import { ServiceRatesService, fetchServices } from '../../services/serviceRatesService';
+import { HospitalService } from '../../types/serviceRates';
+import { WardsRoomsBedsService, fetchWardHierarchy } from '../../services/wardsRoomsBedsService';
+import { Bed } from '../../types/wardsRoomsBeds';
 import { pharmacyApiService, BackendMedicine } from '../../services/pharmacyApiService';
 import {
   fetchAdmissionDetail,
@@ -80,7 +84,84 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
   const [actionError, setActionError] = useState<string | null>(null);
 
   const doctors = useMemo(() => StaffUserService.getStaffUsers().filter((s) => s.staffCategory === 'Doctor' && s.status === 'ACTIVE'), []);
-  const services = useMemo(() => ServiceRatesService.getServices().filter((s) => s.status === 'Active'), []);
+
+  // ── Hierarchical Service Selection (Category/Department -> Services) ──────────
+  const [selectedDeptFilter, setSelectedDeptFilter] = useState('HOSPITAL_MGMT');
+  const [allDepartments, setAllDepartments] = useState<Department[]>(() => DepartmentService.getDepartments());
+  const [allServices, setAllServices] = useState<HospitalService[]>(() => ServiceRatesService.getServices());
+
+  useEffect(() => {
+    fetchServices().then(setAllServices).catch(() => {});
+    fetchDepartments().then(setAllDepartments).catch(() => {});
+  }, []);
+
+  const departmentDropdownOptions = useMemo(() => {
+    const list: { label: string; value: string }[] = [
+      { label: 'Hospital Management (Hospital Services)', value: 'HOSPITAL_MGMT' },
+      { label: 'Laboratory (LAB Investigations)', value: 'LAB' },
+    ];
+
+    // Other specific departments
+    allDepartments
+      .filter((d) => d.status === 'Active')
+      .forEach((d) => {
+        const nameLower = d.name.toLowerCase();
+        if (
+          nameLower.includes('hospital service') ||
+          nameLower === 'hospital' ||
+          nameLower === 'laboratory' ||
+          nameLower === 'lab'
+        ) {
+          return;
+        }
+        const ownershipTag = d.fulfillmentOwnership === 'Outsourced' ? 'Outsourced' : 'Internal';
+        list.push({
+          label: `${d.name} (${ownershipTag})`,
+          value: d.id,
+        });
+      });
+
+    return list;
+  }, [allDepartments]);
+
+  const availableServices = useMemo(() => {
+    if (selectedDeptFilter === 'HOSPITAL_MGMT') {
+      return allServices.filter(
+        (s) =>
+          s.status === 'Active' &&
+          s.serviceStream !== 'LAB' &&
+          s.category !== 'Laboratory' &&
+          s.category !== 'Diagnostic' &&
+          !(s.departmentName || '').toLowerCase().includes('lab')
+      );
+    }
+    if (selectedDeptFilter === 'LAB') {
+      return allServices.filter(
+        (s) =>
+          s.status === 'Active' &&
+          (s.serviceStream === 'LAB' ||
+            s.category === 'Laboratory' ||
+            s.category === 'Diagnostic' ||
+            (s.departmentName || '').toLowerCase().includes('lab'))
+      );
+    }
+    // Filter by specific departmentId
+    return allServices.filter(
+      (s) => s.status === 'Active' && (s.departmentId === selectedDeptFilter || s.departmentName === selectedDeptFilter)
+    );
+  }, [allServices, selectedDeptFilter]);
+
+  const selectedDeptObj = useMemo(() => {
+    return allDepartments.find((d) => d.id === selectedDeptFilter) || null;
+  }, [allDepartments, selectedDeptFilter]);
+
+  const isCurrentSelectionOutsourced = useMemo(() => {
+    if (selectedDeptFilter === 'LAB') {
+      const labDept = allDepartments.find((d) => d.name.toLowerCase().includes('lab'));
+      return labDept?.fulfillmentOwnership === 'Outsourced';
+    }
+    return selectedDeptObj?.fulfillmentOwnership === 'Outsourced';
+  }, [selectedDeptFilter, selectedDeptObj, allDepartments]);
 
   const load = async () => {
     setIsLoading(true);
@@ -111,20 +192,25 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
   const [lineQty, setLineQty] = useState(1);
   const [linePerformedBy, setLinePerformedBy] = useState('');
 
+  const selectedService = useMemo(() => {
+    return allServices.find((s) => s.id === lineServiceId) || null;
+  }, [allServices, lineServiceId]);
+
   const handleAddService = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!lineServiceId) {
-      setActionError('Select a service.');
+      setActionError('Please select a service or procedure.');
       return;
     }
     setIsSaving(true);
     setActionError(null);
     try {
       await addAdmissionService(admissionId, { serviceRateId: lineServiceId, quantity: lineQty, performedByStaffId: linePerformedBy || undefined });
+      const addedName = selectedService?.name || 'Service line';
       setLineServiceId('');
       setLineQty(1);
       setLinePerformedBy('');
-      await refresh('Service line added.');
+      await refresh(`${addedName} added to patient invoice.`);
     } catch (err: any) {
       setActionError(err?.message || 'Failed to add service.');
     } finally {
@@ -202,7 +288,16 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
   // ── Bed Transfer ─────────────────────────────────────────────────────
   const [targetBedId, setTargetBedId] = useState('');
   const [transferReason, setTransferReason] = useState('');
-  const availableBeds = useMemo(() => WardsRoomsBedsService.getBeds().filter((b) => b.occupancyStatus === 'Available'), []);
+  // The shared bed cache is primed once, fire-and-forget, at login — re-fetch here so this
+  // modal always reflects the DB's current bed state instead of a possibly-empty/stale snapshot.
+  const [allBeds, setAllBeds] = useState<Bed[]>(WardsRoomsBedsService.getBeds());
+  useEffect(() => {
+    fetchWardHierarchy().then(({ beds }) => setAllBeds(beds)).catch(() => {});
+  }, []);
+  const availableBeds = useMemo(
+    () => allBeds.filter((b) => b.occupancyStatus === 'Available' && b.operationalStatus === 'Active'),
+    [allBeds]
+  );
 
   const handleTransferBed = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -250,7 +345,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
       isOpen
       onClose={onClose}
       title={detail ? `${detail.admissionNumber} — ${detail.patientName}` : 'Admission'}
-      subtitle={detail ? `${detail.departmentName} • ${detail.doctorName} • ${detail.bedLabel || 'No bed assigned'}` : undefined}
+      subtitle={detail ? `${detail.departmentName} • ${detail.doctorName || 'No doctor assigned'} • ${detail.bedLabel || 'No bed assigned'}` : undefined}
       maxWidth="4xl"
     >
       {isLoading ? (
@@ -347,17 +442,72 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
               )}
 
               {detail.status === 'ACTIVE' && (
-                <form onSubmit={handleAddService} className="space-y-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-[#08775A] flex items-center gap-1.5">
-                    <Plus className="h-3.5 w-3.5" /> Add Service / Procedure
-                  </h4>
-                  <Select
-                    label="Service"
-                    required
-                    options={services.map((s) => ({ label: `${s.name} — ${formatPKR(s.standardRate)}`, value: s.id }))}
-                    value={lineServiceId}
-                    onChange={(e) => setLineServiceId(e.target.value)}
-                  />
+                <form onSubmit={handleAddService} className="space-y-3.5 p-3.5 bg-slate-50 rounded-xl border border-slate-200">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-[#08775A] flex items-center gap-1.5">
+                      <Plus className="h-3.5 w-3.5" /> Add Service / Investigation
+                    </h4>
+                    <span className="text-[10.5px] font-semibold text-slate-500">
+                      Auto-bills under respective department invoice
+                    </span>
+                  </div>
+
+                  {/* 2-Level Cascading Dropdowns: Department / Source -> Service */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <Select
+                      label="1. Department / Source"
+                      options={departmentDropdownOptions}
+                      value={selectedDeptFilter}
+                      onChange={(e) => {
+                        setSelectedDeptFilter(e.target.value);
+                        setLineServiceId('');
+                      }}
+                      hint={
+                        isCurrentSelectionOutsourced
+                          ? 'Outsourced Department — Billed to Outsourced Invoice (No discounts allowed).'
+                          : 'Internal Hospital Management Services'
+                      }
+                    />
+
+                    <Select
+                      label="2. Service / Procedure"
+                      required
+                      placeholder={
+                        availableServices.length === 0
+                          ? 'No services available in this department'
+                          : 'Choose a service / procedure…'
+                      }
+                      options={availableServices.map((s) => ({
+                        label: `${s.name} (${s.code}) — ${formatPKR(s.standardRate)}`,
+                        value: s.id,
+                      }))}
+                      value={lineServiceId}
+                      onChange={(e) => setLineServiceId(e.target.value)}
+                      hint={
+                        selectedService
+                          ? `Rate: ${formatPKR(selectedService.standardRate)} • Billing Unit: ${selectedService.billingUnit || 'One-Time'}`
+                          : 'Select a procedure or test'
+                      }
+                    />
+                  </div>
+
+                  {selectedService && (
+                    <div className="flex items-center justify-between text-[11px] bg-white px-3 py-2 rounded-lg border border-slate-200">
+                      <span className="text-slate-600 font-medium">
+                        Destination: <strong className="text-slate-800">{selectedService.departmentName || 'Hospital Services'} Invoice</strong>
+                      </span>
+                      <span className="text-slate-600 font-medium">
+                        Department Type:{' '}
+                        <strong className={isCurrentSelectionOutsourced ? 'text-amber-800' : 'text-[#08775A]'}>
+                          {isCurrentSelectionOutsourced ? 'Outsourced (No Discount)' : 'Hospital Management'}
+                        </strong>
+                      </span>
+                      <span className="text-slate-900 font-bold">
+                        Line Total: {formatPKR((selectedService.standardRate || 0) * (lineQty || 1))}
+                      </span>
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-2 gap-3">
                     <NumberInput label="Quantity" min={1} value={lineQty} onChange={(e) => setLineQty(Number(e.target.value) || 1)} />
                     <Select
@@ -368,8 +518,8 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                     />
                   </div>
                   <div className="flex justify-end">
-                    <button type="submit" disabled={isSaving} className="px-4 py-1.5 text-xs font-semibold text-white bg-[#08775A] rounded-lg disabled:opacity-60">
-                      {isSaving ? 'Adding…' : 'Add Service'}
+                    <button type="submit" disabled={isSaving || !lineServiceId} className="px-5 py-2 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded-xl shadow-xs disabled:opacity-60 cursor-pointer">
+                      {isSaving ? 'Adding…' : 'Add Service to Patient'}
                     </button>
                   </div>
                 </form>
@@ -424,45 +574,69 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                   Pharmacy requests are only permitted when Medication Mode is Hospital Managed. Switch mode in the Medication Mode tab first.
                 </p>
               ) : (
-                <form onSubmit={handleCreatePharmacyRequest} className="space-y-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-[#08775A]">New Medicine Request</h4>
-                  {pharmLines.map((line, idx) => (
-                    <div key={idx} className="grid grid-cols-3 gap-2 items-end">
-                      <Select
-                        label={idx === 0 ? 'Medicine' : undefined}
-                        className="col-span-2"
-                        placeholder="Choose medicine…"
-                        options={medicines.map((m) => ({ label: `${m.name} (${m.code})`, value: m.id }))}
-                        value={line.medicineId}
-                        onChange={(e) => {
-                          const next = [...pharmLines];
-                          next[idx] = { ...next[idx], medicineId: e.target.value };
-                          setPharmLines(next);
-                        }}
-                      />
-                      <NumberInput
-                        label={idx === 0 ? 'Qty' : undefined}
-                        min={1}
-                        value={line.requestedQuantity}
-                        onChange={(e) => {
-                          const next = [...pharmLines];
-                          next[idx] = { ...next[idx], requestedQuantity: Number(e.target.value) || 1 };
-                          setPharmLines(next);
-                        }}
-                      />
-                    </div>
-                  ))}
+                <form onSubmit={handleCreatePharmacyRequest} className="space-y-3.5 p-3.5 bg-slate-50 rounded-xl border border-slate-200">
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-[#08775A] flex items-center gap-1.5">
+                      <FileText className="h-3.5 w-3.5" /> New Medicine Request
+                    </h4>
+                    <span className="px-2 py-0.5 text-[10px] font-bold bg-[#effaf5] text-[#08775A] border border-[#c2e7db] rounded-full">
+                      Live Pharmacy Inventory
+                    </span>
+                  </div>
+
+                  {pharmLines.map((line, idx) => {
+                    const selMed = medicines.find((m) => m.id === line.medicineId);
+                    return (
+                      <div key={idx} className="space-y-1.5 p-2.5 bg-white border border-slate-200 rounded-xl">
+                        <div className="grid grid-cols-3 gap-2 items-end">
+                          <Select
+                            label={idx === 0 ? 'Select Medicine from Pharmacy Stock' : undefined}
+                            className="col-span-2"
+                            placeholder="Choose medicine from pharmacy…"
+                            options={medicines.map((m) => ({
+                              label: `${m.name} (${m.code}) — Stock: ${m.currentStock} ${m.unit || 'units'} — ${formatPKR(Number(m.saleRate || 0))}`,
+                              value: m.id,
+                            }))}
+                            value={line.medicineId}
+                            onChange={(e) => {
+                              const next = [...pharmLines];
+                              next[idx] = { ...next[idx], medicineId: e.target.value };
+                              setPharmLines(next);
+                            }}
+                          />
+                          <NumberInput
+                            label={idx === 0 ? 'Requested Qty' : undefined}
+                            min={1}
+                            value={line.requestedQuantity}
+                            onChange={(e) => {
+                              const next = [...pharmLines];
+                              next[idx] = { ...next[idx], requestedQuantity: Number(e.target.value) || 1 };
+                              setPharmLines(next);
+                            }}
+                          />
+                        </div>
+                        {selMed && (
+                          <div className="flex items-center justify-between text-[10.5px] text-slate-500 px-1 pt-1 border-t border-slate-100">
+                            <span>Category: <strong className="text-slate-700">{selMed.category || 'General'}</strong></span>
+                            <span>Available Stock: <strong className={Number(selMed.currentStock) > 0 ? 'text-emerald-700' : 'text-rose-600'}>{selMed.currentStock} {selMed.unit}</strong></span>
+                            <span>Unit Rate: <strong className="text-slate-800">{formatPKR(Number(selMed.saleRate || 0))}</strong></span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
                   <button
                     type="button"
                     onClick={() => setPharmLines([...pharmLines, { medicineId: '', requestedQuantity: 1 }])}
-                    className="text-[11px] font-semibold text-[#08775A] hover:underline"
+                    className="text-[11px] font-bold text-[#08775A] hover:text-[#065f46] hover:underline cursor-pointer"
                   >
                     + Add another medicine
                   </button>
-                  <Textarea label="Notes (optional)" rows={2} value={pharmNotes} onChange={(e) => setPharmNotes(e.target.value)} />
+                  <Textarea label="Special Clinical Instructions (optional)" rows={2} placeholder="Dosage instructions, route (IV/IM/Oral), emergency priority…" value={pharmNotes} onChange={(e) => setPharmNotes(e.target.value)} />
                   <div className="flex justify-end">
-                    <button type="submit" disabled={isSaving} className="px-4 py-1.5 text-xs font-semibold text-white bg-[#08775A] rounded-lg disabled:opacity-60">
-                      {isSaving ? 'Sending…' : 'Send Request'}
+                    <button type="submit" disabled={isSaving} className="px-5 py-2 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded-xl shadow-xs disabled:opacity-60 cursor-pointer">
+                      {isSaving ? 'Sending to Pharmacy…' : 'Send Pharmacy Request'}
                     </button>
                   </div>
                 </form>

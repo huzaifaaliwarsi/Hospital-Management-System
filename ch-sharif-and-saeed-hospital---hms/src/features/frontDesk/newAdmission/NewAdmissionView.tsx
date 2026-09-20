@@ -1,9 +1,6 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   BedDouble,
-  Search,
-  UserCheck,
-  UserPlus,
   CheckCircle2,
   AlertCircle,
   ShieldCheck,
@@ -13,10 +10,8 @@ import {
   DollarSign,
   User,
 } from 'lucide-react';
-import { Patient, PatientGender, PayerType, GuardianRelation, GUARDIAN_RELATIONS } from '../../../types/patient';
+import { PatientGender, PayerType, GuardianRelation, GUARDIAN_RELATIONS } from '../../../types/patient';
 import {
-  getAllPatients,
-  fetchPatients,
   createPatient,
   normalizePhone,
   isValidPhone,
@@ -28,19 +23,30 @@ import {
   getActiveCorporatePanels,
   CorporatePanel,
 } from '../../../services/panelService';
-import { DepartmentService } from '../../../services/departmentService';
-import { StaffUserService } from '../../../services/staffUserService';
-import { WardsRoomsBedsService } from '../../../services/wardsRoomsBedsService';
+import { StaffUserService, fetchStaffUsers } from '../../../services/staffUserService';
+import { StaffUser } from '../../../types/staffUser';
+import { WardsRoomsBedsService, fetchWardHierarchy } from '../../../services/wardsRoomsBedsService';
+import { Ward, Room, Bed } from '../../../types/wardsRoomsBeds';
 import {
   createAdmission,
   CreateAdmissionFormValues,
   AdmissionRecord,
+  AdmissionAdvanceReceipt,
+  AdmissionPaymentMethod,
   MedicationMode,
 } from '../../../services/admissionService';
 import { getHospitalCurrentDate, formatDateISO } from '../../../utils/dateConstants';
+import { formatPKR } from '../../../utils/formatters';
 import { useAuth } from '../../../context/AuthContext';
-import { Select, Textarea, NumberInput, TextInput } from '../../../components/forms/FormControls';
-import { PanelBadge } from '../../../components/common/PanelBadge';
+import { Select, Textarea, NumberInput, TextInput, CNICInput } from '../../../components/forms/FormControls';
+import { focusNextField, focusNextFieldOnEnter } from '../../../utils/formNavigation';
+
+const PAYMENT_METHODS: { label: string; value: AdmissionPaymentMethod }[] = [
+  { label: 'Cash', value: 'CASH' },
+  { label: 'Card', value: 'CARD' },
+  { label: 'Bank Transfer', value: 'BANK' },
+  { label: 'Online', value: 'ONLINE' },
+];
 
 const emptyForm = (): CreateAdmissionFormValues => ({
   panelPatientId: '',
@@ -53,31 +59,49 @@ const emptyForm = (): CreateAdmissionFormValues => ({
   estimatedAmount: '',
   medicationMode: 'SELF',
   notes: '',
+  advanceAmount: '',
+  paymentMethod: 'CASH',
+  paymentReference: '',
 });
 
 /**
  * v7.2 §2.9 (HMS_V7.2_NEW_REQUIREMENTS.md) — "Admission begins at Front Desk".
- * Clean inline intake: Option 1 (Existing Patient) vs Option 2 (Register New Patient)
- * with Self Pay vs Corporate / Panel selector.
+ * Landscape 2-column intake layout: Left = Patient Demographics & Payer; Right = Clinical Booking & Bed.
  */
 export const NewAdmissionView: React.FC = () => {
   const { currentUser } = useAuth();
+  const formContainerRef = useRef<HTMLDivElement>(null);
+  const submitButtonRef = useRef<HTMLButtonElement>(null);
+  const handleEnterNext = (e: React.KeyboardEvent<HTMLElement>) => focusNextFieldOnEnter(e, formContainerRef.current);
 
-  // Intake Mode: Existing vs New
-  const [intakeMode, setIntakeMode] = useState<'EXISTING' | 'NEW'>('EXISTING');
-
-  // Existing Patient Search
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+  const handleSelectKeyDown = (e: React.KeyboardEvent<HTMLSelectElement>) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const el = e.currentTarget;
+    if (el.value) {
+      focusNextField(el, formContainerRef.current);
+    } else {
+      try {
+        if (typeof (el as any).showPicker === 'function') {
+          (el as any).showPicker();
+        } else {
+          el.click();
+        }
+      } catch {
+        el.click();
+      }
+    }
+  };
 
   // New Patient Inline Fields
   const [fullName, setFullName] = useState('');
   const [fatherGuardianName, setFatherGuardianName] = useState('');
-  const [guardianRelation, setGuardianRelation] = useState<GuardianRelation>('Father');
+  const [guardianRelation, setGuardianRelation] = useState<GuardianRelation | ''>('');
+  const [guardianCnic, setGuardianCnic] = useState('');
   const [primaryPhone, setPrimaryPhone] = useState('');
   const [age, setAge] = useState('');
   const [gender, setGender] = useState<PatientGender>('Male');
-  const [cnic, setCnic] = useState('');
+  const [address, setAddress] = useState('');
   const [payerType, setPayerType] = useState<PayerType>('Self Pay');
   const [panelId, setPanelId] = useState('');
   const [panelMemberId, setPanelMemberId] = useState('');
@@ -87,188 +111,195 @@ export const NewAdmissionView: React.FC = () => {
   const [formError, setFormError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [createdAdmission, setCreatedAdmission] = useState<AdmissionRecord | null>(null);
+  const [createdAdvanceReceipt, setCreatedAdvanceReceipt] = useState<AdmissionAdvanceReceipt | null>(null);
 
-  // Panels cache
+  // Live master data caches (re-fetched on mount so direct navigation never gets stuck on an unprimed memory cache)
   const [corporatePanels, setCorporatePanels] = useState<CorporatePanel[]>(getActiveCorporatePanels);
+  const [allWards, setAllWards] = useState<Ward[]>(WardsRoomsBedsService.getWards());
+  const [allRooms, setAllRooms] = useState<Room[]>(WardsRoomsBedsService.getRooms());
+  const [allBeds, setAllBeds] = useState<Bed[]>(WardsRoomsBedsService.getBeds());
+  const [allStaff, setAllStaff] = useState<StaffUser[]>(() => StaffUserService.getStaffUsers());
+
+  // No separate Ward/Room selection is kept in CreateAdmissionFormValues — they only exist here
+  // to narrow the Bed dropdown; the backend only needs the final preferredBedId + departmentId.
+  const [selectedWardId, setSelectedWardId] = useState('');
+  const [selectedRoomId, setSelectedRoomId] = useState('');
+
+  const refreshHierarchy = () => {
+    fetchWardHierarchy().then(({ wards, rooms, beds }) => {
+      setAllWards(wards);
+      setAllRooms(rooms);
+      setAllBeds(beds);
+    }).catch(() => {});
+  };
 
   useEffect(() => {
     fetchCorporatePanels().then(setCorporatePanels).catch(() => {});
-    fetchPatients().catch(() => {});
+    refreshHierarchy();
+    fetchStaffUsers().then(setAllStaff).catch(() => {});
   }, []);
 
-  const departments = useMemo(() => DepartmentService.getDepartments().filter((d) => d.status === 'Active'), []);
-  const doctors = useMemo(() => StaffUserService.getStaffUsers().filter((s) => s.staffCategory === 'Doctor' && s.status === 'ACTIVE'), []);
-  const availableBeds = useMemo(() => WardsRoomsBedsService.getBeds().filter((b) => b.occupancyStatus === 'Available' && b.operationalStatus === 'Active'), []);
+  const activeWards = useMemo(() => allWards.filter((w) => w.status === 'Active'), [allWards]);
+  const selectedWard = useMemo(() => allWards.find((w) => w.id === selectedWardId), [allWards, selectedWardId]);
 
-  // Department-filtered doctors
-  const departmentDoctors = useMemo(() => {
-    if (!formValues.departmentId) return doctors;
-    const filtered = doctors.filter((d) => d.departmentId === formValues.departmentId);
-    return filtered.length > 0 ? filtered : doctors;
-  }, [doctors, formValues.departmentId]);
+  useEffect(() => {
+    const deptId = selectedWard?.departmentId || '';
+    setFormValues((prev) => (prev.departmentId === deptId ? prev : { ...prev, departmentId: deptId }));
+  }, [selectedWard]);
 
-  const searchResults = useMemo(() => {
-    if (!searchTerm.trim()) return [];
-    const q = searchTerm.trim().toLowerCase();
-    return getAllPatients()
-      .filter(
-        (p) =>
-          p.fullName.toLowerCase().includes(q) ||
-          p.mrNumber.toLowerCase().includes(q) ||
-          p.primaryPhone.includes(q) ||
-          (p.cnic && p.cnic.includes(q))
-      )
-      .slice(0, 10);
-  }, [searchTerm]);
+  // Only show rooms that have at least one currently available, active bed
+  const wardRooms = useMemo(() => {
+    return allRooms.filter((r) => {
+      if (r.wardId !== selectedWardId || r.status !== 'Active') return false;
+      return allBeds.some(
+        (b) => b.roomId === r.id && b.occupancyStatus === 'Available' && b.operationalStatus === 'Active'
+      );
+    });
+  }, [allRooms, allBeds, selectedWardId]);
 
-  const handleSelectPatient = (patient: Patient) => {
-    setSelectedPatient(patient);
-    setSearchTerm('');
-    setFormValues((prev) => ({
-      ...prev,
-      panelPatientId: patient.payerType === 'Corporate / Panel' ? patient.id : '',
-      selfPayEncounterId: patient.payerType === 'Self Pay' ? patient.id : '',
-    }));
-    setFormError(null);
-  };
+  const roomBeds = useMemo(
+    () =>
+      allBeds.filter(
+        (b) => b.roomId === selectedRoomId && b.occupancyStatus === 'Available' && b.operationalStatus === 'Active'
+      ),
+    [allBeds, selectedRoomId]
+  );
 
   const handleReset = () => {
-    setSelectedPatient(null);
-    setSearchTerm('');
     setFullName('');
     setFatherGuardianName('');
-    setGuardianRelation('Father');
+    setGuardianRelation('');
+    setGuardianCnic('');
     setPrimaryPhone('');
     setAge('');
     setGender('Male');
-    setCnic('');
+    setAddress('');
     setPayerType('Self Pay');
     setPanelId('');
     setPanelMemberId('');
     setFormValues(emptyForm());
-    setCreatedAdmission(null);
     setFormError(null);
+    setCreatedAdmission(null);
+    setCreatedAdvanceReceipt(null);
+    refreshHierarchy();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
 
-    if (!formValues.departmentId) {
-      setFormError('Select the admitting department.');
+    // 1. Patient Fields Validation
+    if (!fullName.trim()) {
+      setFormError('Patient Full Name is required.');
       return;
     }
-    if (!formValues.doctorStaffId) {
-      setFormError('Select the admitting doctor.');
+    if (!fatherGuardianName.trim()) {
+      setFormError('Guardian Name is required.');
       return;
     }
-
-    let activePatient = selectedPatient;
-
-    // If Register New Patient mode is active, validate and create patient first
-    if (intakeMode === 'NEW') {
-      if (!fullName.trim()) {
-        setFormError('Patient Full Name is required.');
+    if (!guardianRelation) {
+      setFormError('Please select Guardian Relation.');
+      return;
+    }
+    if (guardianCnic.trim() && !isValidCnic(normalizeCnic(guardianCnic))) {
+      setFormError('Father / Guardian CNIC must follow the Pakistani format: XXXXX-XXXXXXX-X (13 digits).');
+      return;
+    }
+    if (!primaryPhone.trim()) {
+      setFormError('Contact Phone is required.');
+      return;
+    }
+    if (!isValidPhone(primaryPhone)) {
+      setFormError('Please enter a valid phone number (at least 10 digits).');
+      return;
+    }
+    const ageNum = Number(age);
+    if (!age.trim() || isNaN(ageNum) || ageNum < 0 || ageNum > 130) {
+      setFormError('Please enter a valid age in years.');
+      return;
+    }
+    if (payerType === 'Corporate / Panel') {
+      if (!panelId) {
+        setFormError('Please select a Corporate Panel.');
         return;
       }
-      if (!fatherGuardianName.trim()) {
-        setFormError('Father / Guardian Name is required.');
-        return;
-      }
-      if (!primaryPhone.trim()) {
-        setFormError('Contact Phone is required.');
-        return;
-      }
-      if (!isValidPhone(primaryPhone)) {
-        setFormError('Please enter a valid phone number (at least 10 digits).');
-        return;
-      }
-      const ageNum = Number(age);
-      if (!age.trim() || isNaN(ageNum) || ageNum < 0 || ageNum > 130) {
-        setFormError('Please enter a valid age in years.');
-        return;
-      }
-      if (cnic.trim() && !isValidCnic(normalizeCnic(cnic))) {
-        setFormError('CNIC must follow the Pakistani format: XXXXX-XXXXXXX-X (13 digits).');
-        return;
-      }
-      if (payerType === 'Corporate / Panel') {
-        if (!panelId) {
-          setFormError('Please select a Corporate Panel.');
-          return;
-        }
-        if (!panelMemberId.trim()) {
-          setFormError('Panel Member ID / Card Number is required.');
-          return;
-        }
-      }
-
-      setIsSaving(true);
-      try {
-        const birthYear = new Date().getFullYear() - Math.max(0, Math.floor(ageNum));
-        const dob = `${birthYear}-01-01`;
-
-        const regRes = await createPatient(
-          {
-            fullName: fullName.trim(),
-            fatherGuardianName: fatherGuardianName.trim(),
-            guardianRelation,
-            dateOfBirth: dob,
-            age: ageNum,
-            ageIsEstimated: true,
-            gender,
-            cnic: normalizeCnic(cnic) || '',
-            passportNumber: '',
-            primaryPhone: normalizePhone(primaryPhone),
-            alternatePhone: '',
-            email: '',
-            addressLine1: '',
-            addressLine2: '',
-            city: 'Lahore',
-            province: 'Punjab',
-            country: 'Pakistan',
-            bloodGroup: 'Unknown',
-            payerType,
-            panelId: payerType === 'Corporate / Panel' ? panelId : '',
-            panelName: payerType === 'Corporate / Panel' ? corporatePanels.find((p) => p.id === panelId)?.name || '' : '',
-            panelMemberId: payerType === 'Corporate / Panel' ? panelMemberId.trim() : '',
-            emergencyContactName: '',
-            emergencyContactRelation: '',
-            emergencyContactPhone: '',
-            status: 'ACTIVE',
-          },
-          currentUser
-        );
-
-        if (!regRes.success || !regRes.patient) {
-          setFormError(regRes.error || 'Failed to register patient for admission.');
-          setIsSaving(false);
-          return;
-        }
-
-        activePatient = regRes.patient;
-        setSelectedPatient(regRes.patient);
-      } catch (err: any) {
-        setFormError(err?.message || 'Failed to register patient.');
-        setIsSaving(false);
+      if (!panelMemberId.trim()) {
+        setFormError('Panel Member ID / Card Number is required.');
         return;
       }
     }
 
-    if (!activePatient) {
-      setFormError('Please search and select an existing patient, or fill the new patient form.');
+    // 2. Admission Fields Validation — Simply pick the ward (room & bed can be chosen now or assigned at portal)
+    if (!selectedWardId) {
+      setFormError('Please select an Inpatient Ward for admission.');
       return;
     }
 
     setIsSaving(true);
     try {
+      // 3. Register Patient
+      const birthYear = new Date().getFullYear() - Math.max(0, Math.floor(ageNum));
+      const dob = `${birthYear}-01-01`;
+
+      const regRes = await createPatient(
+        {
+          fullName: fullName.trim(),
+          fatherGuardianName: fatherGuardianName.trim(),
+          guardianRelation,
+          guardianCnic: guardianCnic.trim() ? normalizeCnic(guardianCnic) : '',
+          dateOfBirth: dob,
+          age: ageNum,
+          ageIsEstimated: true,
+          gender,
+          cnic: '',
+          passportNumber: '',
+          primaryPhone: normalizePhone(primaryPhone),
+          alternatePhone: '',
+          email: '',
+          addressLine1: address.trim(),
+          addressLine2: '',
+          city: 'Karachi',
+          province: 'Sindh',
+          country: 'Pakistan',
+          bloodGroup: 'Unknown',
+          payerType,
+          panelId: payerType === 'Corporate / Panel' ? panelId : '',
+          panelName: payerType === 'Corporate / Panel' ? corporatePanels.find((p) => p.id === panelId)?.name || '' : '',
+          panelMemberId: payerType === 'Corporate / Panel' ? panelMemberId.trim() : '',
+          emergencyContactName: fatherGuardianName.trim(),
+          emergencyContactRelation: guardianRelation,
+          emergencyContactPhone: guardianCnic.trim() ? normalizeCnic(guardianCnic) : normalizePhone(primaryPhone),
+          status: 'ACTIVE',
+        },
+        currentUser
+      );
+
+      if (!regRes.success || !regRes.patient) {
+        setFormError(regRes.error || 'Failed to register patient for admission.');
+        setIsSaving(false);
+        return;
+      }
+
+      const activePatient = regRes.patient;
+
+      // 4. Create Admission
+      const extraNotesParts = [
+        formValues.notes.trim(),
+        guardianCnic.trim() ? `Guardian CNIC: ${normalizeCnic(guardianCnic)}` : '',
+        guardianRelation ? `Guardian Relation: ${guardianRelation}` : '',
+        address.trim() ? `Address: ${address.trim()}` : '',
+      ].filter(Boolean);
+
       const admissionPayload: CreateAdmissionFormValues = {
         ...formValues,
+        notes: extraNotesParts.join(' | '),
         panelPatientId: activePatient.payerType === 'Corporate / Panel' ? activePatient.id : '',
         selfPayEncounterId: activePatient.payerType === 'Self Pay' ? activePatient.id : '',
       };
-      const admission = await createAdmission(admissionPayload);
+      const { admission, advanceReceipt } = await createAdmission(admissionPayload);
       setCreatedAdmission(admission);
+      setCreatedAdvanceReceipt(advanceReceipt);
+      refreshHierarchy();
     } catch (err: any) {
       setFormError(err?.response?.data?.error?.message || err?.message || 'Failed to create admission.');
     } finally {
@@ -310,23 +341,46 @@ export const NewAdmissionView: React.FC = () => {
                 <span className="font-semibold text-slate-900">{createdAdmission.payerType}</span>
               </div>
               <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                <span className="text-[10px] text-slate-500 uppercase block">Guardian &amp; Relation</span>
+                <span className="font-semibold text-slate-900">{fatherGuardianName} ({guardianRelation})</span>
+              </div>
+              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                <span className="text-[10px] text-slate-500 uppercase block">Father / Guardian CNIC</span>
+                <span className="font-semibold font-mono text-slate-900">{guardianCnic ? normalizeCnic(guardianCnic) : 'Not provided'}</span>
+              </div>
+              {address && (
+                <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 col-span-2">
+                  <span className="text-[10px] text-slate-500 uppercase block">Residential Address</span>
+                  <span className="font-semibold text-slate-900">{address}</span>
+                </div>
+              )}
+              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
                 <span className="text-[10px] text-slate-500 uppercase block">Department</span>
                 <span className="font-semibold text-slate-900">{createdAdmission.departmentName}</span>
               </div>
               <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
                 <span className="text-[10px] text-slate-500 uppercase block">Admitting Doctor</span>
-                <span className="font-semibold text-slate-900">{createdAdmission.doctorName}</span>
+                <span className="font-semibold text-slate-900">{createdAdmission.doctorName || 'Not Assigned Yet'}</span>
               </div>
             </div>
-            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800">
-              <Wallet className="h-3.5 w-3.5 inline mr-1.5" />
-              Advance collection / deposit at Front Desk is logged with admission reference.
-            </div>
+            {createdAdvanceReceipt ? (
+              <div className="p-3 bg-[#effaf5] border border-emerald-200 rounded-lg text-emerald-900 flex items-center justify-between gap-3">
+                <span className="flex items-center gap-1.5">
+                  <Wallet className="h-3.5 w-3.5 shrink-0" />
+                  Advance collected — receipt <strong className="font-mono">{createdAdvanceReceipt.receiptNumber}</strong> ({createdAdvanceReceipt.method})
+                </span>
+                <span className="font-bold font-mono">{formatPKR(createdAdvanceReceipt.amount)}</span>
+              </div>
+            ) : (
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-slate-600 text-[11px]">
+                No advance was collected at admission — a receipt can be recorded any time from Hospital Invoices once the stay has an invoice.
+              </div>
+            )}
             <div className="flex justify-end pt-2 border-t border-slate-200">
               <button
                 type="button"
                 onClick={handleReset}
-                className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#08775A] hover:bg-[#065f46] text-white rounded-lg text-xs font-semibold shadow-xs"
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#08775A] hover:bg-[#065f46] text-white rounded-lg text-xs font-semibold shadow-xs cursor-pointer"
               >
                 <RefreshCw className="h-3.5 w-3.5" /> Create Another Admission
               </button>
@@ -338,407 +392,470 @@ export const NewAdmissionView: React.FC = () => {
   }
 
   return (
-    <div className="max-w-3xl mx-auto space-y-5 animate-in fade-in duration-150 pb-12">
-      {/* Header Banner */}
-      <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-xl bg-[#effaf5] text-[#08775A] flex items-center justify-center shrink-0">
-            <BedDouble className="h-5 w-5" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-slate-900">New Admission</h1>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Admission begins at Front Desk (v7.2) with instant patient registration and department booking.
-            </p>
-          </div>
+    <div ref={formContainerRef} className="w-full max-w-7xl mx-auto space-y-4 animate-in fade-in duration-150 pb-12">
+      {/* Breadcrumb Header Bar */}
+      <div className="bg-white rounded-xl border border-slate-200 px-4 py-2.5 shadow-xs flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
+          <span className="text-slate-600">Front Desk</span>
+          <span className="text-slate-300">/</span>
+          <span className="uppercase text-slate-500 font-semibold tracking-wide">PATIENT FLOW</span>
+          <span className="text-slate-300">/</span>
+          <span className="text-slate-900 font-bold">New Admission</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="px-2.5 py-1 rounded-md text-xs font-bold border uppercase tracking-wide bg-[#effaf5] text-[#08775A] border-[#c2e7db]">
+            Inpatient Admission Intake
+          </span>
+          <button
+            type="button"
+            onClick={handleReset}
+            title="Reset Form"
+            className="px-2.5 py-1 text-xs font-semibold text-slate-600 bg-slate-50 border border-slate-200 rounded-md hover:bg-slate-100 hover:text-slate-900 transition-colors flex items-center gap-1 cursor-pointer"
+          >
+            <RefreshCw className="h-3 w-3 text-slate-400" />
+            <span>Reset</span>
+          </button>
         </div>
       </div>
 
       {formError && (
         <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg flex items-center gap-2 text-xs text-rose-700 font-medium animate-in fade-in">
-          <AlertCircle className="h-4 w-4 shrink-0" />
+          <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
           <span>{formError}</span>
         </div>
       )}
 
-      {/* 1. Patient Intake Mode (Option 1 vs Option 2) */}
-      <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-4">
-        <div>
-          <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
-            1. Patient Selection & Intake
-          </label>
-          <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100/90 rounded-xl">
-            <button
-              type="button"
-              onClick={() => setIntakeMode('EXISTING')}
-              className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-bold transition-all ${
-                intakeMode === 'EXISTING'
-                  ? 'bg-white text-slate-900 shadow-xs ring-1 ring-slate-200'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <UserCheck className="h-3.5 w-3.5 text-[#08775A]" />
-              <span>Option 1: Existing Patient</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setIntakeMode('NEW')}
-              className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-bold transition-all ${
-                intakeMode === 'NEW'
-                  ? 'bg-white text-[#08775A] shadow-xs ring-1 ring-[#c2e7db]'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <UserPlus className="h-3.5 w-3.5 text-[#08775A]" />
-              <span>Option 2: Register New Patient</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Option 1: Existing Patient Search */}
-        {intakeMode === 'EXISTING' && (
-          <div className="space-y-3 bg-slate-50/60 p-3.5 rounded-xl border border-slate-200/80">
-            {selectedPatient ? (
-              <div className="flex items-center justify-between p-3 bg-white border border-[#c2e7db] rounded-lg shadow-xs">
-                <div className="flex items-center gap-3">
-                  <div className="h-9 w-9 rounded-lg bg-[#effaf5] text-[#08775A] flex items-center justify-center shrink-0">
-                    <User className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-slate-900 text-sm">{selectedPatient.fullName}</span>
-                      {selectedPatient.payerType === 'Corporate / Panel' ? (
-                        <PanelBadge label={selectedPatient.payerType} className="px-2 py-0.5 text-[10px]" />
-                      ) : (
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                          {selectedPatient.payerType}
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-[11px] text-slate-500 block">
-                      {selectedPatient.mrNumber} • {selectedPatient.primaryPhone}
-                      {selectedPatient.panelName ? ` • Panel: ${selectedPatient.panelName}` : ''}
-                      {selectedPatient.age ? ` • Age: ${selectedPatient.age}y` : ''}
-                    </span>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedPatient(null)}
-                  className="text-xs font-semibold text-slate-600 hover:text-rose-600 px-2.5 py-1 bg-slate-50 hover:bg-rose-50 border border-slate-200 rounded-md transition-colors"
+      {/* Landscape Two-Column Form Grid */}
+      <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+        {/* LEFT COLUMN: Patient Category & Demographics (7 cols on desktop) */}
+        <div className="lg:col-span-7 space-y-4">
+          {/* 1. Patient Category Cards (Self Pay vs Panel) */}
+          <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-3">
+            <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
+              1. Patient Category &amp; Billing
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Self Pay Card */}
+              <button
+                type="button"
+                onClick={() => setPayerType('Self Pay')}
+                className={`p-3 rounded-xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${
+                  payerType === 'Self Pay'
+                    ? 'border-[#08775A] bg-[#effaf5] shadow-xs ring-1 ring-[#08775A]/20'
+                    : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                }`}
+              >
+                <div
+                  className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
+                    payerType === 'Self Pay' ? 'bg-[#08775A] text-white shadow-xs' : 'bg-slate-100 text-slate-500'
+                  }`}
                 >
-                  Change
-                </button>
-              </div>
-            ) : (
-              <div>
-                <div className="relative">
-                  <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" />
-                  <input
-                    type="text"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="Search existing patient by name, MRN, phone or CNIC…"
-                    className="w-full text-xs pl-8.5 pr-3 py-2 border border-slate-200 rounded-lg bg-white focus:outline-hidden focus:ring-2 focus:ring-[#149E75]"
-                  />
+                  <DollarSign className="h-4 w-4" />
                 </div>
-                {searchResults.length > 0 && (
-                  <div className="mt-2 bg-white border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-48 overflow-y-auto shadow-sm">
-                    {searchResults.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => handleSelectPatient(p)}
-                        className="w-full text-left px-3 py-2 hover:bg-emerald-50/50 text-xs flex items-center justify-between transition-colors"
-                      >
-                        <div>
-                          <span className="font-semibold text-slate-900">{p.fullName}</span>
-                          <span className="text-slate-400 ml-2">
-                            {p.mrNumber} • {p.primaryPhone}
-                          </span>
-                        </div>
-                        {p.payerType === 'Corporate / Panel' ? (
-                          <PanelBadge label={p.payerType} className="text-[10px]" />
-                        ) : (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
-                            {p.payerType}
-                          </span>
-                        )}
-                      </button>
-                    ))}
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-bold text-xs">Self Pay (Direct Patient)</span>
+                    {payerType === 'Self Pay' && <CheckCircle2 className="h-3.5 w-3.5 text-[#08775A]" />}
                   </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
+                  <span className="text-[11px] text-slate-500 block mt-0.5">
+                    Self-financed inpatient admission.
+                  </span>
+                </div>
+              </button>
 
-        {/* Option 2: Register New Patient (Inline Form) */}
-        {intakeMode === 'NEW' && (
-          <div className="space-y-4 bg-slate-50/80 p-4 rounded-xl border border-slate-200">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-200/80">
-              <span className="text-xs font-bold text-slate-800 uppercase tracking-wide flex items-center gap-1.5">
-                <UserPlus className="h-3.5 w-3.5 text-[#08775A]" /> New Admission Patient Registration
+              {/* Corporate / Panel Card */}
+              <button
+                type="button"
+                onClick={() => setPayerType('Corporate / Panel')}
+                className={`p-3 rounded-xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${
+                  payerType === 'Corporate / Panel'
+                    ? 'border-amber-600 bg-amber-50/70 shadow-xs ring-1 ring-amber-600/20'
+                    : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                }`}
+              >
+                <div
+                  className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
+                    payerType === 'Corporate / Panel' ? 'bg-amber-600 text-white shadow-xs' : 'bg-slate-100 text-slate-500'
+                  }`}
+                >
+                  <Building2 className="h-4 w-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-bold text-xs">Corporate / Panel</span>
+                    {payerType === 'Corporate / Panel' && <CheckCircle2 className="h-3.5 w-3.5 text-amber-600" />}
+                  </div>
+                  <span className="text-[11px] text-slate-500 block mt-0.5">
+                    Company/Insurance credit guarantee admission.
+                  </span>
+                </div>
+              </button>
+            </div>
+          </div>
+
+          {/* 2. Patient Demographics Form */}
+          <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
+                2. Patient Information
+              </label>
+              <span className="text-[11px] text-[#08775A] font-semibold bg-[#effaf5] border border-emerald-200 px-2 py-0.5 rounded">
+                Admission Slip Details
               </span>
-              <span className="text-[11px] text-slate-500">Fast inline hospital entry</span>
             </div>
 
             {/* Name & Guardian */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <TextInput
-                label="Full Name"
+                label="Patient Full Name"
                 required
                 placeholder="Patient's legal name"
                 value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
+                onChange={(e) => setFullName(e.target.value.toUpperCase())}
+                onKeyDown={handleEnterNext}
               />
-              <TextInput
-                label="Father / Guardian Name"
-                required
-                placeholder="Father / Husband / Guardian"
-                value={fatherGuardianName}
-                onChange={(e) => setFatherGuardianName(e.target.value)}
-              />
+              <div className="grid grid-cols-3 gap-2">
+                <div className="col-span-2">
+                  <TextInput
+                    label="Guardian Name"
+                    required
+                    placeholder="Father / Guardian name"
+                    value={fatherGuardianName}
+                    onChange={(e) => setFatherGuardianName(e.target.value.toUpperCase())}
+                    onKeyDown={handleEnterNext}
+                  />
+                </div>
+                <div>
+                  <Select
+                    label="Relation"
+                    required
+                    options={[
+                      { label: 'Select Relation', value: '' },
+                      ...GUARDIAN_RELATIONS.map((r) => ({ label: r, value: r })),
+                    ]}
+                    value={guardianRelation}
+                    onChange={(e) => {
+                      setGuardianRelation(e.target.value as GuardianRelation);
+                    }}
+                    onKeyDown={handleSelectKeyDown}
+                  />
+                </div>
+              </div>
             </div>
 
-            {/* Phone, Age, CNIC */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {/* Guardian CNIC & Phone */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <CNICInput
+                label="Father / Guardian CNIC"
+                placeholder="XXXXX-XXXXXXX-X"
+                value={guardianCnic}
+                onChange={(e) => setGuardianCnic(e.target.value)}
+                onKeyDown={handleEnterNext}
+              />
               <TextInput
                 label="Contact Phone"
                 required
                 placeholder="0300-1234567"
                 value={primaryPhone}
                 onChange={(e) => setPrimaryPhone(e.target.value)}
-              />
-              <TextInput
-                label="Age (Years)"
-                required
-                type="number"
-                min="0"
-                max="130"
-                placeholder="e.g. 35"
-                value={age}
-                onChange={(e) => setAge(e.target.value)}
-              />
-              <TextInput
-                label="CNIC (optional)"
-                placeholder="XXXXX-XXXXXXX-X"
-                value={cnic}
-                onChange={(e) => setCnic(e.target.value)}
+                onKeyDown={handleEnterNext}
               />
             </div>
 
-            {/* Gender Pills */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Gender <span className="text-rose-500">*</span>
-              </label>
-              <div className="flex gap-2">
-                {(['Male', 'Female', 'Other / Not Specified'] as PatientGender[]).map((g) => (
-                  <button
-                    key={g}
-                    type="button"
-                    onClick={() => setGender(g)}
-                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
-                      gender === g
-                        ? 'bg-[#08775A] text-white border-[#08775A] shadow-xs'
-                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                    }`}
-                  >
-                    {g === 'Other / Not Specified' ? 'Other' : g}
-                  </button>
-                ))}
+            {/* Age, Gender, Residential Address */}
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-start">
+              <div className="sm:col-span-3">
+                <TextInput
+                  label="Age (Years)"
+                  required
+                  type="number"
+                  min="0"
+                  max="130"
+                  placeholder="e.g. 35"
+                  value={age}
+                  onChange={(e) => setAge(e.target.value)}
+                  onKeyDown={handleEnterNext}
+                />
               </div>
-            </div>
-
-            {/* Billing / Payer Type Selector */}
-            <div className="pt-2 border-t border-slate-200">
-              <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
-                Billing / Payer Type
-              </label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => setPayerType('Self Pay')}
-                  className={`p-3 rounded-xl border-2 text-left transition-all flex items-start gap-2.5 ${
-                    payerType === 'Self Pay'
-                      ? 'border-[#08775A] bg-[#effaf5] text-slate-900 shadow-xs'
-                      : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-600'
-                  }`}
-                >
-                  <div
-                    className={`h-7 w-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
-                      payerType === 'Self Pay' ? 'bg-[#08775A] text-white' : 'bg-slate-100 text-slate-500'
-                    }`}
-                  >
-                    <DollarSign className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-bold text-xs">Self Pay (Direct Patient)</span>
-                      {payerType === 'Self Pay' && <CheckCircle2 className="h-3.5 w-3.5 text-[#08775A]" />}
-                    </div>
-                    <span className="text-[11px] text-slate-500 block mt-0.5">
-                      Self-financed inpatient admission.
-                    </span>
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setPayerType('Corporate / Panel')}
-                  className={`p-3 rounded-xl border-2 text-left transition-all flex items-start gap-2.5 ${
-                    payerType === 'Corporate / Panel'
-                      ? 'border-amber-600 bg-amber-50/70 text-slate-900 shadow-xs'
-                      : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-600'
-                  }`}
-                >
-                  <div
-                    className={`h-7 w-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
-                      payerType === 'Corporate / Panel' ? 'bg-amber-600 text-white' : 'bg-slate-100 text-slate-500'
-                    }`}
-                  >
-                    <Building2 className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-bold text-xs">Corporate / Panel</span>
-                      {payerType === 'Corporate / Panel' && <CheckCircle2 className="h-3.5 w-3.5 text-amber-600" />}
-                    </div>
-                    <span className="text-[11px] text-slate-500 block mt-0.5">
-                      Company/Insurance credit guarantee admission.
-                    </span>
-                  </div>
-                </button>
-              </div>
-
-              {/* Panel Details (Only if Corporate / Panel selected) */}
-              {payerType === 'Corporate / Panel' && (
-                <div className="mt-3 p-3.5 bg-white border border-amber-200 rounded-xl space-y-3 animate-in fade-in">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <Select
-                      label="Corporate Panel"
-                      required
-                      options={corporatePanels.map((p) => ({ label: `${p.name} (${p.code})`, value: p.id }))}
-                      value={panelId}
-                      onChange={(e) => setPanelId(e.target.value)}
-                    />
-                    <TextInput
-                      label="Panel Member ID / Card #"
-                      required
-                      placeholder="e.g. EMP-99214 / CRD-4412"
-                      value={panelMemberId}
-                      onChange={(e) => setPanelMemberId(e.target.value)}
-                    />
-                  </div>
+              <div className="sm:col-span-4">
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Gender <span className="text-rose-500">*</span>
+                </label>
+                <div className="flex gap-1">
+                  {(['Male', 'Female', 'Other / Not Specified'] as PatientGender[]).map((g) => (
+                    <button
+                      key={g}
+                      type="button"
+                      onClick={() => setGender(g)}
+                      className={`flex-1 py-2 text-xs font-semibold rounded-lg border transition-all cursor-pointer text-center ${
+                        gender === g
+                          ? 'bg-[#08775A] text-white border-[#08775A] shadow-xs'
+                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      {g === 'Other / Not Specified' ? 'Other' : g}
+                    </button>
+                  ))}
                 </div>
+              </div>
+              <div className="sm:col-span-5">
+                <TextInput
+                  label="Residential Address"
+                  placeholder="e.g. Landhi Hospital Karachi"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  onKeyDown={handleEnterNext}
+                />
+              </div>
+            </div>
+
+            {/* Corporate / Panel Specific Fields (Only if Panel selected) */}
+            {payerType === 'Corporate / Panel' && (
+              <div className="pt-3 border-t border-amber-200 space-y-3 bg-amber-50/40 p-3.5 rounded-xl border border-amber-200/80 animate-in fade-in">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-amber-900">
+                  <Building2 className="h-3.5 w-3.5 text-amber-600" />
+                  <span>Panel Contract &amp; Card Information</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Select
+                    label="Corporate Panel"
+                    required
+                    options={[
+                      { label: '-- Select Corporate Panel --', value: '' },
+                      ...corporatePanels.map((p) => ({ label: `${p.name} (${p.code})`, value: p.id })),
+                    ]}
+                    value={panelId}
+                    onChange={(e) => setPanelId(e.target.value)}
+                    onKeyDown={handleSelectKeyDown}
+                  />
+                  <TextInput
+                    label="Panel Member ID / Card #"
+                    required
+                    placeholder="e.g. EMP-99214 / CRD-4412"
+                    value={panelMemberId}
+                    onChange={(e) => setPanelMemberId(e.target.value.toUpperCase())}
+                    onKeyDown={handleEnterNext}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* RIGHT COLUMN: Clinical & Admission Details (5 cols on desktop) */}
+        <div className="lg:col-span-5 space-y-4">
+          <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <label className="block text-xs font-bold uppercase tracking-wider text-[#08775A]">
+                3. Admission &amp; Ward Details
+              </label>
+              <span className="text-[11px] text-slate-500 flex items-center gap-1">
+                <BedDouble className="h-3.5 w-3.5 text-[#08775A]" /> Booking
+              </span>
+            </div>
+
+            {/* Ward → Room → Bed cascade & Fulfillment */}
+            <div className="space-y-3">
+              <Select
+                label="Ward"
+                required
+                hint={activeWards.length === 0 ? 'No active wards configured.' : undefined}
+                options={[
+                  { label: '-- Select Ward --', value: '' },
+                  ...activeWards.map((w) => ({ label: w.name, value: w.id })),
+                ]}
+                value={selectedWardId}
+                onChange={(e) => {
+                  setSelectedWardId(e.target.value);
+                  setSelectedRoomId('');
+                  setFormValues((prev) => ({ ...prev, preferredBedId: '' }));
+                }}
+                onKeyDown={handleSelectKeyDown}
+              />
+              <Select
+                label="Room"
+                hint={
+                  !selectedWardId
+                    ? 'Select a ward first.'
+                    : wardRooms.length === 0
+                    ? 'No rooms with available beds in this ward.'
+                    : undefined
+                }
+                options={[
+                  { label: '-- Select Room --', value: '' },
+                  ...wardRooms.map((r) => {
+                    const availCount = allBeds.filter(
+                      (b) => b.roomId === r.id && b.occupancyStatus === 'Available' && b.operationalStatus === 'Active'
+                    ).length;
+                    return {
+                      label: `${r.roomNumber ? `Room ${r.roomNumber} - ` : ''}${r.name} (${availCount} bed${availCount > 1 ? 's' : ''} available)`,
+                      value: r.id,
+                    };
+                  }),
+                ]}
+                value={selectedRoomId}
+                onChange={(e) => {
+                  setSelectedRoomId(e.target.value);
+                  setFormValues((prev) => ({ ...prev, preferredBedId: '' }));
+                }}
+                onKeyDown={handleSelectKeyDown}
+              />
+              <Select
+                label="Bed Preference (optional)"
+                hint={
+                  !selectedRoomId
+                    ? 'Select a room to see its available beds.'
+                    : roomBeds.length === 0
+                    ? 'No available beds in this room right now.'
+                    : 'Tentative only — bed becomes occupied at Admission Portal check-in.'
+                }
+                options={[
+                  { label: '-- Select Bed Preference (optional) --', value: '' },
+                  ...roomBeds.map((b) => ({ label: `Bed ${b.bedNumber}`, value: b.id })),
+                ]}
+                value={formValues.preferredBedId}
+                onChange={(e) => {
+                  setFormValues((prev) => ({ ...prev, preferredBedId: e.target.value }));
+                }}
+                onKeyDown={handleSelectKeyDown}
+              />
+              <Select
+                label="Fulfillment Mode"
+                hint="Self = arranges own medicines. Hospital Managed = Pharmacy fulfills via requests."
+                options={[
+                  { label: 'Self (Patient Arranged)', value: 'SELF' },
+                  { label: 'Hospital Managed (Pharmacy)', value: 'HOSPITAL_MANAGED' },
+                ]}
+                value={formValues.medicationMode}
+                onChange={(e) => {
+                  setFormValues((prev) => ({ ...prev, medicationMode: e.target.value as MedicationMode }));
+                }}
+                onKeyDown={handleSelectKeyDown}
+              />
+            </div>
+
+            {/* Expected Date */}
+            <div>
+              <TextInput
+                label="Expected Admission Date"
+                type="date"
+                value={formValues.expectedAt}
+                onChange={(e) => setFormValues({ ...formValues, expectedAt: e.target.value })}
+                onKeyDown={handleEnterNext}
+              />
+            </div>
+
+            {/* Advance Received Now — real money, posts a real receipt + cashier ledger entry on submit */}
+            <div className="p-3.5 bg-[#effaf5] border border-[#c2e7db] rounded-xl space-y-3">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-[#08775A]">
+                <Wallet className="h-3.5 w-3.5" />
+                <span>Advance Received Now (optional)</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <NumberInput
+                  label="Advance Amount (PKR)"
+                  min={0}
+                  step={500}
+                  placeholder="0"
+                  value={formValues.advanceAmount}
+                  onChange={(e) =>
+                    setFormValues({
+                      ...formValues,
+                      advanceAmount: e.target.value === '' ? '' : Number(e.target.value),
+                    })
+                  }
+                  onKeyDown={handleEnterNext}
+                />
+                <Select
+                  label="Payment Method"
+                  options={PAYMENT_METHODS}
+                  value={formValues.paymentMethod}
+                  onChange={(e) => {
+                    setFormValues((prev) => ({ ...prev, paymentMethod: e.target.value as AdmissionPaymentMethod }));
+                  }}
+                  onKeyDown={handleSelectKeyDown}
+                />
+              </div>
+              {Number(formValues.advanceAmount) > 0 && (
+                <TextInput
+                  label="Reference / Receipt # (optional)"
+                  placeholder="e.g. Cash Receipt # / Card Auth Code"
+                  value={formValues.paymentReference}
+                  onChange={(e) => setFormValues({ ...formValues, paymentReference: e.target.value })}
+                  onKeyDown={handleEnterNext}
+                />
               )}
             </div>
+
+            {/* Diagnosis & Notes */}
+            <div className="space-y-1">
+              <Textarea
+                label="Diagnosis / Admission Reason"
+                rows={2}
+                placeholder="Primary admitting complaint or diagnosis… (Press Enter to jump to Register button)"
+                value={formValues.diagnosis}
+                onChange={(e) => setFormValues({ ...formValues, diagnosis: e.target.value.toUpperCase() })}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    submitButtonRef.current?.focus();
+                    submitButtonRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                  }
+                }}
+              />
+              <div className="flex items-center justify-between text-[10.5px] text-slate-400 px-0.5">
+                <span>Press <strong className="font-semibold text-slate-600">Enter</strong> to jump straight to Register button</span>
+                <span>Shift+Enter for multi-line</span>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <Textarea
+                label="Intake Notes (optional)"
+                rows={2}
+                placeholder="Special instructions, allergies, dietary… (Press Enter to jump to Register button)"
+                value={formValues.notes}
+                onChange={(e) => setFormValues({ ...formValues, notes: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    submitButtonRef.current?.focus();
+                    submitButtonRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                  }
+                }}
+              />
+            </div>
+
+            {payerType === 'Corporate / Panel' && (
+              <div className="p-3 bg-purple-50 border border-purple-200 rounded-lg text-[11px] text-purple-900 flex items-start gap-2">
+                <ShieldCheck className="h-3.5 w-3.5 shrink-0 mt-0.5 text-purple-600" />
+                <span>
+                  Panel admission — invoices will separate Patient Co-pay share from Panel Receivable per agreement.
+                </span>
+              </div>
+            )}
+
+            {/* Submit & Reset Buttons */}
+            <div className="pt-3 border-t border-slate-200 space-y-2">
+              <button
+                ref={submitButtonRef}
+                type="submit"
+                disabled={isSaving}
+                className="w-full py-3 px-4 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] rounded-xl shadow-xs disabled:opacity-60 transition-colors flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <BedDouble className="h-4 w-4" />
+                <span>{isSaving ? 'Creating Admission…' : 'Create Admission & Handover'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleReset}
+                className="w-full py-2 text-xs font-semibold text-slate-600 bg-slate-50 border border-slate-200 rounded-xl hover:bg-slate-100 hover:text-slate-900 transition-colors cursor-pointer"
+              >
+                Reset All Fields
+              </button>
+            </div>
           </div>
-        )}
-      </div>
-
-      {/* 2. Admission Details Form */}
-      <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-4">
-        <h3 className="text-xs font-bold uppercase tracking-wider text-[#08775A]">2. Admission Details</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Select
-            label="Admitting Department"
-            required
-            options={departments.map((d) => ({ label: d.name, value: d.id }))}
-            value={formValues.departmentId}
-            onChange={(e) => setFormValues({ ...formValues, departmentId: e.target.value })}
-          />
-          <Select
-            label="Admitting Doctor"
-            required
-            options={departmentDoctors.map((d) => ({ label: `${d.fullName} (${d.designation})`, value: d.id }))}
-            value={formValues.doctorStaffId}
-            onChange={(e) => setFormValues({ ...formValues, doctorStaffId: e.target.value })}
-          />
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Select
-            label="Bed Preference (optional)"
-            hint="Tentative only — bed becomes occupied at Admission Portal check-in, not here."
-            options={availableBeds.map((b) => ({
-              label: `${b.wardName} / ${b.roomName} / Bed ${b.bedNumber}${b.departmentName ? ` (${b.departmentName})` : ''}`,
-              value: b.id,
-            }))}
-            value={formValues.preferredBedId}
-            onChange={(e) => setFormValues({ ...formValues, preferredBedId: e.target.value })}
-          />
-          <Select
-            label="Fulfillment Mode"
-            hint="Self = patient arranges own medicines. Hospital Managed = Pharmacy fulfills via requests."
-            options={[
-              { label: 'Self', value: 'SELF' },
-              { label: 'Hospital Managed', value: 'HOSPITAL_MANAGED' },
-            ]}
-            value={formValues.medicationMode}
-            onChange={(e) => setFormValues({ ...formValues, medicationMode: e.target.value as MedicationMode })}
-          />
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <TextInput
-            label="Expected Admission Date"
-            type="date"
-            value={formValues.expectedAt}
-            onChange={(e) => setFormValues({ ...formValues, expectedAt: e.target.value })}
-          />
-          <NumberInput
-            label="Estimated Deposit / Amount (PKR, optional)"
-            min={0}
-            step={500}
-            value={formValues.estimatedAmount}
-            onChange={(e) =>
-              setFormValues({
-                ...formValues,
-                estimatedAmount: e.target.value === '' ? '' : Number(e.target.value),
-              })
-            }
-          />
-        </div>
-
-        <Textarea
-          label="Diagnosis / Admission Reason (optional)"
-          rows={2}
-          value={formValues.diagnosis}
-          onChange={(e) => setFormValues({ ...formValues, diagnosis: e.target.value })}
-        />
-        <Textarea
-          label="Notes (optional)"
-          rows={2}
-          value={formValues.notes}
-          onChange={(e) => setFormValues({ ...formValues, notes: e.target.value })}
-        />
-
-        {((selectedPatient?.payerType === 'Corporate / Panel') || (intakeMode === 'NEW' && payerType === 'Corporate / Panel')) && (
-          <div className="p-3 bg-purple-50 border border-purple-200 rounded-lg text-[11px] text-purple-900 flex items-start gap-2">
-            <ShieldCheck className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-            <span>
-              Corporate / Panel admission — department invoices for this admission will separate Patient Co-pay share from Panel Receivable per corporate agreement.
-            </span>
-          </div>
-        )}
-
-        <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-200">
-          <button
-            type="button"
-            onClick={handleReset}
-            className="px-4 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
-          >
-            Reset
-          </button>
-          <button
-            type="submit"
-            disabled={isSaving}
-            className="px-5 py-2.5 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg shadow-sm disabled:opacity-60 transition-colors"
-          >
-            {isSaving ? 'Creating Admission…' : 'Create Admission'}
-          </button>
         </div>
       </form>
     </div>

@@ -363,12 +363,34 @@ model Staff {
   dischargeSummariesAuthorized DischargeSummary[] @relation("DischargeSummaryAuthorizedBy")
   dischargeSummariesFollowUp   DischargeSummary[] @relation("DischargeSummaryFollowUpDoctor")
 
+  // v7.2 Multi-department assignment for Doctors — junction table
+  staffDepartments StaffDepartment[]
+
   createdAt DateTime @default(now()) @map("created_at")
   createdBy String?  @map("created_by")
   updatedAt DateTime @updatedAt @map("updated_at")
   updatedBy String?  @map("updated_by")
 
   @@map("staff")
+}
+
+/// Junction table: allows a Doctor (or any staff) to be assigned to multiple
+/// clinical departments. `departmentId` on Staff remains for backward
+/// compatibility; this table is the authoritative source for multi-assignment.
+model StaffDepartment {
+  id           String     @id @default(uuid())
+  staffId      String     @map("staff_id")
+  staff        Staff      @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  departmentId String     @map("department_id")
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  isPrimary    Boolean    @default(false) @map("is_primary") // mirrors Staff.departmentId for informational use
+  assignedAt   DateTime   @default(now()) @map("assigned_at")
+  assignedBy   String?    @map("assigned_by")
+
+  @@unique([staffId, departmentId])
+  @@index([staffId])
+  @@index([departmentId])
+  @@map("staff_departments")
 }
 
 /// Effective-dated department/designation/shift assignment history (§4.1,
@@ -543,6 +565,7 @@ model PortalUser {
   dischargeSummariesInitiated DischargeSummary[]        @relation("DischargeSummaryInitiatedBy")
   highCostAttendantConfirmations HighCostMedicineAuthorization[] @relation("HighCostAttendantConfirmedBy")
   highCostManagementApprovals    HighCostMedicineAuthorization[] @relation("HighCostManagementApprovedBy")
+  finalBillsGenerated             AdmissionRecord[]        @relation("AdmissionFinalBillGeneratedBy")
 
   createdAt DateTime @default(now()) @map("created_at")
   createdBy String?  @map("created_by")
@@ -635,10 +658,11 @@ model Department {
   // the relational source of truth for who created/last edited the row.
   statusChangedBy     String?        @map("status_changed_by")
 
-  staff        Staff[]
-  wards        Ward[]
-  serviceRates ServiceRate[]
-  shifts       Shift[]
+  staff            Staff[]
+  wards            Ward[]
+  serviceRates     ServiceRate[]
+  shifts           Shift[]
+  staffDepartments StaffDepartment[] // junction for multi-department doctor assignment
 
   createdAt              DateTime                 @default(now()) @map("created_at")
   createdById            String?                  @map("created_by")
@@ -764,23 +788,31 @@ model HighCostMedicinePolicy {
   @@map("high_cost_medicine_policy")
 }
 
+enum ServiceStream {
+  HOSPITAL
+  LAB
+}
+
 /// §4.2 "Services & Rates" (renamed `ServiceRate` for this phase; = §6.5 `services`).
 model ServiceRate {
-  id                        String     @id @default(uuid())
-  code                      String     @unique
+  id                        String        @id @default(uuid())
+  code                      String        @unique
   name                      String
   description               String?
-  departmentId              String     @map("department_id")
-  department                Department @relation(fields: [departmentId], references: [id])
+  departmentId              String        @map("department_id")
+  department                Department    @relation(fields: [departmentId], references: [id])
   category                  String?
-  billingUnit               String     @map("billing_unit")
-  standardRate              Decimal    @map("standard_rate") @db.Decimal(14, 2)
-  panelEligible             Boolean    @default(false) @map("panel_eligible")
-  discountAllowed           Boolean    @default(true) @map("discount_allowed")
-  manualRateOverrideAllowed Boolean    @default(false) @map("manual_rate_override_allowed")
-  isActive                  Boolean    @default(true) @map("is_active")
-  statusChangedAt           DateTime?  @map("status_changed_at")
-  statusChangedBy           String?    @map("status_changed_by")
+  billingUnit               String        @map("billing_unit")
+  standardRate              Decimal       @map("standard_rate") @db.Decimal(14, 2)
+  panelEligible             Boolean       @default(false) @map("panel_eligible")
+  discountAllowed           Boolean       @default(true) @map("discount_allowed")
+  manualRateOverrideAllowed Boolean       @default(false) @map("manual_rate_override_allowed")
+  isActive                  Boolean       @default(true) @map("is_active")
+  encounterType             String?       @default("NONE") @map("encounter_type")
+  isDefaultEncounterService Boolean       @default(false) @map("is_default_encounter_service")
+  serviceStream             ServiceStream @default(HOSPITAL) @map("service_stream")
+  statusChangedAt           DateTime?     @map("status_changed_at")
+  statusChangedBy           String?       @map("status_changed_by")
 
   invoiceLines       InvoiceLineItem[]
   panelDiscountRules PanelDiscountRule[]
@@ -1233,6 +1265,13 @@ model PaymentReceipt {
   // matching in `appointments.service.ts`'s check-in allocation step.
   appointmentId             String?                  @map("appointment_id")
   appointment               Appointment?             @relation(fields: [appointmentId], references: [id])
+  // Same pattern as `appointmentId` above, for the admission-creation
+  // advance (04/23 PDFs §"Receive optional advance") — no department
+  // invoice exists yet at that point (§2.2 invoices are created on
+  // check-in / first service), so this is the only place that advance can
+  // be recorded as a real receipt.
+  admissionRecordId         String?                  @map("admission_record_id")
+  admissionRecord           AdmissionRecord?         @relation(fields: [admissionRecordId], references: [id])
   amount                    Decimal                  @db.Decimal(14, 2)
   method                    PaymentMethod
   reference                 String?
@@ -1323,8 +1362,8 @@ model AdmissionRecord {
   selfPayEncounter   SelfPayEncounter? @relation(fields: [selfPayEncounterId], references: [id])
   departmentId       String            @map("department_id")
   department         Department        @relation(fields: [departmentId], references: [id])
-  doctorStaffId      String            @map("doctor_staff_id")
-  doctor             Staff             @relation("AdmissionDoctor", fields: [doctorStaffId], references: [id])
+  doctorStaffId      String?           @map("doctor_staff_id") // optional at planning time — a doctor may be assigned later at the Admission Portal
+  doctor             Staff?            @relation("AdmissionDoctor", fields: [doctorStaffId], references: [id])
   bedId              String?           @map("bed_id") // NULL until bed assignment / confirm arrival
   bed                Bed?              @relation(fields: [bedId], references: [id])
   status             AdmissionStatus   @default(PLANNED)
@@ -1334,6 +1373,20 @@ model AdmissionRecord {
   admittedAt         DateTime?         @map("admitted_at")
   dischargedAt       DateTime?         @map("discharged_at")
   estimatedAmount    Decimal?          @map("estimated_amount") @db.Decimal(14, 2)
+  // Intake notes captured at admission creation (04/23 PDFs' "notes" field on
+  // the New Admission form); Check-In's own notes are appended here too
+  // rather than overwriting, so neither moment's note is lost.
+  notes              String?           @db.Text
+
+  // Admission Patient Records / Running Ledger (Front Desk "Generate Invoice
+  // / Final Bill" action) — set exactly once, on the first call; repeat
+  // calls return the same number instead of generating a new one. Never
+  // touches HospitalInvoice/InvoiceLineItem — the final bill is a frozen
+  // number over the already-accumulated ledger, not a new charge source.
+  finalBillNumber          String?     @unique @map("final_bill_number")
+  finalBillGeneratedAt     DateTime?   @map("final_bill_generated_at")
+  finalBillGeneratedById   String?     @map("final_bill_generated_by")
+  finalBillGeneratedByUser PortalUser? @relation("AdmissionFinalBillGeneratedBy", fields: [finalBillGeneratedById], references: [id])
 
   hospitalInvoices      HospitalInvoice[]
   bedTransfers          BedTransferHistory[]
@@ -1342,6 +1395,7 @@ model AdmissionRecord {
   dischargeClearances   DualDischargeClearance[]
   pharmacyClearances    PharmacyClearance[]
   dischargeSummary      DischargeSummary?
+  paymentReceipts       PaymentReceipt[]
 
   createdAt     DateTime    @default(now()) @map("created_at")
   createdById   String?     @map("created_by")
@@ -1731,6 +1785,9 @@ model PharmacyClearance {
   admissionRecord       AdmissionRecord         @relation(fields: [admissionRecordId], references: [id])
   status                PharmacyClearanceStatus @default(REQUESTED)
   idempotencyKey        String                  @unique @map("idempotency_key")
+  // Request-level notes (distinct from each line's own `notes`) — the
+  // Pharmacy Requests tab collects this but it was never persisted anywhere.
+  notes                 String?                 @db.Text
 
   lines             PharmacyClearanceLine[]
   pharmacyDispenses PharmacyDispense[]

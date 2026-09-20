@@ -20,8 +20,10 @@ import { HospitalOperationsSection } from './hospitalOverview/HospitalOperations
 import { HospitalBillingSection } from './hospitalOverview/HospitalBillingSection';
 import { HospitalSystemSummarySection } from './hospitalOverview/HospitalSystemSummarySection';
 import { ProfileAuditSection } from './hospitalOverview/ProfileAuditSection';
+import { DangerZoneSection } from './hospitalOverview/DangerZoneSection';
 import { EditHospitalProfileModal } from './hospitalOverview/EditHospitalProfileModal';
 import { PrintHospitalProfileModal } from './hospitalOverview/PrintHospitalProfileModal';
+import { ResetDataModal } from './hospitalOverview/ResetDataModal';
 
 export const SuperAdminHospitalOverview: React.FC = () => {
   const toast = useToast();
@@ -32,6 +34,7 @@ export const SuperAdminHospitalOverview: React.FC = () => {
 
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
 
   const loadProfile = React.useCallback(async () => {
     setIsLoading(true);
@@ -156,6 +159,9 @@ export const SuperAdminHospitalOverview: React.FC = () => {
       {/* Section 7: Profile Information & Audit Trace */}
       <ProfileAuditSection profile={profile} />
 
+      {/* Section 8: Danger Zone (System Maintenance & Test Data Purge) */}
+      <DangerZoneSection onOpenResetModal={() => setIsResetModalOpen(true)} />
+
       {/* Edit Hospital Profile Modal */}
       <EditHospitalProfileModal
         isOpen={isEditModalOpen}
@@ -169,6 +175,13 @@ export const SuperAdminHospitalOverview: React.FC = () => {
         isOpen={isPrintModalOpen}
         onClose={() => setIsPrintModalOpen(false)}
         profile={profile}
+      />
+
+      {/* Reset Test Data Modal */}
+      <ResetDataModal
+        isOpen={isResetModalOpen}
+        onClose={() => setIsResetModalOpen(false)}
+        onResetSuccess={loadProfile}
       />
     </div>
   );

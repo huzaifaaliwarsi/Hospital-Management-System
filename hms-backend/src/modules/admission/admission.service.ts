@@ -24,6 +24,7 @@ import {
   generateAdmissionNumber,
   generateInvoiceNumber,
   generateMedicineRequestNumber,
+  generateReceiptNumber,
 } from '@/shared/idGenerator';
 
 export const admissionService = {
@@ -65,6 +66,41 @@ export const admissionService = {
         }
       }
 
+      let departmentId = body.departmentId;
+
+      if (body.preferredBedId) {
+        const bed = await tx.bed.findUnique({
+          where: { id: body.preferredBedId },
+          include: { room: { include: { ward: true } } },
+        });
+        if (!bed) throw new NotFoundError('Selected bed not found');
+        if (bed.status !== 'AVAILABLE') {
+          throw new ValidationError(`Selected bed is currently ${bed.status}. Only AVAILABLE beds can be assigned.`);
+        }
+        if (bed.operationalStatus !== 'ACTIVE') {
+          throw new ValidationError(`Selected bed is ${bed.operationalStatus} and cannot be assigned.`);
+        }
+        // Auto-align department with the bed's ward
+        departmentId = bed.room.ward.departmentId;
+
+        // Mark bed as OCCUPIED so it cannot be double-assigned to another patient
+        await tx.bed.update({
+          where: { id: bed.id },
+          data: { status: 'OCCUPIED' },
+        });
+      }
+
+      if (!departmentId) {
+        const defaultDept = await tx.department.findFirst({
+          where: { isActive: true },
+          orderBy: { name: 'asc' },
+        });
+        if (!defaultDept) {
+          throw new ValidationError('No active department found for admission.');
+        }
+        departmentId = defaultDept.id;
+      }
+
       const admissionNumber = await generateAdmissionNumber(tx);
 
       const admission = await tx.admissionRecord.create({
@@ -72,14 +108,15 @@ export const admissionService = {
           admissionNumber,
           panelPatientId: body.panelPatientId,
           selfPayEncounterId,
-          departmentId: body.departmentId,
-          doctorStaffId: body.doctorStaffId,
+          departmentId,
+          doctorStaffId: body.doctorStaffId ?? null,
           bedId: body.preferredBedId ?? null,
           status: 'PLANNED',
           medicationMode: body.medicationMode,
           diagnosis: body.diagnosis,
           expectedAt: body.expectedAt,
           estimatedAmount: body.estimatedAmount ? new Decimal(body.estimatedAmount) : null,
+          notes: body.notes,
           createdById: actorId,
         },
         include: {
@@ -91,7 +128,44 @@ export const admissionService = {
         },
       });
 
-      return admission;
+      // Optional advance collected at admission-creation time (04/23 PDFs
+      // step 6 "Receive optional advance" + step 7 "Print admission/advance
+      // receipt") — no department invoice exists yet (§2.2 invoices are
+      // created on check-in / first service posted), so this is recorded as
+      // a real receipt linked directly to the admission, same pattern as
+      // `appointments.service.ts`'s pre-Check-In advance.
+      let advanceReceipt = null;
+      if (body.advanceAmount && body.advanceAmount > 0) {
+        const advDecimal = new Decimal(body.advanceAmount);
+        const receiptNumber = await generateReceiptNumber(tx);
+
+        advanceReceipt = await tx.paymentReceipt.create({
+          data: {
+            receiptNumber,
+            amount: advDecimal,
+            method: body.paymentMethod ?? 'CASH',
+            reference: body.paymentReference ?? `Advance for admission ${admission.admissionNumber}`,
+            admissionRecordId: admission.id,
+            collectedById: actorId,
+          },
+        });
+
+        // Universal Cashier balance ledger update (§4.9, §8.12) — same
+        // pattern as every other Front Desk collection.
+        await tx.userCashBalance.create({
+          data: {
+            portalUserId: actorId,
+            moduleScope: 'BILLING',
+            direction: 'IN',
+            amount: advDecimal,
+            category: 'COLLECTION',
+            isPhysicalCash: (body.paymentMethod ?? 'CASH') === 'CASH',
+            paymentReceiptId: advanceReceipt.id,
+          },
+        });
+      }
+
+      return { admission, advanceReceipt };
     });
   },
 
@@ -244,23 +318,40 @@ export const admissionService = {
       // Verify target bed is available
       const bed = await tx.bed.findUnique({ where: { id: body.bedId } });
       if (!bed) throw new NotFoundError('Selected bed not found');
-      if (bed.status !== 'AVAILABLE') {
+      if (bed.status !== 'AVAILABLE' && bed.id !== admission.bedId) {
         throw new ValidationError(`Selected bed is currently ${bed.status}. Only AVAILABLE beds can be assigned.`);
       }
 
-      // Mark bed OCCUPIED
+      // If switching to a different bed from previously assigned bed, free the old bed
+      if (admission.bedId && admission.bedId !== bed.id) {
+        await tx.bed.update({
+          where: { id: admission.bedId },
+          data: { status: 'AVAILABLE' },
+        });
+      }
+
+      // Ensure target bed is marked OCCUPIED
       await tx.bed.update({
         where: { id: bed.id },
         data: { status: 'OCCUPIED' },
       });
 
-      // Update admission status to ACTIVE
+      // Update admission status to ACTIVE. Check-in notes are appended to
+      // (never overwrite) any intake notes captured at creation — both
+      // moments' notes stay on the record.
+      const combinedNotes = body.notes
+        ? admission.notes
+          ? `${admission.notes}\n[Check-In] ${body.notes}`
+          : `[Check-In] ${body.notes}`
+        : admission.notes;
+
       const updatedAdmission = await tx.admissionRecord.update({
         where: { id: admission.id },
         data: {
           bedId: bed.id,
           status: 'ACTIVE',
           admittedAt: new Date(),
+          notes: combinedNotes,
         },
         include: {
           bed: { include: { room: { include: { ward: true } } } },
@@ -591,6 +682,7 @@ export const admissionService = {
           idempotencyKey,
           status: triggeringLineAmount ? 'AUTHORIZATION_REQUIRED' : 'REQUESTED',
           requestedById: actorId,
+          notes: body.notes,
           lines: {
             create: body.lines.map((l) => ({
               medicineId: l.medicineId,
@@ -1020,7 +1112,7 @@ export const admissionService = {
             name: admission.selfPayEncounter?.fullName ?? 'Inpatient',
             phone: admission.selfPayEncounter?.phone,
           },
-      doctor: admission.doctor.fullName,
+      doctor: admission.doctor?.fullName ?? null,
       department: admission.department.name,
       diagnosis: admission.diagnosis,
       bedSummary: {

@@ -49,6 +49,9 @@ import { SuperAdminOutsourcedProvidersView } from './outsourcedProviders/SuperAd
 import { HighCostMedicinePolicyView } from './highCostMedicine/HighCostMedicinePolicyView';
 import { ProviderSettlementsView } from './providerSettlements/ProviderSettlementsView';
 import { DoctorCommissionView } from './doctorCommission/DoctorCommissionView';
+import { HospitalInvoicesView } from '../frontDesk/billing/HospitalInvoicesView';
+import { AppointmentsView } from '../frontDesk/appointments/AppointmentsView';
+import { ActiveAdmissionsView } from '../admission/ActiveAdmissionsView';
 import {
   MOCK_DEPARTMENTS,
   DepartmentRecord,
@@ -102,13 +105,17 @@ const LEGACY_MODULE_MAP: Record<string, string> = {
   // Panels
   panel_companies: 'corporate_panels',
   panel_tariffs: 'panel_discounts',
-  patient_registries: 'panel_patient_registry',
-  'patient-registries': 'panel_patient_registry',
-  patient_registry: 'panel_patient_registry',
-  'patient-registry': 'panel_patient_registry',
-  'panel-patient-registry': 'panel_patient_registry',
-  panel_patients: 'panel_patient_registry',
-  'panel-patients': 'panel_patient_registry',
+  // Patients
+  patient_registries: 'patient_registry',
+  'patient-registries': 'patient_registry',
+  patient_registry: 'patient_registry',
+  'patient-registry': 'patient_registry',
+  'panel-patient-registry': 'patient_registry',
+  panel_patient_registry: 'patient_registry',
+  panel_patients: 'patient_registry',
+  'panel-patients': 'patient_registry',
+  today_patients: 'today_patients',
+  todays_patients: 'today_patients',
   patient_reports: 'patient_panel_reports',
 
   // Financials
@@ -220,9 +227,18 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
     return <ShiftManagementView />;
   }
 
-  // 1g. Check if this is Panel Patient Registry Page
-  if (activeModuleId === 'panel_patient_registry') {
-    return <PatientRegistryView currentUser={currentUser} />;
+  // 1g. Check if this is Patient Registry Page
+  if (
+    activeModuleId === 'patient_registry' ||
+    activeModuleId === 'panel_patient_registry' ||
+    activeModuleId === 'today_patients'
+  ) {
+    return (
+      <PatientRegistryView
+        currentUser={currentUser}
+        initialDateFilter={activeModuleId === 'today_patients' ? 'TODAY' : 'ALL'}
+      />
+    );
   }
 
   // 1h. Check if this is Corporate Panels Page
@@ -248,6 +264,116 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
   // 1l. v7.2 — Doctor Commission (§2.7)
   if (activeModuleId === 'doctor_commission') {
     return <DoctorCommissionView />;
+  }
+
+  // 1m. OPERATIONS OVERVIEW — every one of these is the live Front
+  // Desk/Admission ledger, not a mock page: whatever amount a Front Desk or
+  // Admission user enters for an Appointment, OPD/Observation/Emergency
+  // encounter, or Admission flows straight into these same
+  // `HospitalInvoice` / `Appointment` / `AdmissionRecord` tables, so Super
+  // Admin (and Admin, which shares this nav) sees it here in real time.
+  if (activeModuleId === 'appointments_operations_overview') {
+    return <AppointmentsView />;
+  }
+
+  if (activeModuleId === 'opd_overview') {
+    return (
+      <HospitalInvoicesView
+        initialQueueFilter="OPD"
+        title="OPD Overview"
+        subtitle="Every OPD encounter billed by Front Desk — live invoice amounts, payment status, and collections."
+      />
+    );
+  }
+
+  if (activeModuleId === 'observation_overview') {
+    return (
+      <HospitalInvoicesView
+        initialQueueFilter="OBS"
+        title="Observation Overview"
+        subtitle="Every Observation-bed encounter billed by Front Desk — live invoice amounts, payment status, and collections."
+      />
+    );
+  }
+
+  if (activeModuleId === 'emergency_overview') {
+    return (
+      <HospitalInvoicesView
+        initialQueueFilter="ER"
+        title="Emergency Overview"
+        subtitle="Every Emergency encounter billed by Front Desk — live invoice amounts, payment status, and collections."
+      />
+    );
+  }
+
+  if (activeModuleId === 'admission_overview') {
+    return (
+      <ActiveAdmissionsView
+        title="Admission Overview"
+        subtitle="Every admission entered at Front Desk/Admission — planned, active, and discharged — with live billed amounts."
+        statusFilter="ALL"
+        showAmountColumn
+      />
+    );
+  }
+
+  // 1n. FINANCIAL CONTROL — Live hospital billing, collections, discounts, refunds, and panel billing
+  if (activeModuleId === 'billing_overview' || activeModuleId === 'hospital_invoices') {
+    return (
+      <HospitalInvoicesView
+        title="Hospital Billing Overview"
+        subtitle="Consolidated hospital billing operations across OPD, Emergency, Inpatient Admissions, and Diagnostics."
+      />
+    );
+  }
+
+  if (activeModuleId === 'collections' || activeModuleId === 'payments_receipts') {
+    return (
+      <HospitalInvoicesView
+        recordFilter="PAID"
+        title="Collections & Payment Receipts"
+        subtitle="Every invoice with collected payments across Cash, Credit Card, and Bank deposits."
+      />
+    );
+  }
+
+  if (activeModuleId === 'discounts') {
+    return (
+      <HospitalInvoicesView
+        recordFilter="DISCOUNTED"
+        title="Discounts & Concessions"
+        subtitle="Every invoice where policy-based or administrative discounts have been applied."
+      />
+    );
+  }
+
+  if (activeModuleId === 'refunds') {
+    return (
+      <HospitalInvoicesView
+        recordFilter="REFUNDED"
+        title="Refunds & Reversals"
+        subtitle="Invoices with processed cash and payment refunds."
+      />
+    );
+  }
+
+  if (activeModuleId === 'outstanding_balances') {
+    return (
+      <HospitalInvoicesView
+        outstandingOnly
+        title="Outstanding Balances"
+        subtitle="Every invoice with a pending balance due across self-pay and panel patients."
+      />
+    );
+  }
+
+  if (activeModuleId === 'panel_billing') {
+    return (
+      <HospitalInvoicesView
+        title="Corporate Panel Billing"
+        subtitle="All panel and corporate credit invoices, pre-authorizations, and claims."
+      />
+    );
   }
 
   // 2. Check if this is a Report Page (Global Reporting Standard)
@@ -500,13 +626,14 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
           enableImport: true,
           importEntity: 'Corporate Panels',
         };
+      case 'patient_registry':
       case 'panel_patient_registry':
         return {
-          title: 'Panel Patient Registry',
-          desc: 'Centralized institutional patient directory with corporate panel entitlements and medical records.',
+          title: 'Patient Registry',
+          desc: 'Permanent Master Patient Index (MPI), collision-safe MR number allocation, and payer classification.',
           actionLabel: undefined,
           enableImport: false,
-          importEntity: 'Panel Patients',
+          importEntity: 'Patients',
         };
       case 'panel_discounts':
         return {

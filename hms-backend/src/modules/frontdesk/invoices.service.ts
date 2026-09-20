@@ -224,11 +224,29 @@ export const invoicesService = {
     return prisma.$transaction(async (tx) => {
       const invoice = await tx.hospitalInvoice.findUnique({
         where: { id: invoiceId },
-        include: { lines: true },
+        include: { lines: true, department: true },
       });
 
       if (!invoice) throw new NotFoundError('Invoice not found');
       if (invoice.lines.length === 0) throw new ValidationError('Cannot discount an empty invoice');
+
+      const deptName = (invoice.department?.name || '').toLowerCase();
+      const deptCode = (invoice.department?.code || '').toLowerCase();
+      const isOutsourcedOrLabOrPharm =
+        invoice.department?.fulfillmentOwnership === 'OUTSOURCED' ||
+        invoice.department?.outsourcedProviderId !== null ||
+        invoice.department?.pharmacyRelated ||
+        invoice.department?.departmentType === 'PHARMACY' ||
+        deptName.includes('lab') ||
+        deptName.includes('pharmacy') ||
+        deptCode.includes('lab') ||
+        deptCode.includes('pharm');
+
+      if (isOutsourcedOrLabOrPharm) {
+        throw new ValidationError(
+          `Discounts are strictly restricted to Hospital Services. Invoices for '${invoice.department?.name || 'this department'}' (Outsourced Lab / Pharmacy) cannot receive discounts.`
+        );
+      }
 
       if (body.lineItemId) {
         const line = invoice.lines.find((l) => l.id === body.lineItemId);
@@ -547,6 +565,9 @@ export const invoicesService = {
         : {
             type: 'SELF_PAY',
             name: invoice.selfPayEncounter?.fullName ?? 'Walk-In Patient',
+            mrNumber: invoice.selfPayEncounterId
+              ? `MR-26-${invoice.selfPayEncounterId.replace(/\D/g, '').slice(0, 5) || invoice.selfPayEncounterId.replace(/-/g, '').slice(0, 4).toUpperCase()}`
+              : '',
             phone: invoice.selfPayEncounter?.phone,
             cnic: invoice.selfPayEncounter?.cnicOrPassport,
           },
@@ -596,13 +617,26 @@ export const invoicesService = {
       ];
     }
 
+    // Record-type filters (Discounts / Refunds / Payments-Receipts nav items) —
+    // applied in the WHERE clause so they hold across the whole table, not
+    // just whatever lands inside the `take: 100` most-recent window below.
+    if (query.hasDiscount === 'true') where.discountTotal = { gt: 0 };
+    if (query.hasRefund === 'true') where.paymentReceipts = { some: { isReversed: true } };
+    if (query.hasPayment === 'true') where.paymentReceipts = { some: {} };
+    // Outstanding = still owed: UNPAID or PARTIALLY_PAID only (PAID/VOID have
+    // no remaining balance). Only applied when the caller didn't already ask
+    // for a specific status — an explicit `status` filter always wins.
+    if (query.hasOutstandingBalance === 'true' && !query.status) {
+      where.status = { in: ['UNPAID', 'PARTIALLY_PAID'] };
+    }
+
     return prisma.hospitalInvoice.findMany({
       where,
       include: {
         panelPatient: { select: { id: true, fullName: true, mrNumber: true } },
         selfPayEncounter: { select: { id: true, fullName: true } },
         lines: { select: { id: true, lineNet: true, quantity: true } },
-        paymentReceipts: { select: { id: true, receiptNumber: true, amount: true, method: true } },
+        paymentReceipts: { select: { id: true, receiptNumber: true, amount: true, method: true, isReversed: true } },
       },
       orderBy: { createdAt: 'desc' },
       take: 100,
@@ -616,6 +650,21 @@ export const invoicesService = {
         panelPatient: { include: { corporatePanel: true } },
         selfPayEncounter: true,
         appointment: { include: { doctor: true, department: true } },
+        admissionRecord: {
+          include: {
+            department: true,
+            doctor: true,
+            bed: {
+              include: {
+                room: {
+                  include: {
+                    ward: true,
+                  },
+                },
+              },
+            },
+          },
+        },
         lines: {
           include: {
             serviceRate: true,

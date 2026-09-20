@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
-import { cn } from '../../utils/formatters';
+import { cn, formatCnicInput } from '../../utils/formatters';
+export { formatCnicInput };
 import { Calendar, ChevronDown, Check, UploadCloud, X, Search, FileText } from 'lucide-react';
 
 export interface BaseInputProps {
@@ -158,6 +159,47 @@ export const PhoneInput: React.FC<PhoneInputProps> = ({
   );
 };
 
+// 4b. CNIC Input (Auto XXXXX-XXXXXXX-X formatting)
+export interface CNICInputProps extends Omit<TextInputProps, 'onChange'> {
+  value: string;
+  onChange?: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onValueChange?: (formattedValue: string) => void;
+}
+
+export const CNICInput: React.FC<CNICInputProps> = ({
+  value,
+  onChange,
+  onValueChange,
+  label = 'CNIC',
+  placeholder = 'XXXXX-XXXXXXX-X',
+  hint,
+  maxLength = 15,
+  ...props
+}) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const formatted = formatCnicInput(e.target.value);
+    e.target.value = formatted;
+    if (onChange) {
+      onChange(e);
+    }
+    if (onValueChange) {
+      onValueChange(formatted);
+    }
+  };
+
+  return (
+    <TextInput
+      label={label}
+      placeholder={placeholder}
+      hint={hint}
+      value={value}
+      onChange={handleChange}
+      maxLength={maxLength}
+      {...props}
+    />
+  );
+};
+
 // 5. Date Picker
 export interface DatePickerProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type'>, BaseInputProps {}
 
@@ -261,6 +303,7 @@ export const Select: React.FC<SelectProps> = ({
   ...props
 }) => {
   const selectId = id || (label ? label.toLowerCase().replace(/\s+/g, '-') : undefined);
+  const hasEmptyOption = options.some((opt) => opt.value === '');
   return (
     <div className={cn('w-full flex flex-col gap-1', className)}>
       {label && (
@@ -280,7 +323,7 @@ export const Select: React.FC<SelectProps> = ({
           )}
           {...props}
         >
-          {placeholder && <option value="">{placeholder}</option>}
+          {placeholder && !hasEmptyOption && <option value="">{placeholder}</option>}
           {options.map((opt) => (
             <option key={opt.value} value={opt.value} disabled={opt.disabled}>
               {opt.label}
@@ -315,6 +358,7 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
   placeholder = 'Select multiple...',
 }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
 
   const toggleOption = (val: string) => {
     if (value.includes(val)) {
@@ -323,6 +367,10 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
       onChange([...value, val]);
     }
   };
+
+  const filteredOptions = options.filter((opt) =>
+    opt.label.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   return (
     <div className={cn('w-full flex flex-col gap-1 relative', className)}>
@@ -363,20 +411,55 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
       {isOpen && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setIsOpen(false)} />
-          <div className="absolute top-full left-0 right-0 mt-1 z-20 bg-white rounded-lg border border-slate-200 shadow-xl py-1 max-h-48 overflow-y-auto">
-            {options.map((opt) => {
-              const isSelected = value.includes(opt.value);
-              return (
-                <div
-                  key={opt.value}
-                  onClick={() => toggleOption(opt.value)}
-                  className="px-3 py-1.5 text-xs flex items-center justify-between hover:bg-slate-50 cursor-pointer text-slate-700"
-                >
-                  <span>{opt.label}</span>
-                  {isSelected && <Check className="h-4 w-4 text-[#129b70]" />}
-                </div>
-              );
-            })}
+          <div className="absolute top-full left-0 right-0 mt-1 z-20 bg-white rounded-lg border border-slate-200 shadow-xl overflow-hidden flex flex-col">
+            {options.length > 5 && (
+              <div className="p-1.5 border-b border-slate-100 bg-slate-50 flex items-center gap-1.5">
+                <Search className="h-3.5 w-3.5 text-slate-400 shrink-0 ml-1" />
+                <input
+                  type="text"
+                  placeholder="Search services..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-full text-xs bg-transparent border-0 focus:outline-none placeholder:text-slate-400 text-slate-700"
+                  autoFocus
+                />
+                {searchTerm && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSearchTerm('');
+                    }}
+                    className="p-0.5 text-slate-400 hover:text-slate-600"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+            )}
+            <div className="max-h-52 overflow-y-auto py-1">
+              {filteredOptions.length === 0 ? (
+                <div className="px-3 py-2 text-xs text-slate-400 text-center">No matching services found</div>
+              ) : (
+                filteredOptions.map((opt) => {
+                  const isSelected = value.includes(opt.value);
+                  return (
+                    <div
+                      key={opt.value}
+                      onClick={() => toggleOption(opt.value)}
+                      className={cn(
+                        'px-3 py-1.5 text-xs flex items-center justify-between hover:bg-slate-50 cursor-pointer text-slate-700 transition-colors',
+                        isSelected && 'bg-emerald-50/50 text-[#08775A] font-medium'
+                      )}
+                    >
+                      <span>{opt.label}</span>
+                      {isSelected && <Check className="h-4 w-4 text-[#129b70]" />}
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
         </>
       )}

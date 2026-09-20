@@ -1,6 +1,7 @@
 import apiClient from './apiClient';
 import { toErrorMessage } from '../utils/apiErrors';
 import { formatDisplayDate } from '../utils/dateConstants';
+import { getPatientById } from './patientRegistryService';
 
 /**
  * Live Admission service — backed by `/api/v1/admission*`. This is the
@@ -57,6 +58,8 @@ export interface AdmissionRecord {
   clearances?: AdmissionClearance[];
 }
 
+export type AdmissionPaymentMethod = 'CASH' | 'CARD' | 'BANK' | 'ONLINE';
+
 export interface CreateAdmissionFormValues {
   panelPatientId: string;
   selfPayEncounterId: string;
@@ -68,6 +71,19 @@ export interface CreateAdmissionFormValues {
   estimatedAmount: number | '';
   medicationMode: MedicationMode;
   notes: string;
+  /** Optional advance collected at creation time — posts a real receipt (see `createAdmission`), not just a stored estimate. */
+  advanceAmount: number | '';
+  paymentMethod: AdmissionPaymentMethod;
+  paymentReference: string;
+}
+
+export interface AdmissionAdvanceReceipt {
+  id: string;
+  receiptNumber: string;
+  amount: number;
+  method: AdmissionPaymentMethod;
+  reference: string;
+  collectedAt: string;
 }
 
 export interface AdmissionServiceLine {
@@ -197,11 +213,24 @@ function bedLabel(bed: any): string | null {
 function toAdmissionRecord(raw: Record<string, any>): AdmissionRecord {
   const isPanel = !!raw.panelPatientId;
   const patient = raw.panelPatient || raw.selfPayEncounter;
+  const encounterId = raw.selfPayEncounterId || raw.selfPayEncounter?.id;
+  let resolvedMr = patient?.mrNumber || '';
+  if (!resolvedMr && encounterId) {
+    const fromRegistry = getPatientById(encounterId);
+    if (fromRegistry?.mrNumber) {
+      resolvedMr = fromRegistry.mrNumber;
+    } else {
+      const rawId = String(encounterId);
+      const cleanId = rawId.replace(/\D/g, '').slice(0, 6) || rawId.replace(/-/g, '').slice(0, 6).toUpperCase();
+      resolvedMr = `MR-${cleanId.padStart(6, '0')}`;
+    }
+  }
+
   return {
     id: raw.id,
     admissionNumber: raw.admissionNumber,
     patientName: patient?.fullName || 'Unknown',
-    patientMrNumber: isPanel ? patient?.mrNumber || '' : '— (Self-Pay)',
+    patientMrNumber: resolvedMr,
     payerType: isPanel ? 'Corporate / Panel' : 'Self Pay',
     departmentId: raw.departmentId,
     departmentName: raw.department?.name || '',
@@ -354,21 +383,42 @@ export async function fetchAdmissionDetail(id: string): Promise<AdmissionDetail>
  * `panelPatientId` / `selfPayEncounterId` should be set — the caller
  * resolves which from the selected `Patient.payerType`.
  */
-export async function createAdmission(values: CreateAdmissionFormValues): Promise<AdmissionRecord> {
+export async function createAdmission(
+  values: CreateAdmissionFormValues,
+): Promise<{ admission: AdmissionRecord; advanceReceipt: AdmissionAdvanceReceipt | null }> {
   try {
-    const res = await apiClient.post<{ data: Record<string, any> }>('/admissions', {
-      panelPatientId: values.panelPatientId || undefined,
-      selfPayEncounterId: values.selfPayEncounterId || undefined,
-      departmentId: values.departmentId,
-      doctorStaffId: values.doctorStaffId,
-      preferredBedId: values.preferredBedId || undefined,
-      expectedAt: values.expectedAt || undefined,
-      diagnosis: values.diagnosis?.trim() || undefined,
-      estimatedAmount: values.estimatedAmount === '' ? undefined : Number(values.estimatedAmount),
-      medicationMode: values.medicationMode,
-      notes: values.notes?.trim() || undefined,
-    });
-    return toAdmissionRecord(res.data.data);
+    const res = await apiClient.post<{ data: { admission: Record<string, any>; advanceReceipt: Record<string, any> | null } }>(
+      '/admissions',
+      {
+        panelPatientId: values.panelPatientId || undefined,
+        selfPayEncounterId: values.selfPayEncounterId || undefined,
+        departmentId: values.departmentId,
+        doctorStaffId: values.doctorStaffId || undefined,
+        preferredBedId: values.preferredBedId || undefined,
+        expectedAt: values.expectedAt || undefined,
+        diagnosis: values.diagnosis?.trim() || undefined,
+        estimatedAmount: values.estimatedAmount === '' ? undefined : Number(values.estimatedAmount),
+        medicationMode: values.medicationMode,
+        notes: values.notes?.trim() || undefined,
+        advanceAmount: values.advanceAmount === '' ? undefined : Number(values.advanceAmount),
+        paymentMethod: values.paymentMethod,
+        paymentReference: values.paymentReference?.trim() || undefined,
+      },
+    );
+    const { admission, advanceReceipt } = res.data.data;
+    return {
+      admission: toAdmissionRecord(admission),
+      advanceReceipt: advanceReceipt
+        ? {
+            id: advanceReceipt.id,
+            receiptNumber: advanceReceipt.receiptNumber,
+            amount: Number(advanceReceipt.amount ?? 0),
+            method: advanceReceipt.method,
+            reference: advanceReceipt.reference || '',
+            collectedAt: formatTimestamp(advanceReceipt.collectedAt),
+          }
+        : null,
+    };
   } catch (err) {
     throw new Error(toErrorMessage(err));
   }

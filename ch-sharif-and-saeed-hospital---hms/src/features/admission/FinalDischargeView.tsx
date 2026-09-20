@@ -93,7 +93,7 @@ export const FinalDischargeView: React.FC = () => {
                     <td className="px-3 py-2.5 whitespace-nowrap font-mono text-slate-700">{a.admissionNumber}</td>
                     <td className="px-3 py-2.5 whitespace-nowrap font-semibold text-slate-900">{a.patientName}</td>
                     <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">{a.departmentName}</td>
-                    <td className="px-3 py-2.5 whitespace-nowrap text-slate-700">{a.doctorName}</td>
+                    <td className="px-3 py-2.5 whitespace-nowrap text-slate-700">{a.doctorName || 'Not Assigned'}</td>
                     <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">{a.bedLabel || '—'}</td>
                     <td className="px-3 py-2.5 whitespace-nowrap">
                       <div className="flex items-center gap-2">

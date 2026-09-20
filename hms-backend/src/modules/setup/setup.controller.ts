@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { setupService } from './setup.service';
+import { dataResetService } from './dataReset.service';
 import { AuthenticationError } from '@/shared/errors/AppError';
 
 function actorId(req: Request): string {
@@ -32,6 +33,10 @@ export const setupController = {
   deactivateDepartment: async (req: Request, res: Response) => {
     res.json({ data: await setupService.deactivateDepartment(req.params.id as string, actorId(req)) });
   },
+  deleteDepartment: async (req: Request, res: Response) => {
+    await setupService.deleteDepartment(req.params.id as string);
+    res.status(204).send();
+  },
 
   // Service Rates
   listServiceRates: async (req: Request, res: Response) => {
@@ -45,6 +50,10 @@ export const setupController = {
   },
   deactivateServiceRate: async (req: Request, res: Response) => {
     res.json({ data: await setupService.deactivateServiceRate(req.params.id as string, actorId(req)) });
+  },
+  deleteServiceRate: async (req: Request, res: Response) => {
+    await setupService.deleteServiceRate(req.params.id as string);
+    res.status(204).send();
   },
 
   // Wards / Rooms / Beds
@@ -150,5 +159,11 @@ export const setupController = {
   },
   createProviderSettlement: async (req: Request, res: Response) => {
     res.status(201).json({ data: await setupService.createProviderSettlement(req.body, actorId(req)) });
+  },
+
+  // Reset Test / Transactional Data (Super Admin only)
+  resetTransactionalData: async (req: Request, res: Response) => {
+    const result = await dataResetService.resetTransactionalData(actorId(req), req.user?.role);
+    res.json({ data: result });
   },
 };

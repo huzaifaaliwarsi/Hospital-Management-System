@@ -4,6 +4,14 @@ import type { ListStaffQuery } from './staff.schemas';
 
 const staffWithPortalInclude = {
   department: { select: { id: true, name: true, code: true } },
+  staffDepartments: {
+    select: {
+      id: true,
+      departmentId: true,
+      isPrimary: true,
+      department: { select: { id: true, name: true, code: true } },
+    },
+  },
   portalUser: {
     select: {
       id: true,
@@ -83,6 +91,14 @@ export const staffRepository = {
       where: { id },
       include: {
         department: true,
+        staffDepartments: {
+          select: {
+            id: true,
+            departmentId: true,
+            isPrimary: true,
+            department: { select: { id: true, name: true, code: true } },
+          },
+        },
         portalUser: {
           select: {
             id: true,

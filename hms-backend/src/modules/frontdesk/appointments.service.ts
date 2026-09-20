@@ -44,7 +44,11 @@ export const appointmentsService = {
         throw new NotFoundError('Selected service rate not found or inactive');
       }
 
-      if (serviceRate.departmentId && serviceRate.departmentId !== body.departmentId) {
+      if (
+        serviceRate.departmentId &&
+        serviceRate.departmentId !== body.departmentId &&
+        !serviceRate.isDefaultEncounterService
+      ) {
         throw new ValidationError('Selected service does not belong to the chosen department');
       }
 
@@ -92,7 +96,7 @@ export const appointmentsService = {
       let receipt = null;
       if (body.advanceAmount && body.advanceAmount > 0) {
         const advDecimal = new Decimal(body.advanceAmount);
-        const receiptNumber = generateReceiptNumber();
+        const receiptNumber = await generateReceiptNumber();
 
         receipt = await tx.paymentReceipt.create({
           data: {

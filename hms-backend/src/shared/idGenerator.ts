@@ -19,7 +19,7 @@ export function compactRandom(length = 4): string {
   let res = '';
   const bytes = crypto.randomBytes(length);
   for (let i = 0; i < length; i++) {
-    res += chars[bytes[i] % chars.length];
+    res += chars[bytes[i]! % chars.length];
   }
   return res;
 }
@@ -88,11 +88,12 @@ export async function generateReceiptNumber(tx?: PrismaClientOrTx): Promise<stri
 }
 
 /**
- * Short MR Number: e.g. `MR-26-0001`
+ * Professional Medical Record Number (MRN): e.g. `MR-000001`
+ * Lifelong patient identifier without year prefix.
  */
 export async function generateMrNumber(tx?: PrismaClientOrTx): Promise<string> {
-  const prefix = `MR-${currentYear2()}-`;
-  return generateSequentialId(tx, 'panelPatient', 'mrNumber', prefix, 4);
+  const prefix = 'MR-';
+  return generateSequentialId(tx, 'panelPatient', 'mrNumber', prefix, 6);
 }
 
 /**
@@ -117,4 +118,13 @@ export async function generateRemittanceNumber(tx?: PrismaClientOrTx): Promise<s
 export async function generateMedicineRequestNumber(tx?: PrismaClientOrTx): Promise<string> {
   const prefix = `REQ-${currentYear2()}-`;
   return generateSequentialId(tx, 'medicineRequest', 'requestNumber', prefix, 4);
+}
+
+/**
+ * Short Admission Final Bill Number: e.g. `FBL-26-0001` — generated exactly
+ * once per admission by `admissionBillingService.generateFinalBill`.
+ */
+export async function generateFinalBillNumber(tx?: PrismaClientOrTx): Promise<string> {
+  const prefix = `FBL-${currentYear2()}-`;
+  return generateSequentialId(tx, 'admissionRecord', 'finalBillNumber', prefix, 4);
 }

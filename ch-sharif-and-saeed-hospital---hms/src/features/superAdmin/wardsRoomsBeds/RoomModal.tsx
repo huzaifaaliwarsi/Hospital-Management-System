@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { X, AlertCircle } from 'lucide-react';
-import { Room, RoomFormValues, Ward } from '../../../types/wardsRoomsBeds';
+import { X, AlertCircle, Layers, Sparkles } from 'lucide-react';
+import { Room, RoomFormValues, Ward, Bed } from '../../../types/wardsRoomsBeds';
 import {
   WardsRoomsBedsService,
   VALID_ROOM_TYPES,
@@ -12,6 +12,7 @@ interface RoomModalProps {
   onSave: (values: RoomFormValues) => void;
   room?: Room | null;
   wards: Ward[];
+  beds?: Bed[];
 }
 
 export const RoomModal: React.FC<RoomModalProps> = ({
@@ -20,6 +21,7 @@ export const RoomModal: React.FC<RoomModalProps> = ({
   onSave,
   room,
   wards,
+  beds = [],
 }) => {
   const isEditing = !!room;
 
@@ -34,6 +36,7 @@ export const RoomModal: React.FC<RoomModalProps> = ({
     status: 'Active',
   });
 
+  const [autoGenerateBeds, setAutoGenerateBeds] = useState<boolean>(true);
   const [codeError, setCodeError] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -49,6 +52,7 @@ export const RoomModal: React.FC<RoomModalProps> = ({
         dailyRoomRate: room.dailyRoomRate,
         status: room.status,
       });
+      setAutoGenerateBeds(true);
       setCodeError(null);
       setErrors({});
     } else {
@@ -62,6 +66,7 @@ export const RoomModal: React.FC<RoomModalProps> = ({
         dailyRoomRate: 3500,
         status: 'Active',
       });
+      setAutoGenerateBeds(true);
       setCodeError(null);
       setErrors({});
     }
@@ -122,8 +127,11 @@ export const RoomModal: React.FC<RoomModalProps> = ({
       return;
     }
 
-    onSave(formValues);
+    onSave({ ...formValues, status: 'Active', autoGenerateBeds });
   };
+
+  const existingConfigured = room?.bedsConfigured ?? 0;
+  const capacityDiff = Math.max(0, formValues.capacity - existingConfigured);
 
   return (
     <div
@@ -287,7 +295,7 @@ export const RoomModal: React.FC<RoomModalProps> = ({
                 id="room-form-capacity"
                 type="number"
                 min="1"
-                max="20"
+                max="50"
                 value={formValues.capacity}
                 onChange={(e) =>
                   setFormValues((prev) => ({
@@ -329,34 +337,59 @@ export const RoomModal: React.FC<RoomModalProps> = ({
             </div>
           </div>
 
-          {/* Status */}
-          <div className="flex items-center justify-between pt-2">
-            <span className="text-xs font-semibold text-slate-700">Room Status</span>
-            <div className="flex items-center gap-4">
-              <label className="flex items-center gap-1.5 cursor-pointer">
+          {/* Auto-generate Beds Controls */}
+          {isEditing ? (
+            capacityDiff > 0 ? (
+              <div className="p-3.5 bg-emerald-50/80 border border-emerald-200 rounded-xl">
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    id="room-auto-generate-beds"
+                    checked={autoGenerateBeds}
+                    onChange={(e) => setAutoGenerateBeds(e.target.checked)}
+                    className="mt-0.5 rounded border-emerald-300 text-[#08775A] focus:ring-[#08775A]"
+                  />
+                  <div className="text-xs">
+                    <span className="font-bold text-emerald-900 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                      Auto-generate {capacityDiff} additional bed(s) to match new capacity?
+                    </span>
+                    <span className="text-emerald-700 text-[11px] block mt-0.5">
+                      Room currently has <strong>{existingConfigured}</strong> bed(s). Checking this will automatically create {capacityDiff} new bed(s) (e.g. Bed {existingConfigured + 1} to Bed {formValues.capacity}) upon updating.
+                    </span>
+                  </div>
+                </label>
+              </div>
+            ) : formValues.capacity < existingConfigured ? (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <span>
+                  New capacity ({formValues.capacity}) is lower than currently configured beds ({existingConfigured}). Existing beds will remain intact.
+                </span>
+              </div>
+            ) : null
+          ) : (
+            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
+              <label className="flex items-start gap-2.5 cursor-pointer">
                 <input
-                  type="radio"
-                  name="roomStatus"
-                  value="Active"
-                  checked={formValues.status === 'Active'}
-                  onChange={() => setFormValues((p) => ({ ...p, status: 'Active' }))}
-                  className="text-[#08775A] focus:ring-[#08775A]"
+                  type="checkbox"
+                  id="room-auto-generate-beds-create"
+                  checked={autoGenerateBeds}
+                  onChange={(e) => setAutoGenerateBeds(e.target.checked)}
+                  className="mt-0.5 rounded border-slate-300 text-[#08775A] focus:ring-[#08775A]"
                 />
-                <span className="text-xs text-slate-700 font-medium">Active (In Use)</span>
-              </label>
-              <label className="flex items-center gap-1.5 cursor-pointer">
-                <input
-                  type="radio"
-                  name="roomStatus"
-                  value="Inactive"
-                  checked={formValues.status === 'Inactive'}
-                  onChange={() => setFormValues((p) => ({ ...p, status: 'Inactive' }))}
-                  className="text-slate-500 focus:ring-slate-400"
-                />
-                <span className="text-xs text-slate-600 font-medium">Inactive (Closed)</span>
+                <div className="text-xs">
+                  <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-[#08775A]" />
+                    Auto-generate {formValues.capacity} bed(s) for this room upon creation
+                  </span>
+                  <span className="text-slate-500 text-[11px] block mt-0.5">
+                    Will automatically create Bed 1 to Bed {formValues.capacity} with tariff PKR {Math.round(formValues.dailyRoomRate / Math.max(1, formValues.capacity))}/day.
+                  </span>
+                </div>
               </label>
             </div>
-          </div>
+          )}
 
           {/* Footer Actions */}
           <div className="flex items-center justify-end gap-2.5 pt-4 border-t border-slate-200">
