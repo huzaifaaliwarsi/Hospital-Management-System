@@ -333,12 +333,12 @@ model Staff {
   // §2.4) — deliberately separate from `PortalUser` login: a doctor can be
   // "Staff Record Only" (no portal account) and still hold discharge
   // authorization. Password is never returned/printed/exported.
-  clinicalAuthUsername      String?      @unique @map("clinical_auth_username")
-  clinicalAuthPasswordHash  String?      @map("clinical_auth_password_hash")
-  clinicalAuthActive        Boolean      @default(false) @map("clinical_auth_active")
-  clinicalAuthUpdatedAt     DateTime?    @map("clinical_auth_updated_at")
-  clinicalAuthUpdatedById   String?      @map("clinical_auth_updated_by")
-  clinicalAuthUpdatedByUser PortalUser?  @relation("ClinicalAuthUpdatedBy", fields: [clinicalAuthUpdatedById], references: [id])
+  clinicalAuthUsername      String?     @unique @map("clinical_auth_username")
+  clinicalAuthPasswordHash  String?     @map("clinical_auth_password_hash")
+  clinicalAuthActive        Boolean     @default(false) @map("clinical_auth_active")
+  clinicalAuthUpdatedAt     DateTime?   @map("clinical_auth_updated_at")
+  clinicalAuthUpdatedById   String?     @map("clinical_auth_updated_by")
+  clinicalAuthUpdatedByUser PortalUser? @relation("ClinicalAuthUpdatedBy", fields: [clinicalAuthUpdatedById], references: [id])
 
   // v7.2 Doctor Staff Master "Discount rule" field (HMS_V7.2_NEW_REQUIREMENTS.md
   // §3.1) — whether this doctor's patient discounts are tracked as
@@ -349,19 +349,19 @@ model Staff {
   portalUser PortalUser? @relation("StaffPortalUser")
 
   // reverse relations — actor attribution on other domains
-  headOfDepartments     Department[]              @relation("DepartmentHead")
-  appointmentsAsDoctor  Appointment[]             @relation("AppointmentDoctor")
-  admissionsAsDoctor    AdmissionRecord[]         @relation("AdmissionDoctor")
-  invoiceLinesPerformed InvoiceLineItem[]         @relation("InvoiceLinePerformedBy")
-  commissionRules       DoctorCommissionRule[]    @relation("CommissionRuleDoctor")
-  commissionAccruals    DoctorCommissionAccrual[] @relation("CommissionAccrualDoctor")
-  attendanceRecords     AttendanceRecord[]        @relation("AttendanceStaff")
-  attendanceRawPunches  BiometricRawPunch[]       @relation("RawPunchStaff")
-  salarySlips           SalarySlip[]              @relation("SalarySlipStaff")
-  employmentHistory     StaffEmploymentHistory[]  @relation("EmploymentHistoryStaff")
-  salaryProfiles        StaffSalaryProfile[]      @relation("SalaryProfileStaff")
-  dischargeSummariesAuthorized DischargeSummary[] @relation("DischargeSummaryAuthorizedBy")
-  dischargeSummariesFollowUp   DischargeSummary[] @relation("DischargeSummaryFollowUpDoctor")
+  headOfDepartments            Department[]              @relation("DepartmentHead")
+  appointmentsAsDoctor         Appointment[]             @relation("AppointmentDoctor")
+  admissionsAsDoctor           AdmissionRecord[]         @relation("AdmissionDoctor")
+  invoiceLinesPerformed        InvoiceLineItem[]         @relation("InvoiceLinePerformedBy")
+  commissionRules              DoctorCommissionRule[]    @relation("CommissionRuleDoctor")
+  commissionAccruals           DoctorCommissionAccrual[] @relation("CommissionAccrualDoctor")
+  attendanceRecords            AttendanceRecord[]        @relation("AttendanceStaff")
+  attendanceRawPunches         BiometricRawPunch[]       @relation("RawPunchStaff")
+  salarySlips                  SalarySlip[]              @relation("SalarySlipStaff")
+  employmentHistory            StaffEmploymentHistory[]  @relation("EmploymentHistoryStaff")
+  salaryProfiles               StaffSalaryProfile[]      @relation("SalaryProfileStaff")
+  dischargeSummariesAuthorized DischargeSummary[]        @relation("DischargeSummaryAuthorizedBy")
+  dischargeSummariesFollowUp   DischargeSummary[]        @relation("DischargeSummaryFollowUpDoctor")
 
   // v7.2 Multi-department assignment for Doctors — junction table
   staffDepartments StaffDepartment[]
@@ -446,24 +446,24 @@ model SalaryTemplate {
 /// deliberately kept OFF the shared Setup templates above. Effective-dated:
 /// a rate change is a new row, the prior one closed with `effectiveTo`.
 model StaffSalaryProfile {
-  id               String          @id @default(uuid())
-  staffId          String          @map("staff_id")
-  staff            Staff           @relation("SalaryProfileStaff", fields: [staffId], references: [id])
-  salaryTemplateId String?         @map("salary_template_id") // which template this profile was based on, if any
-  salaryTemplate   SalaryTemplate? @relation(fields: [salaryTemplateId], references: [id])
-  salaryBasis      String          @map("salary_basis") // MONTHLY / PER_DAY — copied at creation, may diverge from template
-  baseAmount       Decimal         @map("base_amount") @db.Decimal(14, 2)
-  payrollDivisor   Int             @default(30) @map("payroll_divisor")
-  deductionRules   Json            @default("{}") @map("deduction_rules") // {late:{...}, early_exit:{...}, absence:{...}}
-  allowanceRules   Json            @default("{}") @map("allowance_rules")
+  id                     String          @id @default(uuid())
+  staffId                String          @map("staff_id")
+  staff                  Staff           @relation("SalaryProfileStaff", fields: [staffId], references: [id])
+  salaryTemplateId       String?         @map("salary_template_id") // which template this profile was based on, if any
+  salaryTemplate         SalaryTemplate? @relation(fields: [salaryTemplateId], references: [id])
+  salaryBasis            String          @map("salary_basis") // MONTHLY / PER_DAY — copied at creation, may diverge from template
+  baseAmount             Decimal         @map("base_amount") @db.Decimal(14, 2)
+  payrollDivisor         Int             @default(30) @map("payroll_divisor")
+  deductionRules         Json            @default("{}") @map("deduction_rules") // {late:{...}, early_exit:{...}, absence:{...}}
+  allowanceRules         Json            @default("{}") @map("allowance_rules")
   // v7.2 Doctor Salary Tax (HMS_V7.2_NEW_REQUIREMENTS.md §2.7) — a stream
   // fully independent of Commission Tax on `DoctorCommissionRule` below;
   // NULL = no salary tax configured.
-  salaryTaxMethod       String?   @map("salary_tax_method") // PERCENTAGE | FIXED
-  salaryTaxValue        Decimal?  @map("salary_tax_value") @db.Decimal(14, 2)
-  salaryTaxEffectiveFrom DateTime? @map("salary_tax_effective_from") @db.Date
-  effectiveFrom    DateTime        @map("effective_from") @db.Date
-  effectiveTo      DateTime?       @map("effective_to") @db.Date // NULL = current
+  salaryTaxMethod        String?         @map("salary_tax_method") // PERCENTAGE | FIXED
+  salaryTaxValue         Decimal?        @map("salary_tax_value") @db.Decimal(14, 2)
+  salaryTaxEffectiveFrom DateTime?       @map("salary_tax_effective_from") @db.Date
+  effectiveFrom          DateTime        @map("effective_from") @db.Date
+  effectiveTo            DateTime?       @map("effective_to") @db.Date // NULL = current
 
   createdAt     DateTime    @default(now()) @map("created_at")
   createdById   String?     @map("created_by")
@@ -530,6 +530,7 @@ model PortalUser {
   transferredBeds             BedTransferHistory[]      @relation("BedTransferBy")
   changedMedicationModes      MedicationModeHistory[]   @relation("MedicationModeChangedBy")
   requestedAdmissionPayments  AdmissionPaymentRequest[] @relation("AdmissionPaymentRequestedBy")
+  closedHospitalDays          HospitalDayClose[]        @relation("HospitalDayClosedBy")
   clearedDischargeClearances  DualDischargeClearance[]  @relation("DischargeClearanceClearedBy")
   createdSuppliers            Supplier[]                @relation("SupplierCreatedBy")
   createdStockItems           StockItem[]               @relation("StockItemCreatedBy")
@@ -556,16 +557,16 @@ model PortalUser {
   paidCommissionPayouts       CommissionPayout[]        @relation("CommissionPayoutPaidBy")
 
   // ── v7.2 additions (HMS_V7.2_NEW_REQUIREMENTS.md §2.1/§2.4/§2.6/§2.8) ──
-  createdOutsourcedProviders  OutsourcedProvider[]      @relation("OutsourcedProviderCreatedBy")
-  updatedOutsourcedProviders  OutsourcedProvider[]      @relation("OutsourcedProviderUpdatedBy")
-  settledProviderSettlements  ProviderSettlement[]      @relation("ProviderSettlementSettledBy")
-  updatedHighCostPolicies     HighCostMedicinePolicy[]  @relation("HighCostPolicyUpdatedBy")
-  clinicalAuthUpdatesForStaff Staff[]                   @relation("ClinicalAuthUpdatedBy")
-  receivedPanelRemittances    PanelRemittance[]         @relation("PanelRemittanceReceivedBy")
-  dischargeSummariesInitiated DischargeSummary[]        @relation("DischargeSummaryInitiatedBy")
+  createdOutsourcedProviders     OutsourcedProvider[]            @relation("OutsourcedProviderCreatedBy")
+  updatedOutsourcedProviders     OutsourcedProvider[]            @relation("OutsourcedProviderUpdatedBy")
+  settledProviderSettlements     ProviderSettlement[]            @relation("ProviderSettlementSettledBy")
+  updatedHighCostPolicies        HighCostMedicinePolicy[]        @relation("HighCostPolicyUpdatedBy")
+  clinicalAuthUpdatesForStaff    Staff[]                         @relation("ClinicalAuthUpdatedBy")
+  receivedPanelRemittances       PanelRemittance[]               @relation("PanelRemittanceReceivedBy")
+  dischargeSummariesInitiated    DischargeSummary[]              @relation("DischargeSummaryInitiatedBy")
   highCostAttendantConfirmations HighCostMedicineAuthorization[] @relation("HighCostAttendantConfirmedBy")
   highCostManagementApprovals    HighCostMedicineAuthorization[] @relation("HighCostManagementApprovedBy")
-  finalBillsGenerated             AdmissionRecord[]        @relation("AdmissionFinalBillGeneratedBy")
+  finalBillsGenerated            AdmissionRecord[]               @relation("AdmissionFinalBillGeneratedBy")
 
   createdAt DateTime @default(now()) @map("created_at")
   createdBy String?  @map("created_by")
@@ -630,33 +631,33 @@ model HospitalProfile {
 }
 
 model Department {
-  id                  String         @id @default(uuid())
-  code                String         @unique
-  name                String
-  description         String?
-  headStaffId         String?        @map("head_staff_id")
-  headStaff           Staff?         @relation("DepartmentHead", fields: [headStaffId], references: [id])
-  departmentType      DepartmentType @map("department_type")
-  contactExtension    String?        @map("contact_extension")
-  location            String?
-  supportsOpd         Boolean        @default(false) @map("supports_opd")
-  supportsObservation Boolean        @default(false) @map("supports_observation")
-  supportsEmergency   Boolean        @default(false) @map("supports_emergency")
-  supportsAdmission   Boolean        @default(false) @map("supports_admission")
-  pharmacyRelated     Boolean        @default(false) @map("pharmacy_related")
+  id                   String                         @id @default(uuid())
+  code                 String                         @unique
+  name                 String
+  description          String?
+  headStaffId          String?                        @map("head_staff_id")
+  headStaff            Staff?                         @relation("DepartmentHead", fields: [headStaffId], references: [id])
+  departmentType       DepartmentType                 @map("department_type")
+  contactExtension     String?                        @map("contact_extension")
+  location             String?
+  supportsOpd          Boolean                        @default(false) @map("supports_opd")
+  supportsObservation  Boolean                        @default(false) @map("supports_observation")
+  supportsEmergency    Boolean                        @default(false) @map("supports_emergency")
+  supportsAdmission    Boolean                        @default(false) @map("supports_admission")
+  pharmacyRelated      Boolean                        @default(false) @map("pharmacy_related")
   // v7.2 department billing config (HMS_V7.2_NEW_REQUIREMENTS.md §2.1) —
   // whether this department's services are fulfilled in-house or by an
   // external Outsourced Provider (Lab/Neurology etc.); drives §2.2's
   // department sub-invoice ownership and §2.8's provider settlement.
   fulfillmentOwnership DepartmentFulfillmentOwnership @default(INTERNAL) @map("fulfillment_ownership")
-  outsourcedProviderId String?             @map("outsourced_provider_id")
-  outsourcedProvider   OutsourcedProvider? @relation(fields: [outsourcedProviderId], references: [id])
-  isActive            Boolean        @default(true) @map("is_active")
-  statusChangedAt     DateTime?      @map("status_changed_at")
+  outsourcedProviderId String?                        @map("outsourced_provider_id")
+  outsourcedProvider   OutsourcedProvider?            @relation(fields: [outsourcedProviderId], references: [id])
+  isActive             Boolean                        @default(true) @map("is_active")
+  statusChangedAt      DateTime?                      @map("status_changed_at")
   // Readable "Name (Role)" label, not a relation — mirrors HospitalProfile's
   // plain audit strings; the FK-backed createdById/updatedById below remain
   // the relational source of truth for who created/last edited the row.
-  statusChangedBy     String?        @map("status_changed_by")
+  statusChangedBy      String?                        @map("status_changed_by")
 
   staff            Staff[]
   wards            Ward[]
@@ -691,24 +692,24 @@ enum DepartmentFulfillmentOwnership {
 /// provider is tracked in `ProviderSettlement` (§2.8), against realized
 /// collections only — never merely billed amounts.
 model OutsourcedProvider {
-  id                        String   @id @default(uuid())
-  code                      String?  @unique
+  id                        String    @id @default(uuid())
+  code                      String?   @unique
   name                      String
-  representativeName        String?  @map("representative_name")
-  representativeDesignation String?  @map("representative_designation")
+  representativeName        String?   @map("representative_name")
+  representativeDesignation String?   @map("representative_designation")
   phone                     String?
   email                     String?
   address                   String?
-  paymentTermsNotes         String?  @map("payment_terms_notes")
-  settlementCycle           String?  @map("settlement_cycle") // e.g. Weekly / Monthly / On-Demand — hospital-configured, not enum-locked
-  allowedPaymentMethods     String[] @map("allowed_payment_methods") // subset of Cash / Bank Transfer / Cheque / Online
-  bankName                  String?  @map("bank_name")
-  bankAccountTitle          String?  @map("bank_account_title")
-  bankAccountNumber         String?  @map("bank_account_number")
-  chequePayeeName           String?  @map("cheque_payee_name")
-  withholdingTaxPercent     Decimal? @map("withholding_tax_percent") @db.Decimal(5, 2)
+  paymentTermsNotes         String?   @map("payment_terms_notes")
+  settlementCycle           String?   @map("settlement_cycle") // e.g. Weekly / Monthly / On-Demand — hospital-configured, not enum-locked
+  allowedPaymentMethods     String[]  @map("allowed_payment_methods") // subset of Cash / Bank Transfer / Cheque / Online
+  bankName                  String?   @map("bank_name")
+  bankAccountTitle          String?   @map("bank_account_title")
+  bankAccountNumber         String?   @map("bank_account_number")
+  chequePayeeName           String?   @map("cheque_payee_name")
+  withholdingTaxPercent     Decimal?  @map("withholding_tax_percent") @db.Decimal(5, 2)
   withholdingEffectiveFrom  DateTime? @map("withholding_effective_from") @db.Date
-  isActive                  Boolean  @default(true) @map("is_active")
+  isActive                  Boolean   @default(true) @map("is_active")
 
   departments Department[]
   settlements ProviderSettlement[]
@@ -734,21 +735,21 @@ enum ProviderSettlementStatus {
 /// it automatically is future work; see the doc's Phase A/B split) —
 /// settlement amount can never exceed what's recorded as eligible.
 model ProviderSettlement {
-  id                         String                    @id @default(uuid())
-  outsourcedProviderId       String                    @map("outsourced_provider_id")
-  outsourcedProvider         OutsourcedProvider        @relation(fields: [outsourcedProviderId], references: [id])
-  departmentId               String?                   @map("department_id")
-  department                 Department?               @relation(fields: [departmentId], references: [id])
-  periodLabel                String?                   @map("period_label")
-  eligibleRealizedAmount     Decimal                   @map("eligible_realized_amount") @db.Decimal(14, 2)
-  alreadySettledAmount       Decimal                   @default(0) @map("already_settled_amount") @db.Decimal(14, 2)
-  settlementAmount           Decimal                   @map("settlement_amount") @db.Decimal(14, 2)
-  status                     ProviderSettlementStatus
-  paymentMethod              String                    @map("payment_method")
-  paymentReference           String?                   @map("payment_reference")
-  representativeName         String?                   @map("representative_name")
-  representativeDesignation  String?                   @map("representative_designation")
-  remarks                    String?
+  id                        String                   @id @default(uuid())
+  outsourcedProviderId      String                   @map("outsourced_provider_id")
+  outsourcedProvider        OutsourcedProvider       @relation(fields: [outsourcedProviderId], references: [id])
+  departmentId              String?                  @map("department_id")
+  department                Department?              @relation(fields: [departmentId], references: [id])
+  periodLabel               String?                  @map("period_label")
+  eligibleRealizedAmount    Decimal                  @map("eligible_realized_amount") @db.Decimal(14, 2)
+  alreadySettledAmount      Decimal                  @default(0) @map("already_settled_amount") @db.Decimal(14, 2)
+  settlementAmount          Decimal                  @map("settlement_amount") @db.Decimal(14, 2)
+  status                    ProviderSettlementStatus
+  paymentMethod             String                   @map("payment_method")
+  paymentReference          String?                  @map("payment_reference")
+  representativeName        String?                  @map("representative_name")
+  representativeDesignation String?                  @map("representative_designation")
+  remarks                   String?
 
   settledAt     DateTime    @default(now()) @map("settled_at")
   settledById   String?     @map("settled_by")
@@ -772,14 +773,14 @@ enum HighCostAuthLogic {
 /// §2.6) — singleton config, same pattern as `HospitalProfile`. Threshold is
 /// always management-configured, never hard-coded in application logic.
 model HighCostMedicinePolicy {
-  id                             String            @id @default(uuid())
-  enabled                        Boolean           @default(false)
-  thresholdAmount                Decimal           @default(0) @map("threshold_amount") @db.Decimal(14, 2)
-  thresholdBasis                 String            @default("LINE_TOTAL") @map("threshold_basis") // LINE_TOTAL | PER_UNIT
-  attendantConfirmationRequired  Boolean           @default(true) @map("attendant_confirmation_required")
-  managementApprovalRequired     Boolean           @default(true) @map("management_approval_required")
-  combinedLogic                  HighCostAuthLogic @default(BOTH) @map("combined_logic")
-  panelPreauthRequired           Boolean           @default(false) @map("panel_preauth_required")
+  id                            String            @id @default(uuid())
+  enabled                       Boolean           @default(false)
+  thresholdAmount               Decimal           @default(0) @map("threshold_amount") @db.Decimal(14, 2)
+  thresholdBasis                String            @default("LINE_TOTAL") @map("threshold_basis") // LINE_TOTAL | PER_UNIT
+  attendantConfirmationRequired Boolean           @default(true) @map("attendant_confirmation_required")
+  managementApprovalRequired    Boolean           @default(true) @map("management_approval_required")
+  combinedLogic                 HighCostAuthLogic @default(BOTH) @map("combined_logic")
+  panelPreauthRequired          Boolean           @default(false) @map("panel_preauth_required")
 
   updatedAt     DateTime    @updatedAt @map("updated_at")
   updatedById   String?     @map("updated_by")
@@ -979,22 +980,22 @@ model CorporatePanel {
 /// Service-wise discount configuration per panel (D15 §3). Supporting
 /// entity for CorporatePanel — not a separately requested top-level model.
 model PanelDiscountRule {
-  id               String         @id @default(uuid())
-  corporatePanelId String         @map("corporate_panel_id")
-  corporatePanel   CorporatePanel @relation(fields: [corporatePanelId], references: [id])
-  serviceRateId    String         @map("service_rate_id")
-  serviceRate      ServiceRate    @relation(fields: [serviceRateId], references: [id])
-  discountPercent  Decimal        @map("discount_percent") @db.Decimal(5, 2)
+  id                       String         @id @default(uuid())
+  corporatePanelId         String         @map("corporate_panel_id")
+  corporatePanel           CorporatePanel @relation(fields: [corporatePanelId], references: [id])
+  serviceRateId            String         @map("service_rate_id")
+  serviceRate              ServiceRate    @relation(fields: [serviceRateId], references: [id])
+  discountPercent          Decimal        @map("discount_percent") @db.Decimal(5, 2)
   // v7.2 Panel Management enhancements (HMS_V7.2_NEW_REQUIREMENTS.md §2.5) —
   // `discountPercent` above stays as the legacy simple knock-off; these are
   // additive and optional so existing rules keep working unchanged.
   // coveragePercent is what the panel actually pays; the complement is the
   // patient's co-pay share (Patient Share + Panel Receivable = Contract Amount).
-  coveragePercent          Decimal? @map("coverage_percent") @db.Decimal(5, 2)
-  preauthorizationRequired Boolean  @default(false) @map("preauthorization_required")
-  capAmount                Decimal? @map("cap_amount") @db.Decimal(14, 2)
-  effectiveFrom    DateTime       @map("effective_from") @db.Date
-  effectiveTo      DateTime?      @map("effective_to") @db.Date
+  coveragePercent          Decimal?       @map("coverage_percent") @db.Decimal(5, 2)
+  preauthorizationRequired Boolean        @default(false) @map("preauthorization_required")
+  capAmount                Decimal?       @map("cap_amount") @db.Decimal(14, 2)
+  effectiveFrom            DateTime       @map("effective_from") @db.Date
+  effectiveTo              DateTime?      @map("effective_to") @db.Date
 
   @@unique([corporatePanelId, serviceRateId, effectiveFrom])
   @@map("panel_discount_rules")
@@ -1008,17 +1009,17 @@ model PanelDiscountRule {
 /// .paidTotal`/`status`; panel receivable is only "realized" via its
 /// `PanelRemittanceAllocation` rows, never assumed from billing alone.
 model PanelRemittance {
-  id                String         @id @default(uuid())
-  remittanceNumber  String         @unique @map("remittance_number")
-  corporatePanelId  String         @map("corporate_panel_id")
-  corporatePanel    CorporatePanel @relation(fields: [corporatePanelId], references: [id])
-  amount            Decimal        @db.Decimal(14, 2)
-  method            String // Cash / Bank / Cheque / Online — free text, mirrors ProviderSettlement.paymentMethod
-  reference         String?
-  remarks           String?
-  receivedAt        DateTime       @default(now()) @map("received_at")
-  receivedById      String         @map("received_by")
-  receivedByUser    PortalUser     @relation("PanelRemittanceReceivedBy", fields: [receivedById], references: [id])
+  id               String         @id @default(uuid())
+  remittanceNumber String         @unique @map("remittance_number")
+  corporatePanelId String         @map("corporate_panel_id")
+  corporatePanel   CorporatePanel @relation(fields: [corporatePanelId], references: [id])
+  amount           Decimal        @db.Decimal(14, 2)
+  method           String // Cash / Bank / Cheque / Online — free text, mirrors ProviderSettlement.paymentMethod
+  reference        String?
+  remarks          String?
+  receivedAt       DateTime       @default(now()) @map("received_at")
+  receivedById     String         @map("received_by")
+  receivedByUser   PortalUser     @relation("PanelRemittanceReceivedBy", fields: [receivedById], references: [id])
 
   allocations PanelRemittanceAllocation[]
 
@@ -1189,22 +1190,22 @@ model HospitalInvoice {
   // still its own dedicated pass) — for Appointments, one invoice is
   // already inherently one department, so this is a plain tag, not an
   // aggregation layer.
-  departmentId   String?     @map("department_id")
-  department     Department? @relation(fields: [departmentId], references: [id])
+  departmentId       String?           @map("department_id")
+  department         Department?       @relation(fields: [departmentId], references: [id])
 
-  subtotal      Decimal       @default(0) @db.Decimal(14, 2)
-  discountTotal Decimal       @default(0) @map("discount_total") @db.Decimal(14, 2)
-  total         Decimal       @default(0) @db.Decimal(14, 2)
-  paidTotal     Decimal       @default(0) @map("paid_total") @db.Decimal(14, 2)
+  subtotal        Decimal       @default(0) @db.Decimal(14, 2)
+  discountTotal   Decimal       @default(0) @map("discount_total") @db.Decimal(14, 2)
+  total           Decimal       @default(0) @db.Decimal(14, 2)
+  paidTotal       Decimal       @default(0) @map("paid_total") @db.Decimal(14, 2)
   // v7.2 §2.5/§20/§21 — Patient Share vs Panel Receivable split, informational
   // (does not change `total`/`paidTotal`/`status` arithmetic below, which
   // stays keyed off `total` exactly as before). Self-Pay: patientShare =
   // total, panelReceivable = 0. Panel with no matching coverage rule:
   // NOT_COVERED, same as Self-Pay. Panel realization (remittance posting,
   // §2.8) is still out of scope — this is the split, not the ledger.
-  patientShare     Decimal @default(0) @map("patient_share") @db.Decimal(14, 2)
-  panelReceivable  Decimal @default(0) @map("panel_receivable") @db.Decimal(14, 2)
-  status        InvoiceStatus @default(UNPAID)
+  patientShare    Decimal       @default(0) @map("patient_share") @db.Decimal(14, 2)
+  panelReceivable Decimal       @default(0) @map("panel_receivable") @db.Decimal(14, 2)
+  status          InvoiceStatus @default(UNPAID)
 
   lines                      InvoiceLineItem[]
   paymentReceipts            PaymentReceipt[]
@@ -1245,6 +1246,7 @@ model InvoiceLineItem {
   isCompleted        Boolean         @default(false) @map("is_completed")
 
   commissionAccrual DoctorCommissionAccrual? @relation("CommissionAccrualLine")
+  roomChargeLog     AdmissionRoomChargeLog?
 
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -1396,6 +1398,7 @@ model AdmissionRecord {
   pharmacyClearances    PharmacyClearance[]
   dischargeSummary      DischargeSummary?
   paymentReceipts       PaymentReceipt[]
+  roomChargeLogs        AdmissionRoomChargeLog[]
 
   createdAt     DateTime    @default(now()) @map("created_at")
   createdById   String?     @map("created_by")
@@ -1438,6 +1441,41 @@ model MedicationModeHistory {
   changedAt         DateTime        @default(now()) @map("changed_at")
 
   @@map("medication_mode_history")
+}
+
+/// Super Admin "Close Day" action (Hospital Overview > Operational Settings)
+/// — one row per business date closed. Its unique `businessDate` is what
+/// stops the action from being run twice for the same day; the configured
+/// `dayCloseTime` (Hospital Profile `extendedProfile`) only tells staff WHEN
+/// to click it, never gates the click itself.
+model HospitalDayClose {
+  id                String     @id @default(uuid())
+  businessDate      DateTime   @unique @map("business_date") @db.Date
+  admissionsCharged Int        @default(0) @map("admissions_charged")
+  totalAmountPosted Decimal    @default(0) @map("total_amount_posted") @db.Decimal(14, 2)
+  closedById        String     @map("closed_by")
+  closedBy          PortalUser @relation("HospitalDayClosedBy", fields: [closedById], references: [id])
+  closedAt          DateTime   @default(now()) @map("closed_at")
+
+  @@map("hospital_day_close")
+}
+
+/// Idempotency guard for automatic room/bed accommodation billing — one row
+/// per (admission, businessDate). Its unique constraint is the real reason
+/// re-running "Close Day" for an already-closed date never double-bills an
+/// admission, independent of `HospitalDayClose`'s own per-date guard.
+model AdmissionRoomChargeLog {
+  id                String          @id @default(uuid())
+  admissionRecordId String          @map("admission_record_id")
+  admissionRecord   AdmissionRecord @relation(fields: [admissionRecordId], references: [id])
+  businessDate      DateTime        @map("business_date") @db.Date
+  invoiceLineItemId String          @unique @map("invoice_line_item_id")
+  invoiceLineItem   InvoiceLineItem @relation(fields: [invoiceLineItemId], references: [id])
+  ratePosted        Decimal         @map("rate_posted") @db.Decimal(14, 2)
+  createdAt         DateTime        @default(now()) @map("created_at")
+
+  @@unique([admissionRecordId, businessDate])
+  @@map("admission_room_charge_log")
 }
 
 /// = §6.9 `payment_requests`, renamed. Admission → Billing hand-off; the
@@ -1488,27 +1526,27 @@ model DualDischargeClearance {
 /// Admission-portal user who clicked Discharge — distinct from the
 /// authorizing doctor.
 model DischargeSummary {
-  id                       String          @id @default(uuid())
-  admissionRecordId        String          @unique @map("admission_record_id")
-  admissionRecord          AdmissionRecord @relation(fields: [admissionRecordId], references: [id])
+  id                String          @id @default(uuid())
+  admissionRecordId String          @unique @map("admission_record_id")
+  admissionRecord   AdmissionRecord @relation(fields: [admissionRecordId], references: [id])
 
-  finalDiagnosis           String          @map("final_diagnosis")
-  treatmentSummary         String          @map("treatment_summary")
-  conditionAtDischarge     String          @map("condition_at_discharge")
-  medicinesInstructions    String          @map("medicines_instructions")
-  followUpAdvice           String?         @map("follow_up_advice")
-  followUpDoctorStaffId    String?         @map("follow_up_doctor_staff_id")
-  followUpDoctor           Staff?          @relation("DischargeSummaryFollowUpDoctor", fields: [followUpDoctorStaffId], references: [id])
-  followUpDate             DateTime?       @map("follow_up_date") @db.Date
-  additionalNotes          String?         @map("additional_notes")
+  finalDiagnosis        String    @map("final_diagnosis")
+  treatmentSummary      String    @map("treatment_summary")
+  conditionAtDischarge  String    @map("condition_at_discharge")
+  medicinesInstructions String    @map("medicines_instructions")
+  followUpAdvice        String?   @map("follow_up_advice")
+  followUpDoctorStaffId String?   @map("follow_up_doctor_staff_id")
+  followUpDoctor        Staff?    @relation("DischargeSummaryFollowUpDoctor", fields: [followUpDoctorStaffId], references: [id])
+  followUpDate          DateTime? @map("follow_up_date") @db.Date
+  additionalNotes       String?   @map("additional_notes")
 
-  doctorStaffId            String          @map("doctor_staff_id")
-  doctor                   Staff           @relation("DischargeSummaryAuthorizedBy", fields: [doctorStaffId], references: [id])
-  doctorNameSnapshot        String         @map("doctor_name_snapshot")
-  doctorDepartmentSnapshot  String?        @map("doctor_department_snapshot")
-  authorizedAt              DateTime       @default(now()) @map("authorized_at")
-  initiatedById              String        @map("initiated_by")
-  initiatedByUser             PortalUser   @relation("DischargeSummaryInitiatedBy", fields: [initiatedById], references: [id])
+  doctorStaffId            String     @map("doctor_staff_id")
+  doctor                   Staff      @relation("DischargeSummaryAuthorizedBy", fields: [doctorStaffId], references: [id])
+  doctorNameSnapshot       String     @map("doctor_name_snapshot")
+  doctorDepartmentSnapshot String?    @map("doctor_department_snapshot")
+  authorizedAt             DateTime   @default(now()) @map("authorized_at")
+  initiatedById            String     @map("initiated_by")
+  initiatedByUser          PortalUser @relation("DischargeSummaryInitiatedBy", fields: [initiatedById], references: [id])
 
   @@map("discharge_summaries")
 }
@@ -1789,8 +1827,8 @@ model PharmacyClearance {
   // Pharmacy Requests tab collects this but it was never persisted anywhere.
   notes                 String?                 @db.Text
 
-  lines             PharmacyClearanceLine[]
-  pharmacyDispenses PharmacyDispense[]
+  lines                 PharmacyClearanceLine[]
+  pharmacyDispenses     PharmacyDispense[]
   highCostAuthorization HighCostMedicineAuthorization?
 
   requestedById String      @map("requested_by")
@@ -1810,25 +1848,25 @@ model PharmacyClearance {
 /// unless the policy was actually enabled and exceeded — most pharmacy
 /// requests have no row here at all.
 model HighCostMedicineAuthorization {
-  id                  String          @id @default(uuid())
-  pharmacyClearanceId String          @unique @map("pharmacy_clearance_id")
+  id                  String            @id @default(uuid())
+  pharmacyClearanceId String            @unique @map("pharmacy_clearance_id")
   pharmacyClearance   PharmacyClearance @relation(fields: [pharmacyClearanceId], references: [id])
 
-  lineTotal      Decimal @map("line_total") @db.Decimal(14, 2)
+  lineTotal       Decimal @map("line_total") @db.Decimal(14, 2)
   thresholdAmount Decimal @map("threshold_amount") @db.Decimal(14, 2)
 
-  attendantName          String?   @map("attendant_name")
-  attendantRelation      String?   @map("attendant_relation")
-  attendantContact       String?   @map("attendant_contact")
-  attendantConfirmed     Boolean   @default(false) @map("attendant_confirmed")
-  attendantConfirmedById String?   @map("attendant_confirmed_by")
+  attendantName            String?     @map("attendant_name")
+  attendantRelation        String?     @map("attendant_relation")
+  attendantContact         String?     @map("attendant_contact")
+  attendantConfirmed       Boolean     @default(false) @map("attendant_confirmed")
+  attendantConfirmedById   String?     @map("attendant_confirmed_by")
   attendantConfirmedByUser PortalUser? @relation("HighCostAttendantConfirmedBy", fields: [attendantConfirmedById], references: [id])
-  attendantConfirmedAt   DateTime? @map("attendant_confirmed_at")
+  attendantConfirmedAt     DateTime?   @map("attendant_confirmed_at")
 
-  managementApprovedById String?   @map("management_approved_by")
+  managementApprovedById   String?     @map("management_approved_by")
   managementApprovedByUser PortalUser? @relation("HighCostManagementApprovedBy", fields: [managementApprovedById], references: [id])
-  managementReason       String?   @map("management_reason")
-  managementApprovedAt   DateTime? @map("management_approved_at")
+  managementReason         String?     @map("management_reason")
+  managementApprovedAt     DateTime?   @map("management_approved_at")
 
   panelAuthorizationRef String? @map("panel_authorization_ref")
 
@@ -1964,21 +2002,21 @@ model SalaryPayment {
 /// = §6.7 `staff_commission_rules`, renamed. `serviceRateId = NULL` means
 /// a doctor-wide default; a doctor-specific rule overrides it (D16 p.21).
 model DoctorCommissionRule {
-  id            String             @id @default(uuid())
-  staffId       String             @map("staff_id")
-  doctor        Staff              @relation("CommissionRuleDoctor", fields: [staffId], references: [id])
-  serviceRateId String?            @map("service_rate_id")
-  serviceRate   ServiceRate?       @relation(fields: [serviceRateId], references: [id])
-  ruleType      CommissionRuleType @map("rule_type")
-  rate          Decimal            @db.Decimal(14, 2) // percentage (0-100) or fixed amount, per ruleType
-  basis         CommissionBasis    @default(NET)
+  id                  String             @id @default(uuid())
+  staffId             String             @map("staff_id")
+  doctor              Staff              @relation("CommissionRuleDoctor", fields: [staffId], references: [id])
+  serviceRateId       String?            @map("service_rate_id")
+  serviceRate         ServiceRate?       @relation(fields: [serviceRateId], references: [id])
+  ruleType            CommissionRuleType @map("rule_type")
+  rate                Decimal            @db.Decimal(14, 2) // percentage (0-100) or fixed amount, per ruleType
+  basis               CommissionBasis    @default(NET)
   // v7.2 Doctor Commission Tax (HMS_V7.2_NEW_REQUIREMENTS.md §2.7) —
   // deducted from commission payable, independent of `StaffSalaryProfile`'s
   // salary tax above; effective-dated via this rule's own effectiveFrom/To.
-  commissionTaxMethod String?  @map("commission_tax_method") // PERCENTAGE | FIXED
-  commissionTaxValue  Decimal? @map("commission_tax_value") @db.Decimal(14, 2)
-  effectiveFrom DateTime           @map("effective_from") @db.Date
-  effectiveTo   DateTime?          @map("effective_to") @db.Date
+  commissionTaxMethod String?            @map("commission_tax_method") // PERCENTAGE | FIXED
+  commissionTaxValue  Decimal?           @map("commission_tax_value") @db.Decimal(14, 2)
+  effectiveFrom       DateTime           @map("effective_from") @db.Date
+  effectiveTo         DateTime?          @map("effective_to") @db.Date
 
   createdAt     DateTime    @default(now()) @map("created_at")
   createdById   String?     @map("created_by")

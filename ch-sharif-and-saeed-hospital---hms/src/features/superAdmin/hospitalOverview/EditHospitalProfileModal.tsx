@@ -14,9 +14,30 @@ import {
   Image as ImageIcon,
   RotateCcw,
   Save,
+  Copy,
+  Sparkles,
 } from 'lucide-react';
 import { HospitalProfile, DayWorkingHours } from '../../../types/hospital';
 import { useToast } from '../../../context/ToastContext';
+import { TimePickerInput } from '../../../components/forms/FormControls';
+
+const CURRENCY_OPTIONS = [
+  { code: 'PKR', symbol: 'Rs', name: 'PKR — Pakistani Rupee (Rs)' },
+  { code: 'USD', symbol: '$', name: 'USD — US Dollar ($)' },
+  { code: 'EUR', symbol: '€', name: 'EUR — Euro (€)' },
+  { code: 'GBP', symbol: '£', name: 'GBP — British Pound (£)' },
+  { code: 'AED', symbol: 'AED', name: 'AED — UAE Dirham (د.إ)' },
+  { code: 'SAR', symbol: 'SAR', name: 'SAR — Saudi Riyal (﷼)' },
+  { code: 'QAR', symbol: 'QAR', name: 'Qatari Riyal (﷼)' },
+  { code: 'OMR', symbol: 'OMR', name: 'OMR — Omani Rial (﷼)' },
+  { code: 'KWD', symbol: 'KWD', name: 'KWD — Kuwaiti Dinar (د.ك)' },
+  { code: 'BHD', symbol: 'BHD', name: 'BHD — Bahraini Dinar (BHD)' },
+  { code: 'CAD', symbol: 'C$', name: 'CAD — Canadian Dollar ($)' },
+  { code: 'AUD', symbol: 'A$', name: 'AUD — Australian Dollar ($)' },
+  { code: 'INR', symbol: '₹', name: 'INR — Indian Rupee (₹)' },
+  { code: 'TRY', symbol: '₺', name: 'TRY — Turkish Lira (₺)' },
+  { code: 'CNY', symbol: '¥', name: 'CNY — Chinese Yuan (¥)' },
+];
 
 interface EditHospitalProfileModalProps {
   isOpen: boolean;
@@ -900,14 +921,18 @@ export const EditHospitalProfileModal: React.FC<EditHospitalProfileModalProps> =
                     <label className="block text-xs font-semibold text-[#111827] mb-1">
                       Default Currency
                     </label>
-                    <input
-                      type="text"
-                      value={formData.currency}
-                      onChange={(e) => handleChange('currency', e.target.value.toUpperCase())}
-                      placeholder="PKR"
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-mono font-bold text-[#08775A] focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
-                    />
-                    <span className="text-[10px] text-[#8b9e95] mt-1 block">Default currency for all invoices and tariffs.</span>
+                    <select
+                      value={formData.currency || 'PKR'}
+                      onChange={(e) => handleChange('currency', e.target.value)}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-[#111827] focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A] cursor-pointer"
+                    >
+                      {CURRENCY_OPTIONS.map((c) => (
+                        <option key={c.code} value={c.code}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-[10.5px] text-[#8b9e95] mt-1 block">Default currency for all invoices, patient tariffs, and receipts.</span>
                   </div>
 
                   {/* Timezone */}
@@ -966,30 +991,34 @@ export const EditHospitalProfileModal: React.FC<EditHospitalProfileModalProps> =
                   </div>
 
                   {/* OPD Opening Time */}
-                  <div>
-                    <label className="block text-xs font-semibold text-[#111827] mb-1">
-                      OPD Opening Time
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.opdOpenTime}
-                      onChange={(e) => handleChange('opdOpenTime', e.target.value)}
-                      placeholder="e.g. 08:00 AM"
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-[#111827] focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
-                    />
-                  </div>
+                  <TimePickerInput
+                    label="OPD Opening Time"
+                    value={formData.opdOpenTime}
+                    onChange={(val) => handleChange('opdOpenTime', val)}
+                    placeholder="Select opening time…"
+                    presets={['08:00 AM', '08:30 AM', '09:00 AM', '10:00 AM']}
+                    hint="Daily start time for outpatient consultant clinics"
+                  />
 
                   {/* OPD Closing Time */}
-                  <div>
-                    <label className="block text-xs font-semibold text-[#111827] mb-1">
-                      OPD Closing Time
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.opdCloseTime}
-                      onChange={(e) => handleChange('opdCloseTime', e.target.value)}
-                      placeholder="e.g. 08:00 PM"
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-[#111827] focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
+                  <TimePickerInput
+                    label="OPD Closing Time"
+                    value={formData.opdCloseTime}
+                    onChange={(val) => handleChange('opdCloseTime', val)}
+                    placeholder="Select closing time…"
+                    presets={['02:00 PM', '05:00 PM', '08:00 PM', '10:00 PM']}
+                    hint="Daily closing time for outpatient consultant clinics"
+                  />
+
+                  {/* Hospital Day Close Time */}
+                  <div className="sm:col-span-2">
+                    <TimePickerInput
+                      label="Day Close Time (Hospital Cutoff)"
+                      value={formData.dayCloseTime}
+                      onChange={(val) => handleChange('dayCloseTime', val)}
+                      placeholder="Select day close time…"
+                      presets={['11:00 PM', '11:59 PM', '12:00 AM']}
+                      hint="When the hospital's billing day rolls over — run 'Close Day' around this time to post room/bed accommodation charges"
                     />
                   </div>
 
@@ -1084,6 +1113,50 @@ export const EditHospitalProfileModal: React.FC<EditHospitalProfileModalProps> =
                   </p>
                 </div>
 
+                {/* Quick Actions Bar */}
+                <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-[#effaf5] border border-[#c2e7db] text-xs">
+                  <span className="font-bold text-[#08775A] flex items-center gap-1.5">
+                    <Sparkles className="h-3.5 w-3.5" /> Quick Schedule Setup:
+                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const monday = formData.workingHours.find((w) => w.day === 'Monday');
+                        if (!monday || !monday.openTime || !monday.closeTime) {
+                          toast.error('Please configure Monday hours first.', 'Setup Required');
+                          return;
+                        }
+                        setFormData((prev) => ({
+                          ...prev,
+                          workingHours: prev.workingHours.map((wh) =>
+                            wh.isOpen ? { ...wh, openTime: monday.openTime, closeTime: monday.closeTime } : wh
+                          ),
+                        }));
+                        toast.success('Copied Monday clinic hours to all open days.');
+                      }}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white hover:bg-emerald-50 text-[#08775A] border border-[#c2e7db] text-[11px] font-semibold transition-colors cursor-pointer shadow-2xs"
+                    >
+                      <Copy className="h-3 w-3" /> Copy Monday to Open Days
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormData((prev) => ({
+                          ...prev,
+                          workingHours: prev.workingHours.map((wh) =>
+                            wh.isOpen ? { ...wh, openTime: '08:00 AM', closeTime: '08:00 PM' } : wh
+                          ),
+                        }));
+                        toast.success('Applied standard 08:00 AM – 08:00 PM to all open days.');
+                      }}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white hover:bg-emerald-50 text-[#08775A] border border-[#c2e7db] text-[11px] font-semibold transition-colors cursor-pointer shadow-2xs"
+                    >
+                      Standard (08:00 AM – 08:00 PM)
+                    </button>
+                  </div>
+                </div>
+
                 <div className="space-y-2.5">
                   {formData.workingHours.map((wh, idx) => (
                     <div
@@ -1122,30 +1195,24 @@ export const EditHospitalProfileModal: React.FC<EditHospitalProfileModalProps> =
 
                       {/* Hours Input */}
                       {wh.isOpen ? (
-                        <div className="flex items-center gap-2 flex-1 sm:justify-end">
+                        <div className="flex flex-wrap items-center gap-2 flex-1 sm:justify-end">
                           <div className="flex items-center gap-1.5">
-                            <span className="text-[11px] text-[#52665e]">Open:</span>
-                            <input
-                              type="text"
+                            <span className="text-[11px] text-[#52665e] font-medium">Open:</span>
+                            <TimePickerInput
                               value={wh.openTime}
-                              onChange={(e) =>
-                                handleWorkingHoursChange(idx, 'openTime', e.target.value)
-                              }
+                              onChange={(val) => handleWorkingHoursChange(idx, 'openTime', val)}
                               placeholder="08:00 AM"
-                              className="w-28 rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs font-mono text-[#111827] text-center"
+                              className="w-32"
                             />
                           </div>
-                          <span className="text-slate-400 text-xs">to</span>
+                          <span className="text-slate-400 text-xs font-medium">to</span>
                           <div className="flex items-center gap-1.5">
-                            <span className="text-[11px] text-[#52665e]">Close:</span>
-                            <input
-                              type="text"
+                            <span className="text-[11px] text-[#52665e] font-medium">Close:</span>
+                            <TimePickerInput
                               value={wh.closeTime}
-                              onChange={(e) =>
-                                handleWorkingHoursChange(idx, 'closeTime', e.target.value)
-                              }
+                              onChange={(val) => handleWorkingHoursChange(idx, 'closeTime', val)}
                               placeholder="08:00 PM"
-                              className="w-28 rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs font-mono text-[#111827] text-center"
+                              className="w-32"
                             />
                           </div>
                         </div>

@@ -15,6 +15,7 @@ import type {
   ClinicalDischargeBody,
   AuthorizeHighCostMedicineBody,
   RejectHighCostMedicineBody,
+  CloseHospitalDayBody,
 } from './admission.schemas';
 
 function actorId(req: Request): string {
@@ -158,5 +159,19 @@ export const admissionController = {
       req.body as RejectHighCostMedicineBody,
     );
     res.json({ data: result });
+  },
+
+  closeHospitalDay: async (req: Request, res: Response) => {
+    const result = await admissionService.closeHospitalDay(
+      req.body as CloseHospitalDayBody,
+      actorId(req),
+    );
+    res.status(201).json({ data: result });
+  },
+
+  getDayCloseHistory: async (req: Request, res: Response) => {
+    const limit = req.query.limit ? Number(req.query.limit) : 20;
+    const history = await admissionService.getDayCloseHistory(limit);
+    res.json({ data: history });
   },
 };

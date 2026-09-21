@@ -31,7 +31,11 @@ export const FinalDischargeView: React.FC = () => {
     setIsLoading(true);
     setLoadError(null);
     try {
-      setAdmissions(await fetchAdmissions({ status: 'ACTIVE' }));
+      const [activeRows, pendingRows] = await Promise.all([
+        fetchAdmissions({ status: 'ACTIVE' }),
+        fetchAdmissions({ status: 'DISCHARGE_PENDING' }),
+      ]);
+      setAdmissions([...activeRows, ...pendingRows]);
     } catch (err: any) {
       setLoadError(err?.message || 'Failed to load admissions.');
     } finally {

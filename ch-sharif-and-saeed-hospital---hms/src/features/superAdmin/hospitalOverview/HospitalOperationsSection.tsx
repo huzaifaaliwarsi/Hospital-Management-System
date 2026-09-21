@@ -110,6 +110,21 @@ export const HospitalOperationsSection: React.FC<HospitalOperationsSectionProps>
             </div>
           </div>
 
+          {/* Hospital Day Close Time */}
+          <div className="p-3.5 rounded-lg bg-[#f6faf8] border border-[#e2eae5]">
+            <span className="block text-[10px] uppercase font-bold text-[#8b9e95]">
+              Day Close Time
+            </span>
+            <div className="mt-1 flex items-center gap-1.5">
+              <Clock className="h-3.5 w-3.5 text-[#149e75]" />
+              {isConfigured(profile.dayCloseTime) ? (
+                <span className="font-semibold text-[#111827]">{profile.dayCloseTime}</span>
+              ) : (
+                <span className="text-[#8b9e95] italic font-normal">Not configured</span>
+              )}
+            </div>
+          </div>
+
           {/* Emergency Service Availability */}
           <div className="p-3.5 rounded-lg bg-[#f6faf8] border border-[#e2eae5]">
             <span className="block text-[10px] uppercase font-bold text-[#8b9e95]">

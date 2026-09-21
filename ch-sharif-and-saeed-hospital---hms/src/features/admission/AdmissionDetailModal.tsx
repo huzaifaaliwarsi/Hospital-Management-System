@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   Plus,
   FileText,
+  CheckCircle2,
 } from 'lucide-react';
 import { Modal } from '../../components/common/Modal';
 import { PanelBadge } from '../../components/common/PanelBadge';
@@ -17,7 +18,8 @@ import { formatPKR } from '../../utils/formatters';
 import { useToast } from '../../context/ToastContext';
 import { DepartmentService, fetchDepartments } from '../../services/departmentService';
 import { Department } from '../../types/department';
-import { StaffUserService } from '../../services/staffUserService';
+import { StaffUserService, fetchStaffUsers } from '../../services/staffUserService';
+import { StaffUser } from '../../types/staffUser';
 import { ServiceRatesService, fetchServices } from '../../services/serviceRatesService';
 import { HospitalService } from '../../types/serviceRates';
 import { WardsRoomsBedsService, fetchWardHierarchy } from '../../services/wardsRoomsBedsService';
@@ -31,6 +33,7 @@ import {
   changeAdmissionMedicationMode,
   createAdmissionPharmacyRequest,
   grantAdmissionClearance,
+  dischargeAdmission,
   AdmissionDetail,
   AdmissionPharmacyRequestRecord,
   MedicationMode,
@@ -83,7 +86,8 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
   const [isSaving, setIsSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const doctors = useMemo(() => StaffUserService.getStaffUsers().filter((s) => s.staffCategory === 'Doctor' && s.status === 'ACTIVE'), []);
+  const [allStaff, setAllStaff] = useState<StaffUser[]>(() => StaffUserService.getStaffUsers());
+  const doctors = useMemo(() => allStaff.filter((s) => s.staffCategory === 'Doctor' && s.status === 'ACTIVE'), [allStaff]);
 
   // ── Hierarchical Service Selection (Category/Department -> Services) ──────────
   const [selectedDeptFilter, setSelectedDeptFilter] = useState('HOSPITAL_MGMT');
@@ -93,6 +97,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
   useEffect(() => {
     fetchServices().then(setAllServices).catch(() => {});
     fetchDepartments().then(setAllDepartments).catch(() => {});
+    fetchStaffUsers().then(setAllStaff).catch(() => {});
   }, []);
 
   const departmentDropdownOptions = useMemo(() => {
@@ -191,6 +196,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
   const [lineServiceId, setLineServiceId] = useState('');
   const [lineQty, setLineQty] = useState(1);
   const [linePerformedBy, setLinePerformedBy] = useState('');
+  const [lineArrangementMode, setLineArrangementMode] = useState<'HOSPITAL_MANAGED' | 'SELF'>('HOSPITAL_MANAGED');
 
   const selectedService = useMemo(() => {
     return allServices.find((s) => s.id === lineServiceId) || null;
@@ -205,12 +211,22 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
     setIsSaving(true);
     setActionError(null);
     try {
-      await addAdmissionService(admissionId, { serviceRateId: lineServiceId, quantity: lineQty, performedByStaffId: linePerformedBy || undefined });
+      await addAdmissionService(admissionId, {
+        serviceRateId: lineServiceId,
+        quantity: lineQty,
+        performedByStaffId: linePerformedBy || undefined,
+        arrangementMode: lineArrangementMode,
+      });
       const addedName = selectedService?.name || 'Service line';
       setLineServiceId('');
       setLineQty(1);
       setLinePerformedBy('');
-      await refresh(`${addedName} added to patient invoice.`);
+      setLineArrangementMode('HOSPITAL_MANAGED');
+      await refresh(
+        lineArrangementMode === 'SELF'
+          ? `${addedName} added as Self-Arranged (PKR 0).`
+          : `${addedName} added to patient invoice.`,
+      );
     } catch (err: any) {
       setActionError(err?.message || 'Failed to add service.');
     } finally {
@@ -339,6 +355,25 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
 
   const [isClinicalDischargeOpen, setIsClinicalDischargeOpen] = useState(false);
   const [highCostTarget, setHighCostTarget] = useState<AdmissionPharmacyRequestRecord | null>(null);
+  const [isDischarging, setIsDischarging] = useState(false);
+
+  const isAllClearancesReady = useMemo(() => {
+    if (!detail?.clearances || detail.clearances.length === 0) return false;
+    return detail.clearances.every((c) => c.status === 'CLEARED' || c.status === 'NOT_APPLICABLE');
+  }, [detail?.clearances]);
+
+  const handleFinalDischarge = async () => {
+    setIsDischarging(true);
+    setActionError(null);
+    try {
+      await dischargeAdmission(admissionId);
+      await refresh('Patient discharged successfully. Bed freed to AVAILABLE.');
+    } catch (err: any) {
+      setActionError(err?.message || 'Failed to discharge patient.');
+    } finally {
+      setIsDischarging(false);
+    }
+  };
 
   return (
     <Modal
@@ -408,6 +443,26 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                   {detail.diagnosis}
                 </div>
               )}
+              {detail.status === 'DISCHARGE_PENDING' && isAllClearancesReady && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2 text-emerald-900 font-semibold">
+                    <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
+                    <div>
+                      <p className="font-bold text-emerald-950">Discharge Cleared & Ready</p>
+                      <p className="text-[11px] text-emerald-800 font-normal">All 3 clearance gates are approved. Ready to finalize discharge.</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleFinalDischarge}
+                    disabled={isDischarging}
+                    className="px-4 py-2 bg-[#08775A] hover:bg-[#065f46] text-white font-bold rounded-lg shadow-xs flex items-center gap-1.5 shrink-0 cursor-pointer disabled:opacity-60 text-xs"
+                  >
+                    {isDischarging && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    <span>Complete Final Discharge & Free Bed</span>
+                  </button>
+                </div>
+              )}
               <div className="text-[11px] text-slate-500">
                 Expected: {detail.expectedAt || '—'} • Admitted: {detail.admittedAt || '—'} • Discharged: {detail.dischargedAt || '—'}
               </div>
@@ -416,39 +471,113 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
 
           {tab === 'services' && (
             <div className="space-y-4">
+              <div className="flex items-center justify-between p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-xs">
+                <span className="text-slate-600 font-medium">
+                  Fulfillment Mode (set at admission):{' '}
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold ml-1 ${
+                      detail.medicationMode === 'HOSPITAL_MANAGED' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'
+                    }`}
+                  >
+                    {detail.medicationMode === 'HOSPITAL_MANAGED' ? 'Hospital Managed' : 'Self (Patient Arranged)'}
+                  </span>
+                </span>
+                {detail.status === 'ACTIVE' && (
+                  <button
+                    type="button"
+                    onClick={() => setTab('medication')}
+                    className="text-[11px] font-semibold text-[#08775A] hover:underline cursor-pointer"
+                  >
+                    Change
+                  </button>
+                )}
+              </div>
+
+              {detail.invoices.length > 0 && (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
+                  <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
+                    <span className="text-[10px] text-slate-500 uppercase block">Total Billed</span>
+                    <span className="font-bold text-slate-800">{formatPKR(detail.invoices.reduce((s, i) => s + i.total, 0))}</span>
+                  </div>
+                  {detail.unallocatedAdvanceTotal > 0 && (
+                    <div className="p-2.5 bg-[#effaf5] rounded-lg border border-[#c2e7db]">
+                      <span className="text-[10px] text-[#08775A] uppercase block">Advance / Deposit Applied</span>
+                      <span className="font-bold text-[#08775A]">{formatPKR(detail.unallocatedAdvanceTotal)}</span>
+                    </div>
+                  )}
+                  <div className="p-2.5 bg-amber-50 rounded-lg border border-amber-200">
+                    <span className="text-[10px] text-amber-700 uppercase block">Total Outstanding</span>
+                    <span className="font-bold text-amber-800">{formatPKR(detail.totalOutstanding)}</span>
+                  </div>
+                </div>
+              )}
+
               {detail.invoices.length === 0 ? (
                 <p className="text-xs text-slate-400 py-4 text-center">No department invoices posted yet.</p>
               ) : (
                 detail.invoices.map((inv) => (
-                  <div key={inv.id} className="border border-slate-200 rounded-lg overflow-hidden">
-                    <div className="bg-slate-50 border-b border-slate-200 px-3 py-1.5 flex items-center justify-between">
-                      <span className="text-[11px] font-bold text-slate-600 uppercase">{inv.departmentName} — {inv.invoiceNumber}</span>
-                      <span className="text-[11px] font-semibold text-amber-700">Outstanding: {formatPKR(inv.outstanding)}</span>
+                  <div key={inv.id} className="border border-slate-200 rounded-lg overflow-hidden bg-white shadow-2xs">
+                    <div className="bg-slate-50 border-b border-slate-200 px-3.5 py-2 flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">{inv.departmentName} — {inv.invoiceNumber}</span>
+                      <span className="text-xs font-bold text-amber-700">Outstanding: {formatPKR(inv.outstanding)}</span>
                     </div>
-                    <table className="w-full text-left text-xs border-collapse">
-                      <tbody className="divide-y divide-slate-100">
-                        {inv.lines.map((l) => (
-                          <tr key={l.id}>
-                            <td className="py-1.5 px-3 font-medium text-slate-900">{l.serviceName}</td>
-                            <td className="py-1.5 px-3 text-right">{l.quantity}</td>
-                            <td className="py-1.5 px-3 text-right font-mono font-bold">{formatPKR(l.lineNet)}</td>
-                            <td className="py-1.5 px-3 text-slate-500">{l.performedByName || '—'}</td>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead className="bg-slate-100/75 border-b border-slate-200 text-[10.5px] font-semibold text-slate-600 uppercase tracking-wider">
+                          <tr>
+                            <th className="py-2 px-3.5">Service / Procedure</th>
+                            <th className="py-2 px-3 text-right">Qty</th>
+                            <th className="py-2 px-3.5 text-right">Amount (PKR)</th>
+                            <th className="py-2 px-3.5">Performed By</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {inv.lines.map((l) => {
+                            const isSelf =
+                              l.discountReason?.includes('Self-Arranged') ||
+                              l.discountReason?.includes('Self Arranged') ||
+                              (l.lineNet === 0 && l.lineGross === 0);
+                            return (
+                              <tr key={l.id} className="hover:bg-slate-50/50">
+                                <td className="py-2 px-3.5 font-medium text-slate-900">
+                                  <div className="flex items-center gap-2">
+                                    <span>{l.serviceName}</span>
+                                    {isSelf && (
+                                      <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                                        Self Arranged
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="py-2 px-3 text-right text-slate-600">{l.quantity}</td>
+                                <td className="py-2 px-3.5 text-right font-mono font-semibold">
+                                  {isSelf ? (
+                                    <span className="text-slate-600 text-xs">
+                                      PKR 0 <span className="text-[10px] text-slate-400 font-normal">(Self)</span>
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-900">{formatPKR(l.lineNet)}</span>
+                                  )}
+                                </td>
+                                <td className="py-2 px-3.5 text-slate-500">{l.performedByName || '—'}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 ))
               )}
 
               {detail.status === 'ACTIVE' && (
-                <form onSubmit={handleAddService} className="space-y-3.5 p-3.5 bg-slate-50 rounded-xl border border-slate-200">
+                <form onSubmit={handleAddService} className="space-y-3.5 p-4 bg-slate-50 rounded-xl border border-slate-200">
                   <div className="flex items-center justify-between">
                     <h4 className="text-xs font-bold uppercase tracking-wider text-[#08775A] flex items-center gap-1.5">
                       <Plus className="h-3.5 w-3.5" /> Add Service / Investigation
                     </h4>
                     <span className="text-[10.5px] font-semibold text-slate-500">
-                      Auto-bills under respective department invoice
+                      Auto-adds to patient's admission invoice
                     </span>
                   </div>
 
@@ -491,20 +620,111 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                     />
                   </div>
 
+                  {/* Arrangement / Fulfillment Mode Selection (Professional Medical UI, No Emojis) */}
+                  <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+                    <div className="flex items-center justify-between mb-2.5">
+                      <label className="block text-xs font-semibold text-slate-800">
+                        Service Arrangement / Billing Mode <span className="text-rose-500">*</span>
+                      </label>
+                      <span className="text-[11px] text-slate-500 hidden sm:inline">Select arrangement responsibility</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {/* Option 1: Hospital Arranged */}
+                      <div
+                        onClick={() => setLineArrangementMode('HOSPITAL_MANAGED')}
+                        className={`relative flex items-start gap-3 p-3 rounded-lg border transition-all cursor-pointer select-none ${
+                          lineArrangementMode === 'HOSPITAL_MANAGED'
+                            ? 'border-[#08775A] bg-[#08775A]/[0.04] ring-1 ring-[#08775A]'
+                            : 'border-slate-200 hover:border-slate-300 bg-slate-50/50 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="pt-0.5">
+                          <input
+                            type="radio"
+                            id="mode-hospital-managed"
+                            name="arrangementMode"
+                            checked={lineArrangementMode === 'HOSPITAL_MANAGED'}
+                            onChange={() => setLineArrangementMode('HOSPITAL_MANAGED')}
+                            className="h-4 w-4 text-[#08775A] focus:ring-[#08775A] border-slate-300 cursor-pointer"
+                          />
+                        </div>
+                        <label htmlFor="mode-hospital-managed" className="cursor-pointer flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-bold text-slate-900">Hospital Arranged</span>
+                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-50 text-[#08775A] border border-emerald-200/70">
+                              Billable
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-500 leading-snug mt-1">
+                            Conducted and supplied by hospital. Charged at standard rates and posted to patient invoice.
+                          </p>
+                        </label>
+                      </div>
+
+                      {/* Option 2: Self Arranged (Patient) */}
+                      <div
+                        onClick={() => setLineArrangementMode('SELF')}
+                        className={`relative flex items-start gap-3 p-3 rounded-lg border transition-all cursor-pointer select-none ${
+                          lineArrangementMode === 'SELF'
+                            ? 'border-slate-700 bg-slate-100/70 ring-1 ring-slate-700'
+                            : 'border-slate-200 hover:border-slate-300 bg-slate-50/50 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="pt-0.5">
+                          <input
+                            type="radio"
+                            id="mode-self-arranged"
+                            name="arrangementMode"
+                            checked={lineArrangementMode === 'SELF'}
+                            onChange={() => setLineArrangementMode('SELF')}
+                            className="h-4 w-4 text-slate-800 focus:ring-slate-700 border-slate-300 cursor-pointer"
+                          />
+                        </div>
+                        <label htmlFor="mode-self-arranged" className="cursor-pointer flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-bold text-slate-900">Self Arranged (Patient)</span>
+                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-200/80 text-slate-700 border border-slate-300">
+                              PKR 0 • Non-Billable
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-500 leading-snug mt-1">
+                            Arranged externally by patient/attendant. Documented on medical record without hospital charges.
+                          </p>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
                   {selectedService && (
-                    <div className="flex items-center justify-between text-[11px] bg-white px-3 py-2 rounded-lg border border-slate-200">
-                      <span className="text-slate-600 font-medium">
-                        Destination: <strong className="text-slate-800">{selectedService.departmentName || 'Hospital Services'} Invoice</strong>
-                      </span>
-                      <span className="text-slate-600 font-medium">
-                        Department Type:{' '}
-                        <strong className={isCurrentSelectionOutsourced ? 'text-amber-800' : 'text-[#08775A]'}>
-                          {isCurrentSelectionOutsourced ? 'Outsourced (No Discount)' : 'Hospital Management'}
-                        </strong>
-                      </span>
-                      <span className="text-slate-900 font-bold">
-                        Line Total: {formatPKR((selectedService.standardRate || 0) * (lineQty || 1))}
-                      </span>
+                    <div className="flex flex-wrap items-center justify-between gap-3 text-xs bg-white px-3.5 py-2.5 rounded-lg border border-slate-200">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-slate-500">Destination:</span>
+                        <span className="font-semibold text-slate-800">
+                          Admission Invoice ({detail.invoices[0]?.invoiceNumber || 'Main'})
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-slate-500">Arrangement:</span>
+                        {lineArrangementMode === 'SELF' ? (
+                          <span className="font-semibold text-slate-700">Self Arranged (Outside)</span>
+                        ) : (
+                          <span className="font-semibold text-[#08775A]">
+                            {isCurrentSelectionOutsourced ? 'Outsourced Hospital Managed' : 'Hospital Managed'}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-slate-500">Line Total:</span>
+                        {lineArrangementMode === 'SELF' ? (
+                          <span className="font-bold text-slate-700">
+                            PKR 0 <span className="font-normal text-[10.5px] text-slate-400">(Non-billable)</span>
+                          </span>
+                        ) : (
+                          <span className="font-bold text-slate-900">
+                            {formatPKR((selectedService.standardRate || 0) * (lineQty || 1))}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   )}
 
@@ -770,6 +990,27 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                       {detail.dischargeSummary.authorizedAt}
                     </p>
                   </div>
+                </div>
+              )}
+
+              {isAllClearancesReady && detail.status !== 'DISCHARGED' && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2 text-emerald-900 font-semibold">
+                    <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
+                    <div>
+                      <p className="font-bold text-emerald-950">All Clearances Satisfied</p>
+                      <p className="text-[11px] text-emerald-800 font-normal">Clinical, Hospital Billing, and Pharmacy gates are fully approved.</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleFinalDischarge}
+                    disabled={isDischarging}
+                    className="px-4 py-2 bg-[#08775A] hover:bg-[#065f46] text-white font-bold rounded-lg shadow-xs flex items-center gap-1.5 shrink-0 cursor-pointer disabled:opacity-60 text-xs"
+                  >
+                    {isDischarging && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    <span>Complete Final Discharge & Free Bed</span>
+                  </button>
                 </div>
               )}
             </div>

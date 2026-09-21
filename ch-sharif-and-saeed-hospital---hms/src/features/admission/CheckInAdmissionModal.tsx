@@ -44,6 +44,33 @@ export const CheckInAdmissionModal: React.FC<CheckInAdmissionModalProps> = ({ ad
     ? `${assignedBed.wardName} / ${assignedBed.roomName} / Bed ${assignedBed.bedNumber}`
     : (admission.bedLabel || 'Bed Assigned at Front Desk');
 
+  const parsedBedInfo = useMemo(() => {
+    if (assignedBed) {
+      return {
+        ward: assignedBed.wardName,
+        room: assignedBed.roomName,
+        bed: assignedBed.bedNumber,
+      };
+    }
+    if (admission.bedLabel && admission.bedLabel.includes('/')) {
+      const parts = admission.bedLabel.split('/').map((s) => s.trim());
+      if (parts.length >= 3) {
+        return {
+          ward: parts[0],
+          room: parts[1],
+          bed: parts.slice(2).join(' / '),
+        };
+      } else if (parts.length === 2) {
+        return {
+          ward: parts[0],
+          room: parts[1],
+          bed: '',
+        };
+      }
+    }
+    return null;
+  }, [assignedBed, admission.bedLabel]);
+
   const selectableBeds = useMemo(() => {
     // Include beds that are Available OR currently reserved for THIS admission
     const beds = allBeds.filter(
@@ -58,8 +85,8 @@ export const CheckInAdmissionModal: React.FC<CheckInAdmissionModalProps> = ({ ad
   const bedOptions = useMemo(() => {
     const list = selectableBeds.map((b) => ({
       label: b.id === admission.bedId
-        ? `${b.wardName} / ${b.roomName} / Bed ${b.bedNumber} ★ (Assigned at Front Desk)`
-        : `${b.wardName} / ${b.roomName} / Bed ${b.bedNumber}`,
+        ? `Ward: ${b.wardName} • Room: ${b.roomName} • Bed: ${b.bedNumber} ★ (Assigned at Front Desk)`
+        : `Ward: ${b.wardName} • Room: ${b.roomName} • Bed: ${b.bedNumber}`,
       value: b.id,
     }));
     // If admission has a bedId not yet mapped in allBeds, ensure it appears as the selected option
@@ -106,30 +133,54 @@ export const CheckInAdmissionModal: React.FC<CheckInAdmissionModalProps> = ({ ad
 
         {/* Assigned Bed Banner (if pre-allocated at Front Desk) */}
         {admission.bedId && (
-          <div className="p-3 bg-[#effaf5] border border-[#c2e7db] rounded-xl flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-8 h-8 rounded-lg bg-[#08775A]/10 text-[#08775A] flex items-center justify-center shrink-0">
-                <BedDouble className="h-4 w-4" />
-              </div>
-              <div className="min-w-0">
-                <div className="text-[11px] font-semibold text-[#08775A] flex items-center gap-1">
+          <div className="p-3 bg-[#effaf5] border border-[#c2e7db] rounded-xl space-y-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-[#08775A]/10 text-[#08775A] flex items-center justify-center shrink-0">
+                  <BedDouble className="h-4 w-4" />
+                </div>
+                <div className="text-xs font-bold text-[#08775A] flex items-center gap-1.5">
                   <span>Assigned Bed (from Front Desk)</span>
-                  <CheckCircle2 className="h-3 w-3 text-[#08775A]" />
-                </div>
-                <div className="text-xs font-bold text-slate-800 truncate">
-                  {assignedBedLabel}
+                  <CheckCircle2 className="h-3.5 w-3.5 text-[#08775A]" />
                 </div>
               </div>
+
+              <button
+                type="button"
+                onClick={() => setShowChangeBed((prev) => !prev)}
+                className="px-2.5 py-1 text-xs font-semibold text-[#08775A] hover:text-[#065f46] hover:bg-[#08775A]/10 border border-[#08775A]/30 rounded-lg transition-colors inline-flex items-center gap-1 shrink-0 cursor-pointer"
+              >
+                <ArrowLeftRight className="h-3.5 w-3.5" />
+                <span>{showChangeBed ? 'Hide Bed Selector' : 'Change Bed'}</span>
+              </button>
             </div>
 
-            <button
-              type="button"
-              onClick={() => setShowChangeBed((prev) => !prev)}
-              className="px-2.5 py-1 text-xs font-semibold text-[#08775A] hover:text-[#065f46] hover:bg-[#08775A]/10 border border-[#08775A]/30 rounded-lg transition-colors inline-flex items-center gap-1 shrink-0 cursor-pointer"
-            >
-              <ArrowLeftRight className="h-3.5 w-3.5" />
-              <span>{showChangeBed ? 'Hide Bed Selector' : 'Change Bed'}</span>
-            </button>
+            {parsedBedInfo ? (
+              <div className="grid grid-cols-3 gap-2">
+                <div className="bg-white rounded-lg p-2 border border-[#c2e7db]">
+                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Ward</div>
+                  <div className="text-xs font-bold text-slate-800 break-words mt-0.5" title={parsedBedInfo.ward}>
+                    {parsedBedInfo.ward || '—'}
+                  </div>
+                </div>
+                <div className="bg-white rounded-lg p-2 border border-[#c2e7db]">
+                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Room</div>
+                  <div className="text-xs font-bold text-slate-800 break-words mt-0.5" title={parsedBedInfo.room}>
+                    {parsedBedInfo.room || '—'}
+                  </div>
+                </div>
+                <div className="bg-white rounded-lg p-2 border border-[#c2e7db]">
+                  <div className="text-[10px] font-bold text-[#08775A] uppercase tracking-wider">Bed</div>
+                  <div className="text-xs font-black text-[#08775A] break-words mt-0.5" title={parsedBedInfo.bed}>
+                    {parsedBedInfo.bed ? (parsedBedInfo.bed.startsWith('Bed') ? parsedBedInfo.bed : `Bed ${parsedBedInfo.bed}`) : '—'}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs font-bold text-slate-800">
+                {assignedBedLabel}
+              </div>
+            )}
           </div>
         )}
 
@@ -161,7 +212,7 @@ export const CheckInAdmissionModal: React.FC<CheckInAdmissionModalProps> = ({ ad
 
             {admission.bedId && bedId !== admission.bedId && selectedBedObject && (
               <div className="text-[11px] font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2 flex items-center gap-1.5">
-                <span>⚠️ Previous bed will be freed back to Available and <strong>{selectedBedObject.wardName} / {selectedBedObject.roomName} / Bed {selectedBedObject.bedNumber}</strong> will be occupied.</span>
+                <span>⚠️ Previous bed will be freed back to Available and <strong>Ward: {selectedBedObject.wardName} • Room: {selectedBedObject.roomName} • Bed {selectedBedObject.bedNumber}</strong> will be occupied.</span>
               </div>
             )}
           </div>

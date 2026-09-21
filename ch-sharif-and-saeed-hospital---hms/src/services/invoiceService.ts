@@ -20,6 +20,11 @@ export interface InvoiceLine {
   id: string;
   serviceName: string;
   serviceCode: string;
+  serviceCategory?: string;
+  serviceStream?: string;
+  departmentName?: string;
+  fulfillmentOwnership?: string;
+  discountAllowed?: boolean;
   quantity: number;
   rate: number;
   lineGross: number;
@@ -140,7 +145,7 @@ function toInvoiceDetail(raw: Record<string, any>): InvoiceDetail {
   const doctor = raw.appointment?.doctor?.fullName || admissionDoc || firstLineDoctor || '';
   const admissionDept = raw.admissionRecord?.department?.name;
   const firstLineDept = raw.lines?.[0]?.serviceRate?.departmentName || raw.lines?.[0]?.serviceRate?.category;
-  const department = raw.appointment?.department?.name || admissionDept || firstLineDept || '';
+  const department = raw.department?.name || raw.appointment?.department?.name || admissionDept || firstLineDept || '';
 
   return {
     ...toInvoiceSummary(raw),
@@ -159,6 +164,11 @@ function toInvoiceDetail(raw: Record<string, any>): InvoiceDetail {
       id: l.id,
       serviceName: l.serviceRate?.name || '',
       serviceCode: l.serviceRate?.code || '',
+      serviceCategory: l.serviceRate?.category || '',
+      serviceStream: l.serviceRate?.serviceStream || '',
+      departmentName: l.serviceRate?.department?.name || '',
+      fulfillmentOwnership: l.serviceRate?.department?.fulfillmentOwnership || '',
+      discountAllowed: l.serviceRate?.discountAllowed !== false,
       quantity: Number(l.quantity ?? 1),
       rate: Number(l.rateSnapshot ?? 0),
       lineGross: Number(l.lineGross ?? 0),

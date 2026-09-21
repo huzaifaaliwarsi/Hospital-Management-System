@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { ClipboardCheck, Loader2, AlertTriangle, Receipt } from 'lucide-react';
-import { fetchAdmissions, AdmissionRecord } from '../../../services/admissionService';
+import { ClipboardCheck, Loader2, AlertTriangle, Receipt, CheckCircle2 } from 'lucide-react';
+import { fetchAdmissions, dischargeAdmission, AdmissionRecord } from '../../../services/admissionService';
 import { fetchInvoices, InvoiceSummary } from '../../../services/invoiceService';
 import { AdmissionStatementModal } from './AdmissionStatementModal';
+import { useToast } from '../../../context/ToastContext';
 
 /**
  * Real "Billing Pending Discharges" queue — admissions the doctor has
@@ -14,11 +15,13 @@ import { AdmissionStatementModal } from './AdmissionStatementModal';
  * link into the single-invoice Hospital Invoices list.
  */
 export const BillingPendingDischargesView: React.FC = () => {
+  const toast = useToast();
   const [admissions, setAdmissions] = useState<AdmissionRecord[]>([]);
   const [invoices, setInvoices] = useState<InvoiceSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [statementAdmissionId, setStatementAdmissionId] = useState<string | null>(null);
+  const [dischargingId, setDischargingId] = useState<string | null>(null);
 
   const load = async () => {
     setIsLoading(true);
@@ -40,6 +43,19 @@ export const BillingPendingDischargesView: React.FC = () => {
   useEffect(() => {
     load();
   }, []);
+
+  const handleDirectDischarge = async (admId: string, patientName: string) => {
+    setDischargingId(admId);
+    try {
+      await dischargeAdmission(admId);
+      toast.success(`${patientName} discharged successfully. Bed freed.`);
+      await load();
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to finalize discharge.');
+    } finally {
+      setDischargingId(null);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -100,13 +116,24 @@ export const BillingPendingDischargesView: React.FC = () => {
                   <td className="py-2.5 px-4">{a.doctorName}</td>
                   <td className="py-2.5 px-4 text-slate-500">{a.dischargedAt || '—'}</td>
                   <td className="py-2.5 px-4 text-right">
-                    <button
-                      type="button"
-                      onClick={() => setStatementAdmissionId(a.id)}
-                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#08775A] hover:underline"
-                    >
-                      <Receipt className="h-3 w-3" /> View Statement / Collect
-                    </button>
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setStatementAdmissionId(a.id)}
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#08775A] hover:underline cursor-pointer"
+                      >
+                        <Receipt className="h-3 w-3" /> View Statement / Collect
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDirectDischarge(a.id, a.patientName)}
+                        disabled={dischargingId === a.id}
+                        className="inline-flex items-center gap-1 text-[11px] font-bold text-white bg-[#08775A] hover:bg-[#065f46] px-2.5 py-1 rounded-lg shadow-xs cursor-pointer disabled:opacity-60"
+                      >
+                        {dischargingId === a.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
+                        <span>Complete Discharge</span>
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

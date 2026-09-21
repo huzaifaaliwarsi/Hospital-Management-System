@@ -1,7 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { LayoutGrid, User } from 'lucide-react';
-import { WardsRoomsBedsService } from '../../services/wardsRoomsBedsService';
-import type { Bed } from '../../types/wardsRoomsBeds';
+import { WardsRoomsBedsService, fetchWardHierarchy } from '../../services/wardsRoomsBedsService';
+import type { Ward, Room, Bed } from '../../types/wardsRoomsBeds';
 import { AdmissionDetailModal } from './AdmissionDetailModal';
 
 const OCCUPANCY_STYLE: Record<string, string> = {
@@ -12,17 +12,36 @@ const OCCUPANCY_STYLE: Record<string, string> = {
 };
 
 /**
- * Bed Board / Transfers — pure read/render over `WardsRoomsBedsService`'s
- * already-primed cache (backend already cross-references the active
- * admission occupying each bed, `setup.service.ts`'s `decorateBed`), so
- * this page needs zero new backend calls. Clicking an occupied bed opens
- * the admission's detail modal, pre-selected to the Bed Transfer tab.
+ * Bed Board / Transfers — backend already cross-references the active
+ * admission occupying each bed (`setup.service.ts`'s `decorateBed`), so
+ * this page renders that in a wards → rooms → beds grid. Re-fetches the
+ * hierarchy on mount rather than trusting `WardsRoomsBedsService`'s shared
+ * cache to already be primed — a direct/first navigation here (or a page
+ * refresh) would otherwise show an empty board until some other screen
+ * happened to prime it. Clicking an occupied bed opens the admission's
+ * detail modal, pre-selected to the Bed Transfer tab.
  */
 export const BedBoardView: React.FC = () => {
-  const beds = useMemo(() => WardsRoomsBedsService.getBeds(), []);
-  const wards = useMemo(() => WardsRoomsBedsService.getWards(), []);
-  const rooms = useMemo(() => WardsRoomsBedsService.getRooms(), []);
+  const [wards, setWards] = useState<Ward[]>(() => WardsRoomsBedsService.getWards());
+  const [rooms, setRooms] = useState<Room[]>(() => WardsRoomsBedsService.getRooms());
+  const [beds, setBeds] = useState<Bed[]>(() => WardsRoomsBedsService.getBeds());
+  const [isLoading, setIsLoading] = useState(true);
   const [detailId, setDetailId] = useState<string | null>(null);
+
+  const load = () =>
+    fetchWardHierarchy()
+      .then(({ wards, rooms, beds }) => {
+        setWards(wards);
+        setRooms(rooms);
+        setBeds(beds);
+      })
+      .catch(() => {})
+      .finally(() => setIsLoading(false));
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const occupied = beds.filter((b) => b.occupancyStatus === 'Occupied').length;
   const available = beds.filter((b) => b.occupancyStatus === 'Available').length;
@@ -41,7 +60,11 @@ export const BedBoardView: React.FC = () => {
         </div>
       </div>
 
-      {beds.length === 0 ? (
+      {isLoading ? (
+        <div className="bg-white rounded-xl border border-slate-200 p-10 text-center text-xs text-slate-500">
+          Loading bed board…
+        </div>
+      ) : beds.length === 0 ? (
         <div className="bg-white rounded-xl border border-slate-200 p-10 text-center text-xs text-slate-500">
           No beds configured yet — add wards/rooms/beds from Hospital Management.
         </div>
@@ -87,7 +110,9 @@ export const BedBoardView: React.FC = () => {
         })
       )}
 
-      {detailId && <AdmissionDetailModal admissionId={detailId} initialTab="bed" onClose={() => setDetailId(null)} />}
+      {detailId && (
+        <AdmissionDetailModal admissionId={detailId} initialTab="bed" onClose={() => setDetailId(null)} onChanged={load} />
+      )}
     </div>
   );
 };

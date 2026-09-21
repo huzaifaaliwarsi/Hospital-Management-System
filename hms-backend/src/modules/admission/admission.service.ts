@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs';
 import { Decimal } from '@prisma/client/runtime/library';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
-import { AuthenticationError, NotFoundError, ValidationError } from '@/shared/errors/AppError';
+import { AuthenticationError, ConflictError, NotFoundError, ValidationError } from '@/shared/errors/AppError';
 import { resolvePanelCoverage } from '@/shared/panelCoverage';
 import type {
   CreatePlannedAdmissionBody,
@@ -18,6 +18,7 @@ import type {
   ClinicalDischargeBody,
   AuthorizeHighCostMedicineBody,
   RejectHighCostMedicineBody,
+  CloseHospitalDayBody,
 } from './admission.schemas';
 
 import {
@@ -26,6 +27,85 @@ import {
   generateMedicineRequestNumber,
   generateReceiptNumber,
 } from '@/shared/idGenerator';
+
+/**
+ * Recomputes and persists a HospitalInvoice's aggregate totals from its
+ * current line items (v7.2 §2.2 — always scoped to ONE department invoice).
+ * Shared by every action that appends a line item to an admission's
+ * department invoice, so `addAdmissionService` and `closeHospitalDay` can
+ * never drift on how a total/status is derived from its lines.
+ */
+async function recalcInvoiceTotals(
+  tx: Prisma.TransactionClient,
+  invoice: { id: string; paidTotal: Decimal },
+  allLines: {
+    lineGross: Decimal | null;
+    discountAmount: Decimal | null;
+    lineNet: Decimal | null;
+    patientShare: Decimal | null;
+    panelReceivable: Decimal | null;
+  }[],
+) {
+  const newSubtotal = allLines.reduce((acc, l) => acc.plus(l.lineGross ?? 0), new Decimal(0));
+  const newDiscountTotal = allLines.reduce((acc, l) => acc.plus(l.discountAmount ?? 0), new Decimal(0));
+  const newTotal = allLines.reduce((acc, l) => acc.plus(l.lineNet ?? 0), new Decimal(0));
+  const newPatientShare = allLines.reduce((acc, l) => acc.plus(l.patientShare ?? 0), new Decimal(0));
+  const newPanelReceivable = allLines.reduce((acc, l) => acc.plus(l.panelReceivable ?? 0), new Decimal(0));
+
+  const newStatus = newTotal.equals(0)
+    ? 'PAID'
+    : invoice.paidTotal.greaterThanOrEqualTo(newTotal) && newTotal.greaterThan(0)
+      ? 'PAID'
+      : invoice.paidTotal.greaterThan(0)
+        ? 'PARTIALLY_PAID'
+        : 'UNPAID';
+
+  await tx.hospitalInvoice.update({
+    where: { id: invoice.id },
+    data: {
+      subtotal: newSubtotal,
+      discountTotal: newDiscountTotal,
+      total: newTotal,
+      patientShare: newPatientShare,
+      panelReceivable: newPanelReceivable,
+      status: newStatus,
+    },
+  });
+}
+
+/**
+ * Find-or-create the single shared "Room / Bed Accommodation Charges"
+ * ServiceRate that every automatic day-close charge posts against —
+ * mirrors `createPlannedAdmission`'s `ADM-ADVANCE` lookup-by-code pattern.
+ * Its own `standardRate` is never billed; each posted line snapshots the
+ * admitted bed/room's OWN configured daily rate instead (rates differ per
+ * room/bed, one shared rate card wouldn't fit).
+ */
+async function getOrCreateRoomChargeServiceRate(tx: Prisma.TransactionClient, fallbackDepartmentId: string, actorId: string) {
+  let serviceRate = await tx.serviceRate.findFirst({
+    where: {
+      OR: [{ code: 'ROOM-ACC' }, { name: { contains: 'Room / Bed Accommodation', mode: 'insensitive' } }],
+    },
+  });
+
+  if (!serviceRate) {
+    serviceRate = await tx.serviceRate.create({
+      data: {
+        code: 'ROOM-ACC',
+        name: 'Room / Bed Accommodation Charges',
+        category: 'Accommodation',
+        departmentId: fallbackDepartmentId,
+        standardRate: new Decimal(0),
+        billingUnit: 'PER_DAY',
+        discountAllowed: false,
+        isActive: true,
+        createdById: actorId,
+      },
+    });
+  }
+
+  return serviceRate;
+}
 
 export const admissionService = {
   /**
@@ -128,15 +208,78 @@ export const admissionService = {
         },
       });
 
-      // Optional advance collected at admission-creation time (04/23 PDFs
-      // step 6 "Receive optional advance" + step 7 "Print admission/advance
-      // receipt") — no department invoice exists yet (§2.2 invoices are
-      // created on check-in / first service posted), so this is recorded as
-      // a real receipt linked directly to the admission, same pattern as
-      // `appointments.service.ts`'s pre-Check-In advance.
+      // Generate admission invoice immediately at creation (Front Desk entry time)
+      const invoiceNumber = await generateInvoiceNumber(tx);
+      const advDecimal = body.advanceAmount && body.advanceAmount > 0
+        ? new Decimal(body.advanceAmount)
+        : new Decimal(0);
+
+      const isPaid = advDecimal.gt(0);
+
+      const invoice = await tx.hospitalInvoice.create({
+        data: {
+          invoiceNumber,
+          sourceType: 'ADMISSION',
+          admissionRecordId: admission.id,
+          departmentId: admission.departmentId,
+          panelPatientId: admission.panelPatientId,
+          selfPayEncounterId: admission.selfPayEncounterId,
+          subtotal: advDecimal,
+          discountTotal: new Decimal(0),
+          total: advDecimal,
+          paidTotal: advDecimal,
+          patientShare: admission.panelPatientId ? new Decimal(0) : advDecimal,
+          panelReceivable: admission.panelPatientId ? advDecimal : new Decimal(0),
+          status: isPaid ? 'PAID' : 'UNPAID',
+          createdById: actorId,
+        },
+      });
+
       let advanceReceipt = null;
-      if (body.advanceAmount && body.advanceAmount > 0) {
-        const advDecimal = new Decimal(body.advanceAmount);
+      if (isPaid) {
+        // Find or create a ServiceRate for Admission Advance / Room Deposit
+        let advanceService = await tx.serviceRate.findFirst({
+          where: {
+            OR: [
+              { code: 'ADM-ADVANCE' },
+              { name: { contains: 'Admission Advance', mode: 'insensitive' } },
+            ],
+          },
+        });
+
+        if (!advanceService) {
+          advanceService = await tx.serviceRate.create({
+            data: {
+              code: 'ADM-ADVANCE',
+              name: 'Admission Advance / Deposit',
+              category: 'Admission',
+              departmentId,
+              standardRate: new Decimal(0),
+              billingUnit: 'PER_ADMISSION',
+              discountAllowed: false,
+              isActive: true,
+              createdById: actorId,
+            },
+          });
+        }
+
+        // Attach line item so the invoice itemizes the advance amount
+        await tx.invoiceLineItem.create({
+          data: {
+            hospitalInvoiceId: invoice.id,
+            serviceRateId: advanceService.id,
+            rateSnapshot: advDecimal,
+            quantity: new Decimal(1),
+            lineGross: advDecimal,
+            discountAmount: new Decimal(0),
+            lineNet: advDecimal,
+            patientShare: admission.panelPatientId ? new Decimal(0) : advDecimal,
+            panelReceivable: admission.panelPatientId ? advDecimal : new Decimal(0),
+            performedByStaffId: body.doctorStaffId ?? null,
+            isCompleted: true,
+          },
+        });
+
         const receiptNumber = await generateReceiptNumber(tx);
 
         advanceReceipt = await tx.paymentReceipt.create({
@@ -146,12 +289,12 @@ export const admissionService = {
             method: body.paymentMethod ?? 'CASH',
             reference: body.paymentReference ?? `Advance for admission ${admission.admissionNumber}`,
             admissionRecordId: admission.id,
+            hospitalInvoiceId: invoice.id,
             collectedById: actorId,
           },
         });
 
-        // Universal Cashier balance ledger update (§4.9, §8.12) — same
-        // pattern as every other Front Desk collection.
+        // Universal Cashier balance ledger update (§4.9, §8.12)
         await tx.userCashBalance.create({
           data: {
             portalUserId: actorId,
@@ -165,7 +308,7 @@ export const admissionService = {
         });
       }
 
-      return { admission, advanceReceipt };
+      return { admission, advanceReceipt, invoice };
     });
   },
 
@@ -245,6 +388,7 @@ export const admissionService = {
         dischargeSummary: true,
         hospitalInvoices: {
           include: {
+            department: true,
             lines: { include: { serviceRate: true, performedBy: true } },
             paymentReceipts: true,
           },
@@ -253,7 +397,19 @@ export const admissionService = {
     });
 
     if (!admission) throw new NotFoundError('Admission record not found');
-    return admission;
+
+    // Unallocated advance/deposit receipts (`hospitalInvoiceId: null`) sit
+    // outside every invoice's own `paidTotal` — surfaced here so the
+    // Admission Portal's Services & Charges tab can net it against the raw
+    // per-invoice `total - paidTotal` instead of showing an outstanding
+    // balance that ignores money already collected (same fix as
+    // `admissionBilling.service.ts`'s `getStatement`).
+    const unallocated = await prisma.paymentReceipt.aggregate({
+      where: { admissionRecordId: id, hospitalInvoiceId: null, isReversed: false },
+      _sum: { amount: true },
+    });
+
+    return { ...admission, unallocatedAdvanceTotal: unallocated._sum.amount ?? new Decimal(0) };
   },
 
   async updatePlannedAdmission(id: string, body: UpdatePlannedAdmissionBody) {
@@ -366,7 +522,7 @@ export const admissionService = {
       // are created on-demand in `addAdmissionService` as their services
       // are actually posted).
       const existingInvoice = await tx.hospitalInvoice.findFirst({
-        where: { admissionRecordId: admission.id, departmentId: admission.departmentId },
+        where: { admissionRecordId: admission.id, sourceType: 'ADMISSION' },
       });
 
       if (!existingInvoice) {
@@ -498,19 +654,17 @@ export const admissionService = {
         throw new NotFoundError('Service rate not found or inactive');
       }
 
-      // v7.2 §2.2 — one invoice per (admission × department): a Lab or
-      // Pharmacy service posted against a General Medicine admission bills
-      // to that service's OWN department's invoice, not the admitting
-      // department's. Find-or-create per department, never a single
-      // admission-wide invoice.
-      let invoice = admission.hospitalInvoices.find((inv) => inv.departmentId === serviceRate.departmentId);
+      // 1 Admission = 1 Single Master Invoice!
+      // All services, investigations, procedures, and room charges added for this admission
+      // MUST be added to this admission's single invoice (never a separate invoice per department).
+      let invoice = admission.hospitalInvoices[0];
       if (!invoice) {
         invoice = await tx.hospitalInvoice.create({
           data: {
             invoiceNumber: await generateInvoiceNumber(tx),
             sourceType: 'ADMISSION',
             admissionRecordId: admission.id,
-            departmentId: serviceRate.departmentId,
+            departmentId: admission.departmentId,
             panelPatientId: admission.panelPatientId,
             selfPayEncounterId: admission.selfPayEncounterId,
             subtotal: new Decimal(0),
@@ -522,33 +676,53 @@ export const admissionService = {
             status: 'UNPAID',
             createdById: actorId,
           },
-          include: { lines: true },
+          include: { lines: true, department: true },
         });
       }
 
       const rate = serviceRate.standardRate;
       const qty = new Decimal(body.quantity);
-      const lineGross = rate.mul(qty);
+      const isSelf = body.arrangementMode === 'SELF';
 
-      // v7.2 §2.5 — Patient Share vs Panel Receivable, same resolution
-      // `appointments.service.ts` uses (Panel Service rule → else NOT_COVERED).
-      const coverage = resolvePanelCoverage(lineGross, admission.panelPatient?.corporatePanel?.discountRules, serviceRate.id);
-      const discountAmount = coverage.discountAmount;
-      const discountReason = coverage.discountReason ?? body.notes ?? null;
-      const lineNet = lineGross.minus(discountAmount);
+      let lineGross: Decimal;
+      let discountAmount: Decimal;
+      let discountReason: string | null;
+      let lineNet: Decimal;
+      let patientShare: Decimal;
+      let panelReceivable: Decimal;
+
+      if (isSelf) {
+        // Self-arranged by patient outside: Record for clinical tracking, but Rs 0 charge (no ledger debt)
+        lineGross = new Decimal(0);
+        discountAmount = new Decimal(0);
+        discountReason = body.notes ? `[Self-Arranged] ${body.notes}` : '[Self-Arranged]';
+        lineNet = new Decimal(0);
+        patientShare = new Decimal(0);
+        panelReceivable = new Decimal(0);
+      } else {
+        lineGross = rate.mul(qty);
+        // v7.2 §2.5 — Patient Share vs Panel Receivable, same resolution
+        // `appointments.service.ts` uses (Panel Service rule → else NOT_COVERED).
+        const coverage = resolvePanelCoverage(lineGross, admission.panelPatient?.corporatePanel?.discountRules, serviceRate.id);
+        discountAmount = coverage.discountAmount;
+        discountReason = coverage.discountReason ?? body.notes ?? null;
+        lineNet = lineGross.minus(discountAmount);
+        patientShare = coverage.patientShare;
+        panelReceivable = coverage.panelReceivable;
+      }
 
       const createdLine = await tx.invoiceLineItem.create({
         data: {
           hospitalInvoiceId: invoice.id,
           serviceRateId: serviceRate.id,
-          rateSnapshot: rate,
+          rateSnapshot: isSelf ? new Decimal(0) : rate,
           quantity: qty,
           lineGross,
           discountAmount,
           discountReason,
           lineNet,
-          patientShare: coverage.patientShare,
-          panelReceivable: coverage.panelReceivable,
+          patientShare,
+          panelReceivable,
           performedByStaffId: body.performedByStaffId ?? admission.doctorStaffId,
           isCompleted: true,
         },
@@ -557,30 +731,7 @@ export const admissionService = {
 
       // Recalculate this department invoice's totals (never another
       // department's — each stays independently owned per §2.2).
-      const allLines = [...invoice.lines, createdLine];
-      const newSubtotal = allLines.reduce((acc, l) => acc.plus(l.lineGross ?? 0), new Decimal(0));
-      const newDiscountTotal = allLines.reduce((acc, l) => acc.plus(l.discountAmount ?? 0), new Decimal(0));
-      const newTotal = allLines.reduce((acc, l) => acc.plus(l.lineNet ?? 0), new Decimal(0));
-      const newPatientShare = allLines.reduce((acc, l: any) => acc.plus(l.patientShare ?? 0), new Decimal(0));
-      const newPanelReceivable = allLines.reduce((acc, l: any) => acc.plus(l.panelReceivable ?? 0), new Decimal(0));
-
-      const newStatus = invoice.paidTotal.greaterThanOrEqualTo(newTotal) && newTotal.greaterThan(0)
-        ? 'PAID'
-        : invoice.paidTotal.greaterThan(0)
-          ? 'PARTIALLY_PAID'
-          : 'UNPAID';
-
-      await tx.hospitalInvoice.update({
-        where: { id: invoice.id },
-        data: {
-          subtotal: newSubtotal,
-          discountTotal: newDiscountTotal,
-          total: newTotal,
-          patientShare: newPatientShare,
-          panelReceivable: newPanelReceivable,
-          status: newStatus,
-        },
-      });
+      await recalcInvoiceTotals(tx, invoice, [...invoice.lines, createdLine]);
 
       return createdLine;
     });
@@ -858,14 +1009,30 @@ export const admissionService = {
 
       if (!admission) throw new NotFoundError('Admission record not found');
 
-      // If granting HOSPITAL_BILLING clearance, check that hospital invoice has zero outstanding balance
+      // If granting HOSPITAL_BILLING clearance, check that the admission has
+      // zero outstanding balance ACROSS ALL its department invoices,
+      // combined — never per invoice in isolation. A per-invoice check
+      // (`inv.total - inv.paidTotal`) ignores unallocated advance/deposit
+      // receipts (`hospitalInvoiceId: null` — the admission-creation
+      // deposit, or any "additional deposit" collected under §2.11's
+      // overpayment case), which would otherwise wrongly block discharge
+      // for a patient whose advance already fully covers their balance.
       if (body.clearanceType === 'HOSPITAL_BILLING') {
-        const hasUnpaidBills = admission.hospitalInvoices.some(
-          (inv) => inv.total.minus(inv.paidTotal).greaterThan(0),
-        );
-        if (hasUnpaidBills) {
+        const totalCharges = admission.hospitalInvoices.reduce((sum, inv) => sum.plus(inv.total), new Decimal(0));
+        const receipts = await tx.paymentReceipt.aggregate({
+          where: {
+            isReversed: false,
+            OR: [
+              { admissionRecordId: admission.id },
+              { hospitalInvoiceId: { in: admission.hospitalInvoices.map((inv) => inv.id) } },
+            ],
+          },
+          _sum: { amount: true },
+        });
+        const totalPaid = receipts._sum.amount ?? new Decimal(0);
+        if (totalCharges.minus(totalPaid).greaterThan(0)) {
           throw new ValidationError(
-            'Cannot grant Hospital Billing clearance: patient has unpaid hospital invoices.',
+            'Cannot grant Hospital Billing clearance: patient has an outstanding balance across their hospital invoices.',
           );
         }
       }
@@ -897,8 +1064,114 @@ export const admissionService = {
         });
       }
 
+      await this.reconcileAdmissionDischarge(tx, admission.id, actorId);
       return cleared;
     });
+  },
+
+  /**
+   * Reconcile / evaluate discharge readiness (§4.7, §8.8, v7.2 §2.4)
+   * 1. Checks total charges vs total receipts across this admission. If <= 0, auto-clears HOSPITAL_BILLING.
+   * 2. Checks all 3 gates (CLINICAL, HOSPITAL_BILLING, PHARMACY).
+   * 3. If all gates are CLEARED or NOT_APPLICABLE, and admission is ACTIVE or DISCHARGE_PENDING:
+   *    - Updates admissionRecord.status to 'DISCHARGED', sets dischargedAt = new Date()
+   *    - Automatically frees bed to 'AVAILABLE'.
+   */
+  async reconcileAdmissionDischarge(tx: any, admissionId: string, actorId?: string | null) {
+    const admission = await tx.admissionRecord.findUnique({
+      where: { id: admissionId },
+      include: {
+        hospitalInvoices: { where: { sourceType: 'ADMISSION' } },
+        dischargeClearances: true,
+      },
+    });
+    if (!admission || admission.status === 'DISCHARGED' || admission.status === 'CANCELLED') {
+      return { isDischarged: admission?.status === 'DISCHARGED', isDischargePending: false, admission };
+    }
+
+    // 1. Evaluate billing balance across this admission
+    const totalCharges = admission.hospitalInvoices.reduce((sum: Decimal, inv: any) => sum.plus(inv.total), new Decimal(0));
+    const invoiceIds = admission.hospitalInvoices.map((inv: any) => inv.id);
+    const receipts = await tx.paymentReceipt.aggregate({
+      where: {
+        isReversed: false,
+        OR: [
+          { admissionRecordId: admission.id },
+          ...(invoiceIds.length > 0 ? [{ hospitalInvoiceId: { in: invoiceIds } }] : []),
+        ],
+      },
+      _sum: { amount: true },
+    });
+    const totalPaid = receipts._sum.amount ?? new Decimal(0);
+    const isBillingSettled = totalCharges.minus(totalPaid).lessThanOrEqualTo(0);
+
+    let billingClearance = admission.dischargeClearances.find((c: any) => c.clearanceType === 'HOSPITAL_BILLING');
+    if (isBillingSettled) {
+      if (billingClearance && billingClearance.status !== 'CLEARED') {
+        billingClearance = await tx.dualDischargeClearance.update({
+          where: { id: billingClearance.id },
+          data: {
+            status: 'CLEARED',
+            clearedById: actorId ?? billingClearance.clearedById,
+            clearedAt: billingClearance.clearedAt ?? new Date(),
+          },
+        });
+      } else if (!billingClearance) {
+        billingClearance = await tx.dualDischargeClearance.create({
+          data: {
+            admissionRecordId: admission.id,
+            clearanceType: 'HOSPITAL_BILLING',
+            status: 'CLEARED',
+            clearedById: actorId ?? undefined,
+            clearedAt: new Date(),
+          },
+        });
+      }
+    }
+
+    // Re-fetch clearances to check complete status
+    const allClearances = await tx.dualDischargeClearance.findMany({
+      where: { admissionRecordId: admission.id },
+    });
+
+    const clinicalGate = allClearances.find((c: any) => c.clearanceType === 'CLINICAL');
+    const billingGate = allClearances.find((c: any) => c.clearanceType === 'HOSPITAL_BILLING');
+    const pharmacyGate = allClearances.find((c: any) => c.clearanceType === 'PHARMACY');
+
+    const clinicalOk = clinicalGate?.status === 'CLEARED';
+    const billingOk = billingGate?.status === 'CLEARED' || isBillingSettled;
+    const pharmacyOk = !pharmacyGate || pharmacyGate.status === 'CLEARED' || pharmacyGate.status === 'NOT_APPLICABLE';
+
+    // If clinical is cleared but billing is not settled, ensure status is DISCHARGE_PENDING
+    if (clinicalOk && !billingOk && admission.status === 'ACTIVE') {
+      const updated = await tx.admissionRecord.update({
+        where: { id: admission.id },
+        data: { status: 'DISCHARGE_PENDING' },
+      });
+      return { isDischarged: false, isDischargePending: true, admission: updated };
+    }
+
+    // If all 3 gates are satisfied: Finalize Discharge!
+    if (clinicalOk && billingOk && pharmacyOk) {
+      const updated = await tx.admissionRecord.update({
+        where: { id: admission.id },
+        data: {
+          status: 'DISCHARGED',
+          dischargedAt: admission.dischargedAt ?? new Date(),
+        },
+      });
+
+      if (admission.bedId) {
+        await tx.bed.update({
+          where: { id: admission.bedId },
+          data: { status: 'AVAILABLE' },
+        });
+      }
+
+      return { isDischarged: true, isDischargePending: false, admission: updated };
+    }
+
+    return { isDischarged: false, isDischargePending: admission.status === 'DISCHARGE_PENDING', admission };
   },
 
   /**
@@ -970,12 +1243,16 @@ export const admissionService = {
         });
       }
 
-      const updatedAdmission = await tx.admissionRecord.update({
-        where: { id: admission.id },
-        data: { status: 'DISCHARGE_PENDING' },
-      });
+      // Reconcile discharge status: if billing is already paid & pharmacy cleared, finalize immediately; otherwise set DISCHARGE_PENDING
+      const reconcile = await this.reconcileAdmissionDischarge(tx, admission.id, actorId);
+      const finalAdmission = reconcile.isDischarged
+        ? reconcile.admission
+        : await tx.admissionRecord.update({
+            where: { id: admission.id },
+            data: { status: 'DISCHARGE_PENDING' },
+          });
 
-      return { admission: updatedAdmission, dischargeSummary: summary };
+      return { admission: finalAdmission, dischargeSummary: summary };
     });
   },
 
@@ -983,6 +1260,40 @@ export const admissionService = {
    * Get 3-Key Discharge Clearances status (§4.7, §8.8)
    */
   async getClearances(admissionId: string) {
+    // Reconcile billing clearance if patient has 0 balance
+    const admission = await prisma.admissionRecord.findUnique({
+      where: { id: admissionId },
+      include: {
+        hospitalInvoices: { where: { sourceType: 'ADMISSION' } },
+        dischargeClearances: true,
+      },
+    });
+
+    if (admission) {
+      const totalCharges = admission.hospitalInvoices.reduce((sum, inv) => sum.plus(inv.total), new Decimal(0));
+      const invoiceIds = admission.hospitalInvoices.map((inv) => inv.id);
+      const receipts = await prisma.paymentReceipt.aggregate({
+        where: {
+          isReversed: false,
+          OR: [
+            { admissionRecordId: admission.id },
+            ...(invoiceIds.length > 0 ? [{ hospitalInvoiceId: { in: invoiceIds } }] : []),
+          ],
+        },
+        _sum: { amount: true },
+      });
+      const totalPaid = receipts._sum.amount ?? new Decimal(0);
+      if (totalCharges.minus(totalPaid).lessThanOrEqualTo(0)) {
+        const billingGate = admission.dischargeClearances.find((c) => c.clearanceType === 'HOSPITAL_BILLING');
+        if (billingGate && billingGate.status !== 'CLEARED') {
+          await prisma.dualDischargeClearance.update({
+            where: { id: billingGate.id },
+            data: { status: 'CLEARED', clearedAt: new Date() },
+          });
+        }
+      }
+    }
+
     const clearances = await prisma.dualDischargeClearance.findMany({
       where: { admissionRecordId: admissionId },
       include: { clearedBy: { select: { id: true, username: true } } },
@@ -1007,6 +1318,15 @@ export const admissionService = {
    */
   async dischargePatient(admissionId: string, _actorId: string) {
     return prisma.$transaction(async (tx) => {
+      // First attempt to reconcile: auto-clears billing if balance is 0, auto-discharges if ready
+      const reconcile = await this.reconcileAdmissionDischarge(tx, admissionId, _actorId);
+      if (reconcile.isDischarged) {
+        return {
+          admission: reconcile.admission,
+          message: 'Patient discharged successfully. Bed freed to AVAILABLE.',
+        };
+      }
+
       const admission = await tx.admissionRecord.findUnique({
         where: { id: admissionId },
         include: { dischargeClearances: true },
@@ -1133,5 +1453,132 @@ export const admissionService = {
         clearedAt: c.clearedAt,
       })),
     };
+  },
+
+  /**
+   * Super Admin "Close Day" action (Hospital Overview) — posts one
+   * room/bed accommodation charge line for every currently ACTIVE,
+   * bed-assigned admission, so the daily room rate keeps re-billing for
+   * as long as the patient stays admitted instead of only charging once
+   * at check-in. Nothing here is hardcoded: the rate comes from the
+   * occupied Room/Bed's own configured daily rate, and idempotency is
+   * enforced purely in the database —
+   *   - `HospitalDayClose.businessDate` is unique, so the same date can
+   *     never be closed twice;
+   *   - `AdmissionRoomChargeLog`'s (admission, businessDate) unique
+   *     constraint means even a retried/partial run never double-bills
+   *     one admission for one day.
+   */
+  async closeHospitalDay(body: CloseHospitalDayBody, actorId: string) {
+    const businessDate = new Date(`${body.businessDate ?? new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
+
+    return prisma.$transaction(async (tx) => {
+      const alreadyClosed = await tx.hospitalDayClose.findUnique({ where: { businessDate } });
+      if (alreadyClosed) {
+        throw new ConflictError(`Hospital day ${businessDate.toISOString().slice(0, 10)} has already been closed.`);
+      }
+
+      const activeAdmissions = await tx.admissionRecord.findMany({
+        where: { status: 'ACTIVE', bedId: { not: null } },
+        include: {
+          bed: { include: { room: true } },
+          panelPatient: { include: { corporatePanel: { include: { discountRules: true } } } },
+          hospitalInvoices: { where: { sourceType: 'ADMISSION' }, include: { lines: true } },
+        },
+      });
+
+      let admissionsCharged = 0;
+      let totalAmountPosted = new Decimal(0);
+
+      for (const admission of activeAdmissions) {
+        const dailyRate = admission.bed?.room?.dailyRoomRate ?? admission.bed?.dailyRate ?? null;
+        if (!dailyRate || dailyRate.lessThanOrEqualTo(0)) continue; // no configured rate — nothing to bill
+
+        // Belt-and-braces idempotency check — the unique constraint on
+        // AdmissionRoomChargeLog is the real guarantee against double-billing,
+        // but a Postgres unique-violation here would abort the rest of this
+        // transaction (Prisma interactive transactions share one DB
+        // transaction), so we check first rather than catch-and-continue.
+        const existingLog = await tx.admissionRoomChargeLog.findUnique({
+          where: { admissionRecordId_businessDate: { admissionRecordId: admission.id, businessDate } },
+        });
+        if (existingLog) continue;
+
+        const serviceRate = await getOrCreateRoomChargeServiceRate(tx, admission.departmentId, actorId);
+
+        let invoice = admission.hospitalInvoices[0];
+        if (!invoice) {
+          invoice = await tx.hospitalInvoice.create({
+            data: {
+              invoiceNumber: await generateInvoiceNumber(tx),
+              sourceType: 'ADMISSION',
+              admissionRecordId: admission.id,
+              departmentId: admission.departmentId,
+              panelPatientId: admission.panelPatientId,
+              selfPayEncounterId: admission.selfPayEncounterId,
+              subtotal: new Decimal(0),
+              discountTotal: new Decimal(0),
+              total: new Decimal(0),
+              paidTotal: new Decimal(0),
+              patientShare: new Decimal(0),
+              panelReceivable: new Decimal(0),
+              status: 'UNPAID',
+              createdById: actorId,
+            },
+            include: { lines: true },
+          });
+        }
+
+        const coverage = resolvePanelCoverage(dailyRate, admission.panelPatient?.corporatePanel?.discountRules, serviceRate.id);
+        const lineNet = dailyRate.minus(coverage.discountAmount);
+
+        const createdLine = await tx.invoiceLineItem.create({
+          data: {
+            hospitalInvoiceId: invoice.id,
+            serviceRateId: serviceRate.id,
+            rateSnapshot: dailyRate,
+            quantity: new Decimal(1),
+            lineGross: dailyRate,
+            discountAmount: coverage.discountAmount,
+            discountReason: coverage.discountReason,
+            lineNet,
+            patientShare: coverage.patientShare,
+            panelReceivable: coverage.panelReceivable,
+            isCompleted: true,
+          },
+        });
+
+        await tx.admissionRoomChargeLog.create({
+          data: {
+            admissionRecordId: admission.id,
+            businessDate,
+            invoiceLineItemId: createdLine.id,
+            ratePosted: dailyRate,
+          },
+        });
+
+        await recalcInvoiceTotals(tx, invoice, [...invoice.lines, createdLine]);
+
+        admissionsCharged += 1;
+        totalAmountPosted = totalAmountPosted.plus(lineNet);
+      }
+
+      return tx.hospitalDayClose.create({
+        data: {
+          businessDate,
+          admissionsCharged,
+          totalAmountPosted,
+          closedById: actorId,
+        },
+      });
+    });
+  },
+
+  async getDayCloseHistory(limit: number) {
+    return prisma.hospitalDayClose.findMany({
+      orderBy: { businessDate: 'desc' },
+      take: limit,
+      include: { closedBy: { select: { username: true, staff: { select: { fullName: true } } } } },
+    });
   },
 };

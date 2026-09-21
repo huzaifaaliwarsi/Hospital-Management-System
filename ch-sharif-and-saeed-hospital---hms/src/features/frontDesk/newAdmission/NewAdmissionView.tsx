@@ -9,6 +9,10 @@ import {
   Building2,
   DollarSign,
   User,
+  Receipt,
+  Search,
+  X,
+  Loader2,
 } from 'lucide-react';
 import { PatientGender, PayerType, GuardianRelation, GUARDIAN_RELATIONS } from '../../../types/patient';
 import {
@@ -17,6 +21,9 @@ import {
   isValidPhone,
   normalizeCnic,
   isValidCnic,
+  calculateAgeFromDob,
+  searchPanelPatients,
+  PanelPatientSearchResult,
 } from '../../../services/patientRegistryService';
 import {
   fetchCorporatePanels,
@@ -25,6 +32,8 @@ import {
 } from '../../../services/panelService';
 import { StaffUserService, fetchStaffUsers } from '../../../services/staffUserService';
 import { StaffUser } from '../../../types/staffUser';
+import { DepartmentService, fetchDepartments } from '../../../services/departmentService';
+import { Department } from '../../../types/department';
 import { WardsRoomsBedsService, fetchWardHierarchy } from '../../../services/wardsRoomsBedsService';
 import { Ward, Room, Bed } from '../../../types/wardsRoomsBeds';
 import {
@@ -35,6 +44,7 @@ import {
   AdmissionPaymentMethod,
   MedicationMode,
 } from '../../../services/admissionService';
+import { InvoiceDetailModal } from '../billing/InvoiceDetailModal';
 import { getHospitalCurrentDate, formatDateISO } from '../../../utils/dateConstants';
 import { formatPKR } from '../../../utils/formatters';
 import { useAuth } from '../../../context/AuthContext';
@@ -106,12 +116,24 @@ export const NewAdmissionView: React.FC = () => {
   const [panelId, setPanelId] = useState('');
   const [panelMemberId, setPanelMemberId] = useState('');
 
+  // Panel Patient Registry search (admission.md §2.1 point 2 — "search the permanent Panel Patient
+  // Registry, validate active membership" — reuse an existing record instead of always
+  // inline-registering a brand-new PanelPatient for the same real person).
+  const [panelSearchQuery, setPanelSearchQuery] = useState('');
+  const [panelSearchResults, setPanelSearchResults] = useState<PanelPatientSearchResult[]>([]);
+  const [isSearchingPanel, setIsSearchingPanel] = useState(false);
+  const [panelSearchError, setPanelSearchError] = useState<string | null>(null);
+  const [hasSearchedPanel, setHasSearchedPanel] = useState(false);
+  const [selectedExistingPatient, setSelectedExistingPatient] = useState<PanelPatientSearchResult | null>(null);
+
   // Admission form state
   const [formValues, setFormValues] = useState<CreateAdmissionFormValues>(emptyForm());
   const [formError, setFormError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [createdAdmission, setCreatedAdmission] = useState<AdmissionRecord | null>(null);
   const [createdAdvanceReceipt, setCreatedAdvanceReceipt] = useState<AdmissionAdvanceReceipt | null>(null);
+  const [createdInvoice, setCreatedInvoice] = useState<{ id: string; invoiceNumber: string } | null>(null);
+  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
 
   // Live master data caches (re-fetched on mount so direct navigation never gets stuck on an unprimed memory cache)
   const [corporatePanels, setCorporatePanels] = useState<CorporatePanel[]>(getActiveCorporatePanels);
@@ -119,6 +141,7 @@ export const NewAdmissionView: React.FC = () => {
   const [allRooms, setAllRooms] = useState<Room[]>(WardsRoomsBedsService.getRooms());
   const [allBeds, setAllBeds] = useState<Bed[]>(WardsRoomsBedsService.getBeds());
   const [allStaff, setAllStaff] = useState<StaffUser[]>(() => StaffUserService.getStaffUsers());
+  const [departments, setDepartments] = useState<Department[]>(() => DepartmentService.getDepartments());
 
   // No separate Ward/Room selection is kept in CreateAdmissionFormValues — they only exist here
   // to narrow the Bed dropdown; the backend only needs the final preferredBedId + departmentId.
@@ -137,15 +160,28 @@ export const NewAdmissionView: React.FC = () => {
     fetchCorporatePanels().then(setCorporatePanels).catch(() => {});
     refreshHierarchy();
     fetchStaffUsers().then(setAllStaff).catch(() => {});
+    fetchDepartments().then(setDepartments).catch(() => {});
   }, []);
+
+  const departmentOptions = useMemo(() => {
+    const sorted = [...departments].sort((a, b) => a.name.localeCompare(b.name));
+    return [
+      { label: '-- Select Department --', value: '' },
+      ...sorted.map((d) => ({
+        label: d.status === 'Inactive' ? `${d.name} (Inactive)` : d.name,
+        value: d.id,
+      })),
+    ];
+  }, [departments]);
 
   const activeWards = useMemo(() => allWards.filter((w) => w.status === 'Active'), [allWards]);
   const selectedWard = useMemo(() => allWards.find((w) => w.id === selectedWardId), [allWards, selectedWardId]);
 
   useEffect(() => {
-    const deptId = selectedWard?.departmentId || '';
-    setFormValues((prev) => (prev.departmentId === deptId ? prev : { ...prev, departmentId: deptId }));
-  }, [selectedWard]);
+    if (!formValues.departmentId && selectedWard?.departmentId) {
+      setFormValues((prev) => ({ ...prev, departmentId: selectedWard.departmentId }));
+    }
+  }, [selectedWard, formValues.departmentId]);
 
   // Only show rooms that have at least one currently available, active bed
   const wardRooms = useMemo(() => {
@@ -165,6 +201,36 @@ export const NewAdmissionView: React.FC = () => {
     [allBeds, selectedRoomId]
   );
 
+  const selectedRoom = useMemo(() => allRooms.find((r) => r.id === selectedRoomId), [allRooms, selectedRoomId]);
+  const selectedBed = useMemo(() => allBeds.find((b) => b.id === formValues.preferredBedId), [allBeds, formValues.preferredBedId]);
+  const effectiveDailyRoomRate = useMemo(() => {
+    if (selectedRoom?.dailyRoomRate && selectedRoom.dailyRoomRate > 0) return selectedRoom.dailyRoomRate;
+    if (selectedBed?.dailyRate && selectedBed.dailyRate > 0) return selectedBed.dailyRate;
+    if (selectedBed?.dailyBedRate && selectedBed.dailyBedRate > 0) return selectedBed.dailyBedRate;
+    return 0;
+  }, [selectedRoom, selectedBed]);
+
+  const handleRoomSelect = (roomId: string) => {
+    setSelectedRoomId(roomId);
+    const room = allRooms.find((r) => r.id === roomId);
+    const rate = room?.dailyRoomRate || 0;
+    setFormValues((prev) => ({
+      ...prev,
+      preferredBedId: '',
+      estimatedAmount: rate > 0 ? rate : prev.estimatedAmount,
+    }));
+  };
+
+  const handleBedSelect = (bedId: string) => {
+    const bed = allBeds.find((b) => b.id === bedId);
+    const bedRate = bed?.dailyRate || bed?.dailyBedRate || 0;
+    setFormValues((prev) => ({
+      ...prev,
+      preferredBedId: bedId,
+      estimatedAmount: prev.estimatedAmount || (bedRate > 0 ? bedRate : ''),
+    }));
+  };
+
   const handleReset = () => {
     setFullName('');
     setFatherGuardianName('');
@@ -177,11 +243,63 @@ export const NewAdmissionView: React.FC = () => {
     setPayerType('Self Pay');
     setPanelId('');
     setPanelMemberId('');
+    setSelectedWardId('');
+    setSelectedRoomId('');
     setFormValues(emptyForm());
     setFormError(null);
     setCreatedAdmission(null);
     setCreatedAdvanceReceipt(null);
+    setCreatedInvoice(null);
+    setShowInvoiceModal(false);
+    setPanelSearchQuery('');
+    setPanelSearchResults([]);
+    setHasSearchedPanel(false);
+    setPanelSearchError(null);
+    setSelectedExistingPatient(null);
     refreshHierarchy();
+  };
+
+  const handleSearchPanelPatients = async () => {
+    if (!panelSearchQuery.trim()) return;
+    setIsSearchingPanel(true);
+    setPanelSearchError(null);
+    try {
+      setPanelSearchResults(await searchPanelPatients(panelSearchQuery));
+      setHasSearchedPanel(true);
+    } catch (err: any) {
+      setPanelSearchError(err?.message || 'Failed to search the Panel Patient Registry.');
+    } finally {
+      setIsSearchingPanel(false);
+    }
+  };
+
+  const handleUseExistingPatient = (match: PanelPatientSearchResult) => {
+    setFullName(match.fullName.toUpperCase());
+    setFatherGuardianName((match.guardianName || '').toUpperCase());
+    setGuardianRelation((match.guardianRelation as GuardianRelation) || '');
+    setPrimaryPhone(match.phone || '');
+    setAge(match.dob ? String(calculateAgeFromDob(match.dob)) : '');
+    setGender((match.gender as PatientGender) || 'Other / Not Specified');
+    setAddress(match.addressLine1 || '');
+    setPanelId(match.panelId);
+    setPanelMemberId(match.panelMemberId || '');
+    setSelectedExistingPatient(match);
+    setPanelSearchResults([]);
+    setPanelSearchQuery('');
+    setHasSearchedPanel(false);
+  };
+
+  const handleClearExistingPatient = () => {
+    setSelectedExistingPatient(null);
+    setFullName('');
+    setFatherGuardianName('');
+    setGuardianRelation('');
+    setPrimaryPhone('');
+    setAge('');
+    setGender('Male');
+    setAddress('');
+    setPanelId('');
+    setPanelMemberId('');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -227,9 +345,18 @@ export const NewAdmissionView: React.FC = () => {
         setFormError('Panel Member ID / Card Number is required.');
         return;
       }
+      // §2.1 point 2 — "validate active membership" before admitting against this registry record.
+      if (selectedExistingPatient && selectedExistingPatient.status !== 'ACTIVE') {
+        setFormError(`This panel patient's membership is ${selectedExistingPatient.status} — cannot admit against an inactive registry record.`);
+        return;
+      }
     }
 
-    // 2. Admission Fields Validation — Simply pick the ward (room & bed can be chosen now or assigned at portal)
+    // 2. Admission Fields Validation — First choose Department, then Ward
+    if (!formValues.departmentId) {
+      setFormError('Please select a Department for admission.');
+      return;
+    }
     if (!selectedWardId) {
       setFormError('Please select an Inpatient Ward for admission.');
       return;
@@ -237,50 +364,58 @@ export const NewAdmissionView: React.FC = () => {
 
     setIsSaving(true);
     try {
-      // 3. Register Patient
-      const birthYear = new Date().getFullYear() - Math.max(0, Math.floor(ageNum));
-      const dob = `${birthYear}-01-01`;
+      // 3. Register Patient — reuse the selected Panel Patient Registry
+      // record as-is (admission.md §2.1 point 2) instead of always
+      // inline-registering a brand-new PanelPatient for the same person.
+      let activePatient: { id: string; payerType: PayerType };
 
-      const regRes = await createPatient(
-        {
-          fullName: fullName.trim(),
-          fatherGuardianName: fatherGuardianName.trim(),
-          guardianRelation,
-          guardianCnic: guardianCnic.trim() ? normalizeCnic(guardianCnic) : '',
-          dateOfBirth: dob,
-          age: ageNum,
-          ageIsEstimated: true,
-          gender,
-          cnic: '',
-          passportNumber: '',
-          primaryPhone: normalizePhone(primaryPhone),
-          alternatePhone: '',
-          email: '',
-          addressLine1: address.trim(),
-          addressLine2: '',
-          city: 'Karachi',
-          province: 'Sindh',
-          country: 'Pakistan',
-          bloodGroup: 'Unknown',
-          payerType,
-          panelId: payerType === 'Corporate / Panel' ? panelId : '',
-          panelName: payerType === 'Corporate / Panel' ? corporatePanels.find((p) => p.id === panelId)?.name || '' : '',
-          panelMemberId: payerType === 'Corporate / Panel' ? panelMemberId.trim() : '',
-          emergencyContactName: fatherGuardianName.trim(),
-          emergencyContactRelation: guardianRelation,
-          emergencyContactPhone: guardianCnic.trim() ? normalizeCnic(guardianCnic) : normalizePhone(primaryPhone),
-          status: 'ACTIVE',
-        },
-        currentUser
-      );
+      if (payerType === 'Corporate / Panel' && selectedExistingPatient) {
+        activePatient = { id: selectedExistingPatient.id, payerType: 'Corporate / Panel' };
+      } else {
+        const birthYear = new Date().getFullYear() - Math.max(0, Math.floor(ageNum));
+        const dob = `${birthYear}-01-01`;
 
-      if (!regRes.success || !regRes.patient) {
-        setFormError(regRes.error || 'Failed to register patient for admission.');
-        setIsSaving(false);
-        return;
+        const regRes = await createPatient(
+          {
+            fullName: fullName.trim(),
+            fatherGuardianName: fatherGuardianName.trim(),
+            guardianRelation,
+            guardianCnic: guardianCnic.trim() ? normalizeCnic(guardianCnic) : '',
+            dateOfBirth: dob,
+            age: ageNum,
+            ageIsEstimated: true,
+            gender,
+            cnic: '',
+            passportNumber: '',
+            primaryPhone: normalizePhone(primaryPhone),
+            alternatePhone: '',
+            email: '',
+            addressLine1: address.trim(),
+            addressLine2: '',
+            city: 'Karachi',
+            province: 'Sindh',
+            country: 'Pakistan',
+            bloodGroup: 'Unknown',
+            payerType,
+            panelId: payerType === 'Corporate / Panel' ? panelId : '',
+            panelName: payerType === 'Corporate / Panel' ? corporatePanels.find((p) => p.id === panelId)?.name || '' : '',
+            panelMemberId: payerType === 'Corporate / Panel' ? panelMemberId.trim() : '',
+            emergencyContactName: fatherGuardianName.trim(),
+            emergencyContactRelation: guardianRelation,
+            emergencyContactPhone: guardianCnic.trim() ? normalizeCnic(guardianCnic) : normalizePhone(primaryPhone),
+            status: 'ACTIVE',
+          },
+          currentUser
+        );
+
+        if (!regRes.success || !regRes.patient) {
+          setFormError(regRes.error || 'Failed to register patient for admission.');
+          setIsSaving(false);
+          return;
+        }
+
+        activePatient = regRes.patient;
       }
-
-      const activePatient = regRes.patient;
 
       // 4. Create Admission
       const extraNotesParts = [
@@ -292,13 +427,17 @@ export const NewAdmissionView: React.FC = () => {
 
       const admissionPayload: CreateAdmissionFormValues = {
         ...formValues,
+        estimatedAmount: formValues.estimatedAmount !== ''
+          ? Number(formValues.estimatedAmount)
+          : (effectiveDailyRoomRate > 0 ? effectiveDailyRoomRate : ''),
         notes: extraNotesParts.join(' | '),
         panelPatientId: activePatient.payerType === 'Corporate / Panel' ? activePatient.id : '',
         selfPayEncounterId: activePatient.payerType === 'Self Pay' ? activePatient.id : '',
       };
-      const { admission, advanceReceipt } = await createAdmission(admissionPayload);
+      const { admission, advanceReceipt, invoice } = await createAdmission(admissionPayload);
       setCreatedAdmission(admission);
       setCreatedAdvanceReceipt(advanceReceipt);
+      setCreatedInvoice(invoice);
       refreshHierarchy();
     } catch (err: any) {
       setFormError(err?.response?.data?.error?.message || err?.message || 'Failed to create admission.');
@@ -362,7 +501,19 @@ export const NewAdmissionView: React.FC = () => {
                 <span className="text-[10px] text-slate-500 uppercase block">Admitting Doctor</span>
                 <span className="font-semibold text-slate-900">{createdAdmission.doctorName || 'Not Assigned Yet'}</span>
               </div>
+              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                <span className="text-[10px] text-slate-500 uppercase block">Room &amp; Bed</span>
+                <span className="font-semibold text-slate-900">{createdAdmission.bedLabel || 'Pending Check-in'}</span>
+              </div>
+              {effectiveDailyRoomRate > 0 && (
+                <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                  <span className="text-[10px] text-slate-500 uppercase block">Room Charges (Daily Rate)</span>
+                  <span className="font-bold text-[#08775A] font-mono">{formatPKR(effectiveDailyRoomRate)} / day</span>
+                </div>
+              )}
             </div>
+
+            {/* Advance Receipt Banner */}
             {createdAdvanceReceipt ? (
               <div className="p-3 bg-[#effaf5] border border-emerald-200 rounded-lg text-emerald-900 flex items-center justify-between gap-3">
                 <span className="flex items-center gap-1.5">
@@ -376,6 +527,29 @@ export const NewAdmissionView: React.FC = () => {
                 No advance was collected at admission — a receipt can be recorded any time from Hospital Invoices once the stay has an invoice.
               </div>
             )}
+
+            {/* Instant Admission Invoice Card */}
+            {createdInvoice && (
+              <div className="p-3.5 bg-white border border-emerald-300 rounded-xl flex items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-[#08775A]/10 text-[#08775A] flex items-center justify-center shrink-0">
+                    <Receipt className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-500 uppercase block font-bold tracking-wide">Admission Invoice Generated</span>
+                    <span className="font-mono font-bold text-slate-900 text-xs">{createdInvoice.invoiceNumber}</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowInvoiceModal(true)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#08775A] hover:bg-[#065f46] text-white rounded-lg text-xs font-bold shadow-xs cursor-pointer transition-colors"
+                >
+                  <Receipt className="h-3.5 w-3.5" /> View &amp; Print Invoice
+                </button>
+              </div>
+            )}
+
             <div className="flex justify-end pt-2 border-t border-slate-200">
               <button
                 type="button"
@@ -387,6 +561,15 @@ export const NewAdmissionView: React.FC = () => {
             </div>
           </div>
         </div>
+
+        {/* Immediate Invoice Detail Modal */}
+        {showInvoiceModal && createdInvoice && (
+          <InvoiceDetailModal
+            invoiceId={createdInvoice.id}
+            onClose={() => setShowInvoiceModal(false)}
+            onChanged={() => {}}
+          />
+        )}
       </div>
     );
   }
@@ -438,7 +621,10 @@ export const NewAdmissionView: React.FC = () => {
               {/* Self Pay Card */}
               <button
                 type="button"
-                onClick={() => setPayerType('Self Pay')}
+                onClick={() => {
+                  setPayerType('Self Pay');
+                  if (selectedExistingPatient) handleClearExistingPatient();
+                }}
                 className={`p-3 rounded-xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${
                   payerType === 'Self Pay'
                     ? 'border-[#08775A] bg-[#effaf5] shadow-xs ring-1 ring-[#08775A]/20'
@@ -500,7 +686,7 @@ export const NewAdmissionView: React.FC = () => {
                 2. Patient Information
               </label>
               <span className="text-[11px] text-[#08775A] font-semibold bg-[#effaf5] border border-emerald-200 px-2 py-0.5 rounded">
-                Admission Slip Details
+                {selectedExistingPatient ? 'From Panel Registry' : 'Admission Slip Details'}
               </span>
             </div>
 
@@ -509,6 +695,7 @@ export const NewAdmissionView: React.FC = () => {
               <TextInput
                 label="Patient Full Name"
                 required
+                disabled={!!selectedExistingPatient}
                 placeholder="Patient's legal name"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value.toUpperCase())}
@@ -519,6 +706,7 @@ export const NewAdmissionView: React.FC = () => {
                   <TextInput
                     label="Guardian Name"
                     required
+                    disabled={!!selectedExistingPatient}
                     placeholder="Father / Guardian name"
                     value={fatherGuardianName}
                     onChange={(e) => setFatherGuardianName(e.target.value.toUpperCase())}
@@ -529,6 +717,7 @@ export const NewAdmissionView: React.FC = () => {
                   <Select
                     label="Relation"
                     required
+                    disabled={!!selectedExistingPatient}
                     options={[
                       { label: 'Select Relation', value: '' },
                       ...GUARDIAN_RELATIONS.map((r) => ({ label: r, value: r })),
@@ -555,6 +744,7 @@ export const NewAdmissionView: React.FC = () => {
               <TextInput
                 label="Contact Phone"
                 required
+                disabled={!!selectedExistingPatient}
                 placeholder="0300-1234567"
                 value={primaryPhone}
                 onChange={(e) => setPrimaryPhone(e.target.value)}
@@ -568,6 +758,7 @@ export const NewAdmissionView: React.FC = () => {
                 <TextInput
                   label="Age (Years)"
                   required
+                  disabled={!!selectedExistingPatient}
                   type="number"
                   min="0"
                   max="130"
@@ -586,8 +777,11 @@ export const NewAdmissionView: React.FC = () => {
                     <button
                       key={g}
                       type="button"
+                      disabled={!!selectedExistingPatient}
                       onClick={() => setGender(g)}
-                      className={`flex-1 py-2 text-xs font-semibold rounded-lg border transition-all cursor-pointer text-center ${
+                      className={`flex-1 py-2 text-xs font-semibold rounded-lg border transition-all text-center ${
+                        selectedExistingPatient ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+                      } ${
                         gender === g
                           ? 'bg-[#08775A] text-white border-[#08775A] shadow-xs'
                           : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
@@ -601,6 +795,7 @@ export const NewAdmissionView: React.FC = () => {
               <div className="sm:col-span-5">
                 <TextInput
                   label="Residential Address"
+                  disabled={!!selectedExistingPatient}
                   placeholder="e.g. Landhi Hospital Karachi"
                   value={address}
                   onChange={(e) => setAddress(e.target.value)}
@@ -616,10 +811,101 @@ export const NewAdmissionView: React.FC = () => {
                   <Building2 className="h-3.5 w-3.5 text-amber-600" />
                   <span>Panel Contract &amp; Card Information</span>
                 </div>
+
+                {selectedExistingPatient ? (
+                  <div className="flex items-start justify-between gap-3 bg-white border border-emerald-200 rounded-lg p-3">
+                    <div className="flex items-start gap-2 min-w-0">
+                      <CheckCircle2 className="h-4 w-4 text-[#08775A] mt-0.5 shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-slate-900 truncate">
+                          Using existing registry record — {selectedExistingPatient.fullName}
+                        </p>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          MR# {selectedExistingPatient.mrNumber} • {selectedExistingPatient.panelName} • Member ID:{' '}
+                          {selectedExistingPatient.panelMemberId || '—'} •{' '}
+                          <span className={selectedExistingPatient.status === 'ACTIVE' ? 'text-[#08775A] font-semibold' : 'text-rose-600 font-semibold'}>
+                            {selectedExistingPatient.status}
+                          </span>
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleClearExistingPatient}
+                      className="shrink-0 px-2.5 py-1.5 text-[11px] font-semibold text-slate-500 hover:text-slate-800 border border-slate-200 rounded-lg hover:bg-slate-50 inline-flex items-center gap-1 cursor-pointer"
+                    >
+                      <X className="h-3 w-3" /> Use Different / New Patient
+                    </button>
+                  </div>
+                ) : (
+                  <div className="bg-white border border-amber-200 rounded-lg p-3 space-y-2">
+                    <label className="block text-[11px] font-semibold text-slate-700">
+                      Search Panel Patient Registry — name, MR#, CNIC or phone
+                    </label>
+                    <div className="flex gap-2">
+                      <div className="flex-1">
+                        <TextInput
+                          placeholder="e.g. Ahmed Khan, MR-000123, 35202-1928371-1"
+                          value={panelSearchQuery}
+                          onChange={(e) => setPanelSearchQuery(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleSearchPanelPatients();
+                            }
+                          }}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleSearchPanelPatients}
+                        disabled={isSearchingPanel || !panelSearchQuery.trim()}
+                        className="shrink-0 px-3.5 py-2 text-xs font-semibold text-white bg-slate-800 hover:bg-slate-900 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5 cursor-pointer"
+                      >
+                        {isSearchingPanel ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+                        Search
+                      </button>
+                    </div>
+
+                    {panelSearchError && <p className="text-[11px] text-rose-600 font-medium">{panelSearchError}</p>}
+
+                    {panelSearchResults.length > 0 && (
+                      <div className="space-y-1.5 max-h-48 overflow-y-auto pr-0.5">
+                        {panelSearchResults.map((m) => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onClick={() => handleUseExistingPatient(m)}
+                            className="w-full text-left p-2.5 bg-slate-50 hover:bg-[#effaf5] border border-slate-200 hover:border-[#c2e7db] rounded-lg transition-colors cursor-pointer"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-bold text-slate-900">{m.fullName}</span>
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${m.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                                {m.status}
+                              </span>
+                            </div>
+                            <span className="block text-[10.5px] text-slate-500 mt-0.5">
+                              MR# {m.mrNumber} • {m.panelName} • Member ID: {m.panelMemberId || '—'}
+                              {m.phone ? ` • ${m.phone}` : ''}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {hasSearchedPanel && panelSearchResults.length === 0 && !isSearchingPanel && !panelSearchError && (
+                      <p className="text-[11px] text-slate-500">
+                        No existing patient found in the registry — fill in the details below to register a new one.
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Select
                     label="Corporate Panel"
                     required
+                    disabled={!!selectedExistingPatient}
                     options={[
                       { label: '-- Select Corporate Panel --', value: '' },
                       ...corporatePanels.map((p) => ({ label: `${p.name} (${p.code})`, value: p.id })),
@@ -627,10 +913,12 @@ export const NewAdmissionView: React.FC = () => {
                     value={panelId}
                     onChange={(e) => setPanelId(e.target.value)}
                     onKeyDown={handleSelectKeyDown}
+                    hint={selectedExistingPatient ? "From the patient's registry record." : undefined}
                   />
                   <TextInput
                     label="Panel Member ID / Card #"
                     required
+                    disabled={!!selectedExistingPatient}
                     placeholder="e.g. EMP-99214 / CRD-4412"
                     value={panelMemberId}
                     onChange={(e) => setPanelMemberId(e.target.value.toUpperCase())}
@@ -654,8 +942,19 @@ export const NewAdmissionView: React.FC = () => {
               </span>
             </div>
 
-            {/* Ward → Room → Bed cascade & Fulfillment */}
+            {/* Department → Ward → Room → Bed cascade & Fulfillment */}
             <div className="space-y-3">
+              <Select
+                label="Department"
+                required
+                hint={departments.length === 0 ? 'Loading departments...' : undefined}
+                options={departmentOptions}
+                value={formValues.departmentId}
+                onChange={(e) => {
+                  setFormValues((prev) => ({ ...prev, departmentId: e.target.value }));
+                }}
+                onKeyDown={handleSelectKeyDown}
+              />
               <Select
                 label="Ward"
                 required
@@ -668,7 +967,7 @@ export const NewAdmissionView: React.FC = () => {
                 onChange={(e) => {
                   setSelectedWardId(e.target.value);
                   setSelectedRoomId('');
-                  setFormValues((prev) => ({ ...prev, preferredBedId: '' }));
+                  setFormValues((prev) => ({ ...prev, preferredBedId: '', estimatedAmount: '' }));
                 }}
                 onKeyDown={handleSelectKeyDown}
               />
@@ -687,16 +986,16 @@ export const NewAdmissionView: React.FC = () => {
                     const availCount = allBeds.filter(
                       (b) => b.roomId === r.id && b.occupancyStatus === 'Available' && b.operationalStatus === 'Active'
                     ).length;
+                    const rateLabel = r.dailyRoomRate && r.dailyRoomRate > 0 ? ` • ${formatPKR(r.dailyRoomRate)}/day` : '';
                     return {
-                      label: `${r.roomNumber ? `Room ${r.roomNumber} - ` : ''}${r.name} (${availCount} bed${availCount > 1 ? 's' : ''} available)`,
+                      label: `${r.roomNumber ? `Room ${r.roomNumber} - ` : ''}${r.name}${rateLabel} (${availCount} bed${availCount > 1 ? 's' : ''} available)`,
                       value: r.id,
                     };
                   }),
                 ]}
                 value={selectedRoomId}
                 onChange={(e) => {
-                  setSelectedRoomId(e.target.value);
-                  setFormValues((prev) => ({ ...prev, preferredBedId: '' }));
+                  handleRoomSelect(e.target.value);
                 }}
                 onKeyDown={handleSelectKeyDown}
               />
@@ -711,14 +1010,41 @@ export const NewAdmissionView: React.FC = () => {
                 }
                 options={[
                   { label: '-- Select Bed Preference (optional) --', value: '' },
-                  ...roomBeds.map((b) => ({ label: `Bed ${b.bedNumber}`, value: b.id })),
+                  ...roomBeds.map((b) => {
+                    const bedRateLabel = b.dailyRate && b.dailyRate > 0 && (!selectedRoom?.dailyRoomRate || selectedRoom.dailyRoomRate === 0)
+                      ? ` • ${formatPKR(b.dailyRate)}/day`
+                      : '';
+                    return {
+                      label: `Bed ${b.bedNumber}${bedRateLabel}`,
+                      value: b.id,
+                    };
+                  }),
                 ]}
                 value={formValues.preferredBedId}
                 onChange={(e) => {
-                  setFormValues((prev) => ({ ...prev, preferredBedId: e.target.value }));
+                  handleBedSelect(e.target.value);
                 }}
                 onKeyDown={handleSelectKeyDown}
               />
+
+              {/* Room Charges Badge / Card */}
+              {effectiveDailyRoomRate > 0 && (
+                <div className="p-3 bg-emerald-50/90 border border-emerald-200 rounded-xl space-y-1 animate-in fade-in">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
+                      <Building2 className="h-3.5 w-3.5 text-[#08775A]" />
+                      Room Charges (Daily Rate)
+                    </span>
+                    <span className="text-sm font-black text-[#08775A]">
+                      {formatPKR(effectiveDailyRoomRate)} <span className="text-[10px] font-normal text-slate-500">/ day</span>
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-emerald-700">
+                    Standard daily accommodation rate for <strong>{selectedRoom?.name || 'Selected Room'}</strong>.
+                  </p>
+                </div>
+              )}
+
               <Select
                 label="Fulfillment Mode"
                 hint="Self = arranges own medicines. Hospital Managed = Pharmacy fulfills via requests."
@@ -747,16 +1073,55 @@ export const NewAdmissionView: React.FC = () => {
 
             {/* Advance Received Now — real money, posts a real receipt + cashier ledger entry on submit */}
             <div className="p-3.5 bg-[#effaf5] border border-[#c2e7db] rounded-xl space-y-3">
-              <div className="flex items-center gap-1.5 text-xs font-bold text-[#08775A]">
-                <Wallet className="h-3.5 w-3.5" />
-                <span>Advance Received Now (optional)</span>
+              <div className="flex items-center justify-between pb-1.5 border-b border-[#c2e7db]/70">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-[#08775A]">
+                  <Wallet className="h-3.5 w-3.5" />
+                  <span>Advance Received Now (optional)</span>
+                </div>
+                {effectiveDailyRoomRate > 0 && (
+                  <span className="text-[11px] text-slate-600 font-sans font-semibold">
+                    Room Rate: <strong className="text-[#08775A]">{formatPKR(effectiveDailyRoomRate)}</strong> / day
+                  </span>
+                )}
               </div>
+
+              {/* Quick 1-click action to pay room charges in advance */}
+              {effectiveDailyRoomRate > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-white rounded-lg border border-emerald-200 text-xs">
+                  <span className="text-slate-600 text-[11px]">
+                    Customer paying room charges in advance?
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormValues((prev) => ({ ...prev, advanceAmount: effectiveDailyRoomRate }));
+                      }}
+                      className="px-2.5 py-1 bg-[#08775A] hover:bg-[#065f46] text-white font-bold text-[11px] rounded-md transition-colors shadow-2xs cursor-pointer"
+                    >
+                      + Pay Full Room Charges ({formatPKR(effectiveDailyRoomRate)})
+                    </button>
+                    {formValues.advanceAmount !== '' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFormValues((prev) => ({ ...prev, advanceAmount: '' }));
+                        }}
+                        className="px-2 py-1 text-slate-400 hover:text-slate-600 text-[11px] underline cursor-pointer"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <NumberInput
                   label="Advance Amount (PKR)"
                   min={0}
                   step={500}
-                  placeholder="0"
+                  placeholder={effectiveDailyRoomRate > 0 ? String(effectiveDailyRoomRate) : "0"}
                   value={formValues.advanceAmount}
                   onChange={(e) =>
                     setFormValues({
@@ -765,6 +1130,11 @@ export const NewAdmissionView: React.FC = () => {
                     })
                   }
                   onKeyDown={handleEnterNext}
+                  hint={
+                    effectiveDailyRoomRate > 0
+                      ? `Customer can pay room rate (${formatPKR(effectiveDailyRoomRate)}), custom amount, or leave 0.`
+                      : "Optional advance collected at entry."
+                  }
                 />
                 <Select
                   label="Payment Method"
