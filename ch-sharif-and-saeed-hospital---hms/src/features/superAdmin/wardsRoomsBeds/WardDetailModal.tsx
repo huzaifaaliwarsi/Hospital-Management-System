@@ -79,16 +79,42 @@ export const WardDetailModal: React.FC<WardDetailModalProps> = ({
         {/* Content */}
         <div className="p-6 space-y-5 text-xs text-slate-700">
           {/* Top Meta Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5">
               <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
-                Department
+                Ward Category
               </span>
               <div className="text-xs font-bold text-slate-800 mt-1">
-                {ward.departmentName}
+                {ward.wardType}
               </div>
               <span className="text-[11px] text-slate-500 block mt-0.5">
-                Type: {ward.wardType}
+                Gender: {ward.genderPolicy || 'None'}
+              </span>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5">
+              <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
+                Head / In-charge
+              </span>
+              <div className="text-xs font-bold text-slate-800 mt-1">
+                {ward.headStaffName || 'Not Assigned'}
+              </div>
+              <span className="text-[11px] text-slate-500 block mt-0.5">
+                Ward Supervision
+              </span>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5">
+              <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
+                Fixed Admission Fee
+              </span>
+              <div className="text-xs font-bold text-emerald-700 font-mono mt-1">
+                {ward.fixedPrice != null && ward.fixedPrice > 0
+                  ? `PKR ${ward.fixedPrice.toLocaleString('en-PK')}`
+                  : 'Free / No Charge'}
+              </div>
+              <span className="text-[10px] text-slate-500 block mt-0.5">
+                One-time fixed (Not per-day)
               </span>
             </div>
 
@@ -101,18 +127,6 @@ export const WardDetailModal: React.FC<WardDetailModalProps> = ({
               </div>
               <span className="text-[11px] text-slate-500 block mt-0.5">
                 {ward.location || 'Wing: Main Block'}
-              </span>
-            </div>
-
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5">
-              <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
-                Gender Policy
-              </span>
-              <div className="text-xs font-bold text-slate-800 mt-1">
-                {ward.genderPolicy || 'None (All)'}
-              </div>
-              <span className="text-[11px] text-slate-500 block mt-0.5">
-                Admission Protocol
               </span>
             </div>
           </div>

@@ -712,7 +712,7 @@ export const PatientModal: React.FC<PatientModalProps> = ({
                     Date of Birth
                   </label>
                   <input
-                    type="date"
+                    lang="en-GB" type="date"
                     value={formData.dateOfBirth}
                     onChange={handleDobChange}
                     max="2026-09-09"

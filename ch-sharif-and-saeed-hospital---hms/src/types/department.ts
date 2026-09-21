@@ -15,6 +15,17 @@ export type OperationalCapability =
   | 'Admission'
   | 'Pharmacy Related';
 
+export interface HospitalFloor {
+  id: string;
+  floorNumber: number;
+  name: string;
+  building?: string | null;
+  description?: string | null;
+  isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface Department {
   id: string;
   code: string;
@@ -25,8 +36,10 @@ export interface Department {
   headUserId: string; // e.g., 'DOC-001' or ''
   headName: string;   // e.g., 'Prof. Dr. Tariq Saeed' or 'Not Assigned'
 
-  contactExtension: string;
-  location: string;
+  contactExtension?: string;
+  location?: string;
+  floor?: string;
+  fixedPrice?: number | null; // Optional fixed rate / consultation fee (PKR), not per-day
 
   opdEnabled: boolean;
   observationEnabled: boolean;
@@ -77,8 +90,10 @@ export interface DepartmentFormValues {
   description: string;
   headUserId: string;
   headName: string;
-  contactExtension: string;
-  location: string;
+  contactExtension?: string;
+  location?: string;
+  floor?: string;
+  fixedPrice?: number | null;
   opdEnabled: boolean;
   observationEnabled: boolean;
   emergencyEnabled: boolean;

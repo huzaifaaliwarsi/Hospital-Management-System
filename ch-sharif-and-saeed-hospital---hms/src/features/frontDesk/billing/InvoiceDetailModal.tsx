@@ -51,6 +51,7 @@ export function getInvoiceEncounterLabel(inv?: InvoiceDetail | null): string {
   if (inv.sourceType === 'APPOINTMENT') return 'Doctor Appointment';
   if (inv.encounterType === 'EMERGENCY') return 'Emergency Care';
   if (inv.encounterType === 'OBSERVATION') return 'Observation Stay';
+  if (inv.encounterType === 'CUSTOM') return 'Custom Billing';
   if (inv.encounterType === 'OPD') return 'OPD Intake';
   return inv.encounterType ? `${inv.encounterType} Intake` : 'OPD Intake';
 }
@@ -464,7 +465,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
               <div class="meta-row"><span class="meta-label">Date &amp; Time:</span> <span class="meta-val">${invoice?.createdAt}</span></div>
               <div class="meta-row"><span class="meta-label">Encounter:</span> <span class="meta-val">${getInvoiceEncounterLabel(invoice)}</span></div>
               ${invoice?.admissionNumber ? `<div class="meta-row"><span class="meta-label">Admission #:</span> <strong class="meta-val">${invoice.admissionNumber}</strong></div>` : ''}
-              ${invoice?.wardName || invoice?.bedNumber ? `<div class="meta-row"><span class="meta-label">Ward / Bed:</span> <span class="meta-val">${[invoice.wardName, invoice.bedNumber ? `Bed ${invoice.bedNumber}` : ''].filter(Boolean).join(' - ')}</span></div>` : ''}
+              ${invoice?.wardName || invoice?.bedNumber ? `<div class="meta-row"><span class="meta-label">Ward / Bed:</span> <span class="meta-val">${[invoice.wardName, invoice.bedNumber ? (/^bed\b/i.test(invoice.bedNumber.trim()) ? invoice.bedNumber.trim() : `Bed ${invoice.bedNumber.trim()}`) : ''].filter(Boolean).join(' - ')}</span></div>` : ''}
               <div class="meta-row"><span class="meta-label">Doctor:</span> <span class="meta-val">${invoice?.doctorName || 'Consultant'}</span></div>
               <div class="meta-row"><span class="meta-label">Status:</span> <span class="badge ${invoice?.status === 'PAID' ? 'badge-paid' : 'badge-unpaid'}">${invoice?.status}</span></div>
             </div>
@@ -572,7 +573,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                 <div className="flex justify-between">
                   <span className="text-slate-500 font-semibold">Ward / Bed:</span>
                   <span className="font-semibold text-slate-800">
-                    {[invoice.wardName, invoice.bedNumber ? `Bed ${invoice.bedNumber}` : ''].filter(Boolean).join(' - ')}
+                    {[invoice.wardName, invoice.bedNumber ? (/^bed\b/i.test(invoice.bedNumber.trim()) ? invoice.bedNumber.trim() : `Bed ${invoice.bedNumber.trim()}`) : ''].filter(Boolean).join(' - ')}
                   </span>
                 </div>
               )}

@@ -73,8 +73,8 @@ export const FrontDeskBillingReportsView: React.FC = () => {
         </div>
         {preset === 'custom' && (
           <>
-            <TextInput label="From" type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
-            <TextInput label="To" type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
+            <TextInput label="From" lang="en-GB" type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+            <TextInput label="To" lang="en-GB" type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
           </>
         )}
         <button type="button" onClick={load} className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 hover:text-slate-800 mb-2">

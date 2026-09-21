@@ -89,8 +89,10 @@ export const createDepartmentSchema = z.object({
     'SUPPORT_SERVICE',
     'OTHER',
   ]),
-  contactExtension: z.string().max(20).optional(),
-  location: z.string().max(200).optional(),
+  contactExtension: z.string().max(20).optional().nullable(),
+  location: z.string().max(200).optional().nullable(),
+  floor: z.string().max(100).optional().nullable(),
+  fixedPrice: z.coerce.number().nonnegative().optional().nullable(),
   supportsOpd: z.boolean().optional(),
   supportsObservation: z.boolean().optional(),
   supportsEmergency: z.boolean().optional(),
@@ -107,6 +109,18 @@ export const createDepartmentSchema = z.object({
 export type CreateDepartmentBody = z.infer<typeof createDepartmentSchema>;
 export const updateDepartmentSchema = createDepartmentSchema.partial();
 export type UpdateDepartmentBody = z.infer<typeof updateDepartmentSchema>;
+
+// ── Hospital Floors ───────────────────────────────────────────────────
+export const createFloorSchema = z.object({
+  floorNumber: z.coerce.number().int(),
+  name: z.string().min(1).max(100),
+  building: z.string().max(100).optional().nullable(),
+  description: z.string().max(500).optional().nullable(),
+  isActive: z.boolean().optional(),
+});
+export type CreateFloorBody = z.infer<typeof createFloorSchema>;
+export const updateFloorSchema = createFloorSchema.partial();
+export type UpdateFloorBody = z.infer<typeof updateFloorSchema>;
 
 // ── Service Rates ────────────────────────────────────────────────────
 export const createServiceRateSchema = z.object({
@@ -140,6 +154,8 @@ export const createWardSchema = z.object({
   floor: z.string().max(50).optional(),
   location: z.string().max(200).optional(),
   description: z.string().max(2000).optional(),
+  headStaffId: z.string().uuid().optional().nullable(),
+  fixedPrice: z.coerce.number().nonnegative().optional().nullable(),
   isActive: z.boolean().optional(),
 });
 export type CreateWardBody = z.infer<typeof createWardSchema>;

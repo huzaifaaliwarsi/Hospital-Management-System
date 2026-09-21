@@ -3,8 +3,8 @@ import {
   X,
   Building2,
   UserCheck,
-  Phone,
   MapPin,
+  CreditCard,
   Stethoscope,
   Users,
   FileCheck,
@@ -122,11 +122,17 @@ export const ViewDepartmentDrawer: React.FC<ViewDepartmentDrawerProps> = ({
 
               <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs">
                 <div className="flex items-center gap-2 text-slate-400 mb-1">
-                  <Phone className="h-3.5 w-3.5 text-[#08775A]" />
-                  <span className="text-[10px] uppercase font-semibold">Internal Extension</span>
+                  <CreditCard className="h-3.5 w-3.5 text-[#08775A]" />
+                  <span className="text-[10px] uppercase font-semibold">Fixed Pricing / Fee</span>
                 </div>
                 <div className="font-bold text-slate-900 text-xs">
-                  {department.contactExtension || '—'}
+                  {department.fixedPrice != null ? (
+                    <span className="text-emerald-700 font-bold">
+                      PKR {department.fixedPrice.toLocaleString()} <span className="text-[10px] font-normal text-slate-500">(Fixed)</span>
+                    </span>
+                  ) : (
+                    <span className="text-slate-400 font-normal">Optional / Free</span>
+                  )}
                 </div>
               </div>
 
@@ -136,7 +142,7 @@ export const ViewDepartmentDrawer: React.FC<ViewDepartmentDrawerProps> = ({
                   <span className="text-[10px] uppercase font-semibold">Hospital Location / Floor</span>
                 </div>
                 <div className="font-bold text-slate-900 text-xs">
-                  {department.location || '—'}
+                  {department.floor || department.location || '—'}
                 </div>
               </div>
             </div>

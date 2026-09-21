@@ -38,6 +38,21 @@ export const setupController = {
     res.status(204).send();
   },
 
+  // Hospital Floors
+  listFloors: async (_req: Request, res: Response) => {
+    res.json({ data: await setupService.listFloors() });
+  },
+  createFloor: async (req: Request, res: Response) => {
+    res.status(201).json({ data: await setupService.createFloor(req.body) });
+  },
+  updateFloor: async (req: Request, res: Response) => {
+    res.json({ data: await setupService.updateFloor(req.params.id as string, req.body) });
+  },
+  deleteFloor: async (req: Request, res: Response) => {
+    await setupService.deleteFloor(req.params.id as string);
+    res.status(204).send();
+  },
+
   // Service Rates
   listServiceRates: async (req: Request, res: Response) => {
     res.json({ data: await setupService.listServiceRates(req.query.activeOnly === 'true') });

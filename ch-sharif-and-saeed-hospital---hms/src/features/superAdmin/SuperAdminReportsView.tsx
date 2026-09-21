@@ -314,7 +314,7 @@ export const SuperAdminReportsView: React.FC<SuperAdminReportsViewProps> = ({
               From Date <span className="text-rose-500">*</span>
             </label>
             <input
-              type="date"
+              lang="en-GB" type="date"
               value={fromDate}
               onChange={(e) => {
                 setFromDate(e.target.value);
@@ -330,7 +330,7 @@ export const SuperAdminReportsView: React.FC<SuperAdminReportsViewProps> = ({
               To Date <span className="text-rose-500">*</span>
             </label>
             <input
-              type="date"
+              lang="en-GB" type="date"
               value={toDate}
               onChange={(e) => {
                 setToDate(e.target.value);

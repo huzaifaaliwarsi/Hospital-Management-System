@@ -12,6 +12,7 @@ import {
   Coins,
   Loader2,
   BedDouble,
+  FlaskConical,
 } from 'lucide-react';
 import { formatPKR } from '../../utils/formatters';
 import { useRouter } from '../../context/RouterContext';
@@ -27,6 +28,7 @@ interface DashboardState {
   opdCount: number;
   observationCount: number;
   emergencyCount: number;
+  customBillingCount: number;
   todayInvoicesCount: number;
   outstandingBalance: number;
   cashCollected: number;
@@ -43,6 +45,7 @@ const EMPTY_STATE: DashboardState = {
   opdCount: 0,
   observationCount: 0,
   emergencyCount: 0,
+  customBillingCount: 0,
   todayInvoicesCount: 0,
   outstandingBalance: 0,
   cashCollected: 0,
@@ -86,6 +89,7 @@ export const FrontDeskDashboard: React.FC = () => {
       const opdCount = todayInvoices.filter((inv) => inv.encounterType === 'OPD').length;
       const observationCount = todayInvoices.filter((inv) => inv.encounterType === 'OBSERVATION').length;
       const emergencyCount = todayInvoices.filter((inv) => inv.encounterType === 'EMERGENCY').length;
+      const customBillingCount = todayInvoices.filter((inv) => inv.encounterType === 'CUSTOM').length;
 
       const outstandingBalance = (invoicesRes as any[]).reduce((sum, inv) => sum + Number(inv.balanceDue ?? 0), 0);
 
@@ -124,6 +128,7 @@ export const FrontDeskDashboard: React.FC = () => {
         opdCount,
         observationCount,
         emergencyCount,
+        customBillingCount,
         todayInvoicesCount: todayInvoices.length,
         outstandingBalance,
         cashCollected: cashRes ? Number(cashRes.summary?.physicalCashIn ?? 0) : 0,
@@ -195,8 +200,8 @@ export const FrontDeskDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* 4 Primary Front Desk Quick Intake Cards (OPD, OBSV, ER, ADM+) */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
+      {/* 5 Primary Front Desk Quick Intake Cards (OPD, OBSV, ER, ADM+, CUSTOM) */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5">
         {/* OPD Card */}
         <button
           type="button"
@@ -304,6 +309,34 @@ export const FrontDeskDashboard: React.FC = () => {
           </div>
           <div className="mt-3 pt-2 border-t border-sky-100 flex items-center justify-between text-[11px] font-bold text-sky-700">
             <span>New Admission &rarr;</span>
+          </div>
+        </button>
+
+        {/* Custom Billing Card */}
+        <button
+          type="button"
+          onClick={() => {
+            navigate('/front-desk/walk_in_intake?type=CUSTOM');
+          }}
+          className="group relative p-4 rounded-xl border-2 border-amber-500/80 bg-gradient-to-br from-amber-50/80 via-white to-amber-50/30 hover:from-amber-100/90 hover:to-white shadow-xs hover:shadow-md transition-all text-left flex flex-col justify-between overflow-hidden cursor-pointer"
+        >
+          <div className="flex items-center justify-between w-full mb-3">
+            <div className="h-11 w-11 rounded-xl bg-amber-600 text-white flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
+              <FlaskConical className="h-6 w-6" />
+            </div>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+              {data.customBillingCount} Today
+            </span>
+          </div>
+          <div>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-xl font-extrabold text-slate-900 tracking-tight">Custom</span>
+              <span className="text-[11px] font-semibold text-amber-700">Ad-hoc Billing</span>
+            </div>
+            <p className="text-xs text-slate-600 mt-0.5 line-clamp-1">Lab / Radiology / Any Service, No Doctor Needed</p>
+          </div>
+          <div className="mt-3 pt-2 border-t border-amber-100 flex items-center justify-between text-[11px] font-bold text-amber-700">
+            <span>Fast Walk-In &rarr;</span>
           </div>
         </button>
       </div>

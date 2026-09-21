@@ -106,6 +106,7 @@ enum EncounterType {
   OPD
   OBSERVATION
   EMERGENCY
+  CUSTOM
 }
 
 enum InvoiceSourceType {
@@ -350,6 +351,7 @@ model Staff {
 
   // reverse relations — actor attribution on other domains
   headOfDepartments            Department[]              @relation("DepartmentHead")
+  headOfWards                  Ward[]                    @relation("WardHead")
   appointmentsAsDoctor         Appointment[]             @relation("AppointmentDoctor")
   admissionsAsDoctor           AdmissionRecord[]         @relation("AdmissionDoctor")
   invoiceLinesPerformed        InvoiceLineItem[]         @relation("InvoiceLinePerformedBy")
@@ -630,6 +632,20 @@ model HospitalProfile {
   @@map("hospital_profile")
 }
 
+/// Master registry of hospital floors (Ground Floor, 1st Floor, 2nd Floor, etc.)
+model HospitalFloor {
+  id          String   @id @default(uuid())
+  floorNumber Int      @map("floor_number")
+  name        String   @unique
+  building    String?  @default("Main Building")
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("hospital_floors")
+}
+
 model Department {
   id                   String                         @id @default(uuid())
   code                 String                         @unique
@@ -640,6 +656,8 @@ model Department {
   departmentType       DepartmentType                 @map("department_type")
   contactExtension     String?                        @map("contact_extension")
   location             String?
+  floor                String?
+  fixedPrice           Decimal?                       @map("fixed_price") @db.Decimal(14, 2)
   supportsOpd          Boolean                        @default(false) @map("supports_opd")
   supportsObservation  Boolean                        @default(false) @map("supports_observation")
   supportsEmergency    Boolean                        @default(false) @map("supports_emergency")
@@ -809,6 +827,8 @@ model ServiceRate {
   discountAllowed           Boolean       @default(true) @map("discount_allowed")
   manualRateOverrideAllowed Boolean       @default(false) @map("manual_rate_override_allowed")
   isActive                  Boolean       @default(true) @map("is_active")
+  isDeleted                 Boolean       @default(false) @map("is_deleted")
+  deletedAt                 DateTime?     @map("deleted_at")
   encounterType             String?       @default("NONE") @map("encounter_type")
   isDefaultEncounterService Boolean       @default(false) @map("is_default_encounter_service")
   serviceStream             ServiceStream @default(HOSPITAL) @map("service_stream")
@@ -845,6 +865,9 @@ model Ward {
   isActive        Boolean    @default(true) @map("is_active")
   statusChangedAt DateTime?  @map("status_changed_at")
   statusChangedBy String?    @map("status_changed_by")
+  headStaffId     String?    @map("head_staff_id")
+  headStaff       Staff?     @relation("WardHead", fields: [headStaffId], references: [id])
+  fixedPrice      Decimal?   @map("fixed_price") @db.Decimal(14, 2)
 
   rooms Room[]
 
@@ -1371,6 +1394,7 @@ model AdmissionRecord {
   status             AdmissionStatus   @default(PLANNED)
   medicationMode     MedicationMode    @default(SELF) @map("medication_mode")
   diagnosis          String?
+  weightKg           Decimal?          @map("weight_kg") @db.Decimal(5, 2)
   expectedAt         DateTime?         @map("expected_at")
   admittedAt         DateTime?         @map("admitted_at")
   dischargedAt       DateTime?         @map("discharged_at")

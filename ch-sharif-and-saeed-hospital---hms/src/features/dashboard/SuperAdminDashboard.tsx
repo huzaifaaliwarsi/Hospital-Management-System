@@ -374,7 +374,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                   <label htmlFor="fromDateInput" className="text-slate-500 text-[11px] font-medium">From:</label>
                   <input
                     id="fromDateInput"
-                    type="date"
+                    lang="en-GB" type="date"
                     value={fromDate}
                     onChange={(e) => setFromDate(e.target.value)}
                     className="bg-transparent border-none text-slate-800 text-xs focus:outline-hidden"
@@ -384,7 +384,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                   <label htmlFor="toDateInput" className="text-slate-500 text-[11px] font-medium">To:</label>
                   <input
                     id="toDateInput"
-                    type="date"
+                    lang="en-GB" type="date"
                     value={toDate}
                     onChange={(e) => setToDate(e.target.value)}
                     className="bg-transparent border-none text-slate-800 text-xs focus:outline-hidden"

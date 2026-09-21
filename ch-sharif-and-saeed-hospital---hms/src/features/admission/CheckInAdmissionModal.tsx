@@ -41,7 +41,7 @@ export const CheckInAdmissionModal: React.FC<CheckInAdmissionModalProps> = ({ ad
   }, [allBeds, admission.bedId]);
 
   const assignedBedLabel = assignedBed
-    ? `${assignedBed.wardName} / ${assignedBed.roomName} / Bed ${assignedBed.bedNumber}`
+    ? `${assignedBed.wardName} / ${assignedBed.roomName} / ${/^bed\b/i.test(assignedBed.bedNumber.trim()) ? assignedBed.bedNumber.trim() : `Bed ${assignedBed.bedNumber.trim()}`}`
     : (admission.bedLabel || 'Bed Assigned at Front Desk');
 
   const parsedBedInfo = useMemo(() => {

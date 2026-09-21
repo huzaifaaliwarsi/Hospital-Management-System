@@ -59,6 +59,10 @@ export interface Ward {
   location?: string;
   description?: string;
 
+  headStaffId?: string | null;
+  headStaffName?: string | null;
+  fixedPrice?: number | null;
+
   roomCount: number;
   bedCount: number;
   availableBeds?: number;
@@ -179,6 +183,8 @@ export interface WardFormValues {
   floor: string;
   location: string;
   description: string;
+  headStaffId?: string;
+  fixedPrice?: number | string;
   status: 'Active' | 'Inactive';
 }
 

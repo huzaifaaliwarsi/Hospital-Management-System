@@ -25,6 +25,9 @@ import { DangerZoneSection } from './hospitalOverview/DangerZoneSection';
 import { EditHospitalProfileModal } from './hospitalOverview/EditHospitalProfileModal';
 import { PrintHospitalProfileModal } from './hospitalOverview/PrintHospitalProfileModal';
 import { ResetDataModal } from './hospitalOverview/ResetDataModal';
+import { FloorService } from '../../services/floorService';
+import { HospitalFloor } from '../../types/department';
+import { ManageFloorsModal } from './departments/ManageFloorsModal';
 
 export const SuperAdminHospitalOverview: React.FC = () => {
   const toast = useToast();
@@ -36,17 +39,21 @@ export const SuperAdminHospitalOverview: React.FC = () => {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [floors, setFloors] = useState<HospitalFloor[]>([]);
+  const [isManageFloorsOpen, setIsManageFloorsOpen] = useState(false);
 
   const loadProfile = React.useCallback(async () => {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const [profileData, aggregatesData] = await Promise.all([
+      const [profileData, aggregatesData, floorsData] = await Promise.all([
         fetchHospitalProfile(),
         getHospitalSystemSummaryAggregates(),
+        FloorService.fetchFloors().catch(() => []),
       ]);
       setProfile(profileData);
       setAggregates(aggregatesData);
+      setFloors(floorsData);
     } catch (err: any) {
       setLoadError(err?.message || 'Failed to load hospital profile from the server.');
     } finally {
@@ -148,6 +155,59 @@ export const SuperAdminHospitalOverview: React.FC = () => {
       {/* Section 3: Address & Location */}
       <HospitalAddressSection profile={profile} />
 
+      {/* Section 3b: Hospital Floors Directory & Infrastructure */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-50 text-[#08775A] flex items-center justify-center font-bold shrink-0">
+              <Building2 className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-slate-800">
+                  Hospital Floors &amp; Infrastructure
+                </h3>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                  {floors.length} {floors.length === 1 ? 'Floor' : 'Floors'} Configured
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Define and manage building levels and hospital floors. Configured active floors dynamically populate location selectors across Departments and Wards.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsManageFloorsOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#08775A] hover:bg-[#065f46] text-white text-xs font-bold rounded-lg shadow-xs transition-colors cursor-pointer shrink-0"
+          >
+            <Building2 className="w-3.5 h-3.5" />
+            <span>Manage Floors</span>
+          </button>
+        </div>
+
+        {/* Floor Badges List */}
+        <div className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap items-center gap-2">
+          {floors.map((fl) => (
+            <span
+              key={fl.id}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-50 border border-slate-200 text-slate-700"
+            >
+              <span className="h-2 w-2 rounded-full bg-emerald-500" />
+              <span>{fl.name}</span>
+              {fl.building && (
+                <span className="text-[10px] text-slate-400 font-normal">({fl.building})</span>
+              )}
+            </span>
+          ))}
+          {floors.length === 0 && (
+            <p className="text-xs text-slate-400 italic">
+              No hospital floors configured yet. Click &quot;Manage Floors&quot; to define building levels.
+            </p>
+          )}
+        </div>
+      </div>
+
       {/* Section 4: Operational Settings & Working Hours */}
       <HospitalOperationsSection profile={profile} />
 
@@ -186,6 +246,15 @@ export const SuperAdminHospitalOverview: React.FC = () => {
         isOpen={isResetModalOpen}
         onClose={() => setIsResetModalOpen(false)}
         onResetSuccess={loadProfile}
+      />
+
+      {/* Manage Hospital Floors Modal */}
+      <ManageFloorsModal
+        isOpen={isManageFloorsOpen}
+        onClose={() => setIsManageFloorsOpen(false)}
+        onFloorsUpdated={(updatedFloors) => {
+          setFloors(updatedFloors);
+        }}
       />
     </div>
   );

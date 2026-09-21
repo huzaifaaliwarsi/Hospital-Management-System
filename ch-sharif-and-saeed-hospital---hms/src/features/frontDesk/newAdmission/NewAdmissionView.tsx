@@ -66,6 +66,7 @@ const emptyForm = (): CreateAdmissionFormValues => ({
   preferredBedId: '',
   expectedAt: formatDateISO(getHospitalCurrentDate()),
   diagnosis: '',
+  weightKg: '',
   estimatedAmount: '',
   medicationMode: 'SELF',
   notes: '',
@@ -203,6 +204,13 @@ export const NewAdmissionView: React.FC = () => {
 
   const selectedRoom = useMemo(() => allRooms.find((r) => r.id === selectedRoomId), [allRooms, selectedRoomId]);
   const selectedBed = useMemo(() => allBeds.find((b) => b.id === formValues.preferredBedId), [allBeds, formValues.preferredBedId]);
+
+  const wardFixedFee = useMemo(() => {
+    return selectedWard?.fixedPrice != null && Number(selectedWard.fixedPrice) > 0
+      ? Number(selectedWard.fixedPrice)
+      : 0;
+  }, [selectedWard]);
+
   const effectiveDailyRoomRate = useMemo(() => {
     if (selectedRoom?.dailyRoomRate && selectedRoom.dailyRoomRate > 0) return selectedRoom.dailyRoomRate;
     if (selectedBed?.dailyRate && selectedBed.dailyRate > 0) return selectedBed.dailyRate;
@@ -210,24 +218,30 @@ export const NewAdmissionView: React.FC = () => {
     return 0;
   }, [selectedRoom, selectedBed]);
 
+  const initialAdmissionTotal = useMemo(() => {
+    return wardFixedFee + effectiveDailyRoomRate;
+  }, [wardFixedFee, effectiveDailyRoomRate]);
+
   const handleRoomSelect = (roomId: string) => {
     setSelectedRoomId(roomId);
     const room = allRooms.find((r) => r.id === roomId);
-    const rate = room?.dailyRoomRate || 0;
+    const roomRate = room?.dailyRoomRate || 0;
+    const combinedTotal = wardFixedFee + roomRate;
     setFormValues((prev) => ({
       ...prev,
       preferredBedId: '',
-      estimatedAmount: rate > 0 ? rate : prev.estimatedAmount,
+      estimatedAmount: combinedTotal > 0 ? combinedTotal : (wardFixedFee > 0 ? wardFixedFee : prev.estimatedAmount),
     }));
   };
 
   const handleBedSelect = (bedId: string) => {
     const bed = allBeds.find((b) => b.id === bedId);
-    const bedRate = bed?.dailyRate || bed?.dailyBedRate || 0;
+    const bedRate = bed?.dailyRate || bed?.dailyBedRate || (selectedRoom?.dailyRoomRate || 0);
+    const combinedTotal = wardFixedFee + bedRate;
     setFormValues((prev) => ({
       ...prev,
       preferredBedId: bedId,
-      estimatedAmount: prev.estimatedAmount || (bedRate > 0 ? bedRate : ''),
+      estimatedAmount: combinedTotal > 0 ? combinedTotal : prev.estimatedAmount,
     }));
   };
 
@@ -427,9 +441,10 @@ export const NewAdmissionView: React.FC = () => {
 
       const admissionPayload: CreateAdmissionFormValues = {
         ...formValues,
+        wardId: selectedWardId || undefined,
         estimatedAmount: formValues.estimatedAmount !== ''
           ? Number(formValues.estimatedAmount)
-          : (effectiveDailyRoomRate > 0 ? effectiveDailyRoomRate : ''),
+          : (initialAdmissionTotal > 0 ? initialAdmissionTotal : ''),
         notes: extraNotesParts.join(' | '),
         panelPatientId: activePatient.payerType === 'Corporate / Panel' ? activePatient.id : '',
         selfPayEncounterId: activePatient.payerType === 'Self Pay' ? activePatient.id : '',
@@ -505,9 +520,15 @@ export const NewAdmissionView: React.FC = () => {
                 <span className="text-[10px] text-slate-500 uppercase block">Room &amp; Bed</span>
                 <span className="font-semibold text-slate-900">{createdAdmission.bedLabel || 'Pending Check-in'}</span>
               </div>
+              {wardFixedFee > 0 && (
+                <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                  <span className="text-[10px] text-slate-500 uppercase block">Ward Fee (One-Time Fixed)</span>
+                  <span className="font-bold text-[#08775A] font-mono">{formatPKR(wardFixedFee)}</span>
+                </div>
+              )}
               {effectiveDailyRoomRate > 0 && (
                 <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
-                  <span className="text-[10px] text-slate-500 uppercase block">Room Charges (Daily Rate)</span>
+                  <span className="text-[10px] text-slate-500 uppercase block">Room Stay (Daily Rate)</span>
                   <span className="font-bold text-[#08775A] font-mono">{formatPKR(effectiveDailyRoomRate)} / day</span>
                 </div>
               )}
@@ -752,7 +773,7 @@ export const NewAdmissionView: React.FC = () => {
               />
             </div>
 
-            {/* Age, Gender, Residential Address */}
+            {/* Age, Gender, Weight */}
             <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-start">
               <div className="sm:col-span-3">
                 <TextInput
@@ -768,7 +789,7 @@ export const NewAdmissionView: React.FC = () => {
                   onKeyDown={handleEnterNext}
                 />
               </div>
-              <div className="sm:col-span-4">
+              <div className="sm:col-span-5">
                 <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                   Gender <span className="text-rose-500">*</span>
                 </label>
@@ -792,17 +813,35 @@ export const NewAdmissionView: React.FC = () => {
                   ))}
                 </div>
               </div>
-              <div className="sm:col-span-5">
+              <div className="sm:col-span-4">
                 <TextInput
-                  label="Residential Address"
-                  disabled={!!selectedExistingPatient}
-                  placeholder="e.g. Landhi Hospital Karachi"
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
+                  label="Weight (kg) — optional"
+                  type="number"
+                  min="0.5"
+                  max="999"
+                  step="0.1"
+                  placeholder="e.g. 70.5"
+                  value={formValues.weightKg === '' ? '' : String(formValues.weightKg)}
+                  onChange={(e) =>
+                    setFormValues({
+                      ...formValues,
+                      weightKg: e.target.value === '' ? '' : parseFloat(e.target.value),
+                    })
+                  }
                   onKeyDown={handleEnterNext}
                 />
               </div>
             </div>
+
+            {/* Residential Address */}
+            <TextInput
+              label="Residential Address"
+              disabled={!!selectedExistingPatient}
+              placeholder="e.g. Landhi Hospital Karachi"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              onKeyDown={handleEnterNext}
+            />
 
             {/* Corporate / Panel Specific Fields (Only if Panel selected) */}
             {payerType === 'Corporate / Panel' && (
@@ -961,13 +1000,32 @@ export const NewAdmissionView: React.FC = () => {
                 hint={activeWards.length === 0 ? 'No active wards configured.' : undefined}
                 options={[
                   { label: '-- Select Ward --', value: '' },
-                  ...activeWards.map((w) => ({ label: w.name, value: w.id })),
+                  ...activeWards.map((w) => {
+                    const priceLabel =
+                      w.fixedPrice != null && Number(w.fixedPrice) > 0
+                        ? ` • Fixed Admission: ${formatPKR(Number(w.fixedPrice))}`
+                        : '';
+                    return {
+                      label: `${w.name}${priceLabel}`,
+                      value: w.id,
+                    };
+                  }),
                 ]}
                 value={selectedWardId}
                 onChange={(e) => {
-                  setSelectedWardId(e.target.value);
+                  const newWardId = e.target.value;
+                  setSelectedWardId(newWardId);
                   setSelectedRoomId('');
-                  setFormValues((prev) => ({ ...prev, preferredBedId: '', estimatedAmount: '' }));
+                  const wardObj = allWards.find((w) => w.id === newWardId);
+                  const wardFeeVal =
+                    wardObj?.fixedPrice != null && Number(wardObj.fixedPrice) > 0
+                      ? Number(wardObj.fixedPrice)
+                      : 0;
+                  setFormValues((prev) => ({
+                    ...prev,
+                    preferredBedId: '',
+                    estimatedAmount: wardFeeVal > 0 ? wardFeeVal : '',
+                  }));
                 }}
                 onKeyDown={handleSelectKeyDown}
               />
@@ -1014,8 +1072,12 @@ export const NewAdmissionView: React.FC = () => {
                     const bedRateLabel = b.dailyRate && b.dailyRate > 0 && (!selectedRoom?.dailyRoomRate || selectedRoom.dailyRoomRate === 0)
                       ? ` • ${formatPKR(b.dailyRate)}/day`
                       : '';
+                    const rawBedNum = (b.bedNumber || '').trim();
+                    const cleanBedLabel = /^bed\b/i.test(rawBedNum)
+                      ? rawBedNum
+                      : `Bed ${rawBedNum}`;
                     return {
-                      label: `Bed ${b.bedNumber}${bedRateLabel}`,
+                      label: `${cleanBedLabel}${bedRateLabel}`,
                       value: b.id,
                     };
                   }),
@@ -1027,21 +1089,50 @@ export const NewAdmissionView: React.FC = () => {
                 onKeyDown={handleSelectKeyDown}
               />
 
-              {/* Room Charges Badge / Card */}
-              {effectiveDailyRoomRate > 0 && (
-                <div className="p-3 bg-emerald-50/90 border border-emerald-200 rounded-xl space-y-1 animate-in fade-in">
-                  <div className="flex items-center justify-between">
+              {/* Admission Pricing / Tariff Card (Ward Fixed Fee + Room Stay) */}
+              {(wardFixedFee > 0 || effectiveDailyRoomRate > 0) && (
+                <div className="p-3.5 bg-emerald-50/90 border border-emerald-200 rounded-xl space-y-2.5 animate-in fade-in">
+                  <div className="flex items-center justify-between pb-2 border-b border-emerald-200/80">
                     <span className="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
-                      <Building2 className="h-3.5 w-3.5 text-[#08775A]" />
-                      Room Charges (Daily Rate)
+                      <Building2 className="h-4 w-4 text-[#08775A]" />
+                      Admission Pricing Breakdown
                     </span>
-                    <span className="text-sm font-black text-[#08775A]">
-                      {formatPKR(effectiveDailyRoomRate)} <span className="text-[10px] font-normal text-slate-500">/ day</span>
+                    <span className="text-xs font-extrabold text-[#08775A]">
+                      Total Initial: {formatPKR(initialAdmissionTotal)}
                     </span>
                   </div>
-                  <p className="text-[11px] text-emerald-700">
-                    Standard daily accommodation rate for <strong>{selectedRoom?.name || 'Selected Room'}</strong>.
-                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                    {/* Ward Fixed Fee */}
+                    <div className="p-2.5 bg-white/95 rounded-lg border border-emerald-100 flex items-center justify-between">
+                      <div>
+                        <span className="text-[11px] font-semibold text-slate-800 block">
+                          Ward Fixed Fee
+                        </span>
+                        <span className="text-[10px] text-slate-500">
+                          {selectedWard?.name || 'Selected Ward'} (One-Time)
+                        </span>
+                      </div>
+                      <span className="font-mono font-bold text-emerald-800">
+                        {wardFixedFee > 0 ? formatPKR(wardFixedFee) : 'Free / PKR 0'}
+                      </span>
+                    </div>
+
+                    {/* Room Stay Rate */}
+                    <div className="p-2.5 bg-white/95 rounded-lg border border-emerald-100 flex items-center justify-between">
+                      <div>
+                        <span className="text-[11px] font-semibold text-slate-800 block">
+                          Room Accommodation
+                        </span>
+                        <span className="text-[10px] text-slate-500">
+                          {selectedRoom?.name || 'Selected Room'} (Daily Rate)
+                        </span>
+                      </div>
+                      <span className="font-mono font-bold text-emerald-800">
+                        {effectiveDailyRoomRate > 0 ? `${formatPKR(effectiveDailyRoomRate)}/day` : 'PKR 0'}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -1064,7 +1155,7 @@ export const NewAdmissionView: React.FC = () => {
             <div>
               <TextInput
                 label="Expected Admission Date"
-                type="date"
+                lang="en-GB" type="date"
                 value={formValues.expectedAt}
                 onChange={(e) => setFormValues({ ...formValues, expectedAt: e.target.value })}
                 onKeyDown={handleEnterNext}
@@ -1078,29 +1169,55 @@ export const NewAdmissionView: React.FC = () => {
                   <Wallet className="h-3.5 w-3.5" />
                   <span>Advance Received Now (optional)</span>
                 </div>
-                {effectiveDailyRoomRate > 0 && (
+                {initialAdmissionTotal > 0 && (
                   <span className="text-[11px] text-slate-600 font-sans font-semibold">
-                    Room Rate: <strong className="text-[#08775A]">{formatPKR(effectiveDailyRoomRate)}</strong> / day
+                    Initial Total: <strong className="text-[#08775A]">{formatPKR(initialAdmissionTotal)}</strong>
                   </span>
                 )}
               </div>
 
-              {/* Quick 1-click action to pay room charges in advance */}
-              {effectiveDailyRoomRate > 0 && (
+              {/* Quick 1-click action buttons */}
+              {initialAdmissionTotal > 0 && (
                 <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-white rounded-lg border border-emerald-200 text-xs">
                   <span className="text-slate-600 text-[11px]">
-                    Customer paying room charges in advance?
+                    Customer paying initial admission charges in advance?
                   </span>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {/* Pay Full Initial (Ward Fee + Room Stay) */}
                     <button
                       type="button"
                       onClick={() => {
-                        setFormValues((prev) => ({ ...prev, advanceAmount: effectiveDailyRoomRate }));
+                        setFormValues((prev) => ({ ...prev, advanceAmount: initialAdmissionTotal }));
                       }}
                       className="px-2.5 py-1 bg-[#08775A] hover:bg-[#065f46] text-white font-bold text-[11px] rounded-md transition-colors shadow-2xs cursor-pointer"
                     >
-                      + Pay Full Room Charges ({formatPKR(effectiveDailyRoomRate)})
+                      + Pay Total ({formatPKR(initialAdmissionTotal)})
                     </button>
+
+                    {/* Quick breakdown options if both are present */}
+                    {wardFixedFee > 0 && effectiveDailyRoomRate > 0 && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFormValues((prev) => ({ ...prev, advanceAmount: wardFixedFee }));
+                          }}
+                          className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-[#08775A] border border-[#c2e7db] font-semibold text-[11px] rounded-md transition-colors cursor-pointer"
+                        >
+                          + Ward ({formatPKR(wardFixedFee)})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFormValues((prev) => ({ ...prev, advanceAmount: effectiveDailyRoomRate }));
+                          }}
+                          className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-[#08775A] border border-[#c2e7db] font-semibold text-[11px] rounded-md transition-colors cursor-pointer"
+                        >
+                          + Room ({formatPKR(effectiveDailyRoomRate)})
+                        </button>
+                      </>
+                    )}
+
                     {formValues.advanceAmount !== '' && (
                       <button
                         type="button"
@@ -1121,7 +1238,7 @@ export const NewAdmissionView: React.FC = () => {
                   label="Advance Amount (PKR)"
                   min={0}
                   step={500}
-                  placeholder={effectiveDailyRoomRate > 0 ? String(effectiveDailyRoomRate) : "0"}
+                  placeholder={initialAdmissionTotal > 0 ? String(initialAdmissionTotal) : "0"}
                   value={formValues.advanceAmount}
                   onChange={(e) =>
                     setFormValues({
@@ -1131,8 +1248,8 @@ export const NewAdmissionView: React.FC = () => {
                   }
                   onKeyDown={handleEnterNext}
                   hint={
-                    effectiveDailyRoomRate > 0
-                      ? `Customer can pay room rate (${formatPKR(effectiveDailyRoomRate)}), custom amount, or leave 0.`
+                    initialAdmissionTotal > 0
+                      ? `Customer can pay total initial charges (${formatPKR(initialAdmissionTotal)}), ward fee, room deposit, or leave 0.`
                       : "Optional advance collected at entry."
                   }
                 />

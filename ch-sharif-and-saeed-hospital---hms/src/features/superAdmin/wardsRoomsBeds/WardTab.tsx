@@ -48,11 +48,9 @@ export const WardTab: React.FC<WardTabProps> = ({
       const q = filters.searchTerm.toLowerCase().trim();
       const mCode = w.code.toLowerCase().includes(q);
       const mName = w.name.toLowerCase().includes(q);
-      const mDept = w.departmentName.toLowerCase().includes(q);
-      if (!mCode && !mName && !mDept) return false;
+      const mHead = (w.headStaffName || '').toLowerCase().includes(q);
+      if (!mCode && !mName && !mHead) return false;
     }
-    if (filters.departmentId !== 'All' && w.departmentId !== filters.departmentId)
-      return false;
     if (filters.wardType !== 'All' && w.wardType !== filters.wardType) return false;
     if (filters.status !== 'All' && w.status !== filters.status) return false;
     return true;
@@ -60,14 +58,12 @@ export const WardTab: React.FC<WardTabProps> = ({
 
   const isFiltered =
     filters.searchTerm.trim() !== '' ||
-    filters.departmentId !== 'All' ||
     filters.wardType !== 'All' ||
     filters.status !== 'All';
 
   const resetFilters = () => {
     setFilters({
       searchTerm: '',
-      departmentId: 'All',
       wardType: 'All',
       status: 'All',
     });
@@ -85,28 +81,12 @@ export const WardTab: React.FC<WardTabProps> = ({
               type="text"
               value={filters.searchTerm}
               onChange={(e) => setFilters((p) => ({ ...p, searchTerm: e.target.value }))}
-              placeholder="Search by ward code, ward name, or department..."
+              placeholder="Search by ward code, ward name, or in-charge..."
               className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
             />
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
-            {/* Department */}
-            <select
-              id="ward-filter-dept"
-              aria-label="Filter by department"
-              value={filters.departmentId}
-              onChange={(e) => setFilters((p) => ({ ...p, departmentId: e.target.value }))}
-              className="text-xs py-2 px-3 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 font-medium focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
-            >
-              <option value="All">All Departments</option>
-              {departments.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name} ({d.code}) {d.status === 'Inactive' ? '(Inactive)' : ''}
-                </option>
-              ))}
-            </select>
-
             {/* Ward Type */}
             <select
               id="ward-filter-type"
@@ -194,13 +174,14 @@ export const WardTab: React.FC<WardTabProps> = ({
                 <tr className="bg-slate-50/80 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
                   <th className="py-3 px-4">Ward Code</th>
                   <th className="py-3 px-4">Ward Name</th>
-                  <th className="py-3 px-4">Department</th>
-                  <th className="py-3 px-4">Ward Type</th>
+                  <th className="py-3 px-3">Head / In-charge</th>
+                  <th className="py-3 px-3">Fixed Fee (PKR)</th>
+                  <th className="py-3 px-3">Ward Type</th>
                   <th className="py-3 px-4">Floor / Location</th>
-                  <th className="py-3 px-4 text-center">Rooms</th>
-                  <th className="py-3 px-4 text-center">Total Beds</th>
-                  <th className="py-3 px-4 text-center">Available Beds</th>
-                  <th className="py-3 px-4 text-center">Status</th>
+                  <th className="py-3 px-3 text-center">Rooms</th>
+                  <th className="py-3 px-3 text-center">Total Beds</th>
+                  <th className="py-3 px-3 text-center">Available Beds</th>
+                  <th className="py-3 px-3 text-center">Status</th>
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
@@ -228,10 +209,23 @@ export const WardTab: React.FC<WardTabProps> = ({
                           </span>
                         )}
                       </td>
-                      <td className="py-3 px-4 text-slate-700 whitespace-nowrap">
-                        {w.departmentName}
+                      <td className="py-3 px-3 text-slate-700 whitespace-nowrap">
+                        {w.headStaffName ? (
+                          <span className="font-medium text-slate-800">{w.headStaffName}</span>
+                        ) : (
+                          <span className="text-slate-400 italic text-[11px]">Not Assigned</span>
+                        )}
                       </td>
-                      <td className="py-3 px-4 whitespace-nowrap">
+                      <td className="py-3 px-3 whitespace-nowrap">
+                        {w.fixedPrice != null && w.fixedPrice > 0 ? (
+                          <span className="font-mono font-bold text-emerald-700">
+                            PKR {w.fixedPrice.toLocaleString('en-PK')}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 text-[11px] italic">Free</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-3 whitespace-nowrap">
                         <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
                           {w.wardType}
                         </span>
@@ -239,10 +233,10 @@ export const WardTab: React.FC<WardTabProps> = ({
                       <td className="py-3 px-4 text-slate-600 whitespace-nowrap">
                         {w.location ? `${w.floor || ''} - ${w.location}` : w.floor || '—'}
                       </td>
-                      <td className="py-3 px-4 text-center font-semibold text-slate-700">
+                      <td className="py-3 px-3 text-center font-semibold text-slate-700">
                         {w.roomCount}
                       </td>
-                      <td className="py-3 px-4 text-center font-bold text-slate-800">
+                      <td className="py-3 px-3 text-center font-bold text-slate-800">
                         {w.bedCount}
                       </td>
                       <td className="py-3 px-4 text-center">

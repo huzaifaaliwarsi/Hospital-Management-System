@@ -99,7 +99,12 @@ export const ServicesTable: React.FC<ServicesTableProps> = ({
           </thead>
           <tbody className="divide-y divide-slate-100 text-xs">
             {services.map((service) => {
-              const isLinked = (service.linkedInvoiceCount ?? 0) > 0;
+              const isCoreEncounterService = Boolean(
+                service.isDefaultEncounterService &&
+                service.encounterType &&
+                ['OPD', 'OBSERVATION', 'EMERGENCY'].includes(service.encounterType.toUpperCase())
+              );
+              const cannotDelete = isCoreEncounterService;
 
               return (
                 <tr
@@ -114,7 +119,14 @@ export const ServicesTable: React.FC<ServicesTableProps> = ({
 
                   {/* Service Name */}
                   <td className="py-3 px-4 max-w-[260px]">
-                    <div className="font-semibold text-slate-800">{service.name}</div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-semibold text-slate-800">{service.name}</span>
+                      {isCoreEncounterService && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
+                          Core {service.encounterType}
+                        </span>
+                      )}
+                    </div>
                     {service.description && (
                       <div className="text-[11px] text-slate-400 line-clamp-1 mt-0.5">
                         {service.description}
@@ -226,13 +238,14 @@ export const ServicesTable: React.FC<ServicesTableProps> = ({
                       <button
                         id={`service-delete-btn-${service.id}`}
                         onClick={() => onDelete(service)}
+                        disabled={cannotDelete}
                         title={
-                          isLinked
-                            ? `Cannot delete: linked to ${service.linkedInvoiceCount ?? 0} invoice(s)`
+                          isCoreEncounterService
+                            ? `Core encounter service (${service.encounterType}): Cannot be deleted. Deactivate it instead.`
                             : 'Delete Service'
                         }
                         className={`p-1.5 rounded-md transition-colors ${
-                          isLinked
+                          cannotDelete
                             ? 'text-slate-300 cursor-not-allowed'
                             : 'text-rose-500 hover:text-rose-700 hover:bg-rose-50'
                         }`}

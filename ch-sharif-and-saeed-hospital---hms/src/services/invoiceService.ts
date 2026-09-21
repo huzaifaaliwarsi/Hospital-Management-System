@@ -13,7 +13,7 @@ import { getPatientById } from './patientRegistryService';
  */
 
 export type InvoiceStatus = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID' | 'VOID';
-export type EncounterType = 'OPD' | 'OBSERVATION' | 'EMERGENCY';
+export type EncounterType = 'OPD' | 'OBSERVATION' | 'EMERGENCY' | 'CUSTOM';
 export type PaymentMethod = 'CASH' | 'CARD' | 'BANK' | 'ONLINE';
 
 export interface InvoiceLine {

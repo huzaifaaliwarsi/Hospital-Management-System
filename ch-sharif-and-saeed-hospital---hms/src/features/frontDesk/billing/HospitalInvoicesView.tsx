@@ -24,7 +24,7 @@ import {
   getHospitalCurrentDate,
 } from '../../../utils/dateConstants';
 
-export type CareQueueFilter = 'ALL' | 'OPD' | 'ER' | 'OBS' | 'ADM';
+export type CareQueueFilter = 'ALL' | 'OPD' | 'ER' | 'OBS' | 'ADM' | 'CUSTOM';
 export type PayerFilter = 'ALL' | 'SELF_PAY' | 'PANEL';
 
 /** Record-type filter for the Discounts / Refunds / Payments-Receipts nav items — server-side (see `fetchInvoices`), so it holds across the whole table, not just what's currently loaded. */
@@ -47,12 +47,14 @@ interface HospitalInvoicesViewProps {
  * - ADM: Admission / Inpatient stay
  * - ER: Emergency encounter
  * - OBS: Observation bed encounter
+ * - CUSTOM: Ad-hoc / Custom Billing encounter (e.g. lab-test-only walk-in)
  * - OPD: Outpatient consultation / walk-in encounter
  */
-export function getInvoiceCareQueue(inv: InvoiceSummary): 'OPD' | 'ER' | 'OBS' | 'ADM' {
+export function getInvoiceCareQueue(inv: InvoiceSummary): 'OPD' | 'ER' | 'OBS' | 'ADM' | 'CUSTOM' {
   if (inv.sourceType === 'ADMISSION') return 'ADM';
   if (inv.encounterType === 'EMERGENCY') return 'ER';
   if (inv.encounterType === 'OBSERVATION') return 'OBS';
+  if (inv.encounterType === 'CUSTOM') return 'CUSTOM';
   return 'OPD';
 }
 
@@ -62,6 +64,7 @@ const QUEUE_TABS: { key: CareQueueFilter; label: string }[] = [
   { key: 'ER', label: 'Emergency (ER)' },
   { key: 'OBS', label: 'Observation (OBS)' },
   { key: 'ADM', label: 'Inpatient (ADM)' },
+  { key: 'CUSTOM', label: 'Custom Billing' },
 ];
 
 export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
@@ -70,7 +73,7 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
   initialQueueFilter,
   recordFilter,
   title = 'Hospital Invoices & Patient Queues',
-  subtitle = 'Unified billing ledger across OPD, Emergency (ER), Observation (OBS), and Inpatient Admissions (ADM).',
+  subtitle = 'Unified billing ledger across OPD, Emergency (ER), Observation (OBS), Inpatient Admissions (ADM), and Custom Billing.',
 }) => {
   // Determine initial queue
   const resolvedInitialQueue: CareQueueFilter = useMemo(() => {
@@ -78,6 +81,7 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
     if (encounterTypeFilter === 'OPD') return 'OPD';
     if (encounterTypeFilter === 'EMERGENCY') return 'ER';
     if (encounterTypeFilter === 'OBSERVATION') return 'OBS';
+    if (encounterTypeFilter === 'CUSTOM') return 'CUSTOM';
     return 'ALL';
   }, [initialQueueFilter, encounterTypeFilter]);
 
@@ -160,7 +164,7 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
 
   // Live count by queue tab
   const queueCounts = useMemo(() => {
-    const counts: Record<CareQueueFilter, number> = { ALL: invoices.length, OPD: 0, ER: 0, OBS: 0, ADM: 0 };
+    const counts: Record<CareQueueFilter, number> = { ALL: invoices.length, OPD: 0, ER: 0, OBS: 0, ADM: 0, CUSTOM: 0 };
     invoices.forEach((inv) => {
       const q = getInvoiceCareQueue(inv);
       counts[q] = (counts[q] || 0) + 1;
@@ -420,14 +424,14 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
             <Calendar className="h-3.5 w-3.5 text-[#08775A] shrink-0" />
             <span className="text-[11px] font-semibold text-[#52665e]">From:</span>
             <input
-              type="date"
+              lang="en-GB" type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
               className="text-xs px-1.5 py-1 bg-white border border-[#c2e7db] rounded-md text-[#111827] focus:outline-none focus:ring-1 focus:ring-[#08775A]"
             />
             <span className="text-[11px] font-semibold text-[#52665e]">To:</span>
             <input
-              type="date"
+              lang="en-GB" type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
               className="text-xs px-1.5 py-1 bg-white border border-[#c2e7db] rounded-md text-[#111827] focus:outline-none focus:ring-1 focus:ring-[#08775A]"
@@ -581,6 +585,11 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
                       {careQueue === 'ADM' && (
                         <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-[#effaf5] text-[#08775A] border border-[#c2e7db]">
                           Admission
+                        </span>
+                      )}
+                      {careQueue === 'CUSTOM' && (
+                        <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                          Custom Billing
                         </span>
                       )}
                     </td>

@@ -134,6 +134,9 @@ function toWard(raw: Record<string, any>): Ward {
     floor: raw.floor || undefined,
     location: raw.location || undefined,
     description: raw.description || undefined,
+    headStaffId: raw.headStaffId || undefined,
+    headStaffName: raw.headStaffName || raw.headStaff?.fullName || undefined,
+    fixedPrice: raw.fixedPrice != null ? Number(raw.fixedPrice) : null,
     roomCount: raw.roomCount ?? 0,
     bedCount: raw.bedCount ?? 0,
     availableBeds: raw.availableBeds ?? 0,
@@ -308,6 +311,8 @@ export class WardsRoomsBedsService {
       floor: values.floor?.trim() || undefined,
       location: values.location?.trim() || undefined,
       description: values.description?.trim() || undefined,
+      headStaffId: values.headStaffId?.trim() || undefined,
+      fixedPrice: values.fixedPrice !== undefined && values.fixedPrice !== '' && values.fixedPrice !== null ? Number(values.fixedPrice) : undefined,
       isActive: values.status === 'Active',
     });
     await fetchWardHierarchy();
@@ -324,6 +329,8 @@ export class WardsRoomsBedsService {
       floor: values.floor?.trim() || undefined,
       location: values.location?.trim() || undefined,
       description: values.description?.trim() || undefined,
+      headStaffId: values.headStaffId !== undefined ? (values.headStaffId.trim() ? values.headStaffId.trim() : null) : undefined,
+      fixedPrice: values.fixedPrice !== undefined && values.fixedPrice !== '' && values.fixedPrice !== null ? Number(values.fixedPrice) : null,
       isActive: values.status === 'Active',
     });
     await fetchWardHierarchy();

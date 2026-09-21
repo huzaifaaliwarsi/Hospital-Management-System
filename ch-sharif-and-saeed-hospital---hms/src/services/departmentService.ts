@@ -40,33 +40,10 @@ export const formatAuditTimestamp = (): string => {
 };
 
 /**
- * System-protected core hospital care departments (OPD, Emergency/ER, Observation/OBS).
- * These cannot be deleted as they are foundational to the hospital billing and care queues.
+ * OPD and Observation are care encounter services (managed under Services & Rates),
+ * not departments. Departments are clinical, surgical, diagnostic, and administrative units.
  */
-export function isProtectedCoreDepartment(dept?: { code?: string | null; name?: string | null } | null): boolean {
-  if (!dept) return false;
-  const code = (dept.code || '').trim().toUpperCase();
-  const name = (dept.name || '').trim().toUpperCase();
-
-  const protectedCodes = ['OPD', 'ER', 'OBS', 'GEN-OPD', 'EMERGENCY', 'OBSERVATION'];
-  if (protectedCodes.includes(code)) return true;
-
-  if (
-    name === 'OPD' ||
-    name === 'ER' ||
-    name === 'OBS' ||
-    name === 'EMERGENCY' ||
-    name === 'OBSERVATION' ||
-    name === 'EMERGENCY ROOM' ||
-    name === 'OUTPATIENT DEPARTMENT' ||
-    name === 'OBSERVATION WARD' ||
-    name.startsWith('OPD ') ||
-    name.startsWith('EMERGENCY ') ||
-    name.startsWith('OBSERVATION ')
-  ) {
-    return true;
-  }
-
+export function isProtectedCoreDepartment(_dept?: { code?: string | null; name?: string | null } | null): boolean {
   return false;
 }
 
@@ -120,6 +97,8 @@ function toDepartment(raw: Record<string, any>): Department {
     headName: raw.headName || 'Not Assigned',
     contactExtension: raw.contactExtension || '',
     location: raw.location || '',
+    floor: raw.floor || raw.location || '',
+    fixedPrice: raw.fixedPrice != null ? Number(raw.fixedPrice) : null,
     opdEnabled: !!raw.supportsOpd,
     observationEnabled: !!raw.supportsObservation,
     emergencyEnabled: !!raw.supportsEmergency,
@@ -159,7 +138,9 @@ function toBackendPayload(payload: DepartmentFormValues): Record<string, unknown
     description: payload.description?.trim() || undefined,
     departmentType: TYPE_TO_BACKEND[payload.type] || 'OTHER',
     contactExtension: payload.contactExtension?.trim() || undefined,
-    location: payload.location?.trim() || undefined,
+    location: payload.location?.trim() || payload.floor?.trim() || undefined,
+    floor: payload.floor?.trim() || undefined,
+    fixedPrice: payload.fixedPrice != null && !isNaN(Number(payload.fixedPrice)) ? Number(payload.fixedPrice) : null,
     supportsOpd: payload.opdEnabled,
     supportsObservation: payload.observationEnabled,
     supportsEmergency: payload.emergencyEnabled,

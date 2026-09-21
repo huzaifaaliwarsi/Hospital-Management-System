@@ -302,7 +302,7 @@ export const DoctorCommissionView: React.FC = () => {
           </div>
           <TextInput
             label="Effective From"
-            type="date"
+            lang="en-GB" type="date"
             required
             value={formValues.effectiveFrom}
             onChange={(e) => setFormValues({ ...formValues, effectiveFrom: e.target.value })}

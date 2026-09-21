@@ -612,13 +612,13 @@ const DiscountRulesModal: React.FC<DiscountRulesModalProps> = ({ panel, onClose,
                   placeholder="%"
                 />
                 <input
-                  type="date"
+                  lang="en-GB" type="date"
                   className="col-span-2 text-xs px-2 py-1.5 border border-slate-200 rounded-lg"
                   value={row.effectiveFrom}
                   onChange={(e) => setRows(rows.map((r) => (r.key === row.key ? { ...r, effectiveFrom: e.target.value } : r)))}
                 />
                 <input
-                  type="date"
+                  lang="en-GB" type="date"
                   className="col-span-2 text-xs px-2 py-1.5 border border-slate-200 rounded-lg"
                   value={row.effectiveTo || ''}
                   onChange={(e) => setRows(rows.map((r) => (r.key === row.key ? { ...r, effectiveTo: e.target.value || undefined } : r)))}

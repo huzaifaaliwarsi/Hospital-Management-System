@@ -9,7 +9,7 @@ export const encounterIdParamsSchema = z.object({
 });
 
 export const createEncounterSchema = z.object({
-  encounterType: z.enum(['OPD', 'OBSERVATION', 'EMERGENCY']).default('OPD'),
+  encounterType: z.enum(['OPD', 'OBSERVATION', 'EMERGENCY', 'CUSTOM']).default('OPD'),
   panelPatientId: z.string().uuid().optional(),
   selfPayEncounterId: z.string().uuid().optional(),
   // Inline temporary patient creation if neither ID is passed
@@ -84,7 +84,7 @@ export type RefundPaymentBody = z.infer<typeof refundPaymentSchema>;
 
 export const listInvoicesQuerySchema = z.object({
   sourceType: z.enum(['APPOINTMENT', 'WALK_IN', 'ADMISSION']).optional(),
-  encounterType: z.enum(['OPD', 'OBSERVATION', 'EMERGENCY']).optional(),
+  encounterType: z.enum(['OPD', 'OBSERVATION', 'EMERGENCY', 'CUSTOM']).optional(),
   status: z.enum(['UNPAID', 'PARTIALLY_PAID', 'PAID', 'VOID']).optional(),
   panelPatientId: z.string().uuid().optional(),
   selfPayEncounterId: z.string().uuid().optional(),

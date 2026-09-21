@@ -335,7 +335,7 @@ export function DataTable<T extends Record<string, any>>({
               <div className="flex items-center gap-2">
                 <span className="text-slate-500 font-medium">Filter by Date:</span>
                 <input
-                  type="date"
+                  lang="en-GB" type="date"
                   value={dateFilter}
                   onChange={(e) => setDateFilter(e.target.value)}
                   className="px-2 py-1 bg-white border border-slate-300 rounded text-xs text-slate-800"

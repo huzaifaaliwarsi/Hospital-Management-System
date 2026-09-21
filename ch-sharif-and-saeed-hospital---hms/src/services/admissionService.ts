@@ -64,10 +64,12 @@ export interface CreateAdmissionFormValues {
   panelPatientId: string;
   selfPayEncounterId: string;
   departmentId: string;
+  wardId?: string;
   doctorStaffId: string;
   preferredBedId: string;
   expectedAt: string;
   diagnosis: string;
+  weightKg: number | '';
   estimatedAmount: number | '';
   medicationMode: MedicationMode;
   notes: string;
@@ -420,10 +422,12 @@ export async function createAdmission(
         panelPatientId: values.panelPatientId || undefined,
         selfPayEncounterId: values.selfPayEncounterId || undefined,
         departmentId: values.departmentId,
+        wardId: values.wardId || undefined,
         doctorStaffId: values.doctorStaffId || undefined,
         preferredBedId: values.preferredBedId || undefined,
         expectedAt: values.expectedAt || undefined,
         diagnosis: values.diagnosis?.trim() || undefined,
+        weightKg: values.weightKg === '' ? undefined : Number(values.weightKg),
         estimatedAmount: values.estimatedAmount === '' ? undefined : Number(values.estimatedAmount),
         medicationMode: values.medicationMode,
         notes: values.notes?.trim() || undefined,

@@ -107,6 +107,125 @@ async function getOrCreateRoomChargeServiceRate(tx: Prisma.TransactionClient, fa
   return serviceRate;
 }
 
+/**
+ * One-time fixed Ward charge integration.
+ * Posts a one-time fixed fee line item if the occupied bed's ward has a configured `fixedPrice > 0`.
+ * If `fixedPrice` is 0 or null, strictly nothing is billed.
+ */
+async function postWardFixedChargeIfApplicable(
+  tx: Prisma.TransactionClient,
+  admissionId: string,
+  target: string | { bedId?: string | null; wardId?: string | null },
+  actorId: string
+) {
+  const bedId = typeof target === 'string' ? target : target?.bedId;
+  const wardId = typeof target === 'object' ? target?.wardId : undefined;
+
+  let ward: { id: string; fixedPrice: Decimal | null; departmentId: string } | null = null;
+
+  if (wardId) {
+    ward = await tx.ward.findUnique({
+      where: { id: wardId },
+    });
+  } else if (bedId) {
+    const bed = await tx.bed.findUnique({
+      where: { id: bedId },
+      include: { room: { include: { ward: true } } },
+    });
+    ward = bed?.room?.ward ?? null;
+  }
+
+  if (!ward?.fixedPrice || Number(ward.fixedPrice) <= 0) {
+    return null;
+  }
+
+  const wardFixedRate = new Decimal(ward.fixedPrice);
+
+  let invoice = await tx.hospitalInvoice.findFirst({
+    where: { admissionRecordId: admissionId, sourceType: 'ADMISSION' },
+    include: { lines: true },
+  });
+
+  if (!invoice) {
+    const admission = await tx.admissionRecord.findUnique({ where: { id: admissionId } });
+    if (!admission) return null;
+    invoice = await tx.hospitalInvoice.create({
+      data: {
+        invoiceNumber: await generateInvoiceNumber(tx),
+        sourceType: 'ADMISSION',
+        admissionRecordId: admission.id,
+        departmentId: admission.departmentId,
+        panelPatientId: admission.panelPatientId,
+        selfPayEncounterId: admission.selfPayEncounterId,
+        subtotal: new Decimal(0),
+        discountTotal: new Decimal(0),
+        total: new Decimal(0),
+        paidTotal: new Decimal(0),
+        patientShare: new Decimal(0),
+        panelReceivable: new Decimal(0),
+        status: 'UNPAID',
+        createdById: actorId,
+      },
+      include: { lines: true },
+    });
+  }
+
+  let serviceRate = await tx.serviceRate.findFirst({
+    where: {
+      OR: [{ code: 'WARD-FIXED' }, { name: { contains: 'Ward Fixed / Admission Fee', mode: 'insensitive' } }],
+    },
+  });
+
+  if (!serviceRate) {
+    serviceRate = await tx.serviceRate.create({
+      data: {
+        code: 'WARD-FIXED',
+        name: 'Ward Fixed / Admission Fee',
+        category: 'Accommodation',
+        departmentId: invoice.departmentId ?? ward.departmentId,
+        standardRate: new Decimal(0),
+        billingUnit: 'PER_ADMISSION',
+        discountAllowed: false,
+        isActive: true,
+        createdById: actorId,
+      },
+    });
+  }
+
+  // Idempotency: verify this one-time fee has not already been posted on the admission's invoice
+  const alreadyBilled = invoice.lines.some((l) => l.serviceRateId === serviceRate!.id);
+  if (alreadyBilled) {
+    return null;
+  }
+
+  const createdLine = await tx.invoiceLineItem.create({
+    data: {
+      hospitalInvoiceId: invoice.id,
+      serviceRateId: serviceRate.id,
+      rateSnapshot: wardFixedRate,
+      quantity: new Decimal(1),
+      lineGross: wardFixedRate,
+      discountAmount: new Decimal(0),
+      lineNet: wardFixedRate,
+      patientShare: invoice.panelPatientId ? new Decimal(0) : wardFixedRate,
+      panelReceivable: invoice.panelPatientId ? wardFixedRate : new Decimal(0),
+      isCompleted: true,
+    },
+  });
+
+  await tx.hospitalInvoice.update({
+    where: { id: invoice.id },
+    data: {
+      subtotal: { increment: wardFixedRate },
+      total: { increment: wardFixedRate },
+      patientShare: invoice.panelPatientId ? undefined : { increment: wardFixedRate },
+      panelReceivable: invoice.panelPatientId ? { increment: wardFixedRate } : undefined,
+    },
+  });
+
+  return createdLine;
+}
+
 export const admissionService = {
   /**
    * Create Planned Inpatient Admission (§4.7 Sub-flow A, D16 p.10)
@@ -194,6 +313,7 @@ export const admissionService = {
           status: 'PLANNED',
           medicationMode: body.medicationMode,
           diagnosis: body.diagnosis,
+          weightKg: body.weightKg != null ? new Decimal(body.weightKg) : null,
           expectedAt: body.expectedAt,
           estimatedAmount: body.estimatedAmount ? new Decimal(body.estimatedAmount) : null,
           notes: body.notes,
@@ -306,6 +426,16 @@ export const admissionService = {
             paymentReceiptId: advanceReceipt.id,
           },
         });
+      }
+
+      // Check if ward (either direct wardId or from preferred bed) has fixed pricing configured
+      if (body.wardId || body.preferredBedId) {
+        await postWardFixedChargeIfApplicable(
+          tx,
+          admission.id,
+          { bedId: body.preferredBedId, wardId: body.wardId },
+          actorId
+        );
       }
 
       return { admission, advanceReceipt, invoice };
@@ -546,6 +676,9 @@ export const admissionService = {
           },
         });
       }
+
+      // If assigned bed's ward has fixed pricing, post one-time fixed charge line
+      await postWardFixedChargeIfApplicable(tx, admission.id, bed.id, actorId);
 
       // Initialize 3-Key Discharge Clearances (D16 p.13)
       if (admission.dischargeClearances.length === 0) {
@@ -1435,6 +1568,7 @@ export const admissionService = {
       doctor: admission.doctor?.fullName ?? null,
       department: admission.department.name,
       diagnosis: admission.diagnosis,
+      weightKg: admission.weightKg != null ? Number(admission.weightKg) : null,
       bedSummary: {
         currentBed: admission.bed?.bedNumber ?? null,
         room: admission.bed?.room.name ?? null,

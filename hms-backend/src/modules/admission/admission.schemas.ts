@@ -24,9 +24,11 @@ export const createPlannedAdmissionSchema = z.object({
   // Optional at planning time — Front Desk may not always know the attending doctor yet; the
   // Admission Portal can assign/change one later via `updatePlannedAdmissionSchema`.
   doctorStaffId: z.string().uuid().optional(),
+  wardId: z.string().uuid().optional(),
   preferredBedId: z.string().uuid().optional(),
   expectedAt: z.coerce.date().optional(),
   diagnosis: z.string().optional(),
+  weightKg: z.coerce.number().positive().max(999).optional(),
   estimatedAmount: z.coerce.number().nonnegative().optional(),
   medicationMode: z.enum(['SELF', 'HOSPITAL_MANAGED']).default('SELF'),
   notes: z.string().optional(),

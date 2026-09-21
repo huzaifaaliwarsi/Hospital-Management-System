@@ -210,7 +210,7 @@ export const AppointmentsView: React.FC = () => {
       {/* Filters */}
       <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-          <TextInput label="Date" type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} />
+          <TextInput label="Date" lang="en-GB" type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} />
           <Select
             label="Department"
             placeholder="All Departments"

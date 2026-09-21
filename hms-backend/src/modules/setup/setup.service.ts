@@ -24,6 +24,8 @@ import type {
   UpdateHighCostMedicinePolicyBody,
   CreateProviderSettlementBody,
   ListProviderSettlementsQuery,
+  CreateFloorBody,
+  UpdateFloorBody,
 } from './setup.schemas';
 
 /**
@@ -271,9 +273,19 @@ export const setupService = {
     if (body.fulfillmentOwnership === 'OUTSOURCED' && !body.outsourcedProviderId) {
       throw new ValidationError('An Outsourced department must be linked to an Outsourced Provider.');
     }
+    const location = body.location || body.floor || undefined;
+    const floor = body.floor || (body.location ? body.location : undefined);
+    const fixedPrice = body.fixedPrice != null ? new Prisma.Decimal(body.fixedPrice) : null;
     try {
       const created = await prisma.department.create({
-        data: { ...body, code, createdById },
+        data: {
+          ...body,
+          code,
+          createdById,
+          location,
+          floor,
+          fixedPrice,
+        },
         include: this.departmentInclude,
       });
       return (await this.decorateDepartments([created as any]))[0];
@@ -296,6 +308,15 @@ export const setupService = {
       throw new ValidationError('An Outsourced department must be linked to an Outsourced Provider.');
     }
     const data: Prisma.DepartmentUncheckedUpdateInput = { ...body, code: normalizeCode(body.code), updatedById };
+    if (body.fixedPrice !== undefined) {
+      data.fixedPrice = body.fixedPrice != null ? new Prisma.Decimal(body.fixedPrice) : null;
+    }
+    if (body.floor !== undefined) {
+      data.floor = body.floor;
+      if (!body.location) {
+        data.location = body.floor;
+      }
+    }
     if (body.isActive !== undefined && body.isActive !== (existing as { isActive: boolean }).isActive) {
       data.statusChangedAt = new Date();
       data.statusChangedBy = await resolveActorLabel(updatedById);
@@ -328,21 +349,6 @@ export const setupService = {
 
   async deleteDepartment(id: string) {
     const dept = (await this.assertExists('department', id)) as any;
-
-    const code = (dept.code || '').trim().toUpperCase();
-    const name = (dept.name || '').trim().toUpperCase();
-    const isProtected =
-      ['OPD', 'ER', 'OBS', 'GEN-OPD', 'EMERGENCY', 'OBSERVATION'].includes(code) ||
-      ['OPD', 'ER', 'OBS', 'EMERGENCY', 'OBSERVATION', 'EMERGENCY ROOM', 'OUTPATIENT DEPARTMENT', 'OBSERVATION WARD'].includes(name) ||
-      name.startsWith('OPD ') ||
-      name.startsWith('EMERGENCY ') ||
-      name.startsWith('OBSERVATION ');
-
-    if (isProtected) {
-      throw new ValidationError(
-        `Core care department "${dept.name}" (${dept.code}) is protected by the hospital system and cannot be deleted.`
-      );
-    }
 
     // Find a fallback active department to safely preserve and reassign staff/doctors (Doctors/staff are NEVER deleted)
     let fallbackDept = await prisma.department.findFirst({
@@ -456,6 +462,78 @@ export const setupService = {
     }
   },
 
+  // ── Hospital Floors ──────────────────────────────────────────────────
+  async listFloors() {
+    return prisma.hospitalFloor.findMany({
+      orderBy: [{ floorNumber: 'asc' }, { name: 'asc' }],
+    });
+  },
+
+  async createFloor(body: CreateFloorBody) {
+    const existing = await prisma.hospitalFloor.findFirst({
+      where: {
+        name: { equals: body.name.trim(), mode: 'insensitive' },
+      },
+    });
+    if (existing) {
+      throw new ConflictError(`Floor "${body.name}" already exists.`);
+    }
+
+    return prisma.hospitalFloor.create({
+      data: {
+        floorNumber: body.floorNumber,
+        name: body.name.trim(),
+        building: body.building?.trim() || 'Main Building',
+        description: body.description?.trim() || null,
+        isActive: body.isActive ?? true,
+      },
+    });
+  },
+
+  async updateFloor(id: string, body: UpdateFloorBody) {
+    const floor = await prisma.hospitalFloor.findUnique({ where: { id } });
+    if (!floor) throw new NotFoundError('Hospital floor not found');
+
+    if (body.name && body.name.trim().toLowerCase() !== floor.name.toLowerCase()) {
+      const existing = await prisma.hospitalFloor.findFirst({
+        where: {
+          id: { not: id },
+          name: { equals: body.name.trim(), mode: 'insensitive' },
+        },
+      });
+      if (existing) {
+        throw new ConflictError(`Floor name "${body.name}" is already in use.`);
+      }
+    }
+
+    return prisma.hospitalFloor.update({
+      where: { id },
+      data: {
+        ...body,
+        name: body.name ? body.name.trim() : undefined,
+        building: body.building !== undefined ? (body.building ? body.building.trim() : null) : undefined,
+        description: body.description !== undefined ? (body.description ? body.description.trim() : null) : undefined,
+      },
+    });
+  },
+
+  async deleteFloor(id: string) {
+    const floor = await prisma.hospitalFloor.findUnique({ where: { id } });
+    if (!floor) throw new NotFoundError('Hospital floor not found');
+
+    // Check if any departments currently use this floor
+    const deptCount = await prisma.department.count({
+      where: { floor: floor.name },
+    });
+    if (deptCount > 0) {
+      throw new ValidationError(
+        `Cannot delete "${floor.name}": It is assigned to ${deptCount} department(s). Reassign them first.`
+      );
+    }
+
+    await prisma.hospitalFloor.delete({ where: { id } });
+  },
+
   // ── Service Rates ────────────────────────────────────────────────────
   serviceRateInclude: {
     department: { select: { id: true, name: true, code: true } },
@@ -496,7 +574,10 @@ export const setupService = {
 
   async listServiceRates(activeOnly = false) {
     const rows = await prisma.serviceRate.findMany({
-      where: activeOnly ? { isActive: true } : undefined,
+      where: {
+        isDeleted: false,
+        ...(activeOnly ? { isActive: true } : {}),
+      },
       include: this.serviceRateInclude,
       orderBy: { name: 'asc' },
     });
@@ -532,6 +613,9 @@ export const setupService = {
 
   async updateServiceRate(id: string, body: UpdateServiceRateBody, updatedById: string) {
     const existing = await this.assertExists('serviceRate', id);
+    if ((existing as any).isDeleted) {
+      throw new NotFoundError('Service rate not found or already deleted.');
+    }
     if (body.isDefaultEncounterService && (body.encounterType ?? (existing as any).encounterType) && (body.encounterType ?? (existing as any).encounterType) !== 'NONE') {
       const encType = body.encounterType ?? (existing as any).encounterType;
       await prisma.serviceRate.updateMany({
@@ -570,32 +654,45 @@ export const setupService = {
   async deleteServiceRate(id: string) {
     const service = (await this.assertExists('serviceRate', id)) as any;
 
+    if (service.isDeleted) {
+      throw new NotFoundError('Service rate not found or already deleted.');
+    }
+
+    const encType = (service.encounterType || '').toUpperCase();
+    const isCoreEncounter = Boolean(
+      service.isDefaultEncounterService &&
+      ['OPD', 'OBSERVATION', 'EMERGENCY'].includes(encType)
+    );
+
+    if (isCoreEncounter) {
+      throw new ValidationError(
+        `Core encounter service "${service.name}" (${encType}) cannot be deleted from the hospital master catalog. You can deactivate it instead.`
+      );
+    }
+
     const invoiceLineCount = await prisma.invoiceLineItem.count({
       where: { serviceRateId: id },
     });
 
-    if (invoiceLineCount > 0) {
-      throw new ConflictError(
-        `Cannot delete service "${service.name}": It is used in ${invoiceLineCount} posted billing invoice(s). You can deactivate it instead.`
-      );
-    }
-
     await prisma.$transaction(async (tx) => {
+      // 1. Delete associated panel discount rules
       await tx.panelDiscountRule.deleteMany({
         where: { serviceRateId: id },
       });
 
+      // 2. Delete associated doctor commission rules
       await tx.doctorCommissionRule.deleteMany({
         where: { serviceRateId: id },
       });
 
+      // 3. Reassign linked appointments to another active, non-deleted service
       const linkedAppointments = await tx.appointment.count({
         where: { serviceRateId: id },
       });
       if (linkedAppointments > 0) {
         const fallbackService = await tx.serviceRate.findFirst({
-          where: { id: { not: id }, isActive: true },
-          orderBy: { createdAt: 'asc' },
+          where: { id: { not: id }, isDeleted: false, isActive: true },
+          orderBy: { isDefaultEncounterService: 'desc', createdAt: 'asc' },
         });
         if (fallbackService) {
           await tx.appointment.updateMany({
@@ -605,13 +702,33 @@ export const setupService = {
         }
       }
 
-      await tx.serviceRate.delete({ where: { id } });
+      // 4. Safe deletion:
+      // If the service has no posted invoice lines, physically delete it from the database.
+      // If it has posted invoice lines, archive it (isDeleted: true, isActive: false, renamed code)
+      // so past patient invoices, financial records, receipts, and day-close reports remain 100% intact.
+      if (invoiceLineCount === 0) {
+        await tx.serviceRate.delete({ where: { id } });
+      } else {
+        const uniqueDelSuffix = Date.now().toString(36).toUpperCase();
+        await tx.serviceRate.update({
+          where: { id },
+          data: {
+            code: `${service.code}-DEL-${uniqueDelSuffix}`,
+            isActive: false,
+            isDeleted: true,
+            deletedAt: new Date(),
+            statusChangedAt: new Date(),
+            statusChangedBy: 'System (Deleted by Admin)',
+          },
+        });
+      }
     });
   },
 
   // ── Wards / Rooms / Beds (Department → Ward → Room → Bed, §4.2) ─────
   wardHierarchyInclude: {
     department: { select: { id: true, name: true, code: true } },
+    headStaff: { select: { id: true, fullName: true, designation: true } },
     createdByUser: actorSelect,
     updatedByUser: actorSelect,
     rooms: {
@@ -680,6 +797,9 @@ export const setupService = {
       const allBeds = rooms.flatMap((r: any) => r.beds);
       return {
         ...ward,
+        headStaffId: ward.headStaffId ?? null,
+        headStaffName: ward.headStaff?.fullName ?? null,
+        fixedPrice: ward.fixedPrice != null ? Number(ward.fixedPrice) : null,
         rooms,
         roomCount: rooms.length,
         bedCount: allBeds.length,
@@ -703,8 +823,19 @@ export const setupService = {
       }
       departmentId = defaultDept.id;
     }
+    const fixedPrice = body.fixedPrice != null ? new Prisma.Decimal(body.fixedPrice) : null;
+    const headStaffId = body.headStaffId || null;
     try {
-      return await prisma.ward.create({ data: { ...body, departmentId, code, createdById } });
+      return await prisma.ward.create({
+        data: {
+          ...body,
+          departmentId,
+          code,
+          headStaffId,
+          fixedPrice,
+          createdById,
+        },
+      });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         throw new ConflictError(`Ward code "${code}" already exists.`);
@@ -715,7 +846,13 @@ export const setupService = {
 
   async updateWard(id: string, body: UpdateWardBody, updatedById: string) {
     const existing = await this.assertExists('ward', id);
-    const data: Prisma.WardUncheckedUpdateInput = { ...body, code: normalizeCode(body.code), updatedById };
+    const data: Prisma.WardUncheckedUpdateInput = {
+      ...body,
+      code: normalizeCode(body.code),
+      headStaffId: body.headStaffId !== undefined ? body.headStaffId || null : undefined,
+      fixedPrice: body.fixedPrice !== undefined ? (body.fixedPrice != null ? new Prisma.Decimal(body.fixedPrice) : null) : undefined,
+      updatedById,
+    };
     if (body.isActive !== undefined && body.isActive !== (existing as { isActive: boolean }).isActive) {
       data.statusChangedAt = new Date();
       data.statusChangedBy = await resolveActorLabel(updatedById);

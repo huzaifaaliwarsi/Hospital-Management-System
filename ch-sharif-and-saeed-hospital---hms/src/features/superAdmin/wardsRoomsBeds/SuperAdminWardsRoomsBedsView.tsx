@@ -43,6 +43,10 @@ import {
   downloadRoomsPDF,
   downloadBedsPDF,
 } from '../../../services/wardsRoomsBedsExportService';
+import { StaffUser } from '../../../types/staffUser';
+import { fetchStaffUsers } from '../../../services/staffUserService';
+import { HospitalFloor } from '../../../types/department';
+import { FloorService } from '../../../services/floorService';
 
 interface SuperAdminWardsRoomsBedsViewProps {
   initialTab?: 'wards' | 'rooms' | 'beds';
@@ -60,6 +64,8 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
   const [wards, setWards] = useState<Ward[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [beds, setBeds] = useState<Bed[]>([]);
+  const [staffUsers, setStaffUsers] = useState<StaffUser[]>([]);
+  const [floors, setFloors] = useState<HospitalFloor[]>([]);
 
   // Modals
   const [isWardModalOpen, setIsWardModalOpen] = useState(false);
@@ -104,10 +110,16 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
     setIsLoading(true);
     setLoadError(null);
     try {
-      const { wards: w, rooms: r, beds: b } = await fetchWardHierarchy();
+      const [{ wards: w, rooms: r, beds: b }, staffList, floorList] = await Promise.all([
+        fetchWardHierarchy(),
+        fetchStaffUsers().catch(() => []),
+        FloorService.fetchFloors().catch(() => []),
+      ]);
       setWards(w);
       setRooms(r);
       setBeds(b);
+      setStaffUsers(staffList);
+      setFloors(floorList);
     } catch (err: any) {
       setLoadError(err?.message || 'Failed to load wards / rooms / beds from the server.');
     } finally {
@@ -713,6 +725,8 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
         onSave={handleSaveWard}
         ward={selectedWard}
         departments={departments}
+        staffUsers={staffUsers}
+        floors={floors}
       />
 
       <RoomModal

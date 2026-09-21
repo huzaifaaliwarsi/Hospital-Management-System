@@ -32,6 +32,8 @@ export const TextInput: React.FC<TextInputProps> = ({
   ...props
 }) => {
   const inputId = id || (label ? label.toLowerCase().replace(/\s+/g, '-') : undefined);
+  // Force DD/MM/YYYY display for all date inputs regardless of OS locale
+  const dateLocaleProps = props.type === 'date' ? { lang: 'en-GB' } : {};
   return (
     <div className={cn('w-full flex flex-col gap-1', className)}>
       {label && (
@@ -56,6 +58,7 @@ export const TextInput: React.FC<TextInputProps> = ({
             icon && 'pl-9',
             rightElement && 'pr-9'
           )}
+          {...dateLocaleProps}
           {...props}
         />
         {rightElement && (
@@ -214,7 +217,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
 }) => {
   return (
     <TextInput
-      type="date"
+      lang="en-GB" type="date"
       label={label}
       error={error}
       hint={hint}
@@ -417,7 +420,7 @@ export const DateRange: React.FC<DateRangeProps> = ({
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
           <input
-            type="date"
+            lang="en-GB" type="date"
             value={startDate}
             onChange={(e) => onChangeStartDate(e.target.value)}
             className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-[#129b70]/20 focus:border-[#129b70]"
@@ -426,7 +429,7 @@ export const DateRange: React.FC<DateRangeProps> = ({
         <span className="text-xs text-slate-400 font-medium">to</span>
         <div className="relative flex-1">
           <input
-            type="date"
+            lang="en-GB" type="date"
             value={endDate}
             onChange={(e) => onChangeEndDate(e.target.value)}
             className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-[#129b70]/20 focus:border-[#129b70]"

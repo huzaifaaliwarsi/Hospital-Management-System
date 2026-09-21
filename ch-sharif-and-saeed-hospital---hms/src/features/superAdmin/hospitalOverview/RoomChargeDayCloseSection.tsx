@@ -101,7 +101,7 @@ export const RoomChargeDayCloseSection: React.FC<RoomChargeDayCloseSectionProps>
             </label>
             <input
               id="room-charge-business-date"
-              type="date"
+              lang="en-GB" type="date"
               value={businessDate}
               max={todayIso()}
               onChange={(e) => setBusinessDate(e.target.value)}

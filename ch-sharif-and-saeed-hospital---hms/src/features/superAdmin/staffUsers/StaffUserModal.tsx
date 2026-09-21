@@ -762,7 +762,7 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
                           Effective From
                         </label>
                         <input
-                          type="date"
+                          lang="en-GB" type="date"
                           value={formData.salaryEffectiveFrom || ''}
                           onChange={(e) =>
                             setFormData({

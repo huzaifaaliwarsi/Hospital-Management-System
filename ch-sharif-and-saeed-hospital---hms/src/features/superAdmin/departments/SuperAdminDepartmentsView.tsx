@@ -32,6 +32,7 @@ import {
   DepartmentFormValues,
   DepartmentHeadOption,
   DepartmentType,
+  HospitalFloor,
 } from '../../../types/department';
 import {
   DepartmentService,
@@ -39,6 +40,7 @@ import {
   fetchDepartments,
   isProtectedCoreDepartment,
 } from '../../../services/departmentService';
+import { FloorService } from '../../../services/floorService';
 import { fetchStaffUsers } from '../../../services/staffUserService';
 import { StaffUser } from '../../../types/staffUser';
 import {
@@ -62,6 +64,7 @@ export const SuperAdminDepartmentsView: React.FC = () => {
   // State: Departments master list — loaded from the real backend
   const [departments, setDepartments] = useState<Department[]>([]);
   const [staffUsers, setStaffUsers] = useState<StaffUser[]>([]);
+  const [floors, setFloors] = useState<HospitalFloor[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -69,12 +72,14 @@ export const SuperAdminDepartmentsView: React.FC = () => {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const [deptData, staffData] = await Promise.all([
+      const [deptData, staffData, floorsData] = await Promise.all([
         fetchDepartments(),
         fetchStaffUsers().catch(() => []),
+        FloorService.fetchFloors().catch(() => []),
       ]);
       setDepartments(deptData);
       setStaffUsers(staffData);
+      setFloors(floorsData);
     } catch (err: any) {
       setLoadError(err?.message || 'Failed to load departments from the server.');
     } finally {
@@ -137,6 +142,8 @@ export const SuperAdminDepartmentsView: React.FC = () => {
     code: true,
     name: true,
     type: true,
+    floor: true,
+    fixedPrice: true,
     head: true,
     access: true,
     doctors: true,
@@ -727,6 +734,8 @@ export const SuperAdminDepartmentsView: React.FC = () => {
                 {visibleColumns.code && <th className="py-3 px-4">Code</th>}
                 {visibleColumns.name && <th className="py-3 px-4">Department Name</th>}
                 {visibleColumns.type && <th className="py-3 px-3">Type</th>}
+                {visibleColumns.floor && <th className="py-3 px-3">Location / Floor</th>}
+                {visibleColumns.fixedPrice && <th className="py-3 px-3">Fixed Price (PKR)</th>}
                 {visibleColumns.head && <th className="py-3 px-4">Head / In-charge</th>}
                 {visibleColumns.access && <th className="py-3 px-3">Operational Access</th>}
                 {visibleColumns.doctors && <th className="py-3 px-3 text-center">Doctors</th>}
@@ -766,6 +775,34 @@ export const SuperAdminDepartmentsView: React.FC = () => {
                       <span className="inline-block px-2 py-0.5 rounded text-[10px] font-semibold bg-[#effaf5] text-[#08775A] border border-[#c2e7db]">
                         {dept.type}
                       </span>
+                    </td>
+                  )}
+
+                  {/* Floor / Location */}
+                  {visibleColumns.floor && (
+                    <td className="py-3 px-3 text-slate-700">
+                      {dept.floor ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
+                          {dept.floor}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 text-[10px] italic">Not Set</span>
+                      )}
+                    </td>
+                  )}
+
+                  {/* Fixed Price (PKR) */}
+                  {visibleColumns.fixedPrice && (
+                    <td className="py-3 px-3 font-semibold text-slate-800">
+                      {dept.fixedPrice !== undefined && dept.fixedPrice !== null ? (
+                        <span className="text-emerald-700 font-mono font-bold">
+                          PKR {Number(dept.fixedPrice).toLocaleString()}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 font-normal text-[10px] italic">
+                          Optional / Free
+                        </span>
+                      )}
                     </td>
                   )}
 
@@ -1016,6 +1053,7 @@ export const SuperAdminDepartmentsView: React.FC = () => {
         departmentToEdit={selectedDeptForEdit}
         existingDepartments={departments}
         headOptions={headOptions}
+        floors={floors}
       />
 
       {/* View Detail Drawer */}

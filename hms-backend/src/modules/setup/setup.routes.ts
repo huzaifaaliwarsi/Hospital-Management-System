@@ -24,6 +24,13 @@ router.patch('/departments/:id', write, validate({ params: s.idParamsSchema, bod
 router.post('/departments/:id/deactivate', write, validate({ params: s.idParamsSchema }), asyncHandler(c.deactivateDepartment));
 router.delete('/departments/:id', remove, validate({ params: s.idParamsSchema }), asyncHandler(c.deleteDepartment));
 
+// Hospital Floors
+router.get('/floors', view, asyncHandler(c.listFloors));
+router.post('/floors', create, validate({ body: s.createFloorSchema }), asyncHandler(c.createFloor));
+router.patch('/floors/:id', write, validate({ params: s.idParamsSchema, body: s.updateFloorSchema }), asyncHandler(c.updateFloor));
+router.put('/floors/:id', write, validate({ params: s.idParamsSchema, body: s.updateFloorSchema }), asyncHandler(c.updateFloor));
+router.delete('/floors/:id', remove, validate({ params: s.idParamsSchema }), asyncHandler(c.deleteFloor));
+
 // Services & Rates
 router.get('/services-rates', view, asyncHandler(c.listServiceRates));
 router.post('/services-rates', create, validate({ body: s.createServiceRateSchema }), asyncHandler(c.createServiceRate));

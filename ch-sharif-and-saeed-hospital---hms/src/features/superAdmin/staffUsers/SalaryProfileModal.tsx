@@ -201,7 +201,7 @@ export const SalaryProfileModal: React.FC<SalaryProfileModalProps> = ({ isOpen, 
                 <div>
                   <label className="block text-xs font-semibold text-[#52665e] mb-1">Effective From</label>
                   <input
-                    type="date"
+                    lang="en-GB" type="date"
                     value={effectiveFrom}
                     onChange={(e) => setEffectiveFrom(e.target.value)}
                     className="w-full px-3 py-2 bg-[#f6f8f7] border border-[#e2eae5] rounded-lg text-xs text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#129b70]/20 focus:border-[#129b70]"

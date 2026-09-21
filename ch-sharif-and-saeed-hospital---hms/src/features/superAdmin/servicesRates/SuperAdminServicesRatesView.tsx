@@ -150,15 +150,20 @@ export const SuperAdminServicesRatesView: React.FC = () => {
   };
 
   const handleDeletePrompt = (service: HospitalService) => {
-    const isLinked = (service.linkedInvoiceCount ?? 0) > 0;
+    const isCoreEncounter = Boolean(
+      service.isDefaultEncounterService &&
+      service.encounterType &&
+      ['OPD', 'OBSERVATION', 'EMERGENCY'].includes(service.encounterType.toUpperCase())
+    );
 
-    if (isLinked) {
+    if (isCoreEncounter) {
       showToast(
         'warning',
-        `Cannot delete "${service.name}": It has ${service.linkedInvoiceCount ?? 0} billing invoice(s). Deactivate it instead to preserve financial history.`
+        `Cannot delete "${service.name}": Core encounter services (${service.encounterType}) cannot be deleted from the hospital master catalog. You can deactivate it instead.`
       );
       return;
     }
+
     setServiceToDelete(service);
   };
 
@@ -389,7 +394,7 @@ export const SuperAdminServicesRatesView: React.FC = () => {
               </p>
             </div>
             <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
-              This action cannot be undone. Services with posted invoices cannot be permanently deleted and must be deactivated instead.
+              This action will delete the service from the active master catalog. Core encounter services (OPD, Observation, Emergency) are protected and cannot be deleted.
             </div>
             <div className="flex items-center justify-end gap-2 pt-2">
               <button
