@@ -51,7 +51,8 @@ export const RoomTab: React.FC<RoomTabProps> = ({
       const mWard = r.wardName.toLowerCase().includes(q);
       if (!mCode && !mNum && !mName && !mWard) return false;
     }
-    if (filters.wardId !== 'All' && r.wardId !== filters.wardId) return false;
+    if (filters.wardId === 'STANDALONE' && r.wardId) return false;
+    else if (filters.wardId !== 'All' && filters.wardId !== 'STANDALONE' && r.wardId !== filters.wardId) return false;
     if (filters.roomType !== 'All' && r.roomType !== filters.roomType) return false;
     if (filters.status !== 'All' && r.status !== filters.status) return false;
     return true;
@@ -99,6 +100,7 @@ export const RoomTab: React.FC<RoomTabProps> = ({
               className="text-xs py-2 px-3 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 font-medium focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
             >
               <option value="All">All Wards</option>
+              <option value="STANDALONE">Standalone (No Ward)</option>
               {wards.map((w) => (
                 <option key={w.id} value={w.id}>
                   {w.name} ({w.code})
@@ -222,9 +224,11 @@ export const RoomTab: React.FC<RoomTabProps> = ({
                         {r.roomNumber}
                       </td>
                       <td className="py-3 px-4 font-medium text-slate-800">{r.name}</td>
-                      <td className="py-3 px-4 text-slate-700 whitespace-nowrap">{r.wardName}</td>
+                      <td className="py-3 px-4 text-slate-700 whitespace-nowrap">
+                        {r.wardName || <span className="text-slate-400 italic">Standalone</span>}
+                      </td>
                       <td className="py-3 px-4 text-slate-600 whitespace-nowrap">
-                        {r.departmentName}
+                        {r.departmentName || '—'}
                       </td>
                       <td className="py-3 px-4 whitespace-nowrap">
                         <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200">

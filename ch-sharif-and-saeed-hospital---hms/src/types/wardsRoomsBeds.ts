@@ -2,13 +2,6 @@ export type WardType =
   | 'General'
   | 'Private'
   | 'Semi-Private'
-  | 'ICU'
-  | 'NICU'
-  | 'PICU'
-  | 'Pediatric'
-  | 'Emergency Holding'
-  | 'Isolation'
-  | 'Maternity'
   | 'Other';
 
 export type GenderPolicy =
@@ -21,12 +14,7 @@ export type GenderPolicy =
 export type RoomType =
   | 'General'
   | 'Private'
-  | 'Semi-Private'
-  | 'ICU'
-  | 'Isolation'
-  | 'Suite'
-  | 'Shared'
-  | 'Other';
+  | 'Semi-Private';
 
 export type BedType =
   | 'Standard'
@@ -87,6 +75,8 @@ export interface Room {
   roomNumber: string;
   name: string;
 
+  // Empty string means this Room is standalone (Room -> Bed structure, no
+  // parent Ward) — not every Room belongs to a Ward.
   wardId: string;
   wardName: string;
 
@@ -119,7 +109,11 @@ export interface Bed {
   code: string;
   bedNumber: string;
 
+  // A Bed always has at least one of roomId/wardId set — empty string means
+  // "not set" for that one (direct Ward -> Bed has no room; standalone
+  // Room -> Bed has no ward).
   roomId: string;
+  roomNumber: string;
   roomName: string;
 
   wardId: string;
@@ -192,6 +186,7 @@ export interface RoomFormValues {
   code: string;
   roomNumber: string;
   name: string;
+  // Empty string = standalone Room (no parent Ward).
   wardId: string;
   roomType: RoomType;
   floor: string;
@@ -204,7 +199,9 @@ export interface RoomFormValues {
 export interface BedFormValues {
   code: string;
   bedNumber: string;
+  // At least one of roomId/wardId must be non-empty; the other is ''.
   roomId: string;
+  wardId: string;
   bedType: BedType;
   dailyBedRate: number;
   dailyRate?: number;

@@ -51,6 +51,10 @@ import { useAuth } from '../../../context/AuthContext';
 import { Select, Textarea, NumberInput, TextInput, CNICInput } from '../../../components/forms/FormControls';
 import { focusNextField, focusNextFieldOnEnter } from '../../../utils/formNavigation';
 
+// Ward-dropdown sentinel meaning "browse standalone Rooms with no parent Ward"
+// (the Room -> Bed structure) — never a real ward id.
+const STANDALONE_ROOMS_SENTINEL = '__STANDALONE_ROOMS__';
+
 const PAYMENT_METHODS: { label: string; value: AdmissionPaymentMethod }[] = [
   { label: 'Cash', value: 'CASH' },
   { label: 'Card', value: 'CARD' },
@@ -176,7 +180,12 @@ export const NewAdmissionView: React.FC = () => {
   }, [departments]);
 
   const activeWards = useMemo(() => allWards.filter((w) => w.status === 'Active'), [allWards]);
-  const selectedWard = useMemo(() => allWards.find((w) => w.id === selectedWardId), [allWards, selectedWardId]);
+  // A sentinel Ward-dropdown value that means "browse standalone rooms with
+  // no parent ward at all" (the Room -> Bed structure) rather than an actual ward id.
+  const selectedWard = useMemo(
+    () => (selectedWardId === STANDALONE_ROOMS_SENTINEL ? undefined : allWards.find((w) => w.id === selectedWardId)),
+    [allWards, selectedWardId]
+  );
 
   useEffect(() => {
     if (!formValues.departmentId && selectedWard?.departmentId) {
@@ -184,23 +193,41 @@ export const NewAdmissionView: React.FC = () => {
     }
   }, [selectedWard, formValues.departmentId]);
 
-  // Only show rooms that have at least one currently available, active bed
+  // Only show rooms that have at least one currently available, active bed —
+  // either the current ward's own rooms, or (sentinel) standalone rooms with no ward.
   const wardRooms = useMemo(() => {
+    const wantsStandalone = selectedWardId === STANDALONE_ROOMS_SENTINEL;
     return allRooms.filter((r) => {
-      if (r.wardId !== selectedWardId || r.status !== 'Active') return false;
+      if (wantsStandalone ? Boolean(r.wardId) : r.wardId !== selectedWardId) return false;
+      if (r.status !== 'Active') return false;
       return allBeds.some(
         (b) => b.roomId === r.id && b.occupancyStatus === 'Available' && b.operationalStatus === 'Active'
       );
     });
   }, [allRooms, allBeds, selectedWardId]);
 
-  const roomBeds = useMemo(
-    () =>
-      allBeds.filter(
+  // A real Ward may also carry beds directly (no Room in between).
+  const wardHasDirectBeds = useMemo(() => {
+    if (!selectedWardId || selectedWardId === STANDALONE_ROOMS_SENTINEL) return false;
+    return allBeds.some(
+      (b) => b.wardId === selectedWardId && !b.roomId && b.occupancyStatus === 'Available' && b.operationalStatus === 'Active'
+    );
+  }, [allBeds, selectedWardId]);
+
+  const roomBeds = useMemo(() => {
+    if (selectedRoomId) {
+      return allBeds.filter(
         (b) => b.roomId === selectedRoomId && b.occupancyStatus === 'Available' && b.operationalStatus === 'Active'
-      ),
-    [allBeds, selectedRoomId]
-  );
+      );
+    }
+    // No room chosen: fall back to the selected ward's own direct beds (if any).
+    if (selectedWardId && selectedWardId !== STANDALONE_ROOMS_SENTINEL) {
+      return allBeds.filter(
+        (b) => b.wardId === selectedWardId && !b.roomId && b.occupancyStatus === 'Available' && b.operationalStatus === 'Active'
+      );
+    }
+    return [];
+  }, [allBeds, selectedRoomId, selectedWardId]);
 
   const selectedRoom = useMemo(() => allRooms.find((r) => r.id === selectedRoomId), [allRooms, selectedRoomId]);
   const selectedBed = useMemo(() => allBeds.find((b) => b.id === formValues.preferredBedId), [allBeds, formValues.preferredBedId]);
@@ -366,13 +393,10 @@ export const NewAdmissionView: React.FC = () => {
       }
     }
 
-    // 2. Admission Fields Validation — First choose Department, then Ward
-    if (!formValues.departmentId) {
-      setFormError('Please select a Department for admission.');
-      return;
-    }
-    if (!selectedWardId) {
-      setFormError('Please select an Inpatient Ward for admission.');
+    // 2. Admission Fields Validation — Department is optional (falls back to
+    // the ward's own department, or the hospital's first active department).
+    if (!selectedWard && !selectedRoomId) {
+      setFormError('Please select an Inpatient Ward, or a standalone Room, for admission.');
       return;
     }
 
@@ -441,7 +465,8 @@ export const NewAdmissionView: React.FC = () => {
 
       const admissionPayload: CreateAdmissionFormValues = {
         ...formValues,
-        wardId: selectedWardId || undefined,
+        // The "standalone rooms" sentinel is a UI-only browsing mode, never a real ward.
+        wardId: selectedWard?.id || undefined,
         estimatedAmount: formValues.estimatedAmount !== ''
           ? Number(formValues.estimatedAmount)
           : (initialAdmissionTotal > 0 ? initialAdmissionTotal : ''),
@@ -985,8 +1010,11 @@ export const NewAdmissionView: React.FC = () => {
             <div className="space-y-3">
               <Select
                 label="Department"
-                required
-                hint={departments.length === 0 ? 'Loading departments...' : undefined}
+                hint={
+                  departments.length === 0
+                    ? 'Loading departments...'
+                    : 'Optional — auto-resolved from the selected Ward if left blank.'
+                }
                 options={departmentOptions}
                 value={formValues.departmentId}
                 onChange={(e) => {
@@ -996,8 +1024,11 @@ export const NewAdmissionView: React.FC = () => {
               />
               <Select
                 label="Ward"
-                required
-                hint={activeWards.length === 0 ? 'No active wards configured.' : undefined}
+                hint={
+                  activeWards.length === 0
+                    ? 'No active wards configured.'
+                    : 'Optional — pick "Standalone Rooms" below to admit into a room with no parent ward.'
+                }
                 options={[
                   { label: '-- Select Ward --', value: '' },
                   ...activeWards.map((w) => {
@@ -1010,6 +1041,7 @@ export const NewAdmissionView: React.FC = () => {
                       value: w.id,
                     };
                   }),
+                  { label: '— Standalone Rooms (No Ward) —', value: STANDALONE_ROOMS_SENTINEL },
                 ]}
                 value={selectedWardId}
                 onChange={(e) => {
@@ -1031,15 +1063,23 @@ export const NewAdmissionView: React.FC = () => {
               />
               <Select
                 label="Room"
+                required={selectedWardId === STANDALONE_ROOMS_SENTINEL}
                 hint={
                   !selectedWardId
-                    ? 'Select a ward first.'
+                    ? 'Select a ward first, or choose "Standalone Rooms" above.'
                     : wardRooms.length === 0
-                    ? 'No rooms with available beds in this ward.'
+                    ? (selectedWardId === STANDALONE_ROOMS_SENTINEL
+                        ? 'No standalone rooms with available beds.'
+                        : wardHasDirectBeds
+                          ? 'No rooms with available beds — this ward has direct beds instead (see below).'
+                          : 'No rooms with available beds in this ward.')
                     : undefined
                 }
                 options={[
-                  { label: '-- Select Room --', value: '' },
+                  {
+                    label: wardHasDirectBeds ? 'No Room (Direct Ward Bed)' : '-- Select Room --',
+                    value: '',
+                  },
                   ...wardRooms.map((r) => {
                     const availCount = allBeds.filter(
                       (b) => b.roomId === r.id && b.occupancyStatus === 'Available' && b.operationalStatus === 'Active'
@@ -1060,10 +1100,10 @@ export const NewAdmissionView: React.FC = () => {
               <Select
                 label="Bed Preference (optional)"
                 hint={
-                  !selectedRoomId
-                    ? 'Select a room to see its available beds.'
+                  !selectedRoomId && !wardHasDirectBeds
+                    ? 'Select a room (or a ward with direct beds) to see available beds.'
                     : roomBeds.length === 0
-                    ? 'No available beds in this room right now.'
+                    ? `No available beds in this ${selectedRoomId ? 'room' : 'ward'} right now.`
                     : 'Tentative only — bed becomes occupied at Admission Portal check-in.'
                 }
                 options={[
@@ -1122,10 +1162,10 @@ export const NewAdmissionView: React.FC = () => {
                     <div className="p-2.5 bg-white/95 rounded-lg border border-emerald-100 flex items-center justify-between">
                       <div>
                         <span className="text-[11px] font-semibold text-slate-800 block">
-                          Room Accommodation
+                          {selectedRoom ? 'Room Accommodation' : 'Bed Accommodation'}
                         </span>
                         <span className="text-[10px] text-slate-500">
-                          {selectedRoom?.name || 'Selected Room'} (Daily Rate)
+                          {selectedRoom?.name || selectedBed?.bedNumber || 'Selected Bed'} (Daily Rate)
                         </span>
                       </div>
                       <span className="font-mono font-bold text-emerald-800">

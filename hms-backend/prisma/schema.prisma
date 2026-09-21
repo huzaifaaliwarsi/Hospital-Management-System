@@ -870,6 +870,8 @@ model Ward {
   fixedPrice      Decimal?   @map("fixed_price") @db.Decimal(14, 2)
 
   rooms Room[]
+  // Beds attached directly to this ward, bypassing Room (Ward -> Bed structure).
+  beds  Bed[]
 
   createdAt     DateTime    @default(now()) @map("created_at")
   createdById   String?     @map("created_by")
@@ -884,8 +886,8 @@ model Ward {
 model Room {
   id              String    @id @default(uuid())
   code            String?   @unique
-  wardId          String    @map("ward_id")
-  ward            Ward      @relation(fields: [wardId], references: [id])
+  wardId          String?   @map("ward_id")
+  ward            Ward?     @relation(fields: [wardId], references: [id])
   roomNumber      String?   @map("room_number")
   name            String
   roomType        String?   @map("room_type")
@@ -911,8 +913,14 @@ model Room {
 model Bed {
   id                String               @id @default(uuid())
   code              String?              @unique
-  roomId            String               @map("room_id")
-  room              Room                 @relation(fields: [roomId], references: [id])
+  roomId            String?              @map("room_id")
+  room              Room?                @relation(fields: [roomId], references: [id])
+  // Direct Ward -> Bed assignment (no Room in between). When roomId is set
+  // and that room belongs to a ward, wardId is denormalized to match it
+  // (see setup.service.ts createBed/updateBed) so a bed's ward is always
+  // resolvable directly without joining through Room.
+  wardId            String?              @map("ward_id")
+  ward              Ward?                @relation(fields: [wardId], references: [id])
   bedNumber         String               @map("bed_number")
   bedType           String?              @map("bed_type")
   dailyRate         Decimal              @default(0) @map("daily_rate") @db.Decimal(14, 2)

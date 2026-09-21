@@ -162,9 +162,11 @@ export type CreateWardBody = z.infer<typeof createWardSchema>;
 export const updateWardSchema = createWardSchema.partial();
 export type UpdateWardBody = z.infer<typeof updateWardSchema>;
 
+// Ward is optional on a Room — a Room may stand alone (Room -> Bed structure)
+// or belong to a Ward (Ward -> Room -> Bed structure).
 export const createRoomSchema = z.object({
   code: z.string().max(20).optional(),
-  wardId: z.string().uuid(),
+  wardId: z.string().uuid().optional().nullable(),
   roomNumber: z.string().max(20).optional(),
   name: z.string().min(1).max(100),
   roomType: z.string().optional(),
@@ -177,14 +179,22 @@ export type CreateRoomBody = z.infer<typeof createRoomSchema>;
 export const updateRoomSchema = createRoomSchema.partial();
 export type UpdateRoomBody = z.infer<typeof updateRoomSchema>;
 
-export const createBedSchema = z.object({
-  code: z.string().max(20).optional(),
-  roomId: z.string().uuid(),
-  bedNumber: z.string().min(1).max(20),
-  bedType: z.string().optional(),
-  dailyRate: z.coerce.number().nonnegative().optional(),
-  operationalStatus: z.enum(['ACTIVE', 'CLEANING', 'MAINTENANCE', 'OUT_OF_SERVICE', 'DECOMMISSIONED']).optional(),
-});
+// A Bed may be attached directly to a Ward (no Room), to a Room (which may or
+// may not itself belong to a Ward), or to both — but never to neither.
+export const createBedSchema = z
+  .object({
+    code: z.string().max(20).optional(),
+    roomId: z.string().uuid().optional().nullable(),
+    wardId: z.string().uuid().optional().nullable(),
+    bedNumber: z.string().min(1).max(20),
+    bedType: z.string().optional(),
+    dailyRate: z.coerce.number().nonnegative().optional(),
+    operationalStatus: z.enum(['ACTIVE', 'CLEANING', 'MAINTENANCE', 'OUT_OF_SERVICE', 'DECOMMISSIONED']).optional(),
+  })
+  .refine((data) => Boolean(data.roomId) || Boolean(data.wardId), {
+    message: 'A bed must be assigned to a Ward, a Room, or both — it cannot be left unassigned.',
+    path: ['wardId'],
+  });
 export type CreateBedBody = z.infer<typeof createBedSchema>;
 export const updateBedSchema = z.object({
   code: z.string().max(20).optional(),

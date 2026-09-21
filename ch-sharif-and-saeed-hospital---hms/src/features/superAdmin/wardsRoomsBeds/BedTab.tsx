@@ -318,9 +318,11 @@ export const BedTab: React.FC<BedTabProps> = ({
                         {b.bedNumber}
                       </td>
                       <td className="py-3 px-4 text-slate-700 whitespace-nowrap">
-                        {b.roomNumber} - {b.roomName}
+                        {b.roomId ? `${b.roomNumber} - ${b.roomName}` : <span className="text-slate-400 italic">Direct Ward Bed</span>}
                       </td>
-                      <td className="py-3 px-4 text-slate-600 whitespace-nowrap">{b.wardName}</td>
+                      <td className="py-3 px-4 text-slate-600 whitespace-nowrap">
+                        {b.wardName || <span className="text-slate-400 italic">Standalone</span>}
+                      </td>
                       <td className="py-3 px-4 whitespace-nowrap">
                         <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
                           {b.bedType}

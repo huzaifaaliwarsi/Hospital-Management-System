@@ -18,9 +18,10 @@ export const createPlannedAdmissionSchema = z.object({
       address: z.string().optional(),
     })
     .optional(),
-  // Always required — the frontend derives it from either the chosen doctor or the chosen ward
-  // (department is never asked for directly), but the backend still needs a real, non-null value.
-  departmentId: z.string().uuid(),
+  // Optional — Front Desk may admit against a standalone Room/Bed with no
+  // department context yet; the service falls back to the ward's department
+  // (when a ward/bed resolves one) or the first active department otherwise.
+  departmentId: z.string().uuid().optional(),
   // Optional at planning time — Front Desk may not always know the attending doctor yet; the
   // Admission Portal can assign/change one later via `updatePlannedAdmissionSchema`.
   doctorStaffId: z.string().uuid().optional(),

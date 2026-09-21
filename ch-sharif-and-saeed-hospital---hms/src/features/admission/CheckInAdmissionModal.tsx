@@ -41,7 +41,13 @@ export const CheckInAdmissionModal: React.FC<CheckInAdmissionModalProps> = ({ ad
   }, [allBeds, admission.bedId]);
 
   const assignedBedLabel = assignedBed
-    ? `${assignedBed.wardName} / ${assignedBed.roomName} / ${/^bed\b/i.test(assignedBed.bedNumber.trim()) ? assignedBed.bedNumber.trim() : `Bed ${assignedBed.bedNumber.trim()}`}`
+    ? [
+        assignedBed.wardName,
+        assignedBed.roomName,
+        /^bed\b/i.test(assignedBed.bedNumber.trim()) ? assignedBed.bedNumber.trim() : `Bed ${assignedBed.bedNumber.trim()}`,
+      ]
+        .filter(Boolean)
+        .join(' / ')
     : (admission.bedLabel || 'Bed Assigned at Front Desk');
 
   const parsedBedInfo = useMemo(() => {
@@ -83,12 +89,19 @@ export const CheckInAdmissionModal: React.FC<CheckInAdmissionModalProps> = ({ ad
   }, [allBeds, admission.bedId, admission.departmentId]);
 
   const bedOptions = useMemo(() => {
-    const list = selectableBeds.map((b) => ({
-      label: b.id === admission.bedId
-        ? `Ward: ${b.wardName} • Room: ${b.roomName} • Bed: ${b.bedNumber} ★ (Assigned at Front Desk)`
-        : `Ward: ${b.wardName} • Room: ${b.roomName} • Bed: ${b.bedNumber}`,
-      value: b.id,
-    }));
+    const list = selectableBeds.map((b) => {
+      const location = [
+        b.wardName ? `Ward: ${b.wardName}` : '',
+        b.roomName ? `Room: ${b.roomName}` : '',
+        `Bed: ${b.bedNumber}`,
+      ]
+        .filter(Boolean)
+        .join(' • ');
+      return {
+        label: b.id === admission.bedId ? `${location} ★ (Assigned at Front Desk)` : location,
+        value: b.id,
+      };
+    });
     // If admission has a bedId not yet mapped in allBeds, ensure it appears as the selected option
     if (admission.bedId && !list.some((o) => o.value === admission.bedId)) {
       list.unshift({
@@ -212,7 +225,19 @@ export const CheckInAdmissionModal: React.FC<CheckInAdmissionModalProps> = ({ ad
 
             {admission.bedId && bedId !== admission.bedId && selectedBedObject && (
               <div className="text-[11px] font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2 flex items-center gap-1.5">
-                <span>⚠️ Previous bed will be freed back to Available and <strong>Ward: {selectedBedObject.wardName} • Room: {selectedBedObject.roomName} • Bed {selectedBedObject.bedNumber}</strong> will be occupied.</span>
+                <span>
+                  ⚠️ Previous bed will be freed back to Available and{' '}
+                  <strong>
+                    {[
+                      selectedBedObject.wardName ? `Ward: ${selectedBedObject.wardName}` : '',
+                      selectedBedObject.roomName ? `Room: ${selectedBedObject.roomName}` : '',
+                      `Bed ${selectedBedObject.bedNumber}`,
+                    ]
+                      .filter(Boolean)
+                      .join(' • ')}
+                  </strong>{' '}
+                  will be occupied.
+                </span>
               </div>
             )}
           </div>

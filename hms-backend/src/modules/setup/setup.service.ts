@@ -725,7 +725,17 @@ export const setupService = {
     });
   },
 
-  // ── Wards / Rooms / Beds (Department → Ward → Room → Bed, §4.2) ─────
+  // ── Wards / Rooms / Beds — flexible hierarchy, §4.2 ──────────────────
+  // Three supported structures: Ward -> Bed (direct), Ward -> Room -> Bed,
+  // and standalone Room -> Bed (no Ward). `ward.beds` below is filtered to
+  // roomId: null so a ward's direct beds are never double-counted with the
+  // beds already nested under its rooms.
+  roomWithBedsInclude: {
+    createdByUser: actorSelect,
+    updatedByUser: actorSelect,
+    beds: { include: { createdByUser: actorSelect, updatedByUser: actorSelect } },
+  } satisfies Prisma.RoomInclude,
+
   wardHierarchyInclude: {
     department: { select: { id: true, name: true, code: true } },
     headStaff: { select: { id: true, fullName: true, designation: true } },
@@ -737,6 +747,10 @@ export const setupService = {
         updatedByUser: actorSelect,
         beds: { include: { createdByUser: actorSelect, updatedByUser: actorSelect } },
       },
+    },
+    beds: {
+      where: { roomId: null },
+      include: { createdByUser: actorSelect, updatedByUser: actorSelect },
     },
   } satisfies Prisma.WardInclude,
 
@@ -763,44 +777,66 @@ export const setupService = {
     return map;
   },
 
-  async listWardHierarchy() {
-    const wards = await prisma.ward.findMany({
-      include: this.wardHierarchyInclude,
-      orderBy: { name: 'asc' },
-    });
+  decorateBedRow(bed: any, occupants: Map<string, { admissionId: string; patientName: string }>) {
+    const occupant = occupants.get(bed.id);
+    return {
+      ...bed,
+      currentPatientId: occupant?.admissionId,
+      currentPatientName: occupant?.patientName,
+      admissionId: occupant?.admissionId,
+      createdByLabel: formatActorFromRelation(bed.createdByUser),
+      updatedByLabel: formatActorFromRelation(bed.updatedByUser),
+    };
+  },
 
-    const allBedIds = wards.flatMap((w: any) => w.rooms.flatMap((r: any) => r.beds.map((b: any) => b.id)));
+  decorateRoomRow(room: any, occupants: Map<string, { admissionId: string; patientName: string }>) {
+    const beds = room.beds.map((bed: any) => this.decorateBedRow(bed, occupants));
+    return {
+      ...room,
+      beds,
+      bedsConfigured: beds.length,
+      availableBeds: beds.filter((b: any) => b.status === 'AVAILABLE').length,
+      createdByLabel: formatActorFromRelation(room.createdByUser),
+      updatedByLabel: formatActorFromRelation(room.updatedByUser),
+    };
+  },
+
+  /**
+   * Returns the full hierarchy across all three supported structures:
+   * Ward -> Bed (direct), Ward -> Room -> Bed, and standalone Room -> Bed
+   * (no Ward). `wards[].beds` holds each ward's direct beds; `standaloneRooms`
+   * holds rooms with no parent ward (each with its own `beds`).
+   */
+  async listWardHierarchy() {
+    const [wards, standaloneRooms] = await Promise.all([
+      prisma.ward.findMany({ include: this.wardHierarchyInclude, orderBy: { name: 'asc' } }),
+      prisma.room.findMany({
+        where: { wardId: null },
+        include: this.roomWithBedsInclude,
+        orderBy: { name: 'asc' },
+      }),
+    ]);
+
+    const allBedIds = [
+      ...wards.flatMap((w: any) => [
+        ...w.rooms.flatMap((r: any) => r.beds.map((b: any) => b.id)),
+        ...w.beds.map((b: any) => b.id),
+      ]),
+      ...standaloneRooms.flatMap((r: any) => r.beds.map((b: any) => b.id)),
+    ];
     const occupants = await this.currentOccupantsByBedId(allBedIds);
 
-    return wards.map((ward: any) => {
-      const rooms = ward.rooms.map((room: any) => {
-        const beds = room.beds.map((bed: any) => {
-          const occupant = occupants.get(bed.id);
-          return {
-            ...bed,
-            currentPatientId: occupant?.admissionId,
-            currentPatientName: occupant?.patientName,
-            admissionId: occupant?.admissionId,
-            createdByLabel: formatActorFromRelation(bed.createdByUser),
-            updatedByLabel: formatActorFromRelation(bed.updatedByUser),
-          };
-        });
-        return {
-          ...room,
-          beds,
-          bedsConfigured: beds.length,
-          availableBeds: beds.filter((b: any) => b.status === 'AVAILABLE').length,
-          createdByLabel: formatActorFromRelation(room.createdByUser),
-          updatedByLabel: formatActorFromRelation(room.updatedByUser),
-        };
-      });
-      const allBeds = rooms.flatMap((r: any) => r.beds);
+    const wardResults = wards.map((ward: any) => {
+      const rooms = ward.rooms.map((room: any) => this.decorateRoomRow(room, occupants));
+      const directBeds = ward.beds.map((bed: any) => this.decorateBedRow(bed, occupants));
+      const allBeds = [...rooms.flatMap((r: any) => r.beds), ...directBeds];
       return {
         ...ward,
         headStaffId: ward.headStaffId ?? null,
         headStaffName: ward.headStaff?.fullName ?? null,
         fixedPrice: ward.fixedPrice != null ? Number(ward.fixedPrice) : null,
         rooms,
+        beds: directBeds,
         roomCount: rooms.length,
         bedCount: allBeds.length,
         availableBeds: allBeds.filter((b: any) => b.status === 'AVAILABLE').length,
@@ -808,6 +844,10 @@ export const setupService = {
         updatedByLabel: formatActorFromRelation(ward.updatedByUser),
       };
     });
+
+    const standaloneRoomResults = standaloneRooms.map((room: any) => this.decorateRoomRow(room, occupants));
+
+    return { wards: wardResults, standaloneRooms: standaloneRoomResults };
   },
 
   async createWard(body: CreateWardBody, createdById: string) {
@@ -884,8 +924,20 @@ export const setupService = {
 
   async createBed(body: CreateBedBody, createdById: string) {
     const code = normalizeCode(body.code) ?? (await generateUniqueCode('bed', 'BED'));
+    const roomId = body.roomId || null;
+    let wardId = body.wardId || null;
+
+    // A Room's ward is authoritative when a room is given — the bed's ward
+    // is always denormalized to match it (never a conflicting manual pick),
+    // including null when the room itself is standalone (no ward).
+    if (roomId) {
+      const room = await prisma.room.findUnique({ where: { id: roomId }, select: { wardId: true } });
+      if (!room) throw new NotFoundError('Room not found');
+      wardId = room.wardId;
+    }
+
     try {
-      return await prisma.bed.create({ data: { ...body, code, createdById } });
+      return await prisma.bed.create({ data: { ...body, code, roomId, wardId, createdById } });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         throw new ConflictError(`Bed "${body.bedNumber}" already exists in this room, or the bed code is taken.`);
@@ -1000,29 +1052,21 @@ export const setupService = {
   },
 
   async deleteWard(id: string) {
+    const bedCountSelect = {
+      _count: { select: { admissions: true, bedTransfersFrom: true, bedTransfersTo: true } },
+    } satisfies Prisma.BedInclude;
+
     const ward = await prisma.ward.findUnique({
       where: { id },
       include: {
-        rooms: {
-          include: {
-            beds: {
-              include: {
-                _count: {
-                  select: {
-                    admissions: true,
-                    bedTransfersFrom: true,
-                    bedTransfersTo: true,
-                  },
-                },
-              },
-            },
-          },
-        },
+        rooms: { include: { beds: { include: bedCountSelect } } },
+        // Direct Ward -> Bed assignments (no Room) must also be checked/removed.
+        beds: { where: { roomId: null }, include: bedCountSelect },
       },
     });
     if (!ward) throw new NotFoundError('Ward not found');
 
-    const allBeds = ward.rooms.flatMap((r) => r.beds);
+    const allBeds = [...ward.rooms.flatMap((r) => r.beds), ...ward.beds];
     for (const bed of allBeds) {
       if (bed.status === 'OCCUPIED') {
         throw new ConflictError(
@@ -1044,6 +1088,8 @@ export const setupService = {
           await tx.bed.deleteMany({ where: { roomId: { in: roomIds } } });
           await tx.room.deleteMany({ where: { id: { in: roomIds } } });
         }
+        // Direct ward beds (no room) — deleted separately from room-scoped beds above.
+        await tx.bed.deleteMany({ where: { wardId: id, roomId: null } });
         await tx.ward.delete({ where: { id } });
       });
     } catch (error: any) {

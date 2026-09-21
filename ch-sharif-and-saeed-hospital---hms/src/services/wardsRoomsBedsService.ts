@@ -32,23 +32,11 @@ import { formatDisplayDate } from '../utils/dateConstants';
  * pattern as Departments/Services — never localStorage.
  */
 
-export const VALID_WARD_TYPES: WardType[] = [
-  'General',
-  'Private',
-  'Semi-Private',
-  'ICU',
-  'NICU',
-  'PICU',
-  'Pediatric',
-  'Emergency Holding',
-  'Isolation',
-  'Maternity',
-  'Other',
-];
+export const VALID_WARD_TYPES: WardType[] = ['General', 'Private', 'Semi-Private', 'Other'];
 
 export const VALID_GENDER_POLICIES: GenderPolicy[] = ['Male', 'Female', 'Mixed', 'Pediatric', 'Not Applicable'];
 
-export const VALID_ROOM_TYPES: RoomType[] = ['General', 'Private', 'Semi-Private', 'ICU', 'Isolation', 'Suite', 'Shared', 'Other'];
+export const VALID_ROOM_TYPES: RoomType[] = ['General', 'Private', 'Semi-Private'];
 
 export const VALID_BED_TYPES: BedType[] = [
   'Standard',
@@ -151,17 +139,21 @@ function toWard(raw: Record<string, any>): Ward {
   };
 }
 
-function toRoom(raw: Record<string, any>, ward: { name: string; departmentId: string; departmentName: string }): Room {
+/** `ward` is omitted for a standalone Room (Room -> Bed structure, no parent Ward). */
+function toRoom(
+  raw: Record<string, any>,
+  ward?: { id: string; name: string; departmentId: string; departmentName: string }
+): Room {
   return {
     id: raw.id,
     code: raw.code || '',
     roomNumber: raw.roomNumber || '',
     name: raw.name,
-    wardId: raw.wardId,
-    wardName: ward.name,
-    departmentId: ward.departmentId,
-    departmentName: ward.departmentName,
-    roomType: (raw.roomType as RoomType) || 'Other',
+    wardId: ward?.id || raw.wardId || '',
+    wardName: ward?.name || '',
+    departmentId: ward?.departmentId || '',
+    departmentName: ward?.departmentName || '',
+    roomType: (raw.roomType as RoomType) || 'General',
     floor: raw.floor || undefined,
     capacity: raw.capacity ?? 0,
     bedsConfigured: raw.bedsConfigured ?? 0,
@@ -177,20 +169,28 @@ function toRoom(raw: Record<string, any>, ward: { name: string; departmentId: st
   };
 }
 
+/**
+ * `room` is omitted for a direct Ward -> Bed (no Room in between); `ward` is
+ * omitted for a standalone Room -> Bed (no parent Ward). At least one of the
+ * two is always given — a Bed with neither is never persisted (see
+ * createBedSchema's refine on the backend).
+ */
 function toBed(
   raw: Record<string, any>,
-  room: { name: string; wardId: string; wardName: string; departmentId: string; departmentName: string }
+  room?: { name: string; roomNumber: string },
+  ward?: { id: string; name: string; departmentId: string; departmentName: string }
 ): Bed {
   return {
     id: raw.id,
     code: raw.code || '',
     bedNumber: raw.bedNumber,
-    roomId: raw.roomId,
-    roomName: room.name,
-    wardId: room.wardId,
-    wardName: room.wardName,
-    departmentId: room.departmentId,
-    departmentName: room.departmentName,
+    roomId: raw.roomId || '',
+    roomNumber: room?.roomNumber || '',
+    roomName: room?.name || '',
+    wardId: ward?.id || raw.wardId || '',
+    wardName: ward?.name || '',
+    departmentId: ward?.departmentId || '',
+    departmentName: ward?.departmentName || '',
     bedType: (raw.bedType as BedType) || 'Other',
     dailyRate: Number(raw.dailyRate ?? 0),
     dailyBedRate: Number(raw.dailyRate ?? 0),
@@ -213,21 +213,51 @@ let cachedWards: Ward[] = [];
 let cachedRooms: Room[] = [];
 let cachedBeds: Bed[] = [];
 
+/**
+ * Backend returns `{ wards, standaloneRooms }` — three structures are
+ * flattened here into the three flat arrays (`Ward[]`, `Room[]`, `Bed[]`)
+ * the existing UI expects:
+ *   - Ward -> Room -> Bed:  rawWard.rooms[].beds[]
+ *   - Ward -> Bed (direct): rawWard.beds[]
+ *   - Room -> Bed (standalone, no Ward): res.data.data.standaloneRooms[].beds[]
+ */
 export async function fetchWardHierarchy(): Promise<{ wards: Ward[]; rooms: Room[]; beds: Bed[] }> {
-  const res = await apiClient.get<{ data: Record<string, any>[] }>('/setup/wards-rooms-beds');
+  const res = await apiClient.get<{ data: { wards: Record<string, any>[]; standaloneRooms: Record<string, any>[] } }>(
+    '/setup/wards-rooms-beds'
+  );
   const wards: Ward[] = [];
   const rooms: Room[] = [];
   const beds: Bed[] = [];
 
-  for (const rawWard of res.data.data) {
-    const wardInfo = { name: rawWard.name, departmentId: rawWard.departmentId, departmentName: rawWard.department?.name || '' };
+  for (const rawWard of res.data.data.wards || []) {
+    const wardInfo = {
+      id: rawWard.id,
+      name: rawWard.name,
+      departmentId: rawWard.departmentId,
+      departmentName: rawWard.department?.name || '',
+    };
     wards.push(toWard(rawWard));
+
     for (const rawRoom of rawWard.rooms || []) {
-      const roomInfo = { name: rawRoom.name, wardId: rawWard.id, wardName: rawWard.name, ...wardInfo };
       rooms.push(toRoom(rawRoom, wardInfo));
+      const roomInfo = { name: rawRoom.name, roomNumber: rawRoom.roomNumber || '' };
       for (const rawBed of rawRoom.beds || []) {
-        beds.push(toBed(rawBed, roomInfo));
+        beds.push(toBed(rawBed, roomInfo, wardInfo));
       }
+    }
+
+    // Direct Ward -> Bed (no Room in between)
+    for (const rawBed of rawWard.beds || []) {
+      beds.push(toBed(rawBed, undefined, wardInfo));
+    }
+  }
+
+  // Standalone Room -> Bed (no parent Ward)
+  for (const rawRoom of res.data.data.standaloneRooms || []) {
+    rooms.push(toRoom(rawRoom));
+    const roomInfo = { name: rawRoom.name, roomNumber: rawRoom.roomNumber || '' };
+    for (const rawBed of rawRoom.beds || []) {
+      beds.push(toBed(rawBed, roomInfo));
     }
   }
 
@@ -357,7 +387,7 @@ export class WardsRoomsBedsService {
   static async createRoom(values: RoomFormValues, _currentUser?: User | null): Promise<Room> {
     const res = await apiClient.post<{ data: { id: string } }>('/setup/wards-rooms-beds/rooms', {
       code: values.code?.trim() || undefined,
-      wardId: values.wardId,
+      wardId: values.wardId || undefined,
       roomNumber: values.roomNumber?.trim() || undefined,
       name: values.name.trim(),
       roomType: values.roomType,
@@ -372,7 +402,7 @@ export class WardsRoomsBedsService {
   static async updateRoom(id: string, values: RoomFormValues, _currentUser?: User | null): Promise<Room> {
     await apiClient.patch(`/setup/wards-rooms-beds/rooms/${id}`, {
       code: values.code?.trim() || undefined,
-      wardId: values.wardId,
+      wardId: values.wardId || null,
       roomNumber: values.roomNumber?.trim() || undefined,
       name: values.name.trim(),
       roomType: values.roomType,
@@ -404,7 +434,8 @@ export class WardsRoomsBedsService {
     for (const values of bedsToCreate) {
       await apiClient.post('/setup/wards-rooms-beds/beds', {
         code: values.code?.trim() || undefined,
-        roomId: values.roomId,
+        roomId: values.roomId || undefined,
+        wardId: values.wardId || undefined,
         bedNumber: values.bedNumber.trim(),
         bedType: values.bedType,
         dailyRate: values.dailyBedRate ?? values.dailyRate ?? 0,
@@ -417,7 +448,8 @@ export class WardsRoomsBedsService {
   static async createBed(values: BedFormValues, _currentUser?: User | null): Promise<Bed> {
     const res = await apiClient.post<{ data: { id: string } }>('/setup/wards-rooms-beds/beds', {
       code: values.code?.trim() || undefined,
-      roomId: values.roomId,
+      roomId: values.roomId || undefined,
+      wardId: values.wardId || undefined,
       bedNumber: values.bedNumber.trim(),
       bedType: values.bedType,
       dailyRate: values.dailyBedRate ?? values.dailyRate ?? 0,
@@ -754,6 +786,7 @@ export class WardsRoomsBedsService {
           code: r.bedCode,
           bedNumber: r.bedNumber,
           roomId: room.id,
+          wardId: '',
           bedType: r.bedType as BedType,
           dailyBedRate: r.dailyBedRate,
           occupancyStatus: 'Available',

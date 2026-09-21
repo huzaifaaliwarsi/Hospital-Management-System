@@ -130,9 +130,11 @@ async function postWardFixedChargeIfApplicable(
   } else if (bedId) {
     const bed = await tx.bed.findUnique({
       where: { id: bedId },
-      include: { room: { include: { ward: true } } },
+      include: { room: { include: { ward: true } }, ward: true },
     });
-    ward = bed?.room?.ward ?? null;
+    // Direct Ward -> Bed carries its own ward; Ward -> Room -> Bed resolves
+    // via the room; a standalone Room -> Bed (no ward) has none of either.
+    ward = bed?.ward ?? bed?.room?.ward ?? null;
   }
 
   if (!ward?.fixedPrice || Number(ward.fixedPrice) <= 0) {
@@ -270,7 +272,7 @@ export const admissionService = {
       if (body.preferredBedId) {
         const bed = await tx.bed.findUnique({
           where: { id: body.preferredBedId },
-          include: { room: { include: { ward: true } } },
+          include: { room: { include: { ward: true } }, ward: true },
         });
         if (!bed) throw new NotFoundError('Selected bed not found');
         if (bed.status !== 'AVAILABLE') {
@@ -279,8 +281,13 @@ export const admissionService = {
         if (bed.operationalStatus !== 'ACTIVE') {
           throw new ValidationError(`Selected bed is ${bed.operationalStatus} and cannot be assigned.`);
         }
-        // Auto-align department with the bed's ward
-        departmentId = bed.room.ward.departmentId;
+        // Auto-align department with the bed's ward, when one is resolvable
+        // (direct Ward -> Bed, or via the bed's Room -> Ward). A standalone
+        // Room -> Bed with no ward keeps whatever departmentId was supplied.
+        const resolvedWardDeptId = bed.ward?.departmentId ?? bed.room?.ward?.departmentId;
+        if (resolvedWardDeptId) {
+          departmentId = resolvedWardDeptId;
+        }
 
         // Mark bed as OCCUPIED so it cannot be double-assigned to another patient
         await tx.bed.update({
@@ -324,7 +331,7 @@ export const admissionService = {
           selfPayEncounter: true,
           department: true,
           doctor: true,
-          bed: { include: { room: { include: { ward: true } } } },
+          bed: { include: { room: { include: { ward: true } }, ward: true } },
         },
       });
 
@@ -488,11 +495,11 @@ export const admissionService = {
         selfPayEncounter: true,
         department: true,
         doctor: true,
-        bed: { include: { room: { include: { ward: true } } } },
+        bed: { include: { room: { include: { ward: true } }, ward: true } },
         bedTransfers: {
           include: {
-            fromBed: { include: { room: { include: { ward: true } } } },
-            toBed: { include: { room: { include: { ward: true } } } },
+            fromBed: { include: { room: { include: { ward: true } }, ward: true } },
+            toBed: { include: { room: { include: { ward: true } }, ward: true } },
             transferredBy: { select: { id: true, username: true } },
           },
           orderBy: { transferredAt: 'desc' },
@@ -640,7 +647,7 @@ export const admissionService = {
           notes: combinedNotes,
         },
         include: {
-          bed: { include: { room: { include: { ward: true } } } },
+          bed: { include: { room: { include: { ward: true } }, ward: true } },
           doctor: true,
           department: true,
         },
@@ -753,7 +760,7 @@ export const admissionService = {
         where: { id: admission.id },
         data: { bedId: targetBed.id },
         include: {
-          bed: { include: { room: { include: { ward: true } } } },
+          bed: { include: { room: { include: { ward: true } }, ward: true } },
         },
       });
 
@@ -1515,7 +1522,7 @@ export const admissionService = {
         selfPayEncounter: true,
         department: true,
         doctor: true,
-        bed: { include: { room: { include: { ward: true } } } },
+        bed: { include: { room: { include: { ward: true } }, ward: true } },
         bedTransfers: {
           include: {
             fromBed: true,
@@ -1571,8 +1578,8 @@ export const admissionService = {
       weightKg: admission.weightKg != null ? Number(admission.weightKg) : null,
       bedSummary: {
         currentBed: admission.bed?.bedNumber ?? null,
-        room: admission.bed?.room.name ?? null,
-        ward: admission.bed?.room.ward.name ?? null,
+        room: admission.bed?.room?.name ?? null,
+        ward: admission.bed?.ward?.name ?? admission.bed?.room?.ward?.name ?? null,
         transfersCount: admission.bedTransfers.length,
       },
       hospitalFinancialSummary: {

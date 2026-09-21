@@ -82,9 +82,11 @@ export const RoomDetailModal: React.FC<RoomDetailModalProps> = ({
               <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
                 Parent Ward & Dept
               </span>
-              <div className="text-xs font-bold text-slate-800 mt-1">{room.wardName}</div>
+              <div className="text-xs font-bold text-slate-800 mt-1">
+                {room.wardName || 'Standalone (No Ward)'}
+              </div>
               <span className="text-[11px] text-slate-500 block mt-0.5">
-                Dept: {room.departmentName}
+                Dept: {room.departmentName || 'N/A'}
               </span>
             </div>
 

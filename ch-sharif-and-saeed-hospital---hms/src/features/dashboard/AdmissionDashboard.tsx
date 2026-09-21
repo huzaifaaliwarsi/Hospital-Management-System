@@ -34,6 +34,7 @@ export const AdmissionDashboard: React.FC = () => {
     load();
   }, []);
 
+
   const beds = useMemo(() => WardsRoomsBedsService.getBeds(), []);
   const wards = useMemo(() => WardsRoomsBedsService.getWards(), []);
 

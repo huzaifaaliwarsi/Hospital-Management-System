@@ -907,7 +907,10 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                     label="Target Bed"
                     required
                     placeholder="Choose an available bed…"
-                    options={availableBeds.map((b) => ({ label: `${b.wardName} / ${b.roomName} / ${b.bedNumber}`, value: b.id }))}
+                    options={availableBeds.map((b) => ({
+                      label: [b.wardName, b.roomName, b.bedNumber].filter(Boolean).join(' / '),
+                      value: b.id,
+                    }))}
                     value={targetBedId}
                     onChange={(e) => setTargetBedId(e.target.value)}
                   />

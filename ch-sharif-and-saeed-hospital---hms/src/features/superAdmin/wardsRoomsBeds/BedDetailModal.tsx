@@ -136,30 +136,30 @@ export const BedDetailModal: React.FC<BedDetailModalProps> = ({
                 Room Allocation
               </span>
               <div className="text-xs font-bold text-slate-800 mt-1">
-                Room {bed.roomNumber}
+                {bed.roomId ? `Room ${bed.roomNumber}` : 'Direct Ward Bed'}
               </div>
-              <span className="text-[11px] text-slate-500 block mt-0.5">{bed.roomName}</span>
+              <span className="text-[11px] text-slate-500 block mt-0.5">{bed.roomName || 'No parent room'}</span>
             </div>
 
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5">
               <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
                 Ward & Department
               </span>
-              <div className="text-xs font-bold text-slate-800 mt-1">{bed.wardName}</div>
+              <div className="text-xs font-bold text-slate-800 mt-1">{bed.wardName || 'Standalone (No Ward)'}</div>
               <span className="text-[11px] text-slate-500 block mt-0.5">
-                Dept: {bed.departmentName}
+                Dept: {bed.departmentName || 'N/A'}
               </span>
             </div>
 
             <div className="bg-emerald-50/50 border border-emerald-100 rounded-xl p-3.5">
               <span className="text-[11px] font-semibold text-emerald-800 uppercase tracking-wider block">
-                Room Daily Tariff
+                Daily Tariff
               </span>
               <div className="text-base font-bold text-emerald-900 mt-1">
                 PKR {((rooms.find((r) => r.id === bed.roomId)?.dailyRoomRate) ?? bed.dailyBedRate ?? bed.dailyRate ?? 0).toLocaleString('en-PK')}
               </div>
               <span className="text-[11px] text-emerald-700 block mt-0.5">
-                Room Inpatient Tariff / Day
+                {bed.roomId ? 'Room Inpatient Tariff / Day' : "Bed's Own Daily Rate"}
               </span>
             </div>
           </div>

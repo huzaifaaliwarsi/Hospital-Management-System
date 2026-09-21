@@ -29,18 +29,11 @@ export const BedModal: React.FC<BedModalProps> = ({
   const isEditing = !!bed;
   const isOccupied = bed?.occupancyStatus === 'Occupied';
 
-  const [selectedWardId, setSelectedWardId] = useState<string>(
-    bed?.wardId || wards[0]?.id || ''
-  );
-
-  const availableRooms = useMemo(() => {
-    return rooms.filter((r) => r.wardId === selectedWardId);
-  }, [rooms, selectedWardId]);
-
   const [formValues, setFormValues] = useState<BedFormValues>({
     code: '',
     bedNumber: '',
     roomId: '',
+    wardId: '',
     bedType: 'Standard',
     dailyBedRate: 2000,
     occupancyStatus: 'Available',
@@ -55,39 +48,50 @@ export const BedModal: React.FC<BedModalProps> = ({
   const [codeError, setCodeError] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Active room and its existing beds
+  // Active room (if one is selected) — its Ward is authoritative (rule: a
+  // Room's ward can't be overridden once that room is picked).
   const currentRoom = useMemo(() => {
     return rooms.find((r) => r.id === formValues.roomId);
   }, [rooms, formValues.roomId]);
 
-  const roomBeds = useMemo(() => {
-    if (!formValues.roomId) return [];
-    return beds.filter((b) => b.roomId === formValues.roomId);
-  }, [beds, formValues.roomId]);
+  // Ward selection is free-form only when no Room is selected (Direct Ward
+  // Bed). Once a Room is picked, the ward is derived from it — including
+  // '' when that room is standalone — and the Ward dropdown locks.
+  const isWardLockedByRoom = Boolean(formValues.roomId);
+  const effectiveWardId = isWardLockedByRoom ? (currentRoom?.wardId || '') : formValues.wardId;
+
+  // Existing beds already occupying the same scope (this room, or — for a
+  // direct ward bed — this ward's own direct beds) — used for capacity
+  // tracking and sequential bed-number suggestions.
+  const scopedBeds = useMemo(() => {
+    if (formValues.roomId) return beds.filter((b) => b.roomId === formValues.roomId);
+    if (effectiveWardId) return beds.filter((b) => b.wardId === effectiveWardId && !b.roomId);
+    return [];
+  }, [beds, formValues.roomId, effectiveWardId]);
 
   const roomCapacity = currentRoom?.capacity ?? 0;
-  const configuredCount = roomBeds.length;
+  const configuredCount = scopedBeds.length;
   const remainingCapacity = Math.max(0, roomCapacity - configuredCount);
 
   // Generated bed names preview for Add mode
   const previewAddNames = useMemo(() => {
     if (quantity <= 1) return [];
-    return getNextBedNumbers(roomBeds, quantity, numberingPrefix.trim() ? `${numberingPrefix.trim()} ` : 'Bed ');
-  }, [roomBeds, quantity, numberingPrefix]);
+    return getNextBedNumbers(scopedBeds, quantity, numberingPrefix.trim() ? `${numberingPrefix.trim()} ` : 'Bed ');
+  }, [scopedBeds, quantity, numberingPrefix]);
 
   // Generated bed names preview for Edit mode (additional beds)
   const previewEditNames = useMemo(() => {
     if (additionalBeds <= 0) return [];
-    return getNextBedNumbers(roomBeds, additionalBeds, 'Bed ');
-  }, [roomBeds, additionalBeds]);
+    return getNextBedNumbers(scopedBeds, additionalBeds, 'Bed ');
+  }, [scopedBeds, additionalBeds]);
 
   useEffect(() => {
     if (bed) {
-      setSelectedWardId(bed.wardId);
       setFormValues({
         code: bed.code,
         bedNumber: bed.bedNumber,
         roomId: bed.roomId,
+        wardId: bed.wardId,
         bedType: bed.bedType,
         dailyBedRate: bed.dailyBedRate ?? bed.dailyRate ?? 2000,
         occupancyStatus: bed.occupancyStatus,
@@ -98,17 +102,22 @@ export const BedModal: React.FC<BedModalProps> = ({
       setCodeError(null);
       setErrors({});
     } else {
-      const initialWardId = wards.find((w) => w.status === 'Active')?.id || wards[0]?.id || '';
-      setSelectedWardId(initialWardId);
-      const initialRoom = rooms.find((r) => r.wardId === initialWardId && r.status === 'Active') || rooms[0];
+      // Default to the first active ward's first active room, if any exist —
+      // still fully overridable, including clearing to a Direct Ward Bed or
+      // a standalone Room.
+      const initialWardId = wards.find((w) => w.status === 'Active')?.id || '';
+      const initialRoom = rooms.find((r) => r.wardId === initialWardId && r.status === 'Active');
 
-      const initialRoomBeds = initialRoom ? beds.filter((b) => b.roomId === initialRoom.id) : [];
-      const defaultNextBedName = getNextBedNumbers(initialRoomBeds, 1, 'Bed ')[0] || 'Bed 1';
+      const initialScopedBeds = initialRoom
+        ? beds.filter((b) => b.roomId === initialRoom.id)
+        : beds.filter((b) => b.wardId === initialWardId && !b.roomId);
+      const defaultNextBedName = getNextBedNumbers(initialScopedBeds, 1, 'Bed ')[0] || 'Bed 1';
 
       setFormValues({
         code: '',
         bedNumber: defaultNextBedName,
         roomId: initialRoom?.id || '',
+        wardId: initialWardId,
         bedType: 'Standard',
         dailyBedRate: initialRoom?.dailyRoomRate ? Math.round(initialRoom.dailyRoomRate / Math.max(1, initialRoom.capacity)) : 2000,
         occupancyStatus: 'Available',
@@ -124,34 +133,36 @@ export const BedModal: React.FC<BedModalProps> = ({
 
   if (!isOpen) return null;
 
+  // Only reachable when no Room is selected — a Direct Ward Bed, or clearing
+  // to "no assignment yet". Picking a Room always overrides this (see below).
   const handleWardChange = (wardId: string) => {
-    setSelectedWardId(wardId);
-    const roomsInWard = rooms.filter((r) => r.wardId === wardId);
-    const defaultRoom = roomsInWard[0];
-    const newRoomId = defaultRoom?.id || '';
-    const newRoomBeds = beds.filter((b) => b.roomId === newRoomId);
-    const defaultNextName = getNextBedNumbers(newRoomBeds, 1, 'Bed ')[0] || 'Bed 1';
+    const newScopedBeds = wardId ? beds.filter((b) => b.wardId === wardId && !b.roomId) : [];
+    const defaultNextName = getNextBedNumbers(newScopedBeds, 1, 'Bed ')[0] || 'Bed 1';
 
     setFormValues((prev) => ({
       ...prev,
-      roomId: newRoomId,
+      wardId,
       bedNumber: defaultNextName,
-      dailyBedRate: defaultRoom?.dailyRoomRate
-        ? Math.round(defaultRoom.dailyRoomRate / Math.max(1, defaultRoom.capacity))
-        : prev.dailyBedRate,
     }));
   };
 
   const handleRoomChange = (roomId: string) => {
     const r = rooms.find((x) => x.id === roomId);
-    const targetRoomBeds = beds.filter((b) => b.roomId === roomId);
-    const defaultNextName = getNextBedNumbers(targetRoomBeds, 1, 'Bed ')[0] || 'Bed 1';
+    const newScopedBeds = roomId
+      ? beds.filter((b) => b.roomId === roomId)
+      : beds.filter((b) => b.wardId === formValues.wardId && !b.roomId);
+    const defaultNextName = getNextBedNumbers(newScopedBeds, 1, 'Bed ')[0] || 'Bed 1';
 
     setFormValues((prev) => ({
       ...prev,
       roomId,
+      // Auto-resolve the ward from the room (empty string for a standalone
+      // room) — the Ward field locks to this while a Room is selected.
+      wardId: roomId ? r?.wardId || '' : prev.wardId,
       bedNumber: defaultNextName,
-      dailyBedRate: r ? Math.round(r.dailyRoomRate / Math.max(1, r.capacity)) : prev.dailyBedRate,
+      dailyBedRate: r?.dailyRoomRate
+        ? Math.round(r.dailyRoomRate / Math.max(1, r.capacity))
+        : prev.dailyBedRate,
     }));
   };
 
@@ -194,8 +205,8 @@ export const BedModal: React.FC<BedModalProps> = ({
       }
     }
 
-    if (!formValues.roomId) {
-      newErrors.roomId = 'Room assignment is required.';
+    if (!formValues.roomId && !effectiveWardId) {
+      newErrors.roomId = 'Select a Ward, a Room, or both — a bed cannot be left unassigned.';
     }
 
     if (Object.keys(newErrors).length > 0) {
@@ -205,6 +216,7 @@ export const BedModal: React.FC<BedModalProps> = ({
 
     onSave({
       ...formValues,
+      wardId: effectiveWardId,
       bedNumber: (!isEditing && quantity > 1 && previewAddNames.length > 0)
         ? previewAddNames[0]
         : formValues.bedNumber.trim(),
@@ -259,19 +271,25 @@ export const BedModal: React.FC<BedModalProps> = ({
         )}
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          {/* Ward and Room Selection */}
+          {/* Ward and Room Selection — at least one is required; picking a Room
+              always auto-resolves (and locks) the Ward to that room's own ward. */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* Ward Selector */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Parent Ward <span className="text-rose-500">*</span>
+                Ward{' '}
+                <span className="text-slate-400 font-normal text-[11px]">
+                  {isWardLockedByRoom ? '(Auto-resolved from selected Room)' : '(Optional if a Room is selected)'}
+                </span>
               </label>
               <select
                 id="bed-form-ward"
-                value={selectedWardId}
+                value={effectiveWardId}
+                disabled={isWardLockedByRoom}
                 onChange={(e) => handleWardChange(e.target.value)}
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
+                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A] disabled:bg-slate-50 disabled:text-slate-500"
               >
+                <option value="">No Ward{isWardLockedByRoom ? ' (Standalone Room)' : ' (Direct Ward Bed only)'}</option>
                 {wards.map((w) => (
                   <option key={w.id} value={w.id}>
                     {w.name} ({w.code})
@@ -283,7 +301,7 @@ export const BedModal: React.FC<BedModalProps> = ({
             {/* Room Selector */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Target Room <span className="text-rose-500">*</span>
+                Room <span className="text-slate-400 font-normal text-[11px]">(Optional if a Ward is selected)</span>
               </label>
               <select
                 id="bed-form-room"
@@ -291,15 +309,12 @@ export const BedModal: React.FC<BedModalProps> = ({
                 onChange={(e) => handleRoomChange(e.target.value)}
                 className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
               >
-                {availableRooms.length === 0 ? (
-                  <option value="">No rooms configured in this ward</option>
-                ) : (
-                  availableRooms.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.roomNumber} - {r.name} (Cap: {r.bedsConfigured ?? 0}/{r.capacity})
-                    </option>
-                  ))
-                )}
+                <option value="">No Room (Direct Ward Bed)</option>
+                {rooms.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.roomNumber} - {r.name} ({r.wardName || 'Standalone'}) (Cap: {r.bedsConfigured ?? 0}/{r.capacity})
+                  </option>
+                ))}
               </select>
               {errors.roomId && (
                 <p className="text-[11px] text-rose-600 mt-1">{errors.roomId}</p>
@@ -342,6 +357,25 @@ export const BedModal: React.FC<BedModalProps> = ({
             </div>
           )}
 
+          {/* Direct Ward Bed notice (no Room in between) — no room tariff to
+              inherit, so the daily rate below is entered directly. */}
+          {!currentRoom && effectiveWardId && (
+            <div className="p-3 bg-sky-50/70 border border-sky-200/80 rounded-xl flex items-center gap-2 text-xs text-sky-900">
+              <Info className="w-4 h-4 text-sky-600 shrink-0" />
+              <span>
+                Direct Ward Bed — attached straight to{' '}
+                <strong>{wards.find((w) => w.id === effectiveWardId)?.name}</strong>, no Room in between.
+                Set the bed's own daily rate below.
+              </span>
+            </div>
+          )}
+          {!currentRoom && !effectiveWardId && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2 text-xs text-amber-900">
+              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>Select a Ward, a Room, or both before saving — a bed can't be left unassigned.</span>
+            </div>
+          )}
+
           {/* ADD MODE: Quantity Selector */}
           {!isEditing && (
             <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
@@ -351,7 +385,7 @@ export const BedModal: React.FC<BedModalProps> = ({
                     Bed Quantity (Kitne Beds Add Karne Hain?) <span className="text-rose-500">*</span>
                   </label>
                   <p className="text-[11px] text-slate-500">
-                    Choose how many beds to batch create for this room
+                    Choose how many beds to batch create for this {currentRoom ? 'room' : 'ward'}
                   </p>
                 </div>
                 {/* Quantity Stepper */}
@@ -526,16 +560,38 @@ export const BedModal: React.FC<BedModalProps> = ({
               </select>
             </div>
 
-            {/* Room Tariff Info (Bed charges apply from room tariff) */}
-            <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs">
-              <span className="text-[11px] font-semibold text-slate-500 block">Room Tariff:</span>
-              <span className="text-xs font-bold text-[#08775A]">
-                PKR {(currentRoom?.dailyRoomRate ?? 0).toLocaleString('en-PK')} / day
-              </span>
-              <span className="text-[10px] text-slate-400 block mt-0.5">
-                Bed charges apply directly from parent room tariff
-              </span>
-            </div>
+            {/* Room Tariff (inherited) or a directly-editable Daily Rate for a Direct Ward Bed */}
+            {currentRoom ? (
+              <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+                <span className="text-[11px] font-semibold text-slate-500 block">Room Tariff:</span>
+                <span className="text-xs font-bold text-[#08775A]">
+                  PKR {(currentRoom.dailyRoomRate ?? 0).toLocaleString('en-PK')} / day
+                </span>
+                <span className="text-[10px] text-slate-400 block mt-0.5">
+                  Bed charges apply directly from parent room tariff
+                </span>
+              </div>
+            ) : (
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Daily Bed Rate (PKR) <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  id="bed-form-daily-rate"
+                  type="number"
+                  min="0"
+                  step="50"
+                  value={formValues.dailyBedRate}
+                  onChange={(e) =>
+                    setFormValues((prev) => ({ ...prev, dailyBedRate: parseFloat(e.target.value) || 0 }))
+                  }
+                  className="w-full px-3 py-2 text-xs font-bold text-slate-900 rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
+                />
+                <span className="text-[10px] text-slate-400 block mt-0.5">
+                  No parent room tariff to inherit — set this bed's own daily rate
+                </span>
+              </div>
+            )}
           </div>
 
           {/* EDIT MODE: Expand Room Bed Quantity Section */}
@@ -545,10 +601,10 @@ export const BedModal: React.FC<BedModalProps> = ({
                 <div>
                   <div className="flex items-center gap-1.5 text-xs font-bold text-sky-900">
                     <Layers className="w-4 h-4 text-sky-600" />
-                    <span>Room Capacity & Bed Quantity Expansion</span>
+                    <span>{currentRoom ? 'Room Capacity & Bed Quantity Expansion' : 'Bed Quantity Expansion'}</span>
                   </div>
                   <p className="text-[11px] text-sky-700 mt-0.5">
-                    Need to add more beds to this room? Increase quantity here
+                    Need to add more beds to this {currentRoom ? 'room' : 'ward'}? Increase quantity here
                   </p>
                 </div>
 
