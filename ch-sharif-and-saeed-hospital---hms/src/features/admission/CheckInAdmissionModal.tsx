@@ -169,7 +169,13 @@ export const CheckInAdmissionModal: React.FC<CheckInAdmissionModalProps> = ({ ad
             </div>
 
             {parsedBedInfo ? (
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div className="bg-white rounded-lg p-2 border border-[#c2e7db]">
+                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Department</div>
+                  <div className="text-xs font-bold text-slate-800 break-words mt-0.5" title={admission.departmentName}>
+                    {admission.departmentName || '—'}
+                  </div>
+                </div>
                 <div className="bg-white rounded-lg p-2 border border-[#c2e7db]">
                   <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Ward</div>
                   <div className="text-xs font-bold text-slate-800 break-words mt-0.5" title={parsedBedInfo.ward}>
@@ -190,10 +196,29 @@ export const CheckInAdmissionModal: React.FC<CheckInAdmissionModalProps> = ({ ad
                 </div>
               </div>
             ) : (
-              <div className="text-xs font-bold text-slate-800">
-                {assignedBedLabel}
+              <div className="grid grid-cols-2 gap-2">
+                <div className="bg-white rounded-lg p-2 border border-[#c2e7db]">
+                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Department</div>
+                  <div className="text-xs font-bold text-slate-800 break-words mt-0.5" title={admission.departmentName}>
+                    {admission.departmentName || '—'}
+                  </div>
+                </div>
+                <div className="bg-white rounded-lg p-2 border border-[#c2e7db]">
+                  <div className="text-[10px] font-bold text-[#08775A] uppercase tracking-wider">Bed</div>
+                  <div className="text-xs font-bold text-slate-800 break-words mt-0.5">
+                    {assignedBedLabel}
+                  </div>
+                </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Info when no bed was pre-allocated at Front Desk */}
+        {!admission.bedId && admission.departmentName && (
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs">
+            <span className="text-slate-500 font-medium">Department (from Front Desk):</span>
+            <span className="font-bold text-slate-800">{admission.departmentName}</span>
           </div>
         )}
 

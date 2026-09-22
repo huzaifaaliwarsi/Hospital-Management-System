@@ -1,3 +1,4 @@
+import { HOSPITAL_SERVICE_SOURCE, NO_ACTIVE_DEPARTMENT_SERVICES, serviceSourceOptions, servicesForSource } from '../../../utils/serviceSelection';
 import React, { useState, useEffect, useMemo } from 'react';
 import { Plus, Tag, CreditCard, RotateCcw, Loader2, AlertCircle, CheckCircle2, Printer } from 'lucide-react';
 import { formatPKR } from '../../../utils/formatters';
@@ -11,12 +12,12 @@ import {
   collectPayment,
   refundPayment,
 } from '../../../services/invoiceService';
-import { ServiceRatesService } from '../../../services/serviceRatesService';
+import { ServiceRatesService, fetchServices } from '../../../services/serviceRatesService';
 import { StaffUserService } from '../../../services/staffUserService';
 import { DepartmentService, fetchDepartments } from '../../../services/departmentService';
 import { Department } from '../../../types/department';
 import { Modal } from '../../../components/common/Modal';
-import { Select, NumberInput, TextInput } from '../../../components/forms/FormControls';
+import { Select, NumberInput, TextInput, ServiceChecklist } from '../../../components/forms/FormControls';
 
 export type InvoiceModalAction = 'addLine' | 'discount' | 'payment' | 'refund';
 
@@ -82,99 +83,40 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [paymentAmountTouched, setPaymentAmountTouched] = useState(false);
 
-  const services = ServiceRatesService.getServices().filter((s) => s.status === 'Active');
+  const [services, setServices] = useState(() => ServiceRatesService.getServices());
   const doctors = StaffUserService.getStaffUsers().filter((s) => s.staffCategory === 'Doctor' && s.status === 'ACTIVE');
   const [departments, setDepartments] = useState<Department[]>(() => DepartmentService.getDepartments().filter((d) => d.status === 'Active'));
-  const [selectedDeptFilter, setSelectedDeptFilter] = useState<string>('HOSPITAL_SERVICES');
+  const [selectedDeptFilter, setSelectedDeptFilter] = useState<string>(HOSPITAL_SERVICE_SOURCE);
 
   useEffect(() => {
+    fetchServices().then(setServices).catch(() => {});
     fetchDepartments().then((depts) => {
       setDepartments(depts.filter((d) => d.status === 'Active'));
     }).catch(() => {});
   }, []);
 
-  const departmentDropdownOptions = useMemo(() => {
-    const list = [
-      { label: '🏥 Hospital Services (Procedures / Clinical Care)', value: 'HOSPITAL_SERVICES' },
-      { label: '🔬 Laboratory (LAB / Pathology) — Outsourced', value: 'LAB' },
-      { label: '🩻 Radiology & Imaging (X-Ray / Ultrasound / CT) — Outsourced', value: 'RADIOLOGY' },
-    ];
-    departments.forEach((d) => {
-      const nameLower = d.name.toLowerCase();
-      if (
-        nameLower.includes('hospital service') ||
-        nameLower === 'hospital' ||
-        nameLower === 'laboratory' ||
-        nameLower === 'lab' ||
-        nameLower === 'radiology' ||
-        nameLower.includes('imaging')
-      ) {
-        return;
-      }
-      const tag = d.fulfillmentOwnership === 'Outsourced' ? 'Outsourced' : 'Internal';
-      list.push({
-        label: `${d.name} (${tag})`,
-        value: d.id,
-      });
-    });
-    return list;
-  }, [departments]);
+  const departmentDropdownOptions = useMemo(() => serviceSourceOptions(departments), [departments]);
 
-  const filteredServices = useMemo(() => {
-    if (selectedDeptFilter === 'HOSPITAL_SERVICES') {
-      return services.filter(
-        (s) =>
-          s.serviceStream !== 'LAB' &&
-          s.category !== 'Laboratory' &&
-          s.category !== 'Diagnostic' &&
-          s.category !== 'Radiology' &&
-          !(s.departmentName || '').toLowerCase().includes('lab') &&
-          !(s.departmentName || '').toLowerCase().includes('radiology') &&
-          !(s.departmentName || '').toLowerCase().includes('imaging') &&
-          !(s.name || '').toLowerCase().includes('x-ray') &&
-          !(s.name || '').toLowerCase().includes('ultrasound') &&
-          !(s.name || '').toLowerCase().includes('ct scan') &&
-          !(s.name || '').toLowerCase().includes('mri')
-      );
-    }
-    if (selectedDeptFilter === 'LAB') {
-      return services.filter(
-        (s) =>
-          (s.serviceStream === 'LAB' ||
-            s.category === 'Laboratory' ||
-            s.category === 'Diagnostic' ||
-            (s.departmentName || '').toLowerCase().includes('lab') ||
-            (s.departmentName || '').toLowerCase().includes('pathology')) &&
-          s.category !== 'Radiology' &&
-          !(s.departmentName || '').toLowerCase().includes('radiology') &&
-          !(s.departmentName || '').toLowerCase().includes('imaging') &&
-          !(s.name || '').toLowerCase().includes('x-ray') &&
-          !(s.name || '').toLowerCase().includes('ultrasound') &&
-          !(s.name || '').toLowerCase().includes('ct scan') &&
-          !(s.name || '').toLowerCase().includes('mri')
-      );
-    }
-    if (selectedDeptFilter === 'RADIOLOGY') {
-      return services.filter(
-        (s) =>
-          s.category === 'Radiology' ||
-          (s.departmentName || '').toLowerCase().includes('radiology') ||
-          (s.departmentName || '').toLowerCase().includes('imaging') ||
-          (s.name || '').toLowerCase().includes('x-ray') ||
-          (s.name || '').toLowerCase().includes('ultrasound') ||
-          (s.name || '').toLowerCase().includes('ct scan') ||
-          (s.name || '').toLowerCase().includes('mri')
-      );
-    }
-    return services.filter(
-      (s) => s.departmentId === selectedDeptFilter || s.departmentName === selectedDeptFilter
-    );
-  }, [services, selectedDeptFilter]);
+  const filteredServices = useMemo(
+    () => servicesForSource(services, selectedDeptFilter),
+    [services, selectedDeptFilter]
+  );
 
   // Add Service Line form state
-  const [lineServiceId, setLineServiceId] = useState('');
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
+  useEffect(() => {
+    setSelectedServiceIds((ids) => ids.filter((id) => services.some((s) => s.id === id && s.status === 'Active')));
+  }, [services]);
   const [lineQty, setLineQty] = useState<number>(1);
   const [linePerformedBy, setLinePerformedBy] = useState('');
+
+  const selectedServices = useMemo(() => {
+    return services.filter((s) => selectedServiceIds.includes(s.id));
+  }, [services, selectedServiceIds]);
+
+  const selectedServicesTotal = useMemo(() => {
+    return selectedServices.reduce((sum, s) => sum + (s.standardRate || 0), 0) * (lineQty || 1);
+  }, [selectedServices, lineQty]);
 
   // Discount form state
   const [discountPercent, setDiscountPercent] = useState<number | ''>('');
@@ -257,7 +199,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
   const closeAction = () => {
     setActiveAction(null);
     setActionError(null);
-    setLineServiceId('');
+    setSelectedServiceIds([]);
     setLineQty(1);
     setLinePerformedBy('');
     setDiscountPercent('');
@@ -279,15 +221,22 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
 
   const handleAddLine = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!lineServiceId) {
-      setActionError('Select a service.');
+    if (selectedServiceIds.length === 0) {
+      setActionError('Select at least one service.');
       return;
     }
     setIsSaving(true);
     setActionError(null);
     try {
-      await addServiceLine(invoiceId, { serviceRateId: lineServiceId, quantity: lineQty, performedByStaffId: linePerformedBy || undefined });
-      await afterMutate('Service line added.');
+      for (const serviceId of selectedServiceIds) {
+        await addServiceLine(invoiceId, {
+          serviceRateId: serviceId,
+          quantity: lineQty,
+          performedByStaffId: linePerformedBy || undefined,
+        });
+      }
+      const count = selectedServiceIds.length;
+      await afterMutate(`${count} ${count === 1 ? 'service line' : 'service lines'} added.`);
     } catch (err: any) {
       setActionError(err?.response?.data?.error?.message || err?.message || 'Failed to add service line.');
     } finally {
@@ -465,6 +414,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
               <div class="meta-row"><span class="meta-label">Date &amp; Time:</span> <span class="meta-val">${invoice?.createdAt}</span></div>
               <div class="meta-row"><span class="meta-label">Encounter:</span> <span class="meta-val">${getInvoiceEncounterLabel(invoice)}</span></div>
               ${invoice?.admissionNumber ? `<div class="meta-row"><span class="meta-label">Admission #:</span> <strong class="meta-val">${invoice.admissionNumber}</strong></div>` : ''}
+              ${invoice?.sourceType === 'ADMISSION' && invoice.admissionEstimatedAmount != null ? `<div class="meta-row"><span class="meta-label">Estimated Amount — Subject to Final Billing:</span> <span class="meta-val">${formatPKR(invoice.admissionEstimatedAmount)}</span></div>` : ''}
               ${invoice?.wardName || invoice?.bedNumber ? `<div class="meta-row"><span class="meta-label">Ward / Bed:</span> <span class="meta-val">${[invoice.wardName, invoice.bedNumber ? (/^bed\b/i.test(invoice.bedNumber.trim()) ? invoice.bedNumber.trim() : `Bed ${invoice.bedNumber.trim()}`) : ''].filter(Boolean).join(' - ')}</span></div>` : ''}
               <div class="meta-row"><span class="meta-label">Doctor:</span> <span class="meta-val">${invoice?.doctorName || 'Consultant'}</span></div>
               <div class="meta-row"><span class="meta-label">Status:</span> <span class="badge ${invoice?.status === 'PAID' ? 'badge-paid' : 'badge-unpaid'}">${invoice?.status}</span></div>
@@ -567,6 +517,12 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                 <div className="flex justify-between">
                   <span className="text-slate-500 font-semibold">Admission #:</span>
                   <span className="font-mono font-bold text-[#08775A]">{invoice.admissionNumber}</span>
+                </div>
+              )}
+              {invoice.sourceType === 'ADMISSION' && invoice.admissionEstimatedAmount != null && (
+                <div className="flex justify-between gap-3">
+                  <span className="text-slate-500 font-semibold">Estimated Amount — Subject to Final Billing:</span>
+                  <span className="font-semibold text-slate-800">{formatPKR(invoice.admissionEstimatedAmount)}</span>
                 </div>
               )}
               {(invoice.wardName || invoice.bedNumber) && (
@@ -889,56 +845,55 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                 </span>
               </div>
 
-              {/* 2-Level Cascading Selector */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Service Category / Source Filter */}
+              <div>
                 <Select
                   label="1. Service Category / Source"
                   options={departmentDropdownOptions}
                   value={selectedDeptFilter}
-                  onChange={(e) => {
-                    setSelectedDeptFilter(e.target.value);
-                    setLineServiceId('');
-                  }}
+                  onChange={(e) => setSelectedDeptFilter(e.target.value)}
                   hint={
                     selectedDeptFilter === 'HOSPITAL_SERVICES'
                       ? 'Internal hospital procedures & care'
-                      : selectedDeptFilter === 'LAB'
-                      ? 'Outsourced Laboratory & Pathology tests'
-                      : selectedDeptFilter === 'RADIOLOGY'
-                      ? 'Outsourced Radiology & Imaging procedures'
                       : 'Departmental clinical services'
-                  }
-                />
-                <Select
-                  label="2. Service / Procedure"
-                  required
-                  placeholder={
-                    filteredServices.length === 0
-                      ? 'No services available in this category'
-                      : 'Choose a service…'
-                  }
-                  options={filteredServices.map((s) => ({
-                    label: `${s.name} (${s.code}) — ${formatPKR(s.standardRate)}`,
-                    value: s.id,
-                  }))}
-                  value={lineServiceId}
-                  onChange={(e) => setLineServiceId(e.target.value)}
-                  hint={
-                    lineServiceId
-                      ? `Standard Rate: ${formatPKR(filteredServices.find((s) => s.id === lineServiceId)?.standardRate ?? 0)}`
-                      : 'Select procedure or test'
                   }
                 />
               </div>
 
+              {/* Searchable Multi-Select Service Checklist */}
+              <ServiceChecklist
+                label="2. Select Services / Procedures to Add"
+                services={filteredServices}
+                selectedServiceIds={selectedServiceIds}
+                onChange={setSelectedServiceIds}
+                emptyMessage={
+                  filteredServices.length === 0
+                    ? NO_ACTIVE_DEPARTMENT_SERVICES
+                    : 'No services available in this category'
+                }
+              />
+
+              {selectedServices.length > 0 && (
+                <div className="flex items-center justify-between p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-xs">
+                  <span className="font-semibold text-emerald-900">
+                    {selectedServices.length} {selectedServices.length === 1 ? 'Service' : 'Services'} Selected
+                  </span>
+                  <span className="font-bold text-emerald-950">
+                    Total: {formatPKR(selectedServicesTotal)}
+                  </span>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-3">
-                <NumberInput label="Quantity" min={1} value={lineQty} onChange={(e) => setLineQty(Number(e.target.value) || 1)} />
+                <NumberInput label="Quantity (per service)" min={1} value={lineQty} onChange={(e) => setLineQty(Number(e.target.value) || 1)} />
                 <Select label="Performed By (optional)" options={doctors.map((d) => ({ label: d.fullName, value: d.id }))} value={linePerformedBy} onChange={(e) => setLinePerformedBy(e.target.value)} />
               </div>
 
               <div className="flex justify-end gap-2 pt-1 border-t border-slate-200">
                 <button type="button" onClick={closeAction} className="px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">Cancel</button>
-                <button type="submit" disabled={isSaving || !lineServiceId} className="px-4 py-1.5 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg disabled:opacity-50 transition-colors shadow-2xs">{isSaving ? 'Adding…' : 'Add Line'}</button>
+                <button type="submit" disabled={isSaving || selectedServiceIds.length === 0} className="px-4 py-1.5 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg disabled:opacity-50 transition-colors shadow-2xs">
+                  {isSaving ? 'Adding…' : selectedServiceIds.length > 1 ? `Add ${selectedServiceIds.length} Lines` : 'Add Line'}
+                </button>
               </div>
             </form>
           )}

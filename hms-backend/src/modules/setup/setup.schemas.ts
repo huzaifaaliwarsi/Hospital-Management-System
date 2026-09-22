@@ -128,7 +128,7 @@ export const createServiceRateSchema = z.object({
   code: z.string().max(20).optional(),
   name: z.string().min(1).max(150),
   description: z.string().max(2000).optional(),
-  departmentId: z.string().uuid(),
+  departmentId: z.string().uuid().nullable().optional(),
   category: z.string().optional(),
   billingUnit: z.string().min(1).max(30),
   standardRate: z.coerce.number().nonnegative(),

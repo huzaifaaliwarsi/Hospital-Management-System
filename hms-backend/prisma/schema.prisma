@@ -346,6 +346,9 @@ model Staff {
   // Doctor-Sponsored (deducted from their commission payable) vs a generic
   // hospital discount. Only meaningful for Doctor-category staff.
   doctorSponsoredDiscountTrackingEnabled Boolean @default(false) @map("doctor_sponsored_discount_tracking_enabled")
+  availableForOpd         Boolean @default(false) @map("available_for_opd")
+  availableForObservation Boolean @default(false) @map("available_for_observation")
+  availableForEmergency   Boolean @default(false) @map("available_for_emergency")
 
   portalUser PortalUser? @relation("StaffPortalUser")
 
@@ -818,8 +821,8 @@ model ServiceRate {
   code                      String        @unique
   name                      String
   description               String?
-  departmentId              String        @map("department_id")
-  department                Department    @relation(fields: [departmentId], references: [id])
+  departmentId              String?       @map("department_id")
+  department                Department?   @relation(fields: [departmentId], references: [id], onDelete: Restrict)
   category                  String?
   billingUnit               String        @map("billing_unit")
   standardRate              Decimal       @map("standard_rate") @db.Decimal(14, 2)
@@ -1171,8 +1174,8 @@ model Appointment {
   selfPayEncounter   SelfPayEncounter? @relation(fields: [selfPayEncounterId], references: [id])
   departmentId       String            @map("department_id")
   department         Department        @relation(fields: [departmentId], references: [id])
-  doctorStaffId      String            @map("doctor_staff_id")
-  doctor             Staff             @relation("AppointmentDoctor", fields: [doctorStaffId], references: [id])
+  doctorStaffId      String?           @map("doctor_staff_id")
+  doctor             Staff?            @relation("AppointmentDoctor", fields: [doctorStaffId], references: [id], onDelete: Restrict)
   serviceRateId      String            @map("service_rate_id")
   serviceRate        ServiceRate       @relation(fields: [serviceRateId], references: [id])
   slotAt             DateTime          @map("slot_at")

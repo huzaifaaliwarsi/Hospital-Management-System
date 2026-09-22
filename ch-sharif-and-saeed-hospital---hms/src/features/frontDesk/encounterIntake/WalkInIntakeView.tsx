@@ -1,3 +1,5 @@
+import { doctorsForEncounter } from '../../../utils/doctorAvailability';
+import { HOSPITAL_SERVICE_SOURCE, NO_ACTIVE_DEPARTMENT_SERVICES, serviceSourceOptions, servicesForSource, retainAvailableServiceIds } from '../../../utils/serviceSelection';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Stethoscope,
@@ -37,7 +39,7 @@ import { fetchServices } from '../../../services/serviceRatesService';
 import { fetchDepartments, DepartmentService } from '../../../services/departmentService';
 import { Department } from '../../../types/department';
 import { HospitalService } from '../../../types/serviceRates';
-import { TextInput, Select, Textarea, CNICInput, MultiSelect } from '../../../components/forms/FormControls';
+import { TextInput, Select, Textarea, CNICInput, MultiSelect, ServiceChecklist } from '../../../components/forms/FormControls';
 import { InvoiceDetailModal } from '../billing/InvoiceDetailModal';
 import { useRouter } from '../../../context/RouterContext';
 import { formatPKR } from '../../../utils/formatters';
@@ -201,15 +203,9 @@ export const WalkInIntakeView: React.FC = () => {
     [allActiveDoctors, doctorId]
   );
 
-  // Resolves a doctor's own assigned Department records (never the full hospital list).
-  const getDoctorDepartments = (doc: StaffUser): Department[] => {
-    const ids = doc.departmentIds?.length ? doc.departmentIds : doc.departmentId ? [doc.departmentId] : [];
-    if (ids.length === 0) return [];
-    return departments.filter((d) => ids.includes(d.id));
-  };
-
   const handleDoctorChange = (selectedDocId: string) => {
     setDoctorId(selectedDocId);
+    setDepartmentId('');
   };
 
   // Consulting Doctor dropdown gets two-step Enter behavior: a closed <select>
@@ -234,22 +230,17 @@ export const WalkInIntakeView: React.FC = () => {
     }
   };
 
-  // Consulting Doctor list, filtered down to doctors who have at least one
-  // department that supports the currently selected Encounter Service.
-  const doctorsForEncounterType = useMemo(() => {
-    if (!encounterType) return allActiveDoctors;
-    return allActiveDoctors.filter((doc) => {
-      const depts = getDoctorDepartments(doc);
-      if (depts.length === 0) return true;
-      return depts.some((d) => departmentSupportsEncounter(d, encounterType));
-    });
-  }, [allActiveDoctors, departments, encounterType]);
+  const doctorsForEncounterType = useMemo(
+    () => doctorsForEncounter(staffUsers, encounterType),
+    [staffUsers, encounterType]
+  );
 
   // If the selected doctor no longer supports the (newly changed) Encounter
   // Service, clear the doctor so Front Desk re-picks an authorized doctor.
   useEffect(() => {
     if (doctorId && !doctorsForEncounterType.some((d) => d.id === doctorId)) {
       setDoctorId('');
+      setDepartmentId('');
     }
   }, [doctorsForEncounterType, doctorId]);
 
@@ -260,41 +251,37 @@ export const WalkInIntakeView: React.FC = () => {
       if (docDeptIds.length > 0 && !docDeptIds.includes(departmentId)) {
         setDepartmentId(docDeptIds[0]);
       }
-    } else if (encounterType && encounterType !== 'CUSTOM') {
-      // Custom Billing has no doctor context, so the department is left to be
-      // resolved from the selected service(s) at submit time instead of a
-      // generic clinical-department guess.
-      const targetDept = resolveDoctorDepartmentForEncounter(null, departments, encounterType);
-      if (targetDept && !departmentId) {
-        setDepartmentId(targetDept.id);
-      }
     }
   }, [encounterType, selectedDoctorObj, departments, departmentId]);
 
-  // Core encounter services from Services & Rates (authoritative catalog)
+  // Core encounter services use the same department scope as the selected fee.
+  const encounterServices = useMemo(
+    () => servicesForSource(services, departmentId || HOSPITAL_SERVICE_SOURCE),
+    [services, departmentId]
+  );
   const opdCoreService = useMemo(() => {
     return (
-      services.find((s) => s.encounterType === 'OPD' && s.isDefaultEncounterService) ||
-      services.find((s) => s.encounterType === 'OPD') ||
+      encounterServices.find((s) => s.encounterType === 'OPD' && s.isDefaultEncounterService) ||
+      encounterServices.find((s) => s.encounterType === 'OPD') ||
       null
     );
-  }, [services]);
+  }, [encounterServices]);
 
   const obsCoreService = useMemo(() => {
     return (
-      services.find((s) => s.encounterType === 'OBSERVATION' && s.isDefaultEncounterService) ||
-      services.find((s) => s.encounterType === 'OBSERVATION') ||
+      encounterServices.find((s) => s.encounterType === 'OBSERVATION' && s.isDefaultEncounterService) ||
+      encounterServices.find((s) => s.encounterType === 'OBSERVATION') ||
       null
     );
-  }, [services]);
+  }, [encounterServices]);
 
   const erCoreService = useMemo(() => {
     return (
-      services.find((s) => s.encounterType === 'EMERGENCY' && s.isDefaultEncounterService) ||
-      services.find((s) => s.encounterType === 'EMERGENCY') ||
+      encounterServices.find((s) => s.encounterType === 'EMERGENCY' && s.isDefaultEncounterService) ||
+      encounterServices.find((s) => s.encounterType === 'EMERGENCY') ||
       null
     );
-  }, [services]);
+  }, [encounterServices]);
 
   const selectedCoreService = useMemo(() => {
     if (encounterType === 'OPD') return opdCoreService;
@@ -305,29 +292,14 @@ export const WalkInIntakeView: React.FC = () => {
 
   const isSelectedCoreServiceInactive = Boolean(selectedCoreService && selectedCoreService.status !== 'Active');
 
-  // Resolve configured default encounter service (Services & Rates)
+  // Never fall back to another department's encounter service.
   const defaultEncounterService = useMemo<HospitalService | null>(() => {
-    if (!encounterType || !services || services.length === 0) return null;
-    const active = services.filter((s) => s.status === 'Active');
-
-    // 1. Department-specific default service for this encounterType
-    const deptDefault = active.find(
-      (s) => s.encounterType === encounterType && s.isDefaultEncounterService && s.departmentId === departmentId
-    );
-    if (deptDefault) return deptDefault;
-
-    // 2. Global default service for this encounterType
-    const globalDefault = active.find(
-      (s) => s.encounterType === encounterType && s.isDefaultEncounterService
-    );
-    if (globalDefault) return globalDefault;
-
-    // 3. Any active service configured with this encounterType
-    const anyActive = active.find((s) => s.encounterType === encounterType);
-    if (anyActive) return anyActive;
-
-    return null;
-  }, [services, encounterType, departmentId]);
+    if (!encounterType) return null;
+    const active = encounterServices;
+    return active.find((service) => service.encounterType === encounterType && service.isDefaultEncounterService)
+      || active.find((service) => service.encounterType === encounterType)
+      || null;
+  }, [encounterServices, encounterType]);
 
   // All active billable services in the database that Front Desk can add to the encounter
   // (Observation services, Emergency procedures, Lab tests, Injections, etc.)
@@ -351,96 +323,18 @@ export const WalkInIntakeView: React.FC = () => {
   );
 
   // Additional services cascading selection (Department / Source -> Service)
-  const [selectedServiceStream, setSelectedServiceStream] = useState<string>('HOSPITAL_SERVICES');
-  const [candidateServiceId, setCandidateServiceId] = useState<string>('');
+  const [selectedServiceStream, setSelectedServiceStream] = useState<string>(HOSPITAL_SERVICE_SOURCE);
 
-  const serviceStreamOptions = useMemo(() => {
-    const list = [
-      { label: 'Hospital Services (Procedures & Care)', value: 'HOSPITAL_SERVICES' },
-      { label: 'Laboratory (Pathology Tests)', value: 'LAB' },
-      { label: 'Radiology & Imaging (X-Ray, USG, CT)', value: 'RADIOLOGY' },
-    ];
-    departments
-      .filter((d) => d.status === 'Active')
-      .forEach((d) => {
-        const nameLower = d.name.toLowerCase();
-        if (
-          nameLower.includes('hospital service') ||
-          nameLower === 'hospital' ||
-          nameLower === 'laboratory' ||
-          nameLower === 'lab' ||
-          nameLower === 'radiology' ||
-          nameLower.includes('imaging')
-        ) {
-          return;
-        }
-        const tag = d.fulfillmentOwnership === 'Outsourced' ? 'Outsourced' : 'Internal';
-        list.push({
-          label: `${d.name} (${tag})`,
-          value: d.id,
-        });
-      });
-    return list;
-  }, [departments]);
+  const serviceStreamOptions = useMemo(() => serviceSourceOptions(departments), [departments]);
 
-  const filteredStreamServices = useMemo(() => {
-    if (selectedServiceStream === 'HOSPITAL_SERVICES') {
-      return additionalBillableServices.filter(
-        (s) =>
-          s.serviceStream !== 'LAB' &&
-          s.category !== 'Laboratory' &&
-          s.category !== 'Diagnostic' &&
-          s.category !== 'Radiology' &&
-          !(s.departmentName || '').toLowerCase().includes('lab') &&
-          !(s.departmentName || '').toLowerCase().includes('radiology') &&
-          !(s.departmentName || '').toLowerCase().includes('imaging') &&
-          !(s.name || '').toLowerCase().includes('x-ray') &&
-          !(s.name || '').toLowerCase().includes('ultrasound') &&
-          !(s.name || '').toLowerCase().includes('ct scan') &&
-          !(s.name || '').toLowerCase().includes('mri')
-      );
-    }
-    if (selectedServiceStream === 'LAB') {
-      return additionalBillableServices.filter(
-        (s) =>
-          (s.serviceStream === 'LAB' ||
-            s.category === 'Laboratory' ||
-            s.category === 'Diagnostic' ||
-            (s.departmentName || '').toLowerCase().includes('lab') ||
-            (s.departmentName || '').toLowerCase().includes('pathology')) &&
-          s.category !== 'Radiology' &&
-          !(s.departmentName || '').toLowerCase().includes('radiology') &&
-          !(s.departmentName || '').toLowerCase().includes('imaging') &&
-          !(s.name || '').toLowerCase().includes('x-ray') &&
-          !(s.name || '').toLowerCase().includes('ultrasound') &&
-          !(s.name || '').toLowerCase().includes('ct scan') &&
-          !(s.name || '').toLowerCase().includes('mri')
-      );
-    }
-    if (selectedServiceStream === 'RADIOLOGY') {
-      return additionalBillableServices.filter(
-        (s) =>
-          s.category === 'Radiology' ||
-          (s.departmentName || '').toLowerCase().includes('radiology') ||
-          (s.departmentName || '').toLowerCase().includes('imaging') ||
-          (s.name || '').toLowerCase().includes('x-ray') ||
-          (s.name || '').toLowerCase().includes('ultrasound') ||
-          (s.name || '').toLowerCase().includes('ct scan') ||
-          (s.name || '').toLowerCase().includes('mri')
-      );
-    }
-    return additionalBillableServices.filter(
-      (s) => s.departmentId === selectedServiceStream || s.departmentName === selectedServiceStream
-    );
-  }, [additionalBillableServices, selectedServiceStream]);
+  const filteredStreamServices = useMemo(
+    () => servicesForSource(additionalBillableServices, selectedServiceStream),
+    [additionalBillableServices, selectedServiceStream]
+  );
 
-  const handleAddAdditionalService = () => {
-    if (!candidateServiceId) return;
-    if (!selectedServiceIds.includes(candidateServiceId)) {
-      setSelectedServiceIds((prev) => [...prev, candidateServiceId]);
-    }
-    setCandidateServiceId('');
-  };
+  useEffect(() => {
+    setSelectedServiceIds((ids) => retainAvailableServiceIds(ids, additionalBillableServices));
+  }, [additionalBillableServices]);
 
   const handleRemoveAdditionalService = (idToRemove: string) => {
     setSelectedServiceIds((prev) => prev.filter((id) => id !== idToRemove));
@@ -555,21 +449,14 @@ export const WalkInIntakeView: React.FC = () => {
       }
     }
 
-    // 3. Doctor & Department Validation (Auto-resolves department from doctor)
-    // Custom Billing is ad-hoc service billing (e.g. a walk-in lab-only visit) and
-    // does not require a Consulting Doctor — a doctor may still be attached optionally.
-    if (encounterType !== 'CUSTOM' && !doctorId) {
-      setFormError('Please select a Consulting Doctor.');
-      return;
-    }
-
+    // Doctor assignment is optional; use the selected service when unassigned.
     let effectiveDeptId = '';
-    if (encounterType === 'CUSTOM' && !doctorId) {
+    if (!doctorId) {
       // No doctor context: attribute the lead department from the first selected
       // service (e.g. Laboratory / Radiology / a clinical department) so the
       // invoice header reflects the actual department billed, not a generic one.
       // Each line item still carries its own service's department regardless.
-      effectiveDeptId = additionalBillableServices.find((s) => s.id === selectedServiceIds[0])?.departmentId || departmentId || '';
+      effectiveDeptId = defaultEncounterService?.departmentId || additionalBillableServices.find((s) => s.id === selectedServiceIds[0])?.departmentId || '';
     } else {
       const targetDept = resolveDoctorDepartmentForEncounter(selectedDoctorObj, departments, encounterType);
       effectiveDeptId = targetDept?.id || departmentId;
@@ -602,7 +489,9 @@ export const WalkInIntakeView: React.FC = () => {
     }
 
     if (encounterType === 'OPD' && !defaultEncounterService) {
-      setFormError('No default OPD Consultation service is configured. Please ask Admin to configure Services & Rates.');
+      setFormError(servicesForSource(services, departmentId || HOSPITAL_SERVICE_SOURCE).length === 0
+        ? NO_ACTIVE_DEPARTMENT_SERVICES
+        : 'No default OPD Consultation service is configured. Please ask Admin to configure Services & Rates.');
       return;
     }
 
@@ -631,8 +520,8 @@ export const WalkInIntakeView: React.FC = () => {
             dob,
             phone: normalizePhone(primaryPhone),
           },
-          departmentId: effectiveDeptId,
-          doctorStaffId: doctorId,
+          departmentId: effectiveDeptId || undefined,
+          doctorStaffId: doctorId || undefined,
           notes: combinedNotes,
         });
         targetInvoiceId = invoice.id;
@@ -679,8 +568,8 @@ export const WalkInIntakeView: React.FC = () => {
         const invoice = await createEncounter({
           encounterType,
           panelPatientId: regRes.patient.id,
-          departmentId: effectiveDeptId,
-          doctorStaffId: doctorId,
+          departmentId: effectiveDeptId || undefined,
+          doctorStaffId: doctorId || undefined,
           notes: combinedNotes,
         });
         targetInvoiceId = invoice.id;
@@ -692,7 +581,7 @@ export const WalkInIntakeView: React.FC = () => {
           await addServiceLine(targetInvoiceId, {
             serviceRateId: defaultEncounterService.id,
             quantity: 1,
-            performedByStaffId: doctorId,
+            performedByStaffId: doctorId || undefined,
           });
         } catch (srvErr) {
           console.warn('Could not auto-attach encounter service line:', srvErr);
@@ -1219,11 +1108,7 @@ export const WalkInIntakeView: React.FC = () => {
           <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-3 shrink-0">
             <div className="flex items-center justify-between pb-2 border-b border-slate-100">
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
-                3. Consulting Doctor {encounterType === 'CUSTOM' ? (
-                  <span className="text-slate-400 normal-case font-medium">(Optional)</span>
-                ) : (
-                  <span className="text-rose-500">*</span>
-                )}
+                3. Consulting Doctor <span className="text-slate-400 normal-case font-medium">(Optional)</span>
               </label>
               <span className="text-[10.5px] text-[#08775A] font-semibold bg-[#effaf5] border border-emerald-200 px-2 py-0.5 rounded">
                 {encounterType === 'OPD'
@@ -1240,17 +1125,10 @@ export const WalkInIntakeView: React.FC = () => {
 
             {/* Consulting Doctor Dropdown ONLY */}
             <Select
-              label={encounterType === 'CUSTOM' ? 'Consulting Doctor (Optional)' : 'Consulting Doctor'}
-              required={encounterType !== 'CUSTOM'}
+              label="Consulting Doctor (Optional)"
               options={[
-                { label: '-- Select Consulting Doctor --', value: '' },
-                ...doctorsForEncounterType.map((d) => {
-                  const resolvedDept = resolveDoctorDepartmentForEncounter(d, departments, encounterType);
-                  return {
-                    label: `${d.fullName} (${resolvedDept?.name || d.departmentName || d.designation || 'Doctor'})`,
-                    value: d.id,
-                  };
-                }),
+                { label: 'Not Assigned / Select Later', value: '' },
+                ...doctorsForEncounterType.map((doctor) => ({ label: doctor.fullName, value: doctor.id })),
               ]}
               value={doctorId}
               onChange={(e) => {
@@ -1266,18 +1144,7 @@ export const WalkInIntakeView: React.FC = () => {
               }}
             />
 
-            {selectedDoctorObj ? (
-              <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-100">
-                <span>Clinical Department:</span>
-                <span className="font-bold text-[#08775A] bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                  ✓ {departments.find((d) => d.id === departmentId)?.name || resolveDoctorDepartmentForEncounter(selectedDoctorObj, departments, encounterType)?.name || selectedDoctorObj.departmentName || 'General'}
-                </span>
-              </div>
-            ) : (
-              <span className="text-[10.5px] text-slate-400 block">
-                Showing doctors authorized for {encounterType || 'this service'}
-              </span>
-            )}
+
           </div>
 
           {/* 3b. Additional Services / Procedures Selection (OBSERVATION, EMERGENCY & CUSTOM ONLY - Removed from OPD) */}
@@ -1314,57 +1181,28 @@ export const WalkInIntakeView: React.FC = () => {
                     label="1. Service Category / Source"
                     options={serviceStreamOptions}
                     value={selectedServiceStream}
-                    onChange={(e) => {
-                      setSelectedServiceStream(e.target.value);
-                      setCandidateServiceId('');
-                    }}
+                    onChange={(e) => setSelectedServiceStream(e.target.value)}
                     onKeyDown={handleEnterNext}
                   />
                   <p className="text-[11px] text-slate-500 mt-1 pl-0.5">
                     {selectedServiceStream === 'HOSPITAL_SERVICES'
                       ? 'Internal hospital procedures, clinical care & nursing'
-                      : selectedServiceStream === 'LAB'
-                        ? 'Outsourced Laboratory & Pathology tests'
-                        : selectedServiceStream === 'RADIOLOGY'
-                          ? 'Outsourced X-Ray, Ultrasound, & Imaging'
-                          : 'Departmental clinical services'}
+                      : 'Departmental clinical services'}
                   </p>
                 </div>
 
-                {/* 2. Service / Procedure / Test + Add Button (Pixel-perfect horizontal alignment) */}
-                <div className="flex items-end gap-2.5">
-                  <div className="flex-1 min-w-0">
-                    <Select
-                      label="2. Service / Procedure / Test"
-                      placeholder={
-                        filteredStreamServices.length === 0
-                          ? 'No services available in this category'
-                          : 'Select service...'
-                      }
-                      options={filteredStreamServices.map((s) => ({
-                        label: `${s.name} (${formatPKR(s.standardRate)})`,
-                        value: s.id,
-                      }))}
-                      value={candidateServiceId}
-                      onChange={(e) => setCandidateServiceId(e.target.value)}
-                      onKeyDown={handleEnterNext}
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleAddAdditionalService}
-                    disabled={!candidateServiceId}
-                    className="h-9 px-4 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] disabled:opacity-40 disabled:cursor-not-allowed rounded-lg shadow-2xs transition-colors flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Add</span>
-                  </button>
-                </div>
-                {candidateServiceId && (
-                  <p className="text-[11px] font-medium text-[#08775A] pl-0.5">
-                    Standard Rate: {formatPKR(filteredStreamServices.find((s) => s.id === candidateServiceId)?.standardRate ?? 0)}
-                  </p>
-                )}
+                {/* 2. Searchable Multi-Select Service Checklist */}
+                <ServiceChecklist
+                  label="2. Select Services / Procedures / Tests"
+                  services={filteredStreamServices}
+                  selectedServiceIds={selectedServiceIds}
+                  onChange={setSelectedServiceIds}
+                  emptyMessage={
+                    filteredStreamServices.length === 0
+                      ? NO_ACTIVE_DEPARTMENT_SERVICES
+                      : 'No services available in this category'
+                  }
+                />
               </div>
 
               {/* Added Services Table / List */}
@@ -1433,6 +1271,9 @@ export const WalkInIntakeView: React.FC = () => {
               ) : null}
             </div>
 
+            {departmentId && encounterServices.length === 0 && (
+              <p className="text-xs text-slate-500">{NO_ACTIVE_DEPARTMENT_SERVICES}</p>
+            )}
             {!encounterType ? (
               <div className="flex items-center gap-2 p-3 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-500">
                 <Receipt className="h-4 w-4 shrink-0 text-slate-400" />

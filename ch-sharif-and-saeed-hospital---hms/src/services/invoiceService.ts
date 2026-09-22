@@ -79,6 +79,7 @@ export interface InvoiceDetail extends InvoiceSummary {
   patientAge?: number | string;
   patientCnic?: string;
   admissionNumber?: string;
+  admissionEstimatedAmount?: number | null;
   wardName?: string;
   bedNumber?: string;
 }
@@ -158,6 +159,7 @@ function toInvoiceDetail(raw: Record<string, any>): InvoiceDetail {
     patientAge: raw.panelPatient?.age || (raw.selfPayEncounter?.dob ? Math.max(0, new Date().getFullYear() - new Date(raw.selfPayEncounter.dob).getFullYear()) : ''),
     patientCnic: raw.panelPatient?.cnic || raw.selfPayEncounter?.cnicOrPassport || '',
     admissionNumber: raw.admissionRecord?.admissionNumber || undefined,
+    admissionEstimatedAmount: raw.admissionRecord?.estimatedAmount != null ? Number(raw.admissionRecord.estimatedAmount) : null,
     wardName: raw.admissionRecord?.bed?.room?.ward?.name || undefined,
     bedNumber: raw.admissionRecord?.bed?.bedNumber || undefined,
     lines: (raw.lines || []).map((l: any) => ({

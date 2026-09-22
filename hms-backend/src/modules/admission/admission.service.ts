@@ -322,7 +322,7 @@ export const admissionService = {
           diagnosis: body.diagnosis,
           weightKg: body.weightKg != null ? new Decimal(body.weightKg) : null,
           expectedAt: body.expectedAt,
-          estimatedAmount: body.estimatedAmount ? new Decimal(body.estimatedAmount) : null,
+          estimatedAmount: body.estimatedAmount !== undefined ? new Decimal(body.estimatedAmount) : null,
           notes: body.notes,
           createdById: actorId,
         },

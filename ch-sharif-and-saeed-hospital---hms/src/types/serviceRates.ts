@@ -33,7 +33,7 @@ export interface HospitalService {
   name: string;
   description?: string;
 
-  departmentId: string;
+  departmentId: string | null;
   departmentName: string;
 
   category: ServiceCategory;
@@ -83,13 +83,13 @@ export interface ServiceFormValues {
   name: string;
   description: string;
   departmentId: string;
-  category: ServiceCategory;
+  category?: ServiceCategory;
   standardRate: number;
   billingUnit: BillingUnit;
   panelEligible: boolean;
   manualRateOverrideAllowed: boolean;
   discountAllowed: boolean;
-  status: ServiceStatus;
+  status?: ServiceStatus;
   encounterType?: 'NONE' | 'OPD' | 'OBSERVATION' | 'EMERGENCY';
   isDefaultEncounterService?: boolean;
   serviceStream?: 'HOSPITAL' | 'LAB';

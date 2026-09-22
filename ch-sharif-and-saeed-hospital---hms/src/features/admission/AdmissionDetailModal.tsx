@@ -1,3 +1,4 @@
+import { HOSPITAL_SERVICE_SOURCE, OUTSOURCED_SERVICE_SOURCE, NO_ACTIVE_DEPARTMENT_SERVICES, serviceSourceOptions, servicesForSource } from '../../utils/serviceSelection';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Loader2,
@@ -13,7 +14,7 @@ import {
 } from 'lucide-react';
 import { Modal } from '../../components/common/Modal';
 import { PanelBadge } from '../../components/common/PanelBadge';
-import { Select, NumberInput, TextInput, Textarea, Toggle } from '../../components/forms/FormControls';
+import { Select, NumberInput, TextInput, Textarea, Toggle, ServiceChecklist } from '../../components/forms/FormControls';
 import { formatPKR } from '../../utils/formatters';
 import { useToast } from '../../context/ToastContext';
 import { DepartmentService, fetchDepartments } from '../../services/departmentService';
@@ -90,7 +91,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
   const doctors = useMemo(() => allStaff.filter((s) => s.staffCategory === 'Doctor' && s.status === 'ACTIVE'), [allStaff]);
 
   // ── Hierarchical Service Selection (Category/Department -> Services) ──────────
-  const [selectedDeptFilter, setSelectedDeptFilter] = useState('HOSPITAL_MGMT');
+  const [selectedDeptFilter, setSelectedDeptFilter] = useState<string>(HOSPITAL_SERVICE_SOURCE);
   const [allDepartments, setAllDepartments] = useState<Department[]>(() => DepartmentService.getDepartments());
   const [allServices, setAllServices] = useState<HospitalService[]>(() => ServiceRatesService.getServices());
 
@@ -100,72 +101,19 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
     fetchStaffUsers().then(setAllStaff).catch(() => {});
   }, []);
 
-  const departmentDropdownOptions = useMemo(() => {
-    const list: { label: string; value: string }[] = [
-      { label: 'Hospital Management (Hospital Services)', value: 'HOSPITAL_MGMT' },
-      { label: 'Laboratory (LAB Investigations)', value: 'LAB' },
-    ];
+  const departmentDropdownOptions = useMemo(() => serviceSourceOptions(allDepartments), [allDepartments]);
 
-    // Other specific departments
-    allDepartments
-      .filter((d) => d.status === 'Active')
-      .forEach((d) => {
-        const nameLower = d.name.toLowerCase();
-        if (
-          nameLower.includes('hospital service') ||
-          nameLower === 'hospital' ||
-          nameLower === 'laboratory' ||
-          nameLower === 'lab'
-        ) {
-          return;
-        }
-        const ownershipTag = d.fulfillmentOwnership === 'Outsourced' ? 'Outsourced' : 'Internal';
-        list.push({
-          label: `${d.name} (${ownershipTag})`,
-          value: d.id,
-        });
-      });
-
-    return list;
-  }, [allDepartments]);
-
-  const availableServices = useMemo(() => {
-    if (selectedDeptFilter === 'HOSPITAL_MGMT') {
-      return allServices.filter(
-        (s) =>
-          s.status === 'Active' &&
-          s.serviceStream !== 'LAB' &&
-          s.category !== 'Laboratory' &&
-          s.category !== 'Diagnostic' &&
-          !(s.departmentName || '').toLowerCase().includes('lab')
-      );
-    }
-    if (selectedDeptFilter === 'LAB') {
-      return allServices.filter(
-        (s) =>
-          s.status === 'Active' &&
-          (s.serviceStream === 'LAB' ||
-            s.category === 'Laboratory' ||
-            s.category === 'Diagnostic' ||
-            (s.departmentName || '').toLowerCase().includes('lab'))
-      );
-    }
-    // Filter by specific departmentId
-    return allServices.filter(
-      (s) => s.status === 'Active' && (s.departmentId === selectedDeptFilter || s.departmentName === selectedDeptFilter)
-    );
-  }, [allServices, selectedDeptFilter]);
+  const availableServices = useMemo(
+    () => servicesForSource(allServices, selectedDeptFilter),
+    [allServices, selectedDeptFilter]
+  );
 
   const selectedDeptObj = useMemo(() => {
     return allDepartments.find((d) => d.id === selectedDeptFilter) || null;
   }, [allDepartments, selectedDeptFilter]);
 
   const isCurrentSelectionOutsourced = useMemo(() => {
-    if (selectedDeptFilter === 'LAB') {
-      const labDept = allDepartments.find((d) => d.name.toLowerCase().includes('lab'));
-      return labDept?.fulfillmentOwnership === 'Outsourced';
-    }
-    return selectedDeptObj?.fulfillmentOwnership === 'Outsourced';
+    return selectedDeptFilter === OUTSOURCED_SERVICE_SOURCE || selectedDeptObj?.fulfillmentOwnership === 'Outsourced';
   }, [selectedDeptFilter, selectedDeptObj, allDepartments]);
 
   const load = async () => {
@@ -193,39 +141,48 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
   };
 
   // ── Services & Charges ──────────────────────────────────────────────
-  const [lineServiceId, setLineServiceId] = useState('');
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
+  useEffect(() => {
+    setSelectedServiceIds((ids) => ids.filter((id) => allServices.some((s) => s.id === id && s.status === 'Active')));
+  }, [allServices]);
   const [lineQty, setLineQty] = useState(1);
   const [linePerformedBy, setLinePerformedBy] = useState('');
   const [lineArrangementMode, setLineArrangementMode] = useState<'HOSPITAL_MANAGED' | 'SELF'>('HOSPITAL_MANAGED');
 
-  const selectedService = useMemo(() => {
-    return allServices.find((s) => s.id === lineServiceId) || null;
-  }, [allServices, lineServiceId]);
+  const selectedServices = useMemo(() => {
+    return allServices.filter((s) => selectedServiceIds.includes(s.id));
+  }, [allServices, selectedServiceIds]);
+
+  const selectedServicesTotal = useMemo(() => {
+    return selectedServices.reduce((sum, s) => sum + (s.standardRate || 0), 0) * (lineQty || 1);
+  }, [selectedServices, lineQty]);
 
   const handleAddService = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!lineServiceId) {
-      setActionError('Please select a service or procedure.');
+    if (selectedServiceIds.length === 0) {
+      setActionError('Please select at least one service or procedure.');
       return;
     }
     setIsSaving(true);
     setActionError(null);
     try {
-      await addAdmissionService(admissionId, {
-        serviceRateId: lineServiceId,
-        quantity: lineQty,
-        performedByStaffId: linePerformedBy || undefined,
-        arrangementMode: lineArrangementMode,
-      });
-      const addedName = selectedService?.name || 'Service line';
-      setLineServiceId('');
+      for (const serviceId of selectedServiceIds) {
+        await addAdmissionService(admissionId, {
+          serviceRateId: serviceId,
+          quantity: lineQty,
+          performedByStaffId: linePerformedBy || undefined,
+          arrangementMode: lineArrangementMode,
+        });
+      }
+      const count = selectedServiceIds.length;
+      setSelectedServiceIds([]);
       setLineQty(1);
       setLinePerformedBy('');
       setLineArrangementMode('HOSPITAL_MANAGED');
       await refresh(
         lineArrangementMode === 'SELF'
-          ? `${addedName} added as Self-Arranged (PKR 0).`
-          : `${addedName} added to patient invoice.`,
+          ? `${count} ${count === 1 ? 'service' : 'services'} added as Self-Arranged (PKR 0).`
+          : `${count} ${count === 1 ? 'service' : 'services'} added to patient invoice.`,
       );
     } catch (err: any) {
       setActionError(err?.message || 'Failed to add service.');
@@ -581,44 +538,33 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                     </span>
                   </div>
 
-                  {/* 2-Level Cascading Dropdowns: Department / Source -> Service */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* Department / Source Filter */}
+                  <div>
                     <Select
-                      label="1. Department / Source"
+                      label="1. Department / Source Filter"
                       options={departmentDropdownOptions}
                       value={selectedDeptFilter}
-                      onChange={(e) => {
-                        setSelectedDeptFilter(e.target.value);
-                        setLineServiceId('');
-                      }}
+                      onChange={(e) => setSelectedDeptFilter(e.target.value)}
                       hint={
                         isCurrentSelectionOutsourced
                           ? 'Outsourced Department — Billed to Outsourced Invoice (No discounts allowed).'
                           : 'Internal Hospital Management Services'
                       }
                     />
-
-                    <Select
-                      label="2. Service / Procedure"
-                      required
-                      placeholder={
-                        availableServices.length === 0
-                          ? 'No services available in this department'
-                          : 'Choose a service / procedure…'
-                      }
-                      options={availableServices.map((s) => ({
-                        label: `${s.name} (${s.code}) — ${formatPKR(s.standardRate)}`,
-                        value: s.id,
-                      }))}
-                      value={lineServiceId}
-                      onChange={(e) => setLineServiceId(e.target.value)}
-                      hint={
-                        selectedService
-                          ? `Rate: ${formatPKR(selectedService.standardRate)} • Billing Unit: ${selectedService.billingUnit || 'One-Time'}`
-                          : 'Select a procedure or test'
-                      }
-                    />
                   </div>
+
+                  {/* Searchable Multi-Select Service Checklist */}
+                  <ServiceChecklist
+                    label="2. Select Services / Procedures / Investigations"
+                    services={availableServices}
+                    selectedServiceIds={selectedServiceIds}
+                    onChange={setSelectedServiceIds}
+                    emptyMessage={
+                      availableServices.length === 0
+                        ? NO_ACTIVE_DEPARTMENT_SERVICES
+                        : 'No services available in this department'
+                    }
+                  />
 
                   {/* Arrangement / Fulfillment Mode Selection (Professional Medical UI, No Emojis) */}
                   <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
@@ -695,8 +641,14 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                     </div>
                   </div>
 
-                  {selectedService && (
+                  {selectedServices.length > 0 && (
                     <div className="flex flex-wrap items-center justify-between gap-3 text-xs bg-white px-3.5 py-2.5 rounded-lg border border-slate-200">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-slate-500">Selected:</span>
+                        <span className="font-semibold text-slate-800">
+                          {selectedServices.length} {selectedServices.length === 1 ? 'service' : 'services'}
+                        </span>
+                      </div>
                       <div className="flex items-center gap-1.5">
                         <span className="text-slate-500">Destination:</span>
                         <span className="font-semibold text-slate-800">
@@ -714,14 +666,14 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                         )}
                       </div>
                       <div className="flex items-center gap-1.5">
-                        <span className="text-slate-500">Line Total:</span>
+                        <span className="text-slate-500">Total:</span>
                         {lineArrangementMode === 'SELF' ? (
                           <span className="font-bold text-slate-700">
                             PKR 0 <span className="font-normal text-[10.5px] text-slate-400">(Non-billable)</span>
                           </span>
                         ) : (
                           <span className="font-bold text-slate-900">
-                            {formatPKR((selectedService.standardRate || 0) * (lineQty || 1))}
+                            {formatPKR(selectedServicesTotal)}
                           </span>
                         )}
                       </div>
@@ -729,7 +681,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                   )}
 
                   <div className="grid grid-cols-2 gap-3">
-                    <NumberInput label="Quantity" min={1} value={lineQty} onChange={(e) => setLineQty(Number(e.target.value) || 1)} />
+                    <NumberInput label="Quantity (per service)" min={1} value={lineQty} onChange={(e) => setLineQty(Number(e.target.value) || 1)} />
                     <Select
                       label="Performed By (optional)"
                       options={doctors.map((d) => ({ label: d.fullName, value: d.id }))}
@@ -738,8 +690,16 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                     />
                   </div>
                   <div className="flex justify-end">
-                    <button type="submit" disabled={isSaving || !lineServiceId} className="px-5 py-2 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded-xl shadow-xs disabled:opacity-60 cursor-pointer">
-                      {isSaving ? 'Adding…' : 'Add Service to Patient'}
+                    <button
+                      type="submit"
+                      disabled={isSaving || selectedServiceIds.length === 0}
+                      className="px-5 py-2 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded-xl shadow-xs disabled:opacity-60 cursor-pointer"
+                    >
+                      {isSaving
+                        ? 'Adding…'
+                        : selectedServiceIds.length > 1
+                        ? `Add ${selectedServiceIds.length} Services to Patient`
+                        : 'Add Service to Patient'}
                     </button>
                   </div>
                 </form>

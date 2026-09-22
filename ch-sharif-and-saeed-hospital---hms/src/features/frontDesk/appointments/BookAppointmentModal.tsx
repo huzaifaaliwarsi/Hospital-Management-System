@@ -1,3 +1,5 @@
+import { doctorsForEncounter } from '../../../utils/doctorAvailability';
+import { HOSPITAL_SERVICE_SOURCE, NO_ACTIVE_DEPARTMENT_SERVICES, servicesForSource } from '../../../utils/serviceSelection';
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import {
   AlertCircle,
@@ -12,9 +14,9 @@ import {
 } from 'lucide-react';
 import { Modal } from '../../../components/common/Modal';
 import { Select, TextInput, Textarea, NumberInput, Toggle, CNICInput } from '../../../components/forms/FormControls';
-import { DepartmentService } from '../../../services/departmentService';
-import { StaffUserService } from '../../../services/staffUserService';
-import { ServiceRatesService } from '../../../services/serviceRatesService';
+import { DepartmentService, fetchDepartments } from '../../../services/departmentService';
+import { StaffUserService, fetchStaffUsers } from '../../../services/staffUserService';
+import { ServiceRatesService, fetchServices } from '../../../services/serviceRatesService';
 import { normalizePhone, createPatient } from '../../../services/patientRegistryService';
 import {
   fetchCorporatePanels,
@@ -108,12 +110,27 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
     }
   };
 
-  const departments = useMemo(() => DepartmentService.getDepartments().filter((d) => d.status === 'Active'), []);
-  const activeServices = useMemo(() => ServiceRatesService.getServices().filter((s) => s.status === 'Active'), []);
-  const activeDoctors = useMemo(
-    () => StaffUserService.getStaffUsers().filter((s) => s.staffCategory === 'Doctor' && s.status === 'ACTIVE'),
-    []
-  );
+  const [departments, setDepartments] = useState(() => DepartmentService.getDepartments().filter((d) => d.status === 'Active'));
+  const [activeServices, setActiveServices] = useState(() => ServiceRatesService.getServices().filter((s) => s.status === 'Active'));
+  useEffect(() => {
+    fetchServices().then((services) => setActiveServices(services.filter((service) => service.status === 'Active'))).catch(() => {});
+    fetchDepartments().then((list) => setDepartments(list.filter((department) => department.status === 'Active'))).catch(() => {});
+  }, []);
+  const [activeDoctors, setActiveDoctors] = useState(() => doctorsForEncounter(StaffUserService.getStaffUsers(), 'ADMISSION'));
+  useEffect(() => {
+    fetchStaffUsers().then((staff) => setActiveDoctors(doctorsForEncounter(staff, 'ADMISSION'))).catch(() => {});
+  }, []);
+
+  // Land cursor directly in Patient Full Name on open for new bookings
+  useEffect(() => {
+    if (!isReschedule) {
+      const timer = setTimeout(() => {
+        const nameInput = formContainerRef.current?.querySelector<HTMLInputElement>('#patient-full-name');
+        nameInput?.focus();
+      }, 60);
+      return () => clearTimeout(timer);
+    }
+  }, [isReschedule]);
 
   // Corporate Panels list
   const [corporatePanels, setCorporatePanels] = useState<CorporatePanel[]>(() => getActiveCorporatePanels());
@@ -182,15 +199,10 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
     return null;
   }, [encounterType]);
 
-  // Doctors filtered down to those who belong to a department supporting the selected service
-  const doctorsForEncounterType = useMemo(() => {
-    if (!encounterDeptFlag) return [];
-    return activeDoctors.filter((doc) => {
-      const depts = getDoctorDepts(doc);
-      if (depts.length === 0) return true;
-      return depts.some((d) => d[encounterDeptFlag]);
-    });
-  }, [activeDoctors, departments, encounterDeptFlag]);
+  const doctorsForEncounterType = useMemo(
+    () => doctorsForEncounter(activeDoctors, encounterType),
+    [activeDoctors, encounterType]
+  );
 
   // If encounter type changes and current doctor is no longer in scope, clear doctor & dept
   useEffect(() => {
@@ -218,35 +230,23 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
       ? docDepts.find((d) => d[encounterDeptFlag]) || docDepts[0] || departments[0]
       : docDepts[0] || departments[0];
 
-    if (matchingDept) {
-      setDepartmentId(matchingDept.id);
-    }
-
-    // Auto-resolve Consultation / Service Rate based on encounter type and department
-    const encService =
-      (matchingDept
-        ? activeServices.find(
-            (s) => s.encounterType === encounterType && s.isDefaultEncounterService && s.departmentId === matchingDept.id
-          )
-        : null) ||
-      activeServices.find((s) => s.encounterType === encounterType && s.isDefaultEncounterService) ||
-      activeServices.find((s) => s.encounterType === encounterType) ||
-      (matchingDept
-        ? activeServices.find(
-            (s) => s.departmentId === matchingDept.id && (s.code === 'OPD-CONSULT' || s.name.toLowerCase().includes('consult'))
-          )
-        : null) ||
-      activeServices.find((s) => s.code === 'OPD-CONSULT' || s.name.toLowerCase().includes('consult')) ||
-      activeServices[0];
-
-    if (encService) {
-      setServiceRateId(encService.id);
-    }
+    setDepartmentId(matchingDept?.id || '');
+    setServiceRateId('');
   };
 
+  const departmentServices = useMemo(() => servicesForSource(activeServices, departmentId || HOSPITAL_SERVICE_SOURCE), [activeServices, departmentId]);
+  useEffect(() => {
+    setServiceRateId((id) => {
+      if (departmentServices.some((service) => service.id === id && service.encounterType === encounterType)) return id;
+      return departmentServices.find((service) => service.encounterType === encounterType && service.isDefaultEncounterService)?.id
+        || departmentServices.find((service) => service.encounterType === encounterType)?.id
+        || departmentServices[0]?.id
+        || '';
+    });
+  }, [departmentServices, encounterType]);
+
   const selectedDoctor = activeDoctors.find((d) => d.id === doctorStaffId);
-  const selectedDept = departments.find((d) => d.id === departmentId);
-  const selectedService = activeServices.find((s) => s.id === serviceRateId);
+  const selectedService = departmentServices.find((s) => s.id === serviceRateId);
   const grossFee = selectedService?.standardRate ?? 0;
 
   const panelPreview =
@@ -262,12 +262,16 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
     setFormError(null);
 
     if (isReschedule) {
+      if (departmentId && !selectedService) {
+        setFormError(NO_ACTIVE_DEPARTMENT_SERVICES);
+        return;
+      }
       setIsSaving(true);
       try {
         const slotAt = new Date(`${date}T${time}:00`).toISOString();
         await appointmentsApiService.updateAppointment(rescheduleAppointment!.id, {
           slotAt,
-          doctorStaffId: doctorStaffId || undefined,
+          doctorStaffId: doctorStaffId || null,
           departmentId: departmentId || undefined,
           serviceRateId: serviceRateId || undefined,
         });
@@ -317,12 +321,8 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
       return;
     }
 
-    if (!doctorStaffId) {
-      setFormError('Please select a Consulting Doctor.');
-      return;
-    }
-    if (!departmentId || !serviceRateId) {
-      setFormError('Doctor department or consultation service could not be resolved.');
+    if (!selectedService) {
+      setFormError('Consultation service could not be resolved.');
       return;
     }
     if (collectAdvance) {
@@ -409,8 +409,8 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
         departmentId:
           selectedService?.departmentId && !selectedService.isDefaultEncounterService
             ? selectedService.departmentId
-            : departmentId,
-        doctorStaffId,
+            : departmentId || selectedService?.departmentId || departments.find((department) => encounterDeptFlag && department[encounterDeptFlag])?.id || departments[0]?.id || '',
+        doctorStaffId: doctorStaffId || undefined,
         serviceRateId,
         slotAt,
         estimatedAmount: grossFee || undefined,
@@ -457,7 +457,7 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
             <button
               type="submit"
               form="book-appointment-form"
-              disabled={isSaving || !doctorStaffId}
+              disabled={isSaving}
               className="px-6 py-2 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg shadow-xs disabled:opacity-60 inline-flex items-center gap-1.5 cursor-pointer"
             >
               {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Calendar className="h-4 w-4" />}
@@ -558,6 +558,8 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
                 {/* Full Name & Father / Guardian */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <TextInput
+                    id="patient-full-name"
+                    autoFocus={!isReschedule}
                     label="Patient Full Name"
                     required
                     placeholder="Patient's legal name"
@@ -690,11 +692,6 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
                       : 'Emergency Triage'}
                   </span>
                 )}
-                {selectedDept && (
-                  <span className="text-[11px] font-semibold text-slate-500">
-                    Dept: <strong className="text-slate-800">{selectedDept.name}</strong>
-                  </span>
-                )}
               </div>
             </div>
 
@@ -723,34 +720,19 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
                   onBlur={() => {
                     serviceTypeDropdownOpenRef.current = false;
                   }}
-                  hint="Select service first so only doctors from that department appear below."
+                  hint="Select service first to see doctors marked available for it."
                 />
               </div>
 
               {/* Consulting Doctor Dropdown (Filtered to doctors with matching department capability) */}
               <div className="sm:col-span-2">
                 <Select
-                  label="Consulting Doctor"
-                  required
+                  label="Consulting Doctor (Optional)"
                   disabled={!encounterType}
-                  options={
-                    !encounterType
-                      ? [{ label: '-- Please Select Service Type Above First --', value: '' }]
-                      : doctorsForEncounterType.length === 0
-                      ? [{ label: '-- No Doctors Found for this Department/Service --', value: '' }]
-                      : [
-                          { label: '-- Select Consulting Doctor --', value: '' },
-                          ...doctorsForEncounterType.map((d) => {
-                            const depts = getDoctorDepts(d);
-                            const matching = encounterDeptFlag ? depts.filter((dp) => dp[encounterDeptFlag]) : depts;
-                            const deptStr = (matching.length > 0 ? matching : depts).map((dep) => dep.name).join(', ');
-                            return {
-                              label: `${d.fullName} (${d.designation || 'Consultant'}${deptStr ? ` — ${deptStr}` : ''})`,
-                              value: d.id,
-                            };
-                          }),
-                        ]
-                  }
+                  options={[
+                    { label: 'Not Assigned / Select Later', value: '' },
+                    ...doctorsForEncounterType.map((doctor) => ({ label: doctor.fullName, value: doctor.id })),
+                  ]}
                   value={doctorStaffId}
                   onChange={(e) => {
                     handleDoctorChange(e.target.value);
@@ -785,8 +767,12 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
               />
             </div>
 
+            {departmentId && departmentServices.length === 0 && (
+              <p className="text-xs text-slate-500">{NO_ACTIVE_DEPARTMENT_SERVICES}</p>
+            )}
+
             {/* Fee & Department Auto-Resolution Summary Box */}
-            {selectedDoctor && selectedService && (
+            {selectedService && (
               <div className="p-3 bg-[#effaf5] border border-[#c2e7db] rounded-lg flex items-center justify-between text-xs">
                 <div className="space-y-0.5">
                   <span className="text-slate-500 font-semibold block">Consultation Service:</span>

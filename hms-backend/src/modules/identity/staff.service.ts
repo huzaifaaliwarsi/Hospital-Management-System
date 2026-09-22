@@ -81,6 +81,9 @@ export const staffService = {
           joiningDate: body.joiningDate,
           notes: body.notes,
           doctorSponsoredDiscountTrackingEnabled: body.doctorSponsoredDiscountTrackingEnabled ?? false,
+          availableForOpd: body.availableForOpd ?? false,
+          availableForObservation: body.availableForObservation ?? false,
+          availableForEmergency: body.availableForEmergency ?? false,
           createdBy: actorLabel,
           updatedBy: actorLabel,
           // Populate junction table inline

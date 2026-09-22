@@ -35,6 +35,9 @@ export const createStaffBodySchema = z.object({
   notes: z.string().optional(),
   // v7.2 (HMS_V7.2_NEW_REQUIREMENTS.md §2.3/§3.1) — only meaningful for Doctor-category staff.
   doctorSponsoredDiscountTrackingEnabled: z.boolean().optional(),
+  availableForOpd: z.boolean().optional(),
+  availableForObservation: z.boolean().optional(),
+  availableForEmergency: z.boolean().optional(),
 });
 export type CreateStaffBody = z.infer<typeof createStaffBodySchema>;
 

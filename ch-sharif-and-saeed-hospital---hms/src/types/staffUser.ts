@@ -90,6 +90,9 @@ export interface StaffUser {
   clinicalAuthUsername?: string | null;
   clinicalAuthActive?: boolean;
   clinicalAuthUpdatedAt?: string;
+  availableForOpd?: boolean;
+  availableForObservation?: boolean;
+  availableForEmergency?: boolean;
   doctorSponsoredDiscountTrackingEnabled?: boolean;
 
   linkedActivityCount: number;
@@ -134,6 +137,9 @@ export interface StaffUserFormValues {
   requirePasswordChange: boolean;
 
   // v7.2 (HMS_V7.2_NEW_REQUIREMENTS.md §2.3/§3.1) — only meaningful when staffCategory === 'Doctor'.
+  availableForOpd?: boolean;
+  availableForObservation?: boolean;
+  availableForEmergency?: boolean;
   doctorSponsoredDiscountTrackingEnabled: boolean;
 
   // Canonical Salary & Commission compensation integration

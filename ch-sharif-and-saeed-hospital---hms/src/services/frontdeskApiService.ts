@@ -65,7 +65,7 @@ export interface AppointmentRecord {
 
   departmentId: string;
   departmentName: string;
-  doctorId: string;
+  doctorId: string | null;
   doctorName: string;
   serviceRateId: string;
   serviceName: string;
@@ -179,7 +179,7 @@ export interface BookAppointmentPayload {
   selfPayEncounterId?: string;
   newSelfPayPatient?: NewSelfPayAppointmentPatient;
   departmentId: string;
-  doctorStaffId: string;
+  doctorStaffId?: string;
   serviceRateId: string;
   slotAt: string; // ISO datetime
   estimatedAmount?: number;
@@ -191,7 +191,7 @@ export interface BookAppointmentPayload {
 
 export interface UpdateAppointmentPayload {
   slotAt?: string;
-  doctorStaffId?: string;
+  doctorStaffId?: string | null;
   departmentId?: string;
   serviceRateId?: string;
   estimatedAmount?: number;

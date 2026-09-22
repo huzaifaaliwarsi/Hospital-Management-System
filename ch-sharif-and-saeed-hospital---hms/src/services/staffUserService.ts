@@ -98,6 +98,9 @@ function toStaffUser(raw: Record<string, any>): StaffUser {
     clinicalAuthUsername: raw.clinicalAuthUsername ?? null,
     clinicalAuthActive: !!raw.clinicalAuthActive,
     clinicalAuthUpdatedAt: raw.clinicalAuthUpdatedAt ? formatTimestamp(raw.clinicalAuthUpdatedAt) : undefined,
+    availableForOpd: !!raw.availableForOpd,
+    availableForObservation: !!raw.availableForObservation,
+    availableForEmergency: !!raw.availableForEmergency,
     doctorSponsoredDiscountTrackingEnabled: !!raw.doctorSponsoredDiscountTrackingEnabled,
     linkedActivityCount: 0,
     notes: raw.notes || undefined,
@@ -114,8 +117,18 @@ function getPortalUserId(u: StaffUser): string | undefined {
 let cachedStaffUsers: StaffUser[] = [];
 
 export async function fetchStaffUsers(): Promise<StaffUser[]> {
-  const res = await apiClient.get<{ data: Record<string, any>[] }>('/staff', { params: { pageSize: 100 } });
-  cachedStaffUsers = res.data.data.map(toStaffUser);
+  const rows: Record<string, any>[] = [];
+  let page = 1;
+  let totalPages = 1;
+  do {
+    const res = await apiClient.get<{ data: Record<string, any>[]; meta?: { pagination?: { totalPages: number } } }>(
+      '/staff', { params: { pageSize: 100, page } }
+    );
+    rows.push(...res.data.data);
+    totalPages = res.data.meta?.pagination?.totalPages ?? 1;
+    page += 1;
+  } while (page <= totalPages);
+  cachedStaffUsers = rows.map(toStaffUser);
   return cachedStaffUsers;
 }
 
@@ -247,6 +260,9 @@ export class StaffUserService {
         alternatePhone: values.alternatePhone?.trim() || undefined,
         email: values.email?.trim() || undefined,
         joiningDate: new Date().toISOString().slice(0, 10), // not yet collected by this form — defaults to today
+        availableForOpd: values.availableForOpd,
+        availableForObservation: values.availableForObservation,
+        availableForEmergency: values.availableForEmergency,
         doctorSponsoredDiscountTrackingEnabled: values.doctorSponsoredDiscountTrackingEnabled,
       });
       const staffId = staffRes.data.data.id;
@@ -340,6 +356,9 @@ export class StaffUserService {
         alternatePhone: values.alternatePhone?.trim() || undefined,
         email: values.email?.trim() || undefined,
         isActive: values.status !== 'INACTIVE',
+        availableForOpd: values.availableForOpd,
+        availableForObservation: values.availableForObservation,
+        availableForEmergency: values.availableForEmergency,
         doctorSponsoredDiscountTrackingEnabled: values.doctorSponsoredDiscountTrackingEnabled,
       });
 

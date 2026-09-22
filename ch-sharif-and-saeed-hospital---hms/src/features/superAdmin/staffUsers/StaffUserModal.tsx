@@ -1,3 +1,4 @@
+import { DOCTOR_AVAILABILITY_OPTIONS } from '../../../utils/doctorAvailability';
 import React, { useState, useEffect } from 'react';
 import {
   X,
@@ -72,6 +73,9 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
     password: '',
     confirmPassword: '',
     requirePasswordChange: false,
+    availableForOpd: false,
+    availableForObservation: false,
+    availableForEmergency: false,
     doctorSponsoredDiscountTrackingEnabled: false,
     salaryEnabled: false,
     salaryBasis: 'MONTHLY',
@@ -114,6 +118,9 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
         password: '',
         confirmPassword: '',
         requirePasswordChange: editingStaff.requirePasswordChange || false,
+        availableForOpd: editingStaff.availableForOpd ?? false,
+        availableForObservation: editingStaff.availableForObservation ?? false,
+        availableForEmergency: editingStaff.availableForEmergency ?? false,
         doctorSponsoredDiscountTrackingEnabled: editingStaff.doctorSponsoredDiscountTrackingEnabled || false,
         clinicalAuthUsername: editingStaff.clinicalAuthUsername || '',
         clinicalAuthPassword: '',
@@ -162,6 +169,9 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
         password: '',
         confirmPassword: '',
         requirePasswordChange: true,
+        availableForOpd: false,
+        availableForObservation: false,
+        availableForEmergency: false,
         doctorSponsoredDiscountTrackingEnabled: false,
         clinicalAuthUsername: '',
         clinicalAuthPassword: '',
@@ -657,6 +667,22 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({
                     <p className="text-[10px] text-red-500 mt-1">{errors.departmentId}</p>
                   )}
                 </div>
+              )}
+
+              {formData.staffCategory === 'Doctor' && (
+                <fieldset className="sm:col-span-2">
+                  <legend className="text-xs font-semibold text-[#52665e] mb-2">Doctor Available For (Optional)</legend>
+                  <div className="flex flex-wrap gap-4">
+                    {DOCTOR_AVAILABILITY_OPTIONS.map(({ label, field }) => (
+                      <label key={field} className="flex items-center gap-2 text-xs text-[#52665e] cursor-pointer">
+                        <input type="checkbox" checked={formData[field] ?? false}
+                          onChange={(event) => setFormData((prev) => ({ ...prev, [field]: event.target.checked }))}
+                          className="rounded text-[#129b70] focus:ring-[#129b70]/20" />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
               )}
 
               {/* Staff Category */}

@@ -999,3 +999,5 @@ export const FileUpload: React.FC<FileUploadProps> = ({
     </div>
   );
 };
+
+export { ServiceChecklist } from './ServiceChecklist';

@@ -20,7 +20,7 @@ export const bookAppointmentSchema = z.object({
     })
     .optional(),
   departmentId: z.string().uuid(),
-  doctorStaffId: z.string().uuid(),
+  doctorStaffId: z.string().uuid().optional(),
   serviceRateId: z.string().uuid(),
   slotAt: z.coerce.date(),
   estimatedAmount: z.coerce.number().nonnegative().optional(),
@@ -49,7 +49,7 @@ export type ListAppointmentsQuery = z.infer<typeof listAppointmentsQuerySchema>;
 
 export const updateAppointmentSchema = z.object({
   slotAt: z.coerce.date().optional(),
-  doctorStaffId: z.string().uuid().optional(),
+  doctorStaffId: z.string().uuid().nullable().optional(),
   departmentId: z.string().uuid().optional(),
   serviceRateId: z.string().uuid().optional(),
   estimatedAmount: z.coerce.number().nonnegative().optional(),
