@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Loader2, Wallet, Printer, FileCheck2, Receipt, CheckCircle2 } from 'lucide-react';
+import { AlertCircle, Loader2, Wallet, Printer, FileCheck2, Receipt, CheckCircle2, Calendar, Filter } from 'lucide-react';
 import { Modal } from '../../../components/common/Modal';
 import { NumberInput, Select, TextInput } from '../../../components/forms/FormControls';
 import { PanelBadge } from '../../../components/common/PanelBadge';
 import { formatPKR } from '../../../utils/formatters';
 import { formatDisplayDate } from '../../../utils/dateConstants';
 import { useToast } from '../../../context/ToastContext';
-import { dischargeAdmission } from '../../../services/admissionService';
+import { dischargeAdmission, fetchAdmissionDetail } from '../../../services/admissionService';
+import { getAllPatients, primePatientRegistryCache } from '../../../services/patientRegistryService';
 import {
   fetchAdmissionLedger,
   collectAdmissionPayment,
@@ -22,10 +23,21 @@ const PAYMENT_METHODS: { label: string; value: PaymentMethod }[] = [
   { label: 'Online', value: 'ONLINE' },
 ];
 
+function toLocalDateKey(iso?: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 interface AdmissionLedgerModalProps {
   admissionId: string;
   onClose: () => void;
   onChanged?: () => void;
+  readOnly?: boolean;
 }
 
 function formatTimestamp(iso?: string | null): string {
@@ -61,7 +73,7 @@ function openPrintWindow(title: string, bodyHtml: string) {
           th { background: #f1f5f9; text-align: left; padding: 6px 8px; border-bottom: 2px solid #cbd5e1; font-size: 10px; text-transform: uppercase; color: #334155; font-weight: 700; }
           td { padding: 6px 8px; border-bottom: 1px solid #e2e8f0; font-size: 11px; font-weight: 600; }
           .text-right { text-align: right; }
-          .summary-box { width: 340px; margin-left: auto; border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 14px; background: #f8fafc; }
+          .summary-box { width: 360px; margin-left: auto; border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 14px; background: #f8fafc; }
           .summary-row { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 12px; font-weight: 600; color: #475569; }
           .summary-row span.val { font-weight: 700; color: #0f172a; }
           .footer { text-align: center; font-size: 10px; color: #64748b; border-top: 1px dashed #cbd5e1; padding-top: 10px; margin-top: 20px; }
@@ -96,13 +108,19 @@ function ledgerHeaderHtml(ledger: AdmissionLedger, bannerText: string, docLabel:
       <div class="meta-col">
         <div class="meta-row"><span class="meta-label">Patient:</span> <strong>${ledger.patientName}</strong></div>
         <div class="meta-row"><span class="meta-label">MR #:</span> ${ledger.patientMrNumber || '—'}</div>
+        <div class="meta-row"><span class="meta-label">Admission Department:</span> ${ledger.departmentName || 'Not assigned'}</div>
         <div class="meta-row"><span class="meta-label">Payer:</span> ${ledger.payerType === 'PANEL' ? `Corporate / Panel${ledger.panelName ? ` (${ledger.panelName})` : ''}` : 'Self-Pay'}</div>
       </div>
     </div>
   `;
 }
 
-function ledgerTableHtml(ledger: AdmissionLedger) {
+function ledgerTableHtml(
+  ledger: AdmissionLedger,
+  entriesToPrint: AdmissionLedger['entries'] = ledger.entries,
+  periodInfo?: { label: string; periodCharges: number; periodPaid: number; periodDue: number } | null,
+) {
+  const isFiltered = !!periodInfo;
   return `
     <table>
       <thead>
@@ -113,7 +131,11 @@ function ledgerTableHtml(ledger: AdmissionLedger) {
         </tr>
       </thead>
       <tbody>
-        ${ledger.entries
+        ${entriesToPrint.length === 0 ? `
+          <tr>
+            <td colspan="9" style="text-align: center; color: #64748b; padding: 18px;">No charges or services recorded for this period.</td>
+          </tr>
+        ` : entriesToPrint
           .map((e) => {
             const isSelf = e.status === 'SELF' || (e.debit === 0 && (e.description?.includes('Self-Arranged') || e.description?.includes('Self Arranged')));
             return `
@@ -141,10 +163,19 @@ function ledgerTableHtml(ledger: AdmissionLedger) {
       </tbody>
     </table>
     <div class="summary-box">
+      ${isFiltered ? `
+        <div style="font-size: 11px; font-weight: bold; color: #08775A; border-bottom: 1px dashed #cbd5e1; padding-bottom: 4px; margin-bottom: 6px;">
+          PERIOD SUMMARY: ${periodInfo.label.toUpperCase()}
+        </div>
+        <div class="summary-row"><span>Period Charges</span><span class="val">${formatPKR(periodInfo.periodCharges)}</span></div>
+        <div class="summary-row"><span>Period Paid</span><span class="val" style="color: #047857;">${formatPKR(periodInfo.periodPaid)}</span></div>
+        <div class="summary-row"><span>Period Balance Due</span><span class="val" style="color: ${periodInfo.periodDue > 0 ? '#e11d48' : '#047857'};">${formatPKR(periodInfo.periodDue)}</span></div>
+        <div style="border-top: 1px solid #cbd5e1; margin-top: 6px; padding-top: 6px; font-size: 10px; font-weight: bold; color: #64748b; text-transform: uppercase;">Overall Admission Totals</div>
+      ` : ''}
       <div class="summary-row"><span>Total Charges</span><span class="val">${formatPKR(ledger.summary.totalCharges)}</span></div>
       <div class="summary-row"><span>Total Paid</span><span class="val">${formatPKR(ledger.summary.totalPaid)}</span></div>
       <div class="summary-row"><span>Available Advance / Credit</span><span class="val">${formatPKR(ledger.summary.availableCredit)}</span></div>
-      <div class="summary-row"><span>Outstanding Balance</span><span class="val">${formatPKR(ledger.summary.outstandingBalance)}</span></div>
+      <div class="summary-row"><span>Outstanding Balance</span><span class="val" style="color: ${ledger.summary.outstandingBalance > 0 ? '#e11d48' : '#047857'};">${formatPKR(ledger.summary.outstandingBalance)}</span></div>
     </div>
   `;
 }
@@ -156,7 +187,7 @@ function ledgerTableHtml(ledger: AdmissionLedger) {
  * advance/deposit) shows here chronologically with a running balance —
  * never a new patient-facing invoice per charge (§1/§5/§6).
  */
-export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admissionId, onClose, onChanged }) => {
+export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admissionId, onClose, onChanged, readOnly = false }) => {
   const toast = useToast();
   const [ledger, setLedger] = useState<AdmissionLedger | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -174,7 +205,34 @@ export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admi
     setIsLoading(true);
     setLoadError(null);
     try {
-      const data = await fetchAdmissionLedger(admissionId);
+      if (!readOnly && !getAllPatients().length) {
+        await primePatientRegistryCache();
+      }
+      const data = await fetchAdmissionLedger(admissionId, readOnly);
+      
+      // Always guarantee MR number matches the invoice and master patient registry
+      let realMr: string | null = null;
+      if (data.patientName) {
+        const found = getAllPatients().find(
+          (p) => p.fullName?.trim().toLowerCase() === data.patientName.trim().toLowerCase(),
+        );
+        if (found?.mrNumber) {
+          realMr = found.mrNumber;
+        }
+      }
+      if (!realMr) {
+        try {
+          const detail = await fetchAdmissionDetail(admissionId);
+          if (detail?.patientMrNumber) {
+            realMr = detail.patientMrNumber;
+          }
+        } catch {
+          // ignore
+        }
+      }
+      if (realMr) {
+        data.patientMrNumber = realMr;
+      }
       setLedger(data);
       // Auto-default amount to remaining outstanding balance so officer can simply click collect
       if (data?.summary?.outstandingBalance && data.summary.outstandingBalance > 0) {
@@ -196,6 +254,7 @@ export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admi
 
   const handleCollectPayment = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (readOnly) return;
     setFormError(null);
     if (!amount || Number(amount) <= 0) {
       setFormError('Enter a valid amount.');
@@ -236,6 +295,7 @@ export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admi
   };
 
   const handleFinalDischarge = async () => {
+    if (readOnly) return;
     setIsDischarging(true);
     try {
       await dischargeAdmission(admissionId);
@@ -249,15 +309,112 @@ export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admi
     }
   };
 
+  const [dateFilter, setDateFilter] = useState<'ALL' | 'TODAY' | 'DAY_WISE' | 'CUSTOM'>('ALL');
+  const [selectedDate, setSelectedDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [customStartDate, setCustomStartDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [customEndDate, setCustomEndDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+
+  const filterPeriodLabel = useMemo(() => {
+    if (dateFilter === 'TODAY') {
+      return `Today (${formatDisplayDate(new Date())})`;
+    }
+    if (dateFilter === 'DAY_WISE') {
+      return selectedDate ? `Day: ${formatDisplayDate(new Date(selectedDate + 'T00:00:00'))}` : 'Selected Day';
+    }
+    if (dateFilter === 'CUSTOM') {
+      const fromStr = customStartDate ? formatDisplayDate(new Date(customStartDate + 'T00:00:00')) : 'Start';
+      const toStr = customEndDate ? formatDisplayDate(new Date(customEndDate + 'T00:00:00')) : 'Now';
+      return `${fromStr} to ${toStr}`;
+    }
+    return 'All Time (Full Ledger)';
+  }, [dateFilter, selectedDate, customStartDate, customEndDate]);
+
+  const filteredEntries = useMemo(() => {
+    if (!ledger) return [];
+    if (dateFilter === 'ALL') return ledger.entries;
+
+    const todayKey = toLocalDateKey(new Date().toISOString());
+
+    return ledger.entries.filter((e) => {
+      const entryDate = toLocalDateKey(e.date);
+      if (!entryDate) return false;
+
+      if (dateFilter === 'TODAY') {
+        return entryDate === todayKey;
+      }
+      if (dateFilter === 'DAY_WISE') {
+        return entryDate === selectedDate;
+      }
+      if (dateFilter === 'CUSTOM') {
+        const from = customStartDate || '1970-01-01';
+        const to = customEndDate || '2099-12-31';
+        return entryDate >= from && entryDate <= to;
+      }
+      return true;
+    });
+  }, [ledger, dateFilter, selectedDate, customStartDate, customEndDate]);
+
+  const filteredTotals = useMemo(() => {
+    const periodCharges = filteredEntries.reduce((sum, e) => sum + (e.debit || 0), 0);
+    const periodPaid = filteredEntries.reduce((sum, e) => sum + (e.paidAmount != null ? e.paidAmount : (e.credit || 0)), 0);
+    const periodDue = filteredEntries.reduce((sum, e) => {
+      const isSelf = e.status === 'SELF' || (e.debit === 0 && (e.description?.includes('Self-Arranged') || e.description?.includes('Self Arranged')));
+      if (isSelf) return sum;
+      const due = e.dueAmount != null ? e.dueAmount : Math.max(0, (e.debit || 0) - (e.credit || 0));
+      return sum + due;
+    }, 0);
+
+    return { periodCharges, periodPaid, periodDue };
+  }, [filteredEntries]);
+
+  const filteredReceipts = useMemo(() => {
+    if (!ledger?.receipts) return [];
+    if (dateFilter === 'ALL') return ledger.receipts;
+    const todayKey = toLocalDateKey(new Date().toISOString());
+
+    return ledger.receipts.filter((r) => {
+      const rDate = toLocalDateKey(r.collectedAt);
+      if (!rDate) return false;
+      if (dateFilter === 'TODAY') return rDate === todayKey;
+      if (dateFilter === 'DAY_WISE') return rDate === selectedDate;
+      if (dateFilter === 'CUSTOM') {
+        const from = customStartDate || '1970-01-01';
+        const to = customEndDate || '2099-12-31';
+        return rDate >= from && rDate <= to;
+      }
+      return true;
+    });
+  }, [ledger, dateFilter, selectedDate, customStartDate, customEndDate]);
+
   const handlePrintStatement = () => {
     if (!ledger) return;
+    const isFiltered = dateFilter !== 'ALL';
+    const bannerText = isFiltered
+      ? `RUNNING / INTERIM STATEMENT — ${filterPeriodLabel.toUpperCase()}`
+      : 'RUNNING / INTERIM STATEMENT — NOT FINAL INVOICE';
+    const docLabel = isFiltered
+      ? `Running Statement (${filterPeriodLabel})`
+      : 'Running / Interim Statement';
+
     openPrintWindow(
       'Running Statement',
-      `${ledgerHeaderHtml(ledger, 'RUNNING / INTERIM STATEMENT — NOT FINAL INVOICE', 'Running / Interim Statement')}${ledgerTableHtml(ledger)}`,
+      `${ledgerHeaderHtml(ledger, bannerText, docLabel)}${ledgerTableHtml(
+        ledger,
+        filteredEntries,
+        isFiltered
+          ? {
+              label: filterPeriodLabel,
+              periodCharges: filteredTotals.periodCharges,
+              periodPaid: filteredTotals.periodPaid,
+              periodDue: filteredTotals.periodDue,
+            }
+          : null,
+      )}`,
     );
   };
 
   const handleGenerateFinalBill = async () => {
+    if (readOnly) return;
     setIsGeneratingBill(true);
     try {
       const result = await generateFinalBill(admissionId);
@@ -311,6 +468,7 @@ export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admi
               </div>
             </div>
             <div className="space-y-1">
+              <div className="flex justify-between"><span className="text-slate-500 font-semibold">Admission Department</span><span className="font-semibold text-slate-800">{ledger.departmentName || 'Not assigned'}</span></div>
               <div className="flex justify-between"><span className="text-slate-500 font-semibold">Admission Date</span><span className="font-semibold text-slate-800">{formatTimestamp(ledger.admittedAt)}</span></div>
               <div className="flex justify-between"><span className="text-slate-500 font-semibold">Ward / Room / Bed</span><span className="font-semibold text-slate-800">{wardRoomBed}</span></div>
               <div className="flex justify-between items-center">
@@ -349,7 +507,7 @@ export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admi
           </div>
 
           {/* Discharge status alert / action banner */}
-          {ledger.status === 'DISCHARGE_PENDING' && (
+          {!readOnly && ledger.status === 'DISCHARGE_PENDING' && (
             ledger.summary.outstandingBalance <= 0 ? (
               <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between gap-3 text-xs">
                 <div className="flex items-center gap-2.5 text-emerald-900 font-semibold">
@@ -409,6 +567,127 @@ export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admi
 
           {/* Itemized Services & Charges Table */}
           <div className="space-y-2.5">
+            {/* Date Filtering Toolbar */}
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 text-xs">
+                  <Calendar className="h-4 w-4 text-[#08775A]" />
+                  <span className="font-bold text-slate-800">Ledger View:</span>
+                </div>
+                {/* Filter Selector Tabs */}
+                <div className="flex flex-wrap gap-1 bg-white p-1 rounded-lg border border-slate-200 text-xs font-semibold">
+                  <button
+                    type="button"
+                    onClick={() => setDateFilter('ALL')}
+                    className={`px-3 py-1 rounded-md transition-colors cursor-pointer ${
+                      dateFilter === 'ALL'
+                        ? 'bg-[#08775A] text-white shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                    }`}
+                  >
+                    All Time ({ledger.entries.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDateFilter('TODAY')}
+                    className={`px-3 py-1 rounded-md transition-colors cursor-pointer ${
+                      dateFilter === 'TODAY'
+                        ? 'bg-[#08775A] text-white shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                    }`}
+                  >
+                    Today
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDateFilter('DAY_WISE')}
+                    className={`px-3 py-1 rounded-md transition-colors cursor-pointer ${
+                      dateFilter === 'DAY_WISE'
+                        ? 'bg-[#08775A] text-white shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                    }`}
+                  >
+                    Day-Wise
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDateFilter('CUSTOM')}
+                    className={`px-3 py-1 rounded-md transition-colors cursor-pointer ${
+                      dateFilter === 'CUSTOM'
+                        ? 'bg-[#08775A] text-white shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                    }`}
+                  >
+                    Custom Range
+                  </button>
+                </div>
+              </div>
+
+              {/* Sub-controls for Day-Wise or Custom Range */}
+              {dateFilter === 'DAY_WISE' && (
+                <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-slate-200/80 text-xs">
+                  <span className="text-slate-600 font-medium shrink-0">Select Date:</span>
+                  <input
+                    type="date"
+                    value={selectedDate}
+                    onChange={(e) => setSelectedDate(e.target.value)}
+                    className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-medium text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-[#08775A]"
+                  />
+                  <span className="text-[11px] text-slate-500 font-medium">
+                    Showing charges &amp; procedures for {selectedDate ? formatDisplayDate(new Date(selectedDate + 'T00:00:00')) : 'selected day'}
+                  </span>
+                </div>
+              )}
+
+              {dateFilter === 'CUSTOM' && (
+                <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-slate-200/80 text-xs">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-slate-600 font-medium shrink-0">From:</span>
+                    <input
+                      type="date"
+                      value={customStartDate}
+                      onChange={(e) => setCustomStartDate(e.target.value)}
+                      className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-medium text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-[#08775A]"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-slate-600 font-medium shrink-0">To:</span>
+                    <input
+                      type="date"
+                      value={customEndDate}
+                      onChange={(e) => setCustomEndDate(e.target.value)}
+                      className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-medium text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-[#08775A]"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Active Filter Period Summary Badge */}
+              {dateFilter !== 'ALL' && (
+                <div className="bg-[#effaf5] border border-[#c2e7db] rounded-lg px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-bold text-[#08775A]">{filterPeriodLabel}:</span>
+                    <span className="text-slate-700">
+                      <strong>{filteredEntries.length}</strong> {filteredEntries.length === 1 ? 'entry' : 'entries'}
+                    </span>
+                    <span className="text-slate-400">•</span>
+                    <span className="text-slate-700">Charges: <strong className="text-slate-900">{formatPKR(filteredTotals.periodCharges)}</strong></span>
+                    <span className="text-slate-400">•</span>
+                    <span className="text-slate-700">Paid: <strong className="text-emerald-700">{formatPKR(filteredTotals.periodPaid)}</strong></span>
+                    <span className="text-slate-400">•</span>
+                    <span className="text-slate-700">Due: <strong className={filteredTotals.periodDue > 0 ? 'text-rose-700' : 'text-slate-700'}>{formatPKR(filteredTotals.periodDue)}</strong></span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setDateFilter('ALL')}
+                    className="text-[11px] font-bold text-[#08775A] hover:underline cursor-pointer"
+                  >
+                    Reset to All
+                  </button>
+                </div>
+              )}
+            </div>
+
             <div className="border border-slate-200 rounded-lg overflow-hidden">
               <div className="overflow-x-auto max-h-72 overflow-y-auto">
                 <table className="w-full text-xs">
@@ -420,7 +699,7 @@ export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admi
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {ledger.entries.map((e, idx) => {
+                    {filteredEntries.map((e, idx) => {
                       const isSelf =
                         e.status === 'SELF' ||
                         (e.debit === 0 && (e.description?.includes('Self-Arranged') || e.description?.includes('Self Arranged')));
@@ -509,9 +788,13 @@ export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admi
                         </tr>
                       );
                     })}
-                    {ledger.entries.length === 0 && (
+                    {filteredEntries.length === 0 && (
                       <tr>
-                        <td colSpan={11} className="px-3 py-6 text-center text-slate-400">No charges or services posted yet.</td>
+                        <td colSpan={11} className="px-3 py-6 text-center text-slate-400">
+                          {dateFilter === 'ALL'
+                            ? 'No charges or services posted yet.'
+                            : `No charges or services recorded for ${filterPeriodLabel}.`}
+                        </td>
                       </tr>
                     )}
                   </tbody>
@@ -520,12 +803,12 @@ export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admi
             </div>
 
             {/* Payment Receipts History */}
-            {ledger.receipts && ledger.receipts.length > 0 && (
+            {filteredReceipts && filteredReceipts.length > 0 && (
               <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5 flex flex-wrap items-center gap-2 text-xs">
                 <span className="font-bold text-slate-700 flex items-center gap-1.5">
-                  <Receipt className="h-3.5 w-3.5 text-[#08775A]" /> Receipts Collected ({ledger.receipts.length}):
+                  <Receipt className="h-3.5 w-3.5 text-[#08775A]" /> Receipts Collected ({filteredReceipts.length}{dateFilter !== 'ALL' ? ` in ${filterPeriodLabel}` : ''}):
                 </span>
-                {ledger.receipts.map((r) => (
+                {filteredReceipts.map((r) => (
                   <span
                     key={r.id}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white border border-slate-200 text-[11px]"
@@ -540,7 +823,7 @@ export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admi
           </div>
 
           {/* Receive Payment */}
-          <form onSubmit={handleCollectPayment} className="border-t border-slate-200 pt-4 space-y-3">
+          {!readOnly && <form onSubmit={handleCollectPayment} className="border-t border-slate-200 pt-4 space-y-3">
             <div className="flex items-center justify-between">
               <h4 className="text-xs font-bold uppercase tracking-wider text-[#08775A] flex items-center gap-1.5">
                 <Wallet className="h-3.5 w-3.5" /> Receive Payment
@@ -588,17 +871,21 @@ export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admi
                 {amount ? `Collect & Pay ${formatPKR(Number(amount))}` : 'Collect & Print Receipt'}
               </button>
             </div>
-          </form>
+          </form>}
 
           {/* Statement / Final Bill actions */}
           <div className="flex items-center justify-between pt-3 border-t border-slate-200">
             <button
               type="button"
               onClick={handlePrintStatement}
-              className="px-4 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors flex items-center gap-1.5"
+              className="px-4 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
             >
               <Printer className="h-4 w-4 text-[#08775A]" />
-              <span>Generate Running Statement</span>
+              <span>
+                {dateFilter === 'ALL'
+                  ? 'Print Running Statement (All)'
+                  : `Print Statement (${filterPeriodLabel})`}
+              </span>
             </button>
             <div className="flex items-center gap-2">
               {ledger.finalBillNumber && (
@@ -606,7 +893,7 @@ export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admi
                   Final Bill: <span className="font-mono font-bold text-slate-800">{ledger.finalBillNumber}</span>
                 </span>
               )}
-              <button
+              {!readOnly && <button
                 type="button"
                 onClick={handleGenerateFinalBill}
                 disabled={isGeneratingBill}
@@ -614,7 +901,7 @@ export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admi
               >
                 {isGeneratingBill ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />}
                 <span>{ledger.finalBillNumber ? 'Re-print Final Bill' : 'Generate Invoice / Final Bill'}</span>
-              </button>
+              </button>}
             </div>
           </div>
         </div>

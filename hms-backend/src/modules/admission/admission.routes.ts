@@ -5,10 +5,14 @@ import { asyncHandler } from '@/shared/asyncHandler';
 import { admissionController as c } from './admission.controller';
 import * as s from './admission.schemas';
 
+import { admissionBillingController } from '../frontdesk/admissionBilling.controller';
+
 const router = Router();
 const view = authorize('admission', 'view');
 const create = authorize('admission', 'create');
 const write = authorize('admission', 'edit');
+
+router.get('/:id/ledger', view, validate({ params: s.admissionIdParamsSchema }), asyncHandler(admissionBillingController.getReadOnlyLedger));
 
 // Planned Admissions
 router.post(

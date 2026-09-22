@@ -1,3 +1,4 @@
+import { AdmissionLedgerButton } from './AdmissionLedgerButton';
 import React, { useEffect, useMemo, useState } from 'react';
 import { LayoutDashboard, Clock, Users, BedDouble, CheckCircle2, Pill, Eye } from 'lucide-react';
 import { LoadingState, ErrorState } from '../../components/common/StateViews';
@@ -165,6 +166,7 @@ export const AdmissionDashboardView: React.FC = () => {
                           <button type="button" title="View" onClick={() => setDetailId(a.id)} className="p-1.5 rounded-md text-[#08775A] hover:bg-[#effaf5]">
                             <Eye className="h-3.5 w-3.5" />
                           </button>
+                        <AdmissionLedgerButton admissionId={a.id} />
                         </td>
                       </tr>
                     ))}

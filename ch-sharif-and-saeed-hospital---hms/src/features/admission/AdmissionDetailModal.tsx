@@ -1,3 +1,5 @@
+import { AdmissionLedgerButton } from './AdmissionLedgerButton';
+import { fetchAdmissionLedger, AdmissionLedger } from '../../services/admissionBillingService';
 import { HOSPITAL_SERVICE_SOURCE, OUTSOURCED_SERVICE_SOURCE, NO_ACTIVE_DEPARTMENT_SERVICES, serviceSourceOptions, servicesForSource } from '../../utils/serviceSelection';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
@@ -23,8 +25,7 @@ import { StaffUserService, fetchStaffUsers } from '../../services/staffUserServi
 import { StaffUser } from '../../types/staffUser';
 import { ServiceRatesService, fetchServices } from '../../services/serviceRatesService';
 import { HospitalService } from '../../types/serviceRates';
-import { WardsRoomsBedsService, fetchWardHierarchy } from '../../services/wardsRoomsBedsService';
-import { Bed } from '../../types/wardsRoomsBeds';
+import { TransferLocationFields } from './TransferLocationFields';
 import { pharmacyApiService, BackendMedicine } from '../../services/pharmacyApiService';
 import {
   fetchAdmissionDetail,
@@ -50,7 +51,7 @@ const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'services', label: 'Services & Charges', icon: Stethoscope },
   { id: 'medication', label: 'Medication Mode', icon: Pill },
   { id: 'pharmacy', label: 'Pharmacy Requests', icon: Pill },
-  { id: 'bed', label: 'Bed Transfer', icon: ArrowLeftRight },
+  { id: 'bed', label: 'Transfer Ward / Room / Bed', icon: ArrowLeftRight },
   { id: 'clearances', label: 'Clearances', icon: ShieldCheck },
 ];
 
@@ -82,6 +83,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
   const toast = useToast();
   const [tab, setTab] = useState<Tab>(initialTab);
   const [detail, setDetail] = useState<AdmissionDetail | null>(null);
+  const [ledgerSummary, setLedgerSummary] = useState<AdmissionLedger['summary'] | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -120,7 +122,9 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
     setIsLoading(true);
     setLoadError(null);
     try {
-      setDetail(await fetchAdmissionDetail(admissionId));
+      const [admission, ledger] = await Promise.all([fetchAdmissionDetail(admissionId), fetchAdmissionLedger(admissionId, true)]);
+      setDetail(admission);
+      setLedgerSummary(ledger.summary);
     } catch (err: any) {
       setLoadError(err?.message || 'Failed to load admission.');
     } finally {
@@ -148,6 +152,9 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
   const [lineQty, setLineQty] = useState(1);
   const [linePerformedBy, setLinePerformedBy] = useState('');
   const [lineArrangementMode, setLineArrangementMode] = useState<'HOSPITAL_MANAGED' | 'SELF'>('HOSPITAL_MANAGED');
+  useEffect(() => {
+    setLineArrangementMode(isCurrentSelectionOutsourced ? detail?.outsourcedFulfillmentMode ?? 'HOSPITAL_MANAGED' : 'HOSPITAL_MANAGED');
+  }, [isCurrentSelectionOutsourced, detail?.outsourcedFulfillmentMode]);
 
   const selectedServices = useMemo(() => {
     return allServices.filter((s) => selectedServiceIds.includes(s.id));
@@ -178,7 +185,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
       setSelectedServiceIds([]);
       setLineQty(1);
       setLinePerformedBy('');
-      setLineArrangementMode('HOSPITAL_MANAGED');
+      setLineArrangementMode(isCurrentSelectionOutsourced ? detail?.outsourcedFulfillmentMode ?? 'HOSPITAL_MANAGED' : 'HOSPITAL_MANAGED');
       await refresh(
         lineArrangementMode === 'SELF'
           ? `${count} ${count === 1 ? 'service' : 'services'} added as Self-Arranged (PKR 0).`
@@ -261,16 +268,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
   // ── Bed Transfer ─────────────────────────────────────────────────────
   const [targetBedId, setTargetBedId] = useState('');
   const [transferReason, setTransferReason] = useState('');
-  // The shared bed cache is primed once, fire-and-forget, at login — re-fetch here so this
-  // modal always reflects the DB's current bed state instead of a possibly-empty/stale snapshot.
-  const [allBeds, setAllBeds] = useState<Bed[]>(WardsRoomsBedsService.getBeds());
-  useEffect(() => {
-    fetchWardHierarchy().then(({ beds }) => setAllBeds(beds)).catch(() => {});
-  }, []);
-  const availableBeds = useMemo(
-    () => allBeds.filter((b) => b.occupancyStatus === 'Available' && b.operationalStatus === 'Active'),
-    [allBeds]
-  );
+  const [transferVersion, setTransferVersion] = useState(0);
 
   const handleTransferBed = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -287,6 +285,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
     try {
       await transferAdmissionBed(admissionId, { targetBedId, reason: transferReason.trim() });
       setTargetBedId('');
+      setTransferVersion((version) => version + 1);
       setTransferReason('');
       await refresh('Bed transfer completed.');
     } catch (err: any) {
@@ -366,6 +365,8 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
             ))}
           </div>
 
+          <AdmissionLedgerButton admissionId={admissionId} />
+
           {actionError && (
             <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700 font-medium flex items-center gap-2">
               <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {actionError}
@@ -388,6 +389,10 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                 <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
                   <span className="text-[10px] text-slate-500 uppercase block">Medication Mode</span>
                   <span className="font-bold text-slate-900">{detail.medicationMode}</span>
+                </div>
+                <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
+                  <span className="text-[10px] text-slate-500 uppercase block">Department</span>
+                  <span className="font-semibold text-slate-900">{detail.departmentName || 'Not assigned'}</span>
                 </div>
                 <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
                   <span className="text-[10px] text-slate-500 uppercase block">MR Number</span>
@@ -450,6 +455,12 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                 )}
               </div>
 
+              {ledgerSummary && (
+                <div className="p-2.5 bg-[#effaf5] rounded-lg border border-[#c2e7db] text-xs">
+                  <span className="text-[10px] text-[#08775A] uppercase block">Remaining Amount (Available Credit)</span>
+                  <span className="font-bold text-[#08775A]">{formatPKR(ledgerSummary.availableCredit)}</span>
+                </div>
+              )}
               {detail.invoices.length > 0 && (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
                   <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
@@ -464,7 +475,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                   )}
                   <div className="p-2.5 bg-amber-50 rounded-lg border border-amber-200">
                     <span className="text-[10px] text-amber-700 uppercase block">Total Outstanding</span>
-                    <span className="font-bold text-amber-800">{formatPKR(detail.totalOutstanding)}</span>
+                    <span className="font-bold text-amber-800">{formatPKR(ledgerSummary?.outstandingBalance ?? detail.totalOutstanding)}</span>
                   </div>
                 </div>
               )}
@@ -863,21 +874,11 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
               <p className="text-xs text-slate-600">Current bed: <strong>{detail.bedLabel || 'Not assigned'}</strong></p>
               {detail.status === 'ACTIVE' && (
                 <form onSubmit={handleTransferBed} className="space-y-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
-                  <Select
-                    label="Target Bed"
-                    required
-                    placeholder="Choose an available bed…"
-                    options={availableBeds.map((b) => ({
-                      label: [b.wardName, b.roomName, b.bedNumber].filter(Boolean).join(' / '),
-                      value: b.id,
-                    }))}
-                    value={targetBedId}
-                    onChange={(e) => setTargetBedId(e.target.value)}
-                  />
+                  <TransferLocationFields refreshVersion={transferVersion} bedId={targetBedId} onChange={setTargetBedId} currentBedId={detail.bedId} />
                   <TextInput label="Reason" required value={transferReason} onChange={(e) => setTransferReason(e.target.value)} />
                   <div className="flex justify-end">
                     <button type="submit" disabled={isSaving} className="px-4 py-1.5 text-xs font-semibold text-white bg-[#08775A] rounded-lg disabled:opacity-60">
-                      {isSaving ? 'Transferring…' : 'Transfer Bed'}
+                      {isSaving ? 'Transferring…' : 'Transfer Ward / Room / Bed'}
                     </button>
                   </div>
                 </form>
@@ -892,6 +893,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                         <tr key={t.id}>
                           <td className="py-1.5 px-3">{t.fromBedLabel} → <strong>{t.toBedLabel}</strong></td>
                           <td className="py-1.5 px-3 text-slate-500">{t.reason}</td>
+                          <td className="py-1.5 px-3 text-slate-500">{t.transferredByLabel}</td>
                           <td className="py-1.5 px-3 text-slate-400 text-right whitespace-nowrap">{t.transferredAt}</td>
                         </tr>
                       ))}

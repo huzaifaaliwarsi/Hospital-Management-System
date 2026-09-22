@@ -10,6 +10,7 @@ import {
   Plus,
   RotateCcw,
   Eye,
+  CreditCard,
 } from 'lucide-react';
 import { formatPKR } from '../../../utils/formatters';
 import {
@@ -638,14 +639,18 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
                       )}
                     </td>
 
-                    {/* Balance Due */}
+                    {/* Balance Due / Remaining */}
                     <td className="py-3 px-4 text-right font-mono font-bold">
                       {inv.balanceDue > 0 ? (
                         <span className="text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
                           {formatPKR(inv.balanceDue)}
                         </span>
+                      ) : inv.paidTotal > inv.total ? (
+                        <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 text-[11px]" title="Excess deposit remaining / refundable">
+                          +{formatPKR(inv.paidTotal - inv.total)} Ref
+                        </span>
                       ) : (
-                        <span className="text-slate-400 font-normal">Settle</span>
+                        <span className="text-slate-400 font-normal">Settled</span>
                       )}
                     </td>
 
@@ -679,12 +684,24 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
                         <button
                           type="button"
                           onClick={() => openInvoice(inv.id)}
-                          title="View invoice / collect payment"
-                          className="inline-flex items-center gap-1 px-2 py-1 bg-white hover:bg-[#08775A] text-[#08775A] hover:text-white border border-[#c2e7db] hover:border-[#08775A] text-[11px] font-semibold rounded shadow-2xs transition-colors cursor-pointer"
+                          title="View invoice details"
+                          className="inline-flex items-center gap-1 px-2 py-1 bg-white hover:bg-slate-800 text-slate-700 hover:text-white border border-slate-200 hover:border-slate-800 text-[11px] font-semibold rounded shadow-2xs transition-colors cursor-pointer"
                         >
                           <Eye className="h-3 w-3" />
                           <span>View</span>
                         </button>
+
+                        {!isVoid && (inv.balanceDue > 0 || inv.sourceType === 'ADMISSION') && (
+                          <button
+                            type="button"
+                            onClick={() => openInvoice(inv.id, 'payment')}
+                            title={inv.sourceType === 'ADMISSION' ? 'Collect payment or additional advance' : 'Collect payment on this invoice'}
+                            className="inline-flex items-center gap-1 px-2 py-1 bg-[#effaf5] hover:bg-[#08775A] text-[#08775A] hover:text-white border border-[#c2e7db] hover:border-[#08775A] text-[11px] font-semibold rounded shadow-2xs transition-colors cursor-pointer"
+                          >
+                            <CreditCard className="h-3 w-3" />
+                            <span>{inv.sourceType === 'ADMISSION' ? 'Pay / Advance' : 'Pay'}</span>
+                          </button>
+                        )}
 
                         {!isVoid && (
                           <button

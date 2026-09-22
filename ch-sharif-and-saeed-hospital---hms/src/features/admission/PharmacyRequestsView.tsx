@@ -1,3 +1,4 @@
+import { AdmissionLedgerButton } from './AdmissionLedgerButton';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Pill, Eye } from 'lucide-react';
 import { Select, TextInput } from '../../components/forms/FormControls';
@@ -178,6 +179,7 @@ export const PharmacyRequestsView: React.FC = () => {
                       <button type="button" title="Open Admission" onClick={() => setDetailId(r.admissionId)} className="p-1.5 rounded-md text-[#08775A] hover:bg-[#effaf5]">
                         <Eye className="h-3.5 w-3.5" />
                       </button>
+                        <AdmissionLedgerButton admissionId={r.admissionId} />
                     </td>
                   </tr>
                 ))}

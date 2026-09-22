@@ -46,6 +46,22 @@ const PAYMENT_METHODS: { label: string; value: PaymentMethod }[] = [
   { label: 'Online', value: 'ONLINE' },
 ];
 
+export function formatServiceName(name?: string | null): string {
+  if (!name) return '';
+  if (/ward\s*fixed(\s*\/\s*admission\s*fee)?/i.test(name)) {
+    return 'Ward Price';
+  }
+  return name.replace(/\bward\s*fixed\b/gi, 'Ward Price');
+}
+
+export function formatServiceCode(code?: string | null): string {
+  if (!code) return '';
+  if (/^ward[-_]fixed/i.test(code) || code.includes('-DEL-') || /ward[-_]price/i.test(code)) {
+    return '';
+  }
+  return code;
+}
+
 export function getInvoiceEncounterLabel(inv?: InvoiceDetail | null): string {
   if (!inv) return 'OPD Intake';
   if (inv.sourceType === 'ADMISSION') return 'Inpatient Admission';
@@ -183,9 +199,9 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
 
   // Focus directly on the Discount input (or Payment input if no Hospital Services) when the payment collector opens
   useEffect(() => {
-    if (activeAction === 'payment' && invoice && invoice.status !== 'PAID') {
+    if (activeAction === 'payment' && invoice) {
       const timer = setTimeout(() => {
-        const targetId = isDiscountDisabled ? 'modal-payment-input' : 'modal-discount-input';
+        const targetId = isDiscountDisabled || invoice.status === 'PAID' ? 'modal-payment-input' : 'modal-discount-input';
         const el = document.getElementById(targetId) as HTMLInputElement | null;
         if (el) {
           el.focus();
@@ -273,7 +289,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
   const handleCollectPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     const payAmt = paymentAmount === '' ? 0 : Number(paymentAmount);
-    const discAmt = discountAmount === '' ? 0 : Number(discountAmount);
+    const discAmt = invoice?.status === 'PAID' || discountAmount === '' ? 0 : Number(discountAmount);
 
     if (payAmt <= 0 && discAmt <= 0) {
       setActionError('Enter a payment amount or a discount.');
@@ -315,10 +331,11 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
 
   const isFullyPaid = invoice?.status === 'PAID';
   const isVoid = invoice?.status === 'VOID';
+  const canCollectPayment = !!invoice && !isVoid && (!isFullyPaid || invoice.sourceType === 'ADMISSION');
 
   // Pressing Enter when invoice is fully paid closes modal to immediately take next patient
   useEffect(() => {
-    if (!isFullyPaid) return;
+    if (!isFullyPaid || activeAction !== null) return;
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Enter') {
         e.preventDefault();
@@ -327,7 +344,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [isFullyPaid, onClose]);
+  }, [isFullyPaid, activeAction, onClose]);
 
   const handleRefund = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -417,6 +434,8 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
               ${invoice?.sourceType === 'ADMISSION' && invoice.admissionEstimatedAmount != null ? `<div class="meta-row"><span class="meta-label">Estimated Amount — Subject to Final Billing:</span> <span class="meta-val">${formatPKR(invoice.admissionEstimatedAmount)}</span></div>` : ''}
               ${invoice?.wardName || invoice?.bedNumber ? `<div class="meta-row"><span class="meta-label">Ward / Bed:</span> <span class="meta-val">${[invoice.wardName, invoice.bedNumber ? (/^bed\b/i.test(invoice.bedNumber.trim()) ? invoice.bedNumber.trim() : `Bed ${invoice.bedNumber.trim()}`) : ''].filter(Boolean).join(' - ')}</span></div>` : ''}
               <div class="meta-row"><span class="meta-label">Doctor:</span> <span class="meta-val">${invoice?.doctorName || 'Consultant'}</span></div>
+${invoice?.admissionMedicationMode ? `<div class="meta-row"><span class="meta-label">Medication Fulfillment:</span> ${invoice.admissionMedicationMode === 'HOSPITAL_MANAGED' ? 'Hospital Managed' : 'Self Arranged'}</div>` : ''}
+${invoice?.sourceType === 'ADMISSION' ? `<div class="meta-row"><span class="meta-label">Admission Department:</span> ${invoice.admissionDepartmentName || invoice.departmentName || 'Not assigned'}</div>` : ''}
               <div class="meta-row"><span class="meta-label">Status:</span> <span class="badge ${invoice?.status === 'PAID' ? 'badge-paid' : 'badge-unpaid'}">${invoice?.status}</span></div>
             </div>
             <div class="meta-col">
@@ -441,7 +460,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
               ${invoice?.lines.map((l, i) => `
                 <tr>
                   <td class="text-center" style="color: #64748b;">${i + 1}</td>
-                  <td><strong>${l.serviceName}</strong> ${l.serviceCode ? `<span style="color: #64748b; font-size: 11px; font-weight: 500;">(${l.serviceCode})</span>` : ''}</td>
+                  <td><strong>${formatServiceName(l.serviceName)}</strong> ${formatServiceCode(l.serviceCode) ? `<span style="color: #64748b; font-size: 11px; font-weight: 500;">(${formatServiceCode(l.serviceCode)})</span>` : ''}</td>
                   <td class="text-right">${l.quantity}</td>
                   <td class="text-right">${formatPKR(l.rate)}</td>
                   <td class="text-right"><strong style="color: #0f172a;">${formatPKR(l.lineGross)}</strong></td>
@@ -453,7 +472,18 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
             <div class="summary-row"><span>Total Charges</span><span class="val">${formatPKR(invoice?.subtotal || 0)}</span></div>
             <div class="summary-row"><span>Discount</span><span class="val" style="color: #b45309;">${invoice?.discountTotal ? `- ${formatPKR(invoice.discountTotal)}` : formatPKR(0)}</span></div>
             <div class="summary-row total"><span>Net Payable</span><span class="val">${formatPKR(invoice?.total || 0)}</span></div>
-            <div class="summary-row"><span>Amount Paid</span><span class="val" style="color: #08775A;">${formatPKR(invoice?.paidTotal || 0)}</span></div>
+            ${invoice?.advancePaid ? `<div class="summary-row"><span>Advance Paid / Deposit Received</span><span>${formatPKR(invoice.advancePaid)}</span></div>` : ''}
+            <div class="summary-row"><span>${invoice?.advancePaid ? 'Amount Paid (including advance)' : 'Amount Paid'}</span><span class="val" style="color: #08775A;">${formatPKR(invoice?.paidTotal || 0)}</span></div>
+            <div class="summary-row" style="font-weight: 600; border-top: 1px solid #cbd5e1; padding-top: 6px;">
+              <span>Current Remaining</span>
+              <span class="val" style="color: ${(invoice?.paidTotal || 0) > (invoice?.total || 0) ? '#08775A' : '#991b1b'};">
+                ${(invoice?.paidTotal || 0) > (invoice?.total || 0)
+                  ? `${formatPKR((invoice?.paidTotal || 0) - (invoice?.total || 0))} (Patient Credit)`
+                  : (invoice?.balanceDue || 0) > 0
+                  ? `${formatPKR(invoice?.balanceDue || 0)} (Due)`
+                  : `${formatPKR(0)} (Settled)`}
+              </span>
+            </div>
             <div class="summary-row balance"><span>Balance Due</span><span>${formatPKR(invoice?.balanceDue || 0)}</span></div>
           </div>
           <div class="footer">
@@ -525,6 +555,8 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                   <span className="font-semibold text-slate-800">{formatPKR(invoice.admissionEstimatedAmount)}</span>
                 </div>
               )}
+              {invoice.admissionMedicationMode && <div className="flex justify-between"><span className="text-slate-500 font-semibold">Medication Fulfillment:</span><span className="font-semibold text-slate-800">{invoice.admissionMedicationMode === 'HOSPITAL_MANAGED' ? 'Hospital Managed' : 'Self Arranged'}</span></div>}
+              {invoice.sourceType === 'ADMISSION' && <div className="flex justify-between"><span className="text-slate-500 font-semibold">Admission Department:</span><span className="font-semibold text-slate-800">{invoice.admissionDepartmentName || invoice.departmentName || 'Not assigned'}</span></div>}
               {(invoice.wardName || invoice.bedNumber) && (
                 <div className="flex justify-between">
                   <span className="text-slate-500 font-semibold">Ward / Bed:</span>
@@ -599,8 +631,8 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                     <tr key={l.id}>
                       <td className="py-2.5 px-3.5 text-center text-slate-500 font-semibold">{idx + 1}</td>
                       <td className="py-2.5 px-3.5 font-semibold text-slate-900">
-                        {l.serviceName}
-                        {l.serviceCode && <span className="ml-1.5 text-slate-400 font-semibold text-[11px]">({l.serviceCode})</span>}
+                        {formatServiceName(l.serviceName)}
+                        {formatServiceCode(l.serviceCode) && <span className="ml-1.5 text-slate-400 font-semibold text-[11px]">({formatServiceCode(l.serviceCode)})</span>}
                       </td>
                       <td className="py-2.5 px-3.5 text-right text-slate-800 font-semibold">{l.quantity}</td>
                       <td className="py-2.5 px-3.5 text-right text-slate-800 font-semibold">{formatPKR(l.rate)}</td>
@@ -618,15 +650,25 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
             const liveDiscountTotal = (invoice.discountTotal || 0) + (isFullyPaid ? 0 : currentDiscountInput);
             const liveNetPayable = Math.max(0, (invoice.subtotal || 0) - liveDiscountTotal);
             const currentPaymentInput = typeof paymentAmount === 'number' ? paymentAmount : 0;
-            const livePaidTotal = (invoice.paidTotal || 0) + (isFullyPaid ? 0 : currentPaymentInput);
+            const livePaidTotal = (invoice.paidTotal || 0) + (activeAction === 'payment' ? currentPaymentInput : 0);
             const liveBalanceDue = Math.max(0, liveNetPayable - livePaidTotal);
+            const liveRemainingRefundable = Math.max(0, livePaidTotal - liveNetPayable);
 
             return (
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-3 pt-1 font-sans">
-                {/* Quick action buttons (Add Line / Refund if needed) */}
+                {/* Quick action buttons (Collect Payment / Add Line / Discount / Refund) */}
                 <div className="flex flex-wrap gap-2 text-xs">
                   {activeAction === null && (
                     <>
+                      {canCollectPayment && (
+                        <button
+                          type="button"
+                          onClick={() => setActiveAction('payment')}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-[#08775A] bg-[#effaf5] hover:bg-[#dff5ea] border border-[#c2e7db] rounded-md transition-colors cursor-pointer"
+                        >
+                          <CreditCard className="h-3 w-3" /> {invoice.sourceType === 'ADMISSION' ? 'Collect Payment / Advance' : 'Collect Payment'}
+                        </button>
+                      )}
                       {!isVoid && (
                         <button
                           type="button"
@@ -661,7 +703,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                   )}
                 </div>
 
-                {/* Exactly 5 Summary Rows: Total Charges, Discount, Net Payable, Amount Paid, Balance Due */}
+                {/* Summary Rows: Total Charges, Discount, Net Payable, Advance, Amount Paid, Current Remaining, Balance Due */}
                 <div className="w-full sm:w-80 bg-slate-50 rounded-xl border border-slate-200 p-3.5 space-y-2 shadow-2xs font-sans">
                   <div className="flex items-center justify-between text-xs text-slate-700 font-semibold">
                     <span>Total Charges</span>
@@ -673,23 +715,51 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                       {liveDiscountTotal > 0 ? `- ${formatPKR(liveDiscountTotal)}` : formatPKR(0)}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between text-xs text-slate-900 pt-1.5 border-t border-slate-200">
+                  <div className="flex items-center justify-between text-xs text-slate-900 font-extrabold pt-1 border-t border-slate-200">
                     <span className="font-bold">Net Payable</span>
                     <span className="font-extrabold text-slate-900 text-sm">{formatPKR(liveNetPayable)}</span>
                   </div>
+                  {invoice.advancePaid > 0 && (
+                    <div className="flex items-center justify-between text-xs text-slate-700 font-semibold">
+                      <span>Advance Paid / Deposit Received</span>
+                      <span className="font-bold text-slate-800">{formatPKR(invoice.advancePaid)}</span>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between text-xs text-slate-700 font-semibold">
-                    <span>Amount Paid</span>
+                    <span>{invoice.advancePaid > 0 ? 'Amount Paid (including advance)' : 'Amount Paid'}</span>
                     <span className="font-bold text-[#08775A]">{formatPKR(livePaidTotal)}</span>
                   </div>
+
+                  {/* Current Remaining Row */}
+                  <div className="flex items-center justify-between text-xs text-slate-700 font-semibold pt-1.5 border-t border-slate-200/80">
+                    <span>Current Remaining</span>
+                    {liveRemainingRefundable > 0 ? (
+                      <span className="font-bold text-emerald-700" title="Remaining advance / patient credit">
+                        {formatPKR(liveRemainingRefundable)} <span className="text-[10px] font-medium text-emerald-600">(Patient Credit)</span>
+                      </span>
+                    ) : liveBalanceDue > 0 ? (
+                      <span className="font-bold text-rose-700" title="Remaining balance due from patient">
+                        {formatPKR(liveBalanceDue)} <span className="text-[10px] font-medium text-rose-600">(Due)</span>
+                      </span>
+                    ) : (
+                      <span className="font-bold text-slate-600">
+                        {formatPKR(0)} <span className="text-[10px] font-medium text-slate-500">(Settled)</span>
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Standard Balance Due Box */}
                   <div
-                    className={`flex items-center justify-between text-xs p-2 rounded-lg border font-semibold ${
+                    className={`flex items-center justify-between text-xs p-2.5 rounded-lg border font-semibold ${
                       liveBalanceDue <= 0
                         ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
                         : 'bg-rose-50 border-rose-200 text-rose-900'
                     }`}
                   >
                     <span className="font-extrabold uppercase tracking-wide">Balance Due</span>
-                    <span className="font-extrabold text-base">{formatPKR(liveBalanceDue)}</span>
+                    <span className="font-extrabold text-base font-mono">
+                      {formatPKR(liveBalanceDue)}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -703,7 +773,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
           )}
 
           {/* Fast Unified Payment & Discount Form (When Balance Due > 0) */}
-          {!isFullyPaid && activeAction === 'payment' && (
+          {canCollectPayment && activeAction === 'payment' && (
             <form onSubmit={handleCollectPayment} className="p-3.5 bg-[#effaf5] rounded-xl border border-[#c2e7db] space-y-3 animate-in fade-in">
               <div className="flex items-center justify-between pb-1.5 border-b border-[#c2e7db]/70">
                 <span className="text-xs font-bold text-[#08775A] flex items-center gap-1.5">
@@ -722,7 +792,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                   max={eligibleHospitalServicesGross}
                   placeholder={isDiscountDisabled ? "N/A" : "0"}
                   value={isDiscountDisabled ? '' : discountAmount}
-                  disabled={isDiscountDisabled}
+                  disabled={isDiscountDisabled || isFullyPaid}
                   onChange={(e) => {
                     if (isDiscountDisabled) return;
                     const val = e.target.value === '' ? '' : Number(e.target.value);
@@ -768,7 +838,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                       handleCollectPayment(e);
                     }
                   }}
-                  hint="Enter to confirm & submit payment"
+                  hint={invoice.sourceType === 'ADMISSION' ? 'Any amount may be received. Excess remains as patient credit.' : 'Enter to confirm & submit payment'}
                 />
 
                 {/* 3. Payment Method */}
@@ -937,14 +1007,14 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
             </button>
 
             <div className="flex items-center gap-2">
-              {!isFullyPaid && activeAction !== 'payment' && (
+              {canCollectPayment && activeAction !== 'payment' && (
                 <button
                   type="button"
                   onClick={() => setActiveAction('payment')}
                   className="px-4 py-2 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
                 >
                   <CreditCard className="h-4 w-4" />
-                  <span>Collect Payment</span>
+                  <span>{invoice.sourceType === 'ADMISSION' ? 'Collect Payment / Advance' : 'Collect Payment'}</span>
                 </button>
               )}
               <button

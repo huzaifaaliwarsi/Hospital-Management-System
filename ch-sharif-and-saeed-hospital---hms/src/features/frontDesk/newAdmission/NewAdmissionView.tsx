@@ -1,4 +1,5 @@
 import { doctorsForEncounter } from '../../../utils/doctorAvailability';
+import { formatDateISO, getHospitalCurrentDate } from '../../../utils/dateConstants';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   BedDouble,
@@ -46,8 +47,11 @@ import {
   MedicationMode,
 } from '../../../services/admissionService';
 import { InvoiceDetailModal } from '../billing/InvoiceDetailModal';
-import { getHospitalCurrentDate, formatDateISO } from '../../../utils/dateConstants';
-import { formatPKR } from '../../../utils/formatters';
+import {
+  formatPKR,
+  formatSentenceCase,
+  normalizeSentenceCase,
+} from '../../../utils/formatters';
 import { useAuth } from '../../../context/AuthContext';
 import { Select, Textarea, NumberInput, TextInput, CNICInput } from '../../../components/forms/FormControls';
 import { focusNextField, focusNextFieldOnEnter } from '../../../utils/formNavigation';
@@ -73,7 +77,8 @@ const emptyForm = (): CreateAdmissionFormValues => ({
   diagnosis: '',
   weightKg: '',
   estimatedAmount: '',
-  medicationMode: 'SELF',
+  medicationMode: 'HOSPITAL_MANAGED',
+  outsourcedFulfillmentMode: 'HOSPITAL_MANAGED',
   notes: '',
   advanceAmount: '',
   paymentMethod: 'CASH',
@@ -499,6 +504,10 @@ export const NewAdmissionView: React.FC = () => {
                 <span className="font-semibold text-slate-900">{createdAdmission.patientName}</span>
               </div>
               <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                <span className="text-[10px] text-slate-500 uppercase block">MR Number</span>
+                <span className="font-semibold font-mono text-slate-900">{createdAdmission.patientMrNumber || 'Not available'}</span>
+              </div>
+              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
                 <span className="text-[10px] text-slate-500 uppercase block">Payer Type</span>
                 <span className="font-semibold text-slate-900">{createdAdmission.payerType}</span>
               </div>
@@ -843,7 +852,7 @@ export const NewAdmissionView: React.FC = () => {
               disabled={!!selectedExistingPatient}
               placeholder="e.g. Landhi Hospital Karachi"
               value={address}
-              onChange={(e) => setAddress(e.target.value)}
+              onChange={(e) => setAddress(e.target.value.toUpperCase())}
               onKeyDown={handleEnterNext}
             />
 
@@ -1114,11 +1123,23 @@ export const NewAdmissionView: React.FC = () => {
               />
 
               <Select
-                label="Fulfillment Mode"
+                label="Outsourced Services"
+                placeholder=""
+                options={[
+                  { label: 'Hospital Managed', value: 'HOSPITAL_MANAGED' },
+                  { label: 'Self Managed / External', value: 'SELF' },
+                ]}
+                value={formValues.outsourcedFulfillmentMode}
+                onChange={(e) => setFormValues((prev) => ({ ...prev, outsourcedFulfillmentMode: e.target.value as MedicationMode }))}
+                onKeyDown={handleSelectKeyDown}
+              />
+              <Select
+                label="Pharmacy Fulfillment"
+                placeholder=""
                 hint="Self = arranges own medicines. Hospital Managed = Pharmacy fulfills via requests."
                 options={[
-                  { label: 'Self (Patient Arranged)', value: 'SELF' },
-                  { label: 'Hospital Managed (Pharmacy)', value: 'HOSPITAL_MANAGED' },
+                  { label: 'Hospital Managed', value: 'HOSPITAL_MANAGED' },
+                  { label: 'Self Managed / External', value: 'SELF' },
                 ]}
                 value={formValues.medicationMode}
                 onChange={(e) => {
@@ -1192,7 +1213,8 @@ export const NewAdmissionView: React.FC = () => {
                 rows={2}
                 placeholder="Primary admitting complaint or diagnosis… (Press Enter to jump to Register button)"
                 value={formValues.diagnosis}
-                onChange={(e) => setFormValues({ ...formValues, diagnosis: e.target.value.toUpperCase() })}
+                onChange={(e) => setFormValues({ ...formValues, diagnosis: formatSentenceCase(e.target.value) })}
+                onBlur={(e) => setFormValues({ ...formValues, diagnosis: normalizeSentenceCase(e.target.value) })}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
@@ -1213,7 +1235,8 @@ export const NewAdmissionView: React.FC = () => {
                 rows={2}
                 placeholder="Special instructions, allergies, dietary… (Press Enter to jump to Register button)"
                 value={formValues.notes}
-                onChange={(e) => setFormValues({ ...formValues, notes: e.target.value })}
+                onChange={(e) => setFormValues({ ...formValues, notes: formatSentenceCase(e.target.value) })}
+                onBlur={(e) => setFormValues({ ...formValues, notes: normalizeSentenceCase(e.target.value) })}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();

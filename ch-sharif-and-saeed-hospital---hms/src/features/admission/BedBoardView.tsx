@@ -1,3 +1,4 @@
+import { AdmissionLedgerButton } from './AdmissionLedgerButton';
 import React, { useEffect, useState } from 'react';
 import { LayoutGrid, User } from 'lucide-react';
 import { WardsRoomsBedsService, fetchWardHierarchy } from '../../services/wardsRoomsBedsService';
@@ -84,12 +85,12 @@ export const BedBoardView: React.FC = () => {
                       <p className="text-[11px] font-semibold text-slate-500 mb-1.5">{room.name}</p>
                       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
                         {roomBeds.map((bed: Bed) => (
+                          <div key={bed.id}>
                           <button
-                            key={bed.id}
                             type="button"
                             disabled={!bed.admissionId}
                             onClick={() => bed.admissionId && setDetailId(bed.admissionId)}
-                            className={`p-2.5 rounded-lg border text-left transition-colors ${OCCUPANCY_STYLE[bed.occupancyStatus] || 'bg-slate-50 border-slate-200 text-slate-600'} ${bed.admissionId ? 'hover:shadow-xs cursor-pointer' : 'cursor-default'}`}
+                            className={`w-full p-2.5 rounded-lg border text-left transition-colors ${OCCUPANCY_STYLE[bed.occupancyStatus] || 'bg-slate-50 border-slate-200 text-slate-600'} ${bed.admissionId ? 'hover:shadow-xs cursor-pointer' : 'cursor-default'}`}
                           >
                             <span className="block text-xs font-bold">{bed.bedNumber}</span>
                             <span className="block text-[10px] mt-0.5">{bed.occupancyStatus}</span>
@@ -99,6 +100,8 @@ export const BedBoardView: React.FC = () => {
                               </span>
                             )}
                           </button>
+                          {bed.admissionId && <AdmissionLedgerButton admissionId={bed.admissionId} />}
+                          </div>
                         ))}
                       </div>
                     </div>

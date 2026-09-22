@@ -1,3 +1,4 @@
+import { DischargedPatientsView } from '../shared/DischargedPatientsView';
 import React from 'react';
 import { NewAdmissionView } from './newAdmission/NewAdmissionView';
 import { AppointmentsView } from './appointments/AppointmentsView';
@@ -38,6 +39,8 @@ interface FrontDeskModuleViewProps {
  */
 export const FrontDeskModuleView: React.FC<FrontDeskModuleViewProps> = ({ moduleId, moduleName, groupTitle }) => {
   switch (moduleId) {
+    case 'discharged_patients':
+      return <DischargedPatientsView />;
     case 'new_admission':
       return <NewAdmissionView />;
     case 'appointments':

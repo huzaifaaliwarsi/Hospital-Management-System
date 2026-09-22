@@ -1,3 +1,4 @@
+import { DischargedPatientsView } from '../shared/DischargedPatientsView';
 import React from 'react';
 import { AdmissionDashboardView } from './AdmissionDashboardView';
 import { PlannedAdmissionsView } from './PlannedAdmissionsView';
@@ -33,6 +34,8 @@ interface AdmissionModuleViewProps {
  */
 export const AdmissionModuleView: React.FC<AdmissionModuleViewProps> = ({ moduleId, moduleName, groupTitle }) => {
   switch (moduleId) {
+    case 'discharged_patients':
+      return <DischargedPatientsView />;
     case 'dashboard':
       return <AdmissionDashboardView />;
     case 'planned_admissions':

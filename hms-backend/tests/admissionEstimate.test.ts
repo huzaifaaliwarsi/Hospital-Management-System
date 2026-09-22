@@ -23,6 +23,7 @@ vi.mock('../../ch-sharif-and-saeed-hospital---hms/src/services/patientRegistrySe
 import { admissionService } from '../src/modules/admission/admission.service';
 import { createPlannedAdmissionSchema } from '../src/modules/admission/admission.schemas';
 import { fetchInvoiceDetail } from '../../ch-sharif-and-saeed-hospital---hms/src/services/invoiceService';
+import { invoicePaymentStatus } from '../src/shared/invoicePaymentStatus';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -32,10 +33,41 @@ beforeEach(() => {
   mocks.tx.paymentReceipt.create.mockImplementation(async ({ data }) => ({ id: 'receipt', ...data }));
   mocks.tx.invoiceLineItem.create.mockImplementation(async ({ data }) => ({ id: 'line', ...data }));
   mocks.tx.ward.findUnique.mockResolvedValue({ id: 'ward', departmentId: 'department', fixedPrice: new Decimal(750) });
-  mocks.tx.hospitalInvoice.findFirst.mockResolvedValue({ id: 'invoice', lines: [], paidTotal: new Decimal(0) });
+  mocks.tx.hospitalInvoice.findFirst.mockResolvedValue({ id: 'invoice', lines: [], total: new Decimal(0), paidTotal: new Decimal(0) });
 });
 
 const base = { departmentId: 'department', selfPayEncounterId: 'patient', medicationMode: 'SELF' as const };
+
+describe('admission advance payment and invoice status', () => {
+  it.each([[500, 5000, 'PAID'], [500, 100, 'PARTIALLY_PAID'], [500, 0, 'UNPAID'], [0, 0, 'PAID']])(
+    'derives status for charges %s and payments %s', async (total, paid, status) => {
+      expect(invoicePaymentStatus(new Decimal(total), new Decimal(paid))).toBe(status);
+      mocks.get.mockResolvedValue({ data: { data: {
+        id: 'invoice', sourceType: 'ADMISSION', total, paidTotal: paid, status: 'PAID',
+        lines: [{ id: 'old-advance', serviceRate: { code: 'ADM-ADVANCE' } },
+          { id: 'ward', serviceRate: { code: 'WARD-FIXED' }, lineNet: total }],
+        paymentReceipts: [{ admissionRecordId: 'admission', amount: paid }],
+      } } });
+      const invoice = await fetchInvoiceDetail('invoice');
+      expect(invoice.status).toBe(status);
+      expect(invoice.balanceDue).toBe(Math.max(0, Number(total) - Number(paid)));
+      expect(invoice.advancePaid).toBe(Number(paid));
+      expect(invoice.lines.map((line) => line.id)).toEqual(['ward']);
+    },
+  );
+
+  it('keeps a 5000 advance as credit against the unchanged 500 ward charge', async () => {
+    mocks.tx.ward.findUnique.mockResolvedValue({ id: 'ward', fixedPrice: new Decimal(500) });
+    mocks.tx.hospitalInvoice.findFirst.mockResolvedValue({ id: 'invoice', total: new Decimal(0), paidTotal: new Decimal(5000), lines: [] });
+    await admissionService.createPlannedAdmission({ ...base, wardId: 'ward', advanceAmount: 5000 }, 'actor');
+    expect(mocks.tx.invoiceLineItem.create).toHaveBeenCalledTimes(1);
+    expect(mocks.tx.invoiceLineItem.create.mock.calls[0][0].data.lineNet.toNumber()).toBe(500);
+    expect(mocks.tx.hospitalInvoice.create.mock.calls[0][0].data.total.toNumber()).toBe(0);
+    expect(mocks.tx.hospitalInvoice.create.mock.calls[0][0].data.paidTotal.toNumber()).toBe(5000);
+    expect(mocks.tx.hospitalInvoice.update.mock.calls[0][0].data.status).toBe('PAID');
+    expect(mocks.tx.paymentReceipt.create.mock.calls[0][0].data.amount.toNumber()).toBe(5000);
+  });
+});
 
 describe('informational admission estimate', () => {
   it.each([undefined, 0, 99999.25])('stores estimate %s without adding any charge or receipt', async (estimatedAmount) => {
@@ -53,8 +85,8 @@ describe('informational admission estimate', () => {
     const receipt = mocks.tx.paymentReceipt.create.mock.calls[0][0].data;
     expect(receipt.amount.toString()).toBe('2500');
     expect(mocks.tx.userCashBalance.create.mock.calls[0][0].data.amount.toString()).toBe('2500');
-    expect(mocks.tx.invoiceLineItem.create.mock.calls[0][0].data.rateSnapshot.toString()).toBe('2500');
-    expect(mocks.tx.hospitalInvoice.create.mock.calls[0][0].data.total.toString()).toBe('2500');
+    expect(mocks.tx.invoiceLineItem.create).not.toHaveBeenCalled();
+    expect(mocks.tx.hospitalInvoice.create.mock.calls[0][0].data.total.toString()).toBe('0');
   });
 
   it.each([0, 90000])('preserves the configured ward charge independently of estimate %s', async (estimatedAmount) => {

@@ -132,7 +132,6 @@ export const RoomDetailModal: React.FC<RoomDetailModalProps> = ({
                       <th className="py-2 px-3">Bed Code</th>
                       <th className="py-2 px-3">Bed Number</th>
                       <th className="py-2 px-3">Type</th>
-                      <th className="py-2 px-3 text-right">Daily Rate</th>
                       <th className="py-2 px-3 text-center">Occupancy</th>
                       <th className="py-2 px-3">Admitted Patient</th>
                     </tr>
@@ -143,9 +142,6 @@ export const RoomDetailModal: React.FC<RoomDetailModalProps> = ({
                         <td className="py-2 px-3 font-mono font-bold text-slate-800">{b.code}</td>
                         <td className="py-2 px-3 text-slate-700 font-medium">{b.bedNumber}</td>
                         <td className="py-2 px-3 text-slate-600">{b.bedType}</td>
-                        <td className="py-2 px-3 text-right font-bold text-slate-800">
-                          PKR {(b.dailyBedRate ?? b.dailyRate ?? 0).toLocaleString('en-PK')}
-                        </td>
                         <td className="py-2 px-3 text-center">
                           <span
                             className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${

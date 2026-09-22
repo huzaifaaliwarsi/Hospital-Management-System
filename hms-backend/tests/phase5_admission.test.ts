@@ -8,6 +8,7 @@ vi.mock('@/db/client', () => {
   const mockPrisma: any = {
     $transaction: vi.fn(async (cb: any) => cb(mockTx)),
     admissionRecord: {
+      updateMany: vi.fn(),
       findMany: vi.fn(),
       findUnique: vi.fn(),
       create: vi.fn(),
@@ -18,6 +19,7 @@ vi.mock('@/db/client', () => {
       findMany: vi.fn(),
     },
     bed: {
+      updateMany: vi.fn(),
       findUnique: vi.fn(),
       update: vi.fn(),
     },
@@ -104,6 +106,8 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
 
   beforeEach(() => {
     vi.clearAllMocks();
+    (prisma.bed.updateMany as any).mockResolvedValue({ count: 1 });
+    (prisma.admissionRecord.updateMany as any).mockResolvedValue({ count: 1 });
     (prisma.selfPayEncounter.create as any).mockResolvedValue({
       id: 'self-pay-encounter-1',
       fullName: 'Kamran Akmal',
@@ -365,6 +369,7 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
       (prisma.bed.findUnique as any).mockResolvedValue({
         id: bedId1,
         status: 'AVAILABLE',
+        operationalStatus: 'ACTIVE',
       });
 
       (prisma.bed.update as any).mockResolvedValue({
@@ -431,7 +436,7 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
         dischargeClearances: [],
         notes: 'Intake: patient allergic to penicillin.',
       });
-      (prisma.bed.findUnique as any).mockResolvedValue({ id: bedId1, status: 'AVAILABLE' });
+      (prisma.bed.findUnique as any).mockResolvedValue({ id: bedId1, status: 'AVAILABLE', operationalStatus: 'ACTIVE' });
       (prisma.bed.update as any).mockResolvedValue({ id: bedId1, status: 'OCCUPIED' });
       (prisma.admissionRecord.update as any).mockResolvedValue({ id: 'adm-003', status: 'ACTIVE' });
       (prisma.hospitalInvoice.findFirst as any).mockResolvedValue(null);
@@ -462,6 +467,7 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
       (prisma.bed.findUnique as any).mockResolvedValue({
         id: bedId2,
         status: 'AVAILABLE',
+        operationalStatus: 'ACTIVE',
       });
 
       (prisma.bed.update as any)
@@ -494,10 +500,10 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
         }),
       );
 
-      // New bed occupied
-      expect(prisma.bed.update).toHaveBeenCalledWith(
+      // New bed occupied only while it is still available
+      expect(prisma.bed.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: bedId2 },
+          where: { id: bedId2, status: 'AVAILABLE', operationalStatus: 'ACTIVE' },
           data: { status: 'OCCUPIED' },
         }),
       );
@@ -1434,6 +1440,20 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
       expect(ledger.summary.totalPaid).toEqual(new Decimal(5000));
       expect(ledger.summary.availableCredit).toEqual(new Decimal(3500));
       expect(ledger.summary.outstandingBalance).toEqual(new Decimal(0));
+    });
+
+    it.each(['PLANNED', 'CONFIRMED'])('shows %s registrations before check-in without making them active', async (status) => {
+      (prisma.admissionRecord.findMany as any).mockResolvedValue([
+        { id: 'new-registration', admissionNumber: 'ADM-NEW', status, admittedAt: null,
+          selfPayEncounter: { fullName: 'Registered Patient' }, hospitalInvoices: [], bed: null },
+      ]);
+      (prisma.paymentReceipt.findMany as any).mockResolvedValue([]);
+      const rows = await admissionBillingService.listAdmissionRecords();
+      expect(prisma.admissionRecord.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: { OR: [{ admittedAt: { not: null } }, { status: { in: ['PLANNED', 'CONFIRMED'] } }] },
+      }));
+      expect(rows[0]).toMatchObject({ id: 'new-registration', clinicalStatus: status, admittedAt: null });
+      expect(prisma.admissionRecord.update).not.toHaveBeenCalled();
     });
 
     it('listAdmissionRecords consolidates charges and payments (including unallocated advance receipts) per admission', async () => {

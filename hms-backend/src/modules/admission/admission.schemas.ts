@@ -31,7 +31,8 @@ export const createPlannedAdmissionSchema = z.object({
   diagnosis: z.string().optional(),
   weightKg: z.coerce.number().positive().max(999).optional(),
   estimatedAmount: z.coerce.number().nonnegative().optional(),
-  medicationMode: z.enum(['SELF', 'HOSPITAL_MANAGED']).default('SELF'),
+  outsourcedFulfillmentMode: z.enum(['HOSPITAL_MANAGED', 'SELF']).default('HOSPITAL_MANAGED'),
+  medicationMode: z.enum(['SELF', 'HOSPITAL_MANAGED']).default('HOSPITAL_MANAGED'),
   notes: z.string().optional(),
   // v7.2 §"Admission from Front Desk" step 6 — optional advance collected
   // at creation time, before any department invoice exists (§2.2). Same
@@ -58,6 +59,7 @@ export const updatePlannedAdmissionSchema = z.object({
 export type UpdatePlannedAdmissionBody = z.infer<typeof updatePlannedAdmissionSchema>;
 
 export const checkInAdmissionSchema = z.object({
+  transferReason: z.string().trim().min(1).optional(),
   bedId: z.string().uuid(),
   notes: z.string().optional(),
 });
@@ -74,7 +76,7 @@ export type RequestPaymentBody = z.infer<typeof requestPaymentSchema>;
 
 export const transferBedSchema = z.object({
   targetBedId: z.string().uuid(),
-  reason: z.string().min(1, 'Reason for bed transfer is required'),
+  reason: z.string().trim().min(1, 'Reason for bed transfer is required'),
 });
 
 export type TransferBedBody = z.infer<typeof transferBedSchema>;

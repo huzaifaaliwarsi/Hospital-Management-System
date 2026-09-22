@@ -46,6 +46,7 @@ export interface AdmissionRecord {
   bedLabel: string | null;
   status: AdmissionStatus;
   medicationMode: MedicationMode;
+  outsourcedFulfillmentMode?: MedicationMode;
   diagnosis: string;
   estimatedAmount: number | null;
   expectedAt: string;
@@ -72,6 +73,7 @@ export interface CreateAdmissionFormValues {
   weightKg: number | '';
   estimatedAmount: number | '';
   medicationMode: MedicationMode;
+  outsourcedFulfillmentMode?: MedicationMode;
   notes: string;
   /** Optional advance collected at creation time — posts a real receipt (see `createAdmission`), not just a stored estimate. */
   advanceAmount: number | '';
@@ -247,6 +249,7 @@ function toAdmissionRecord(raw: Record<string, any>): AdmissionRecord {
     bedLabel: bedLabel(raw.bed),
     status: raw.status,
     medicationMode: raw.medicationMode,
+    outsourcedFulfillmentMode: raw.outsourcedFulfillmentMode ?? 'HOSPITAL_MANAGED',
     diagnosis: raw.diagnosis || '',
     estimatedAmount: raw.estimatedAmount != null ? Number(raw.estimatedAmount) : null,
     expectedAt: raw.expectedAt ? formatTimestamp(raw.expectedAt) : '',
@@ -327,8 +330,8 @@ function toAdmissionDetail(raw: Record<string, any>): AdmissionDetail {
       status: inv.status,
       lines: (inv.lines || []).map((l: any) => ({
         id: l.id,
-        serviceName: l.serviceRate?.name || '',
-        serviceCode: l.serviceRate?.code || '',
+        serviceName: /ward\s*fixed/i.test(l.serviceRate?.name || '') ? 'Ward Price' : (l.serviceRate?.name || ''),
+        serviceCode: (/^ward[-_]fixed/i.test(l.serviceRate?.code || '') || (l.serviceRate?.code || '').includes('-DEL-') || /ward[-_]price/i.test(l.serviceRate?.code || '')) ? '' : (l.serviceRate?.code || ''),
         quantity: toNumber(l.quantity) || 1,
         lineGross: toNumber(l.lineGross),
         discountAmount: toNumber(l.discountAmount),
@@ -429,7 +432,8 @@ export async function createAdmission(
         diagnosis: values.diagnosis?.trim() || undefined,
         weightKg: values.weightKg === '' ? undefined : Number(values.weightKg),
         estimatedAmount: values.estimatedAmount === '' ? undefined : Number(values.estimatedAmount),
-        medicationMode: values.medicationMode,
+        medicationMode: values.medicationMode || 'HOSPITAL_MANAGED',
+        outsourcedFulfillmentMode: values.outsourcedFulfillmentMode || 'HOSPITAL_MANAGED',
         notes: values.notes?.trim() || undefined,
         advanceAmount: values.advanceAmount === '' ? undefined : Number(values.advanceAmount),
         paymentMethod: values.paymentMethod,
@@ -461,7 +465,7 @@ export async function createAdmission(
   }
 }
 
-export async function checkInAdmission(id: string, values: { bedId: string; notes?: string }): Promise<AdmissionRecord> {
+export async function checkInAdmission(id: string, values: { bedId: string; notes?: string; transferReason?: string }): Promise<AdmissionRecord> {
   try {
     const res = await apiClient.post<{ data: Record<string, any> }>(`/admissions/${id}/check-in`, values);
     return toAdmissionRecord(res.data.data);

@@ -75,7 +75,7 @@ export const RoomChargeDayCloseSection: React.FC<RoomChargeDayCloseSectionProps>
           <div>
             <h3 className="text-sm font-bold text-[#111827]">Room / Bed Charge — Close Day</h3>
             <p className="text-[11px] text-[#52665e]">
-              Re-posts the daily room/bed rate for every active admission.
+              Re-posts the daily room rate for every active admission.
               {profile.dayCloseTime ? ` Configured day-close time: ${profile.dayCloseTime}.` : ''}
             </p>
           </div>
@@ -130,7 +130,7 @@ export const RoomChargeDayCloseSection: React.FC<RoomChargeDayCloseSectionProps>
             <span>Confirm: post room/bed charges for {businessDate}?</span>
           </div>
           <p className="text-[11px] text-amber-800">
-            Every currently ACTIVE, bed-assigned admission with a configured daily room/bed rate will get one
+            Every currently ACTIVE, bed-assigned admission with a configured daily room rate will get one
             new charge line for this date. This cannot be run twice for the same date.
           </p>
           <div className="flex items-center justify-end gap-2.5">

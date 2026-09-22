@@ -24,6 +24,11 @@ export const admissionBillingController = {
     res.json({ data: ledger });
   },
 
+  getReadOnlyLedger: async (req: Request, res: Response) => {
+    const ledger = await admissionBillingService.getLedger(req.params.id as string, true);
+    res.json({ data: ledger });
+  },
+
   collectPayment: async (req: Request, res: Response) => {
     const result = await admissionBillingService.collectPayment(
       req.params.id as string,

@@ -68,6 +68,8 @@ export interface InvoiceSummary {
 }
 
 export interface InvoiceDetail extends InvoiceSummary {
+  admissionDepartmentName?: string;
+  advancePaid: number;
   lines: InvoiceLine[];
   receipts: PaymentReceiptRow[];
   doctorName: string;
@@ -79,6 +81,7 @@ export interface InvoiceDetail extends InvoiceSummary {
   patientAge?: number | string;
   patientCnic?: string;
   admissionNumber?: string;
+  admissionMedicationMode?: 'SELF' | 'HOSPITAL_MANAGED';
   admissionEstimatedAmount?: number | null;
   wardName?: string;
   bedNumber?: string;
@@ -91,6 +94,22 @@ function formatTimestamp(iso?: string | null): string {
   const dateStr = formatDisplayDate(d);
   const timeStr = d.toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' });
   return `${dateStr}, ${timeStr}`;
+}
+
+export function formatServiceName(name?: string | null): string {
+  if (!name) return '';
+  if (/ward\s*fixed(\s*\/\s*admission\s*fee)?/i.test(name)) {
+    return 'Ward Price';
+  }
+  return name.replace(/\bward\s*fixed\b/gi, 'Ward Price');
+}
+
+export function formatServiceCode(code?: string | null): string {
+  if (!code) return '';
+  if (/^ward[-_]fixed/i.test(code) || code.includes('-DEL-') || /ward[-_]price/i.test(code)) {
+    return '';
+  }
+  return code;
 }
 
 function resolveMrNumber(raw: Record<string, any>): string {
@@ -119,20 +138,22 @@ function toInvoiceSummary(raw: Record<string, any>): InvoiceSummary {
   const patient = raw.panelPatient || raw.selfPayEncounter || raw.admissionRecord?.panelPatient || raw.admissionRecord?.selfPayEncounter;
   const receipts: any[] = Array.isArray(raw.paymentReceipts) ? raw.paymentReceipts : [];
   const reversedReceipts = receipts.filter((r) => r.isReversed);
+  const paidTotal = Number(raw.paidTotal ?? 0);
+  const balanceDue = Math.max(0, Number(raw.total ?? 0) - paidTotal);
   return {
     id: raw.id,
     invoiceNumber: raw.invoiceNumber,
     sourceType: raw.sourceType,
     encounterType: raw.encounterType || null,
-    status: raw.status,
+    status: raw.status === 'VOID' ? 'VOID' : balanceDue === 0 ? 'PAID' : paidTotal > 0 ? 'PARTIALLY_PAID' : 'UNPAID',
     patientName: patient?.fullName || 'Walk-in Patient',
     patientMr: resolveMrNumber(raw),
     payerType: isPanel ? 'Corporate / Panel' : 'Self Pay',
     subtotal: Number(raw.subtotal ?? 0),
     discountTotal: Number(raw.discountTotal ?? 0),
     total: Number(raw.total ?? 0),
-    paidTotal: Number(raw.paidTotal ?? 0),
-    balanceDue: Number(raw.balanceDue ?? Math.max(0, Number(raw.total ?? 0) - Number(raw.paidTotal ?? 0))),
+    paidTotal,
+    balanceDue,
     hasRefund: reversedReceipts.length > 0,
     refundedAmount: reversedReceipts.reduce((sum, r) => sum + Math.abs(Number(r.amount ?? 0)), 0),
     createdAt: formatTimestamp(raw.createdAt),
@@ -150,6 +171,7 @@ function toInvoiceDetail(raw: Record<string, any>): InvoiceDetail {
 
   return {
     ...toInvoiceSummary(raw),
+    admissionDepartmentName: admissionDept,
     doctorName: doctor,
     departmentName: department,
     panelName: raw.panelPatient?.corporatePanel?.name || raw.panelPatient?.corporatePanel?.organizationName || '',
@@ -158,14 +180,16 @@ function toInvoiceDetail(raw: Record<string, any>): InvoiceDetail {
     patientGender: raw.panelPatient?.gender || raw.selfPayEncounter?.gender || '',
     patientAge: raw.panelPatient?.age || (raw.selfPayEncounter?.dob ? Math.max(0, new Date().getFullYear() - new Date(raw.selfPayEncounter.dob).getFullYear()) : ''),
     patientCnic: raw.panelPatient?.cnic || raw.selfPayEncounter?.cnicOrPassport || '',
+    admissionMedicationMode: raw.admissionRecord?.medicationMode,
     admissionNumber: raw.admissionRecord?.admissionNumber || undefined,
     admissionEstimatedAmount: raw.admissionRecord?.estimatedAmount != null ? Number(raw.admissionRecord.estimatedAmount) : null,
+    advancePaid: (raw.paymentReceipts || []).filter((r: any) => r.admissionRecordId && !r.admissionPaymentRequestId && !r.isReversed && Number(r.amount) > 0).reduce((sum: number, r: any) => sum + Number(r.amount), 0),
     wardName: raw.admissionRecord?.bed?.room?.ward?.name || undefined,
     bedNumber: raw.admissionRecord?.bed?.bedNumber || undefined,
-    lines: (raw.lines || []).map((l: any) => ({
+    lines: (raw.lines || []).filter((l: any) => raw.sourceType !== 'ADMISSION' || l.serviceRate?.code !== 'ADM-ADVANCE').map((l: any) => ({
       id: l.id,
-      serviceName: l.serviceRate?.name || '',
-      serviceCode: l.serviceRate?.code || '',
+      serviceName: formatServiceName(l.serviceRate?.name || ''),
+      serviceCode: formatServiceCode(l.serviceRate?.code || ''),
       serviceCategory: l.serviceRate?.category || '',
       serviceStream: l.serviceRate?.serviceStream || '',
       departmentName: l.serviceRate?.department?.name || '',

@@ -1,3 +1,4 @@
+import { invoicePaymentStatus } from '@/shared/invoicePaymentStatus';
 import { Decimal } from '@prisma/client/runtime/library';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
@@ -224,7 +225,7 @@ export const invoicesService = {
       const newDiscountTotal = allLines.reduce((acc, l) => acc.plus(l.discountAmount), new Decimal(0));
       const newTotal = allLines.reduce((acc, l) => acc.plus(l.lineNet), new Decimal(0));
 
-      const newStatus = invoice.paidTotal.greaterThanOrEqualTo(newTotal) && newTotal.greaterThan(0)
+      const newStatus = invoice.paidTotal.greaterThanOrEqualTo(newTotal)
         ? 'PAID'
         : invoice.paidTotal.greaterThan(0)
           ? 'PARTIALLY_PAID'
@@ -417,7 +418,7 @@ export const invoicesService = {
       const newDiscountTotal = refreshedLines.reduce((acc, l) => acc.plus(l.discountAmount), new Decimal(0));
       const newTotal = refreshedLines.reduce((acc, l) => acc.plus(l.lineNet), new Decimal(0));
 
-      const newStatus = invoice.paidTotal.greaterThanOrEqualTo(newTotal) && newTotal.greaterThan(0)
+      const newStatus = invoice.paidTotal.greaterThanOrEqualTo(newTotal)
         ? 'PAID'
         : invoice.paidTotal.greaterThan(0)
           ? 'PARTIALLY_PAID'
@@ -456,13 +457,13 @@ export const invoicesService = {
       });
 
       if (!invoice) throw new NotFoundError('Invoice not found');
-      if (invoice.status === 'PAID') throw new ValidationError('This invoice is already fully paid');
+      if (invoice.sourceType !== 'ADMISSION' && invoicePaymentStatus(invoice.total, invoice.paidTotal) === 'PAID') throw new ValidationError('This invoice is already fully paid');
       if (invoice.status === 'VOID') throw new ValidationError('Cannot pay a void invoice');
 
       const amountDecimal = new Decimal(body.amount);
       const remainingBalance = invoice.total.minus(invoice.paidTotal);
 
-      if (amountDecimal.greaterThan(remainingBalance)) {
+      if (invoice.sourceType !== 'ADMISSION' && amountDecimal.greaterThan(remainingBalance)) {
         throw new ValidationError(
           `Payment amount of PKR ${amountDecimal.toFixed(2)} exceeds remaining balance of PKR ${remainingBalance.toFixed(2)}`,
         );
@@ -567,11 +568,7 @@ export const invoicesService = {
       });
 
       const newPaidTotal = invoice.paidTotal.minus(refundAmount);
-      const newStatus = newPaidTotal.equals(0)
-        ? 'UNPAID'
-        : newPaidTotal.lessThan(invoice.total)
-          ? 'PARTIALLY_PAID'
-          : 'PAID';
+      const newStatus = invoicePaymentStatus(invoice.total, newPaidTotal);
 
       const updatedInvoice = await tx.hospitalInvoice.update({
         where: { id: invoice.id },
@@ -620,7 +617,7 @@ export const invoicesService = {
 
     const hospitalProfile = await prisma.hospitalProfile.findFirst();
 
-    const outstanding = invoice.total.minus(invoice.paidTotal);
+    const outstanding = Decimal.max(0, invoice.total.minus(invoice.paidTotal));
 
     return {
       hospital: {
@@ -636,7 +633,7 @@ export const invoicesService = {
         sourceType: invoice.sourceType,
         encounterType: invoice.encounterType,
         createdAt: invoice.createdAt,
-        status: invoice.status,
+        status: invoice.status === 'VOID' ? 'VOID' : invoicePaymentStatus(invoice.total, invoice.paidTotal),
         subtotal: invoice.subtotal,
         discountTotal: invoice.discountTotal,
         total: invoice.total,
@@ -660,7 +657,7 @@ export const invoicesService = {
             phone: invoice.selfPayEncounter?.phone,
             cnic: invoice.selfPayEncounter?.cnicOrPassport,
           },
-      lines: invoice.lines.map((l) => ({
+      lines: invoice.lines.filter((l) => invoice.sourceType !== 'ADMISSION' || l.serviceRate.code !== 'ADM-ADVANCE').map((l) => ({
         id: l.id,
         serviceName: l.serviceRate.name,
         billingUnit: l.serviceRate.billingUnit,
@@ -774,6 +771,6 @@ export const invoicesService = {
       },
     });
     if (!invoice) throw new NotFoundError('Invoice not found');
-    return invoice;
+    return { ...invoice, status: invoice.status === 'VOID' ? 'VOID' : invoicePaymentStatus(invoice.total, invoice.paidTotal), lines: invoice.lines.filter((l) => invoice.sourceType !== 'ADMISSION' || l.serviceRate.code !== 'ADM-ADVANCE') };
   },
 };

@@ -1,7 +1,8 @@
+import { TransferLocationFields } from './TransferLocationFields';
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Loader2, BedDouble, ArrowLeftRight, CheckCircle2 } from 'lucide-react';
 import { Modal } from '../../components/common/Modal';
-import { Select, TextInput } from '../../components/forms/FormControls';
+import { TextInput } from '../../components/forms/FormControls';
 import { useToast } from '../../context/ToastContext';
 import { WardsRoomsBedsService, fetchWardHierarchy } from '../../services/wardsRoomsBedsService';
 import { Bed } from '../../types/wardsRoomsBeds';
@@ -19,6 +20,7 @@ export const CheckInAdmissionModal: React.FC<CheckInAdmissionModalProps> = ({ ad
   const [bedId, setBedId] = useState(admission.bedId || '');
   const [showChangeBed, setShowChangeBed] = useState(!admission.bedId);
   const [notes, setNotes] = useState('');
+  const [transferReason, setTransferReason] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -77,41 +79,6 @@ export const CheckInAdmissionModal: React.FC<CheckInAdmissionModalProps> = ({ ad
     return null;
   }, [assignedBed, admission.bedLabel]);
 
-  const selectableBeds = useMemo(() => {
-    // Include beds that are Available OR currently reserved for THIS admission
-    const beds = allBeds.filter(
-      (b) => b.operationalStatus === 'Active' && (b.occupancyStatus === 'Available' || b.id === admission.bedId)
-    );
-    const assigned = beds.filter((b) => b.id === admission.bedId);
-    const sameDept = beds.filter((b) => b.id !== admission.bedId && b.departmentId === admission.departmentId);
-    const otherDept = beds.filter((b) => b.id !== admission.bedId && b.departmentId !== admission.departmentId);
-    return [...assigned, ...sameDept, ...otherDept];
-  }, [allBeds, admission.bedId, admission.departmentId]);
-
-  const bedOptions = useMemo(() => {
-    const list = selectableBeds.map((b) => {
-      const location = [
-        b.wardName ? `Ward: ${b.wardName}` : '',
-        b.roomName ? `Room: ${b.roomName}` : '',
-        `Bed: ${b.bedNumber}`,
-      ]
-        .filter(Boolean)
-        .join(' • ');
-      return {
-        label: b.id === admission.bedId ? `${location} ★ (Assigned at Front Desk)` : location,
-        value: b.id,
-      };
-    });
-    // If admission has a bedId not yet mapped in allBeds, ensure it appears as the selected option
-    if (admission.bedId && !list.some((o) => o.value === admission.bedId)) {
-      list.unshift({
-        label: `${admission.bedLabel || 'Assigned Bed'} ★ (Assigned at Front Desk)`,
-        value: admission.bedId,
-      });
-    }
-    return list;
-  }, [selectableBeds, admission.bedId, admission.bedLabel]);
-
   const selectedBedObject = useMemo(() => {
     return allBeds.find((b) => b.id === bedId) || null;
   }, [allBeds, bedId]);
@@ -125,7 +92,7 @@ export const CheckInAdmissionModal: React.FC<CheckInAdmissionModalProps> = ({ ad
     setIsSaving(true);
     setError(null);
     try {
-      await checkInAdmission(admission.id, { bedId, notes: notes.trim() || undefined });
+      await checkInAdmission(admission.id, { bedId, notes: notes.trim() || undefined, transferReason: transferReason.trim() || undefined });
       toast.success(`${admission.patientName} checked in.`);
       onCheckedIn();
     } catch (err: any) {
@@ -160,11 +127,11 @@ export const CheckInAdmissionModal: React.FC<CheckInAdmissionModalProps> = ({ ad
 
               <button
                 type="button"
-                onClick={() => setShowChangeBed((prev) => !prev)}
+                onClick={() => { setBedId(showChangeBed ? admission.bedId || '' : ''); setShowChangeBed((prev) => !prev); }}
                 className="px-2.5 py-1 text-xs font-semibold text-[#08775A] hover:text-[#065f46] hover:bg-[#08775A]/10 border border-[#08775A]/30 rounded-lg transition-colors inline-flex items-center gap-1 shrink-0 cursor-pointer"
               >
                 <ArrowLeftRight className="h-3.5 w-3.5" />
-                <span>{showChangeBed ? 'Hide Bed Selector' : 'Change Bed'}</span>
+                <span>{showChangeBed ? 'Hide Bed Selector' : 'Transfer Ward / Room / Bed'}</span>
               </button>
             </div>
 
@@ -232,7 +199,7 @@ export const CheckInAdmissionModal: React.FC<CheckInAdmissionModalProps> = ({ ad
               {admission.bedId && bedId !== admission.bedId && (
                 <button
                   type="button"
-                  onClick={() => setBedId(admission.bedId || '')}
+                  onClick={() => { setBedId(admission.bedId || ''); setShowChangeBed(false); }}
                   className="text-[11px] font-semibold text-slate-500 hover:text-slate-800 underline cursor-pointer"
                 >
                   Reset to Assigned Bed
@@ -240,13 +207,8 @@ export const CheckInAdmissionModal: React.FC<CheckInAdmissionModalProps> = ({ ad
               )}
             </div>
 
-            <Select
-              options={bedOptions}
-              value={bedId}
-              onChange={(e) => setBedId(e.target.value)}
-              placeholder={bedOptions.length === 0 ? 'No available beds' : 'Choose a bed…'}
-              hint={`${admission.departmentName}'s beds are listed first.`}
-            />
+            <TransferLocationFields bedId={bedId} onChange={setBedId} currentBedId={admission.bedId} />
+            {admission.bedId && bedId !== admission.bedId && <TextInput label="Transfer Reason" required value={transferReason} onChange={(e) => setTransferReason(e.target.value)} />}
 
             {admission.bedId && bedId !== admission.bedId && selectedBedObject && (
               <div className="text-[11px] font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2 flex items-center gap-1.5">

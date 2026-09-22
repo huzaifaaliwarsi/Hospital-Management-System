@@ -936,8 +936,12 @@ export const setupService = {
       wardId = room.wardId;
     }
 
+    if (!roomId && wardId && await prisma.room.count({ where: { wardId } }) > 0) {
+      throw new ValidationError('This ward has rooms. Select a room before adding a bed.');
+    }
+
     try {
-      return await prisma.bed.create({ data: { ...body, code, roomId, wardId, createdById } });
+      return await prisma.bed.create({ data: { ...body, code, roomId, wardId, dailyRate: 0, createdById } });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         throw new ConflictError(`Bed "${body.bedNumber}" already exists in this room, or the bed code is taken.`);
@@ -948,7 +952,7 @@ export const setupService = {
 
   async updateBed(id: string, body: UpdateBedBody, updatedById: string) {
     const existing = await this.assertExists('bed', id);
-    const data: Prisma.BedUncheckedUpdateInput = { ...body, code: normalizeCode(body.code), updatedById };
+    const data: Prisma.BedUncheckedUpdateInput = { ...body, dailyRate: 0, code: normalizeCode(body.code), updatedById };
     if (
       body.operationalStatus !== undefined &&
       body.operationalStatus !== (existing as { operationalStatus: string }).operationalStatus

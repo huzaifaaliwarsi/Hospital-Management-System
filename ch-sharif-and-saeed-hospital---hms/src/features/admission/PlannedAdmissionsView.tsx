@@ -1,3 +1,4 @@
+import { AdmissionLedgerButton } from './AdmissionLedgerButton';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Clock, Search, RotateCcw, LogIn, Eye } from 'lucide-react';
 import { Select, TextInput } from '../../components/forms/FormControls';
@@ -142,6 +143,7 @@ export const PlannedAdmissionsView: React.FC<PlannedAdmissionsViewProps> = ({ ti
                         <button type="button" title="View" onClick={() => setDetailId(a.id)} className="p-1.5 rounded-md text-slate-500 hover:bg-slate-100">
                           <Eye className="h-3.5 w-3.5" />
                         </button>
+                        <AdmissionLedgerButton admissionId={a.id} />
                       </div>
                     </td>
                   </tr>

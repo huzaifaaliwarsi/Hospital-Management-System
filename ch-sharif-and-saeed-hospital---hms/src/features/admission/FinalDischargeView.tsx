@@ -1,3 +1,4 @@
+import { AdmissionLedgerButton } from './AdmissionLedgerButton';
 import React, { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Loader2 } from 'lucide-react';
 import { LoadingState, ErrorState, EmptyState } from '../../components/common/StateViews';
@@ -104,6 +105,7 @@ export const FinalDischargeView: React.FC = () => {
                         <button type="button" onClick={() => setDetailId(a.id)} className="text-[11px] font-semibold text-slate-500 hover:text-slate-800">
                           View
                         </button>
+                        <AdmissionLedgerButton admissionId={a.id} />
                         <button
                           type="button"
                           disabled={dischargingId === a.id}

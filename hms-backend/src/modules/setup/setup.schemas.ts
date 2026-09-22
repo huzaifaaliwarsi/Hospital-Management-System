@@ -188,7 +188,6 @@ export const createBedSchema = z
     wardId: z.string().uuid().optional().nullable(),
     bedNumber: z.string().min(1).max(20),
     bedType: z.string().optional(),
-    dailyRate: z.coerce.number().nonnegative().optional(),
     operationalStatus: z.enum(['ACTIVE', 'CLEANING', 'MAINTENANCE', 'OUT_OF_SERVICE', 'DECOMMISSIONED']).optional(),
   })
   .refine((data) => Boolean(data.roomId) || Boolean(data.wardId), {
@@ -200,7 +199,6 @@ export const updateBedSchema = z.object({
   code: z.string().max(20).optional(),
   bedNumber: z.string().min(1).max(20).optional(),
   bedType: z.string().optional(),
-  dailyRate: z.coerce.number().nonnegative().optional(),
   // AVAILABLE / RESERVED / OCCUPIED / OUT_OF_SERVICE ("Under Maintenance") — occupancy, owned by Admission workflow.
   status: z.enum(['AVAILABLE', 'RESERVED', 'OCCUPIED', 'OUT_OF_SERVICE']).optional(),
   // Orthogonal: whether the bed itself is fit for use right now.

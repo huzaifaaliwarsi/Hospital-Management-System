@@ -1806,27 +1806,13 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
                 { value: 'General Medical Ward', label: 'General Medical Ward' },
               ]}
             />
-            <div className="grid grid-cols-2 gap-3">
-              <Select
-                label="Bed Type"
-                value={bedForm.bedType}
-                onChange={(e) => setBedForm({ ...bedForm, bedType: e.target.value as any })}
-                options={[
-                  { value: 'ICU Ventilator', label: 'ICU Ventilator Bed' },
-                  { value: 'Private Deluxe', label: 'Private Deluxe Bed' },
-                  { value: 'Semi-Private', label: 'Semi-Private Bed' },
-                  { value: 'General Ward', label: 'General Ward Bed' },
-                  { value: 'Day Care Bay', label: 'Day Care Stretcher' },
-                ]}
-              />
-              <NumberInput
-                label="Daily Rate (PKR)"
-                value={bedForm.ratePerDay}
-                onChange={(val) => setBedForm({ ...bedForm, ratePerDay: val })}
-                min={500}
-                max={50000}
-              />
-            </div>
+            <NumberInput
+              label="Daily Rate (PKR)"
+              value={bedForm.ratePerDay}
+              onChange={(val) => setBedForm({ ...bedForm, ratePerDay: val })}
+              min={500}
+              max={50000}
+            />
             <div className="pt-4 border-t border-slate-100 flex justify-end gap-2">
               <button
                 type="button"

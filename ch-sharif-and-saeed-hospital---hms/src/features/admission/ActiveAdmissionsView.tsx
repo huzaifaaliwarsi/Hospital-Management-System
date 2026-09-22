@@ -1,3 +1,4 @@
+import { AdmissionLedgerButton } from './AdmissionLedgerButton';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Users, Search, RotateCcw, Eye } from 'lucide-react';
 import { Select, TextInput } from '../../components/forms/FormControls';
@@ -230,6 +231,7 @@ export const ActiveAdmissionsView: React.FC<ActiveAdmissionsViewProps> = ({
                       >
                         <Eye className="h-3.5 w-3.5" />
                       </button>
+                        <AdmissionLedgerButton admissionId={a.id} />
                     </td>
                   </tr>
                 ))}

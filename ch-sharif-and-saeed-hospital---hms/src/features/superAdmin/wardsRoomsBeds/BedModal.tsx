@@ -35,7 +35,6 @@ export const BedModal: React.FC<BedModalProps> = ({
     roomId: '',
     wardId: '',
     bedType: 'Standard',
-    dailyBedRate: 2000,
     occupancyStatus: 'Available',
     operationalStatus: 'Active',
   });
@@ -59,6 +58,11 @@ export const BedModal: React.FC<BedModalProps> = ({
   // '' when that room is standalone — and the Ward dropdown locks.
   const isWardLockedByRoom = Boolean(formValues.roomId);
   const effectiveWardId = isWardLockedByRoom ? (currentRoom?.wardId || '') : formValues.wardId;
+
+  const wardHasRooms = !!effectiveWardId && rooms.some((room) => room.wardId === effectiveWardId);
+  const requiresRoom = wardHasRooms && (!isEditing || additionalBeds > 0);
+  const selectableRooms = rooms.filter((room) => room.status === 'Active' &&
+    (effectiveWardId ? room.wardId === effectiveWardId : !room.wardId));
 
   // Existing beds already occupying the same scope (this room, or — for a
   // direct ward bed — this ward's own direct beds) — used for capacity
@@ -93,7 +97,6 @@ export const BedModal: React.FC<BedModalProps> = ({
         roomId: bed.roomId,
         wardId: bed.wardId,
         bedType: bed.bedType,
-        dailyBedRate: bed.dailyBedRate ?? bed.dailyRate ?? 2000,
         occupancyStatus: bed.occupancyStatus,
         operationalStatus: bed.operationalStatus,
       });
@@ -119,7 +122,6 @@ export const BedModal: React.FC<BedModalProps> = ({
         roomId: initialRoom?.id || '',
         wardId: initialWardId,
         bedType: 'Standard',
-        dailyBedRate: initialRoom?.dailyRoomRate ? Math.round(initialRoom.dailyRoomRate / Math.max(1, initialRoom.capacity)) : 2000,
         occupancyStatus: 'Available',
         operationalStatus: 'Active',
       });
@@ -142,6 +144,7 @@ export const BedModal: React.FC<BedModalProps> = ({
     setFormValues((prev) => ({
       ...prev,
       wardId,
+      roomId: '',
       bedNumber: defaultNextName,
     }));
   };
@@ -160,9 +163,6 @@ export const BedModal: React.FC<BedModalProps> = ({
       // room) — the Ward field locks to this while a Room is selected.
       wardId: roomId ? r?.wardId || '' : prev.wardId,
       bedNumber: defaultNextName,
-      dailyBedRate: r?.dailyRoomRate
-        ? Math.round(r.dailyRoomRate / Math.max(1, r.capacity))
-        : prev.dailyBedRate,
     }));
   };
 
@@ -205,6 +205,9 @@ export const BedModal: React.FC<BedModalProps> = ({
       }
     }
 
+    if (requiresRoom && !formValues.roomId) {
+      newErrors.roomId = 'This ward has rooms. Select a room before adding a bed.';
+    }
     if (!formValues.roomId && !effectiveWardId) {
       newErrors.roomId = 'Select a Ward, a Room, or both — a bed cannot be left unassigned.';
     }
@@ -223,7 +226,6 @@ export const BedModal: React.FC<BedModalProps> = ({
       quantity: isEditing ? 1 : Math.max(1, quantity),
       additionalBeds: isEditing ? Math.max(0, additionalBeds) : 0,
       numberingPrefix: numberingPrefix.trim() || 'Bed ',
-      dailyBedRate: currentRoom?.dailyRoomRate ?? formValues.dailyBedRate ?? 0,
       occupancyStatus: isOccupied ? bed!.occupancyStatus : 'Available',
       operationalStatus: 'Active',
     });
@@ -279,17 +281,17 @@ export const BedModal: React.FC<BedModalProps> = ({
               <label className="block text-xs font-semibold text-slate-700 mb-1">
                 Ward{' '}
                 <span className="text-slate-400 font-normal text-[11px]">
-                  {isWardLockedByRoom ? '(Auto-resolved from selected Room)' : '(Optional if a Room is selected)'}
+                  {effectiveWardId ? '' : '(Optional for standalone rooms)'}
                 </span>
               </label>
               <select
                 id="bed-form-ward"
                 value={effectiveWardId}
-                disabled={isWardLockedByRoom}
+                disabled={isEditing}
                 onChange={(e) => handleWardChange(e.target.value)}
                 className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A] disabled:bg-slate-50 disabled:text-slate-500"
               >
-                <option value="">No Ward{isWardLockedByRoom ? ' (Standalone Room)' : ' (Direct Ward Bed only)'}</option>
+                <option value="">No Ward (Standalone Room)</option>
                 {wards.map((w) => (
                   <option key={w.id} value={w.id}>
                     {w.name} ({w.code})
@@ -301,16 +303,18 @@ export const BedModal: React.FC<BedModalProps> = ({
             {/* Room Selector */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Room <span className="text-slate-400 font-normal text-[11px]">(Optional if a Ward is selected)</span>
+                Room <span className="text-slate-400 font-normal text-[11px]">{requiresRoom ? '(Required ? ward has rooms)' : '(Optional for wards without rooms)'}</span>
               </label>
               <select
                 id="bed-form-room"
+                required={requiresRoom}
+                disabled={isEditing}
                 value={formValues.roomId}
                 onChange={(e) => handleRoomChange(e.target.value)}
                 className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
               >
-                <option value="">No Room (Direct Ward Bed)</option>
-                {rooms.map((r) => (
+                <option value="">{wardHasRooms ? 'Select a room?' : 'No Room (Direct Ward Bed)'}</option>
+                {selectableRooms.map((r) => (
                   <option key={r.id} value={r.id}>
                     {r.roomNumber} - {r.name} ({r.wardName || 'Standalone'}) (Cap: {r.bedsConfigured ?? 0}/{r.capacity})
                   </option>
@@ -340,9 +344,6 @@ export const BedModal: React.FC<BedModalProps> = ({
                       (Room at full capacity)
                     </span>
                   )}
-                  <span className="block text-[11px] text-emerald-800 mt-0.5">
-                    Room Daily Rate: <strong>PKR {(currentRoom.dailyRoomRate ?? 0).toLocaleString('en-PK')}</strong>/day (Stay charges apply per room tariff)
-                  </span>
                 </span>
               </div>
               {!isEditing && remainingCapacity > 0 && quantity !== remainingCapacity && (
@@ -535,63 +536,6 @@ export const BedModal: React.FC<BedModalProps> = ({
                 </>
               )}
             </div>
-          </div>
-
-          {/* Bed Type and Room Tariff Info */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
-            {/* Bed Type */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Bed Type <span className="text-rose-500">*</span>
-              </label>
-              <select
-                id="bed-form-type"
-                value={formValues.bedType}
-                onChange={(e) =>
-                  setFormValues((prev) => ({ ...prev, bedType: e.target.value as any }))
-                }
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
-              >
-                {VALID_BED_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Room Tariff (inherited) or a directly-editable Daily Rate for a Direct Ward Bed */}
-            {currentRoom ? (
-              <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs">
-                <span className="text-[11px] font-semibold text-slate-500 block">Room Tariff:</span>
-                <span className="text-xs font-bold text-[#08775A]">
-                  PKR {(currentRoom.dailyRoomRate ?? 0).toLocaleString('en-PK')} / day
-                </span>
-                <span className="text-[10px] text-slate-400 block mt-0.5">
-                  Bed charges apply directly from parent room tariff
-                </span>
-              </div>
-            ) : (
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Daily Bed Rate (PKR) <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  id="bed-form-daily-rate"
-                  type="number"
-                  min="0"
-                  step="50"
-                  value={formValues.dailyBedRate}
-                  onChange={(e) =>
-                    setFormValues((prev) => ({ ...prev, dailyBedRate: parseFloat(e.target.value) || 0 }))
-                  }
-                  className="w-full px-3 py-2 text-xs font-bold text-slate-900 rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
-                />
-                <span className="text-[10px] text-slate-400 block mt-0.5">
-                  No parent room tariff to inherit — set this bed's own daily rate
-                </span>
-              </div>
-            )}
           </div>
 
           {/* EDIT MODE: Expand Room Bed Quantity Section */}

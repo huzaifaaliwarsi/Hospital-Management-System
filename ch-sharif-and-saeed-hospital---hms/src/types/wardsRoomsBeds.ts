@@ -123,8 +123,6 @@ export interface Bed {
   departmentName: string;
 
   bedType: BedType;
-  dailyRate: number; // PKR
-  dailyBedRate: number; // PKR
 
   occupancyStatus: BedOccupancyStatus;
   operationalStatus: BedOperationalStatus;
@@ -203,8 +201,6 @@ export interface BedFormValues {
   roomId: string;
   wardId: string;
   bedType: BedType;
-  dailyBedRate: number;
-  dailyRate?: number;
   occupancyStatus: BedOccupancyStatus;
   operationalStatus: BedOperationalStatus;
   quantity?: number;
@@ -246,7 +242,6 @@ export interface BedImportRow {
   bedNumber: string;
   roomCode: string;
   bedType: string;
-  dailyBedRate: number;
   occupancyStatus?: string;
   operationalStatus: string;
   isValid: boolean;

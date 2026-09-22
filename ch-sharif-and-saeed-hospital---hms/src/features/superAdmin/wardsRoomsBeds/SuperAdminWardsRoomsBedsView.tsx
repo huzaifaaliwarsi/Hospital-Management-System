@@ -210,14 +210,12 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
         const missingCount = values.capacity - existingRoomBeds.length;
         if (values.autoGenerateBeds && missingCount > 0) {
           const newBedNames = getNextBedNumbers(existingRoomBeds, missingCount, 'Bed ');
-          const ratePerBed = values.dailyRoomRate ?? 0;
           const bedsToCreate: BedFormValues[] = newBedNames.map((bName) => ({
             code: '',
             bedNumber: bName,
             roomId: selectedRoom.id,
             wardId: '',
             bedType: 'Standard',
-            dailyBedRate: ratePerBed,
             occupancyStatus: 'Available',
             operationalStatus: 'Active',
           }));
@@ -231,7 +229,6 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
 
         // If autoGenerateBeds was selected on new room:
         if (values.autoGenerateBeds && values.capacity > 0) {
-          const ratePerBed = values.dailyRoomRate ?? 0;
           const newBedNames = getNextBedNumbers([], values.capacity, 'Bed ');
           const bedsToCreate: BedFormValues[] = newBedNames.map((bName) => ({
             code: '',
@@ -239,7 +236,6 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
             roomId: createdRoom.id,
             wardId: '',
             bedType: 'Standard',
-            dailyBedRate: ratePerBed,
             occupancyStatus: 'Available',
             operationalStatus: 'Active',
           }));
@@ -290,7 +286,6 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
       const existingScopedBeds = values.roomId
         ? beds.filter((b) => b.roomId === values.roomId)
         : beds.filter((b) => b.wardId === values.wardId && !b.roomId);
-      const effectiveDailyRate = targetRoom?.dailyRoomRate ?? values.dailyBedRate ?? 0;
       const scopeLabel = targetRoom ? `room "${targetRoom.name}"` : 'the ward';
 
       // Room has a fixed bed-capacity ceiling that auto-expands; a Ward has
@@ -315,7 +310,6 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
             roomId: values.roomId,
             wardId: values.wardId,
             bedType: values.bedType || 'Standard',
-            dailyBedRate: effectiveDailyRate,
             occupancyStatus: 'Available',
             operationalStatus: 'Active',
           }));
@@ -334,7 +328,7 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
         const qty = values.quantity && values.quantity > 1 ? values.quantity : 1;
 
         if (qty === 1) {
-          await WardsRoomsBedsService.createBed({ ...values, dailyBedRate: effectiveDailyRate }, currentUser);
+          await WardsRoomsBedsService.createBed(values, currentUser);
           await maybeExpandRoomCapacity(existingScopedBeds.length + 1);
           showToast('success', `Bed "${values.bedNumber}" created successfully.`);
         } else {
@@ -347,7 +341,6 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
             roomId: values.roomId,
             wardId: values.wardId,
             bedType: values.bedType || 'Standard',
-            dailyBedRate: effectiveDailyRate,
             occupancyStatus: 'Available',
             operationalStatus: 'Active',
           }));

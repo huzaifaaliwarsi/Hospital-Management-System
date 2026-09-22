@@ -151,17 +151,7 @@ export const BedDetailModal: React.FC<BedDetailModalProps> = ({
               </span>
             </div>
 
-            <div className="bg-emerald-50/50 border border-emerald-100 rounded-xl p-3.5">
-              <span className="text-[11px] font-semibold text-emerald-800 uppercase tracking-wider block">
-                Daily Tariff
-              </span>
-              <div className="text-base font-bold text-emerald-900 mt-1">
-                PKR {((rooms.find((r) => r.id === bed.roomId)?.dailyRoomRate) ?? bed.dailyBedRate ?? bed.dailyRate ?? 0).toLocaleString('en-PK')}
-              </div>
-              <span className="text-[11px] text-emerald-700 block mt-0.5">
-                {bed.roomId ? 'Room Inpatient Tariff / Day' : "Bed's Own Daily Rate"}
-              </span>
-            </div>
+
           </div>
 
           {/* Historical link */}

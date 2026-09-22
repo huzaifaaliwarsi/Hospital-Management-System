@@ -9,6 +9,7 @@ import {
   AdmissionPatientRecordRow,
   AdmissionBillingStatus,
 } from '../../../services/admissionBillingService';
+import { getAllPatients, primePatientRegistryCache } from '../../../services/patientRegistryService';
 import { AdmissionLedgerModal } from './AdmissionLedgerModal';
 
 function formatTimestamp(iso?: string | null): string {
@@ -26,6 +27,8 @@ const BILLING_STATUS_BADGE: Record<AdmissionBillingStatus, string> = {
 };
 
 const CLINICAL_STATUS_BADGE: Record<string, string> = {
+  PLANNED: 'bg-blue-50 text-blue-700 border border-blue-200',
+  CONFIRMED: 'bg-blue-50 text-blue-700 border border-blue-200',
   ACTIVE: 'bg-[#effaf5] text-[#08775A] border border-[#c2e7db]',
   DISCHARGE_PENDING: 'bg-amber-50 text-amber-800 border border-amber-200',
   DISCHARGED: 'bg-slate-100 text-slate-600 border border-slate-200',
@@ -33,7 +36,7 @@ const CLINICAL_STATUS_BADGE: Record<string, string> = {
 
 /**
  * Front Desk / Billing — "Admission Patient Records" (source-of-truth: the
- * user's admission ledger spec §2). One row per checked-in admission (never
+ * user's admission ledger spec §2). One row per registered admission (never
  * per department invoice, unlike `HospitalInvoicesView`'s ADM queue) — the
  * single entry point into an admission's Running Ledger (`AdmissionLedgerModal`).
  */
@@ -50,6 +53,9 @@ export const AdmissionPatientRecordsView: React.FC = () => {
     else setIsLoading(true);
     setLoadError(null);
     try {
+      if (!getAllPatients().length) {
+        await primePatientRegistryCache();
+      }
       setRows(await fetchAdmissionRecords());
     } catch (err: any) {
       setLoadError(err?.message || 'Failed to load admission patient records.');
@@ -188,7 +194,7 @@ export const AdmissionPatientRecordsView: React.FC = () => {
                         <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-600">Self-Pay</span>
                       )}
                     </td>
-                    <td className="py-3 px-4 whitespace-nowrap text-slate-600">{formatTimestamp(r.admittedAt)}</td>
+                    <td className="py-3 px-4 whitespace-nowrap text-slate-600">{r.admittedAt ? formatTimestamp(r.admittedAt) : 'Pending check-in'}</td>
                     <td className="py-3 px-4 whitespace-nowrap text-slate-600">
                       {[r.ward, r.room, r.bed].filter(Boolean).join(' / ') || '—'}
                     </td>
@@ -207,7 +213,7 @@ export const AdmissionPatientRecordsView: React.FC = () => {
                     </td>
                     <td className="py-3 px-4 text-center">
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${CLINICAL_STATUS_BADGE[r.clinicalStatus] || 'bg-slate-100 text-slate-600'}`}>
-                        {r.clinicalStatus.replace(/_/g, ' ')}
+                        {['PLANNED', 'CONFIRMED'].includes(r.clinicalStatus) ? 'PENDING CHECK-IN' : r.clinicalStatus.replace(/_/g, ' ')}
                       </span>
                     </td>
                     <td className="py-3 px-4 text-center">
@@ -234,7 +240,7 @@ export const AdmissionPatientRecordsView: React.FC = () => {
                       <ClipboardList className="h-9 w-9 text-slate-300 mx-auto mb-2" />
                       <h4 className="text-sm font-semibold text-slate-800">No Admission Records Found</h4>
                       <p className="text-xs text-slate-500 mt-1">
-                        {searchTerm ? 'No admission matches your search.' : 'No patient has been checked in yet.'}
+                        {searchTerm ? 'No admission matches your search.' : 'No admission patient records yet.'}
                       </p>
                     </td>
                   </tr>

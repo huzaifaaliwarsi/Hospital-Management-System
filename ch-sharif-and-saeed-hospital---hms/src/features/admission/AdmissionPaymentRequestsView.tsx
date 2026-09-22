@@ -1,3 +1,4 @@
+import { AdmissionLedgerButton } from './AdmissionLedgerButton';
 import React, { useEffect, useMemo, useState } from 'react';
 import { CreditCard, Loader2, AlertCircle, Plus } from 'lucide-react';
 import { Modal } from '../../components/common/Modal';
@@ -157,7 +158,7 @@ export const AdmissionPaymentRequestsView: React.FC = () => {
             <table className="w-full text-xs">
               <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
-                  {['Admission #', 'Patient', 'Type', 'Requested', 'Collected', 'Remaining', 'Status', 'Requested At'].map((h) => (
+                  {['Admission #', 'Patient', 'Type', 'Requested', 'Collected', 'Remaining', 'Status', 'Requested At', 'Ledger'].map((h) => (
                     <th key={h} className="text-left px-3 py-2.5 font-semibold text-slate-600 whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -175,6 +176,7 @@ export const AdmissionPaymentRequestsView: React.FC = () => {
                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${STATUS_BADGE[r.status] || 'bg-slate-100 text-slate-600'}`}>{r.status}</span>
                     </td>
                     <td className="px-3 py-2.5 whitespace-nowrap text-slate-400">{r.requestedAt}</td>
+                    <td className="px-3 py-2.5 whitespace-nowrap"><AdmissionLedgerButton admissionId={r.admissionId} /></td>
                   </tr>
                 ))}
               </tbody>

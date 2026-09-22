@@ -607,7 +607,7 @@ export async function downloadBedsPDF(
   doc.text(appliedFilters, margin + 130, 38);
 
   const headers = [
-    ['Bed Code', 'Number', 'Room', 'Ward', 'Type', 'Daily Rate', 'Occupancy', 'Operational', 'Current Patient'],
+    ['Bed Code', 'Number', 'Room', 'Ward', 'Type', 'Occupancy', 'Operational', 'Current Patient'],
   ];
 
   const body = beds.map((b) => [
@@ -616,7 +616,6 @@ export async function downloadBedsPDF(
     b.roomName,
     b.wardName,
     b.bedType,
-    formatPKR(b.dailyBedRate ?? b.dailyRate ?? 0),
     b.occupancyStatus,
     b.operationalStatus,
     b.occupancyStatus === 'Occupied' ? b.currentPatientName || 'Occupied' : '—',
@@ -636,10 +635,9 @@ export async function downloadBedsPDF(
       2: { cellWidth: 36 },
       3: { cellWidth: 40 },
       4: { cellWidth: 24 },
-      5: { halign: 'right', fontStyle: 'bold', cellWidth: 26 },
-      6: { halign: 'center', cellWidth: 22 },
-      7: { halign: 'center', cellWidth: 24 },
-      8: { cellWidth: 50 },
+      5: { halign: 'center', cellWidth: 22 },
+      6: { halign: 'center', cellWidth: 24 },
+      7: { cellWidth: 50 },
     },
     showHead: 'everyPage',
     didDrawPage: (data) => {
@@ -686,7 +684,6 @@ export async function downloadBedsExcel(
     'Ward Name': b.wardName,
     'Department Name': b.departmentName,
     'Bed Type': b.bedType,
-    'Daily Rate (PKR)': b.dailyBedRate ?? b.dailyRate ?? 0,
     'Occupancy Status': b.occupancyStatus,
     'Operational Status': b.operationalStatus,
     'Current Patient': b.occupancyStatus === 'Occupied' ? b.currentPatientName || 'Occupied' : '',

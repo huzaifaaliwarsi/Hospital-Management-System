@@ -1,5 +1,37 @@
 import apiClient from './apiClient';
 import { toErrorMessage } from '../utils/apiErrors';
+import { getPatientById, getAllPatients } from './patientRegistryService';
+
+function resolveMrNumber(raw: Record<string, any>): string | null {
+  if (raw.panelPatient?.mrNumber) return raw.panelPatient.mrNumber;
+  if (raw.selfPayEncounter?.mrNumber) return raw.selfPayEncounter.mrNumber;
+
+  const encounterId = raw.selfPayEncounterId || raw.selfPayEncounter?.id || raw.patientId;
+  if (encounterId) {
+    const fromRegistry = getPatientById(String(encounterId));
+    if (fromRegistry?.mrNumber) return fromRegistry.mrNumber;
+  }
+
+  if (raw.patientName) {
+    const name = String(raw.patientName).trim().toLowerCase();
+    const matched = getAllPatients().find((p) => p.fullName?.trim().toLowerCase() === name);
+    if (matched?.mrNumber) return matched.mrNumber;
+  }
+
+  if (raw.mrNumber) return raw.mrNumber;
+  // If backend returned a valid MR number that isn't a synthetic UUID hash
+  if (raw.patientMrNumber && !raw.patientMrNumber.startsWith('MR-8') && !raw.patientMrNumber.startsWith('MR-26-')) {
+    return raw.patientMrNumber;
+  }
+
+  if (encounterId) {
+    const rawId = String(encounterId);
+    const cleanId = rawId.replace(/\D/g, '').slice(0, 6) || rawId.replace(/-/g, '').slice(0, 6).toUpperCase();
+    return `MR-${cleanId.padStart(6, '0')}`;
+  }
+
+  return raw.patientMrNumber || null;
+}
 
 /**
  * Front Desk's consolidated view + payment collection over an admission's
@@ -206,6 +238,9 @@ export interface AdmissionLedgerPanelFigures {
 }
 
 export interface AdmissionLedger {
+  departmentName?: string | null;
+  departmentId?: string;
+  medicationMode?: 'SELF' | 'HOSPITAL_MANAGED';
   admissionId: string;
   admissionNumber: string;
   status: string;
@@ -235,7 +270,7 @@ function toRecordRow(raw: Record<string, any>): AdmissionPatientRecordRow {
     id: raw.id,
     admissionNumber: raw.admissionNumber,
     patientName: raw.patientName,
-    patientMrNumber: raw.patientMrNumber ?? null,
+    patientMrNumber: resolveMrNumber(raw),
     payerType: raw.payerType,
     admittedAt: raw.admittedAt,
     ward: raw.ward ?? null,
@@ -252,17 +287,20 @@ function toRecordRow(raw: Record<string, any>): AdmissionPatientRecordRow {
 
 function toLedger(raw: Record<string, any>): AdmissionLedger {
   return {
+    departmentName: raw.departmentName ?? null,
+    departmentId: raw.departmentId,
     admissionId: raw.admissionId,
     admissionNumber: raw.admissionNumber,
     status: raw.status,
     payerType: raw.payerType,
     patientName: raw.patientName,
-    patientMrNumber: raw.patientMrNumber ?? null,
+    patientMrNumber: resolveMrNumber(raw),
     panelName: raw.panelName ?? null,
     admittedAt: raw.admittedAt,
     ward: raw.ward ?? null,
     room: raw.room ?? null,
     bed: raw.bed ?? null,
+    medicationMode: raw.medicationMode,
     finalBillNumber: raw.finalBillNumber ?? null,
     finalBillGeneratedAt: raw.finalBillGeneratedAt ?? null,
     entries: (raw.entries || []).map((e: any) => ({
@@ -322,9 +360,9 @@ export async function fetchAdmissionRecords(): Promise<AdmissionPatientRecordRow
   }
 }
 
-export async function fetchAdmissionLedger(admissionId: string): Promise<AdmissionLedger> {
+export async function fetchAdmissionLedger(admissionId: string, readOnly = false): Promise<AdmissionLedger> {
   try {
-    const res = await apiClient.get<{ data: Record<string, any> }>(`/admission-billing/${admissionId}/ledger`);
+    const res = await apiClient.get<{ data: Record<string, any> }>(`${readOnly ? "/admissions" : "/admission-billing"}/${admissionId}/ledger`);
     return toLedger(res.data.data);
   } catch (err) {
     throw new Error(toErrorMessage(err));

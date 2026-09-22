@@ -21,6 +21,14 @@ function bedLabel(bed: any): { ward: string | null; room: string | null; bed: st
   };
 }
 
+function resolveMrNumber(
+  panelPatient: { mrNumber?: string | null } | null | undefined,
+  _selfPayEncounterId?: string | null,
+): string | null {
+  if (panelPatient?.mrNumber) return panelPatient.mrNumber;
+  return null;
+}
+
 /**
  * Front Desk's consolidated view + payment collection over an admission's
  * **multiple** department invoices (HMS_V7.2_NEW_REQUIREMENTS.md §2.2/§2.10/
@@ -137,14 +145,14 @@ export const admissionBillingService = {
    */
   async listAdmissionRecords() {
     const admissions = await prisma.admissionRecord.findMany({
-      where: { admittedAt: { not: null } },
+      where: { OR: [{ admittedAt: { not: null } }, { status: { in: ['PLANNED', 'CONFIRMED'] } }] },
       include: {
         panelPatient: { select: { id: true, fullName: true, mrNumber: true } },
         selfPayEncounter: { select: { id: true, fullName: true, phone: true } },
         bed: { include: { room: { include: { ward: true } } } },
         hospitalInvoices: { where: { sourceType: 'ADMISSION' }, select: { id: true, total: true } },
       },
-      orderBy: { admittedAt: 'desc' },
+      orderBy: { createdAt: 'desc' },
     });
 
     const admissionIds = admissions.map((a) => a.id);
@@ -189,8 +197,10 @@ export const admissionBillingService = {
       return {
         id: a.id,
         admissionNumber: a.admissionNumber,
+        panelPatientId: a.panelPatientId ?? null,
+        selfPayEncounterId: a.selfPayEncounterId ?? a.selfPayEncounter?.id ?? null,
         patientName: a.panelPatient?.fullName ?? a.selfPayEncounter?.fullName ?? 'Unknown',
-        patientMrNumber: a.panelPatient?.mrNumber ?? null,
+        patientMrNumber: resolveMrNumber(a.panelPatient, a.selfPayEncounterId ?? a.selfPayEncounter?.id),
         payerType: a.panelPatientId ? 'PANEL' : 'SELF_PAY',
         admittedAt: a.admittedAt,
         ...bedLabel(a.bed),
@@ -211,10 +221,11 @@ export const admissionBillingService = {
    * the read model behind the Front Desk "Admission Patient Record" page —
    * it never creates or mutates anything.
    */
-  async getLedger(admissionId: string) {
+  async getLedger(admissionId: string, readOnly = false) {
     const admission = await prisma.admissionRecord.findUnique({
       where: { id: admissionId },
       include: {
+        department: { select: { id: true, name: true } },
         panelPatient: { include: { corporatePanel: { select: { id: true, organizationName: true } } } },
         selfPayEncounter: { select: { id: true, fullName: true, phone: true } },
         bed: { include: { room: { include: { ward: true } } } },
@@ -249,8 +260,8 @@ export const admissionBillingService = {
     const outstandingBalance = Decimal.max(0, totalCharges.minus(totalPaid));
     const availableCredit = Decimal.max(0, totalPaid.minus(totalCharges));
 
-    // If clinically discharged and balance is now 0, reconcile discharge
-    if (admission.status === 'DISCHARGE_PENDING' && outstandingBalance.lessThanOrEqualTo(0)) {
+    // Keep Front Desk reconciliation; Admission portal reads must never change status or beds.
+    if (!readOnly && admission.status === 'DISCHARGE_PENDING' && outstandingBalance.lessThanOrEqualTo(0)) {
       const reconcile = await admissionService.reconcileAdmissionDischarge(prisma, admissionId);
       if (reconcile.isDischarged) {
         admission.status = 'DISCHARGED';
@@ -263,15 +274,14 @@ export const admissionBillingService = {
         inv.lines.map((l) => {
           const isSelf =
             l.discountReason?.includes('Self-Arranged') ||
-            l.discountReason?.includes('Self Arranged') ||
-            (l.lineNet.equals(0) && l.lineGross.equals(0));
+            l.discountReason?.includes('Self Arranged');
 
           return {
             id: l.id,
             date: l.createdAt,
-            type: l.serviceRate.name,
+            type: /ward\s*fixed/i.test(l.serviceRate.name) ? 'Ward Price' : l.serviceRate.name,
             department: inv.department?.name ?? null,
-            description: isSelf ? '[Self-Arranged]' : l.serviceRate.name,
+            description: isSelf ? '[Self-Arranged]' : (/ward\s*fixed/i.test(l.serviceRate.name) ? 'Ward Price' : l.serviceRate.name),
             qty: l.quantity,
             rate: l.rateSnapshot,
             grossAmount: l.lineGross,
@@ -303,13 +313,12 @@ export const admissionBillingService = {
       const dueForLine = Decimal.max(0, l.amount.minus(paidForLine));
       const isSelfArranged =
         l.description?.includes('Self-Arranged') ||
-        l.description?.includes('Self Arranged') ||
-        (l.amount.equals(0) && l.rate.equals(0));
+        l.description?.includes('Self Arranged');
 
       const lineStatus: 'PAID' | 'UNPAID' | 'PARTIAL' | 'SELF' =
         isSelfArranged
           ? 'SELF'
-          : dueForLine.equals(0) && l.amount.greaterThan(0)
+          : dueForLine.equals(0)
             ? 'PAID'
             : paidForLine.greaterThan(0)
               ? 'PARTIAL'
@@ -374,12 +383,17 @@ export const admissionBillingService = {
     }
 
     return {
+      departmentId: admission.departmentId,
+      departmentName: admission.department?.name ?? null,
       admissionId: admission.id,
       admissionNumber: admission.admissionNumber,
+      panelPatientId: admission.panelPatientId ?? null,
+      selfPayEncounterId: admission.selfPayEncounterId ?? admission.selfPayEncounter?.id ?? null,
       status: admission.status,
+      medicationMode: admission.medicationMode,
       payerType: admission.panelPatientId ? 'PANEL' : 'SELF_PAY',
       patientName: admission.panelPatient?.fullName ?? admission.selfPayEncounter?.fullName ?? 'Unknown',
-      patientMrNumber: admission.panelPatient?.mrNumber ?? null,
+      patientMrNumber: resolveMrNumber(admission.panelPatient, admission.selfPayEncounterId ?? admission.selfPayEncounter?.id),
       panelName: admission.panelPatient?.corporatePanel?.organizationName ?? null,
       admittedAt: admission.admittedAt,
       ...bedLabel(admission.bed),

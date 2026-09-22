@@ -123,11 +123,13 @@ export const WardDetailModal: React.FC<WardDetailModalProps> = ({
                 Physical Location
               </span>
               <div className="text-xs font-bold text-slate-800 mt-1">
-                {ward.floor || 'Floor: N/A'}
+                {ward.floor ? `Floor: ${ward.floor}` : 'Floor: N/A'}
               </div>
-              <span className="text-[11px] text-slate-500 block mt-0.5">
-                {ward.location || 'Wing: Main Block'}
-              </span>
+              {ward.location && (
+                <span className="text-[11px] text-slate-500 block mt-0.5">
+                  {ward.location}
+                </span>
+              )}
             </div>
           </div>
 

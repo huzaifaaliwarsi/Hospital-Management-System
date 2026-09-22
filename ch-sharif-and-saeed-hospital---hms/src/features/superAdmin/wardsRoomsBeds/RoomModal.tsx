@@ -32,7 +32,7 @@ export const RoomModal: React.FC<RoomModalProps> = ({
     wardId: wards[0]?.id || '',
     roomType: 'General',
     capacity: 2,
-    dailyRoomRate: 3500,
+    dailyRoomRate: 0,
     status: 'Active',
   });
 
@@ -63,7 +63,7 @@ export const RoomModal: React.FC<RoomModalProps> = ({
         wardId: wards.find((w) => w.status === 'Active')?.id || wards[0]?.id || '',
         roomType: 'General',
         capacity: 2,
-        dailyRoomRate: 3500,
+        dailyRoomRate: 0,
         status: 'Active',
       });
       setAutoGenerateBeds(true);
@@ -310,7 +310,7 @@ export const RoomModal: React.FC<RoomModalProps> = ({
             {/* Daily Room Rate (PKR) */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Daily Rate (PKR) <span className="text-rose-500">*</span>
+                Daily Rate (PKR) (optional)
               </label>
               <div className="relative">
                 <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
@@ -320,7 +320,7 @@ export const RoomModal: React.FC<RoomModalProps> = ({
                   id="room-form-rate"
                   type="number"
                   min="0"
-                  step="50"
+                  step="any"
                   value={formValues.dailyRoomRate}
                   onChange={(e) =>
                     setFormValues((prev) => ({
@@ -381,7 +381,7 @@ export const RoomModal: React.FC<RoomModalProps> = ({
                     Auto-generate {formValues.capacity} bed(s) for this room upon creation
                   </span>
                   <span className="text-slate-500 text-[11px] block mt-0.5">
-                    Will automatically create Bed 1 to Bed {formValues.capacity} with tariff PKR {Math.round(formValues.dailyRoomRate / Math.max(1, formValues.capacity))}/day.
+                    Will automatically create Bed 1 to Bed {formValues.capacity} for this room (room daily rate applies).
                   </span>
                 </div>
               </label>

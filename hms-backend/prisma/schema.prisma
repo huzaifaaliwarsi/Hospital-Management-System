@@ -1403,7 +1403,8 @@ model AdmissionRecord {
   bedId              String?           @map("bed_id") // NULL until bed assignment / confirm arrival
   bed                Bed?              @relation(fields: [bedId], references: [id])
   status             AdmissionStatus   @default(PLANNED)
-  medicationMode     MedicationMode    @default(SELF) @map("medication_mode")
+  outsourcedFulfillmentMode MedicationMode @default(HOSPITAL_MANAGED) @map("outsourced_fulfillment_mode")
+  medicationMode     MedicationMode    @default(HOSPITAL_MANAGED) @map("medication_mode")
   diagnosis          String?
   weightKg           Decimal?          @map("weight_kg") @db.Decimal(5, 2)
   expectedAt         DateTime?         @map("expected_at")

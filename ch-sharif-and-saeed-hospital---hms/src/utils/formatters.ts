@@ -61,3 +61,49 @@ export function formatCnicInput(raw?: string | null): string {
   return cleanDigits;
 }
 
+/**
+ * Automatically capitalizes the first letter of text and after sentence endings (. ! ?),
+ * while keeping the rest in natural case as the user types (preventing forced ALL CAPS).
+ */
+export function formatSentenceCase(val?: string | null): string {
+  if (!val) return '';
+  return val.replace(/(^\s*|[.!?]\s+)([a-z])/g, (_, prefix, char) => prefix + char.toUpperCase());
+}
+
+/**
+ * Normalizes full sentence on blur: if the entire string was entered in ALL CAPS,
+ * converts to sentence case (First letter capital, rest lowercase).
+ */
+export function normalizeSentenceCase(val?: string | null): string {
+  if (!val) return '';
+  const trimmed = val.trim();
+  if (trimmed.length > 1 && trimmed === trimmed.toUpperCase() && /[A-Z]/.test(trimmed)) {
+    return formatSentenceCase(trimmed.toLowerCase());
+  }
+  return formatSentenceCase(val);
+}
+
+/**
+ * Formats name inputs (Patient Full Name, Guardian Name):
+ * Capitalizes the first letter of each word (Title Case) as user types.
+ */
+export function formatTitleCase(val?: string | null): string {
+  if (!val) return '';
+  return val.replace(/(^|\s|-)([a-z])/g, (_, prefix, char) => prefix + char.toUpperCase());
+}
+
+/**
+ * Normalizes name on blur: if entered in ALL CAPS, converts to Title Case.
+ */
+export function normalizeTitleCase(val?: string | null): string {
+  if (!val) return '';
+  const trimmed = val.trim();
+  if (trimmed.length > 1 && trimmed === trimmed.toUpperCase() && /[A-Z]/.test(trimmed)) {
+    return trimmed
+      .toLowerCase()
+      .replace(/(^|\s|-)([a-z])/g, (_, prefix, char) => prefix + char.toUpperCase());
+  }
+  return formatTitleCase(val);
+}
+
+

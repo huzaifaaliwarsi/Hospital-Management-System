@@ -266,35 +266,35 @@ export const WardModal: React.FC<WardModalProps> = ({
             </div>
           </div>
 
-          {/* Row 3: Gender Policy */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Gender Policy
-            </label>
-            <select
-              id="ward-form-gender"
-              value={formValues.genderPolicy}
-              onChange={(e) =>
-                setFormValues((prev) => ({
-                  ...prev,
-                  genderPolicy: e.target.value as any,
-                }))
-              }
-              className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
-            >
-              <option value="None">None (Co-ed / All)</option>
-              <option value="Male Only">Male Only</option>
-              <option value="Female Only">Female Only</option>
-              <option value="Pediatric">Pediatric</option>
-            </select>
-          </div>
-
-          {/* Row 4: Floor and Location / Wing */}
+          {/* Row 3: Gender Policy and Floor */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Gender Policy */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Gender Policy
+              </label>
+              <select
+                id="ward-form-gender"
+                value={formValues.genderPolicy}
+                onChange={(e) =>
+                  setFormValues((prev) => ({
+                    ...prev,
+                    genderPolicy: e.target.value as any,
+                  }))
+                }
+                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
+              >
+                <option value="None">None (Co-ed / All)</option>
+                <option value="Male Only">Male Only</option>
+                <option value="Female Only">Female Only</option>
+                <option value="Pediatric">Pediatric</option>
+              </select>
+            </div>
+
             {/* Floor */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Location / Floor
+                Floor
               </label>
               {floors && floors.length > 0 ? (
                 <select
@@ -323,23 +323,6 @@ export const WardModal: React.FC<WardModalProps> = ({
                   className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
                 />
               )}
-            </div>
-
-            {/* Location / Wing */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Location / Wing
-              </label>
-              <input
-                id="ward-form-location"
-                type="text"
-                value={formValues.location}
-                onChange={(e) =>
-                  setFormValues((prev) => ({ ...prev, location: e.target.value }))
-                }
-                placeholder="e.g. East Wing, Block B"
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
-              />
             </div>
           </div>
 

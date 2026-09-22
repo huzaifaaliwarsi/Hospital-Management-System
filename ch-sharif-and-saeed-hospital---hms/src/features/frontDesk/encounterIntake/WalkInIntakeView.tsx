@@ -1,4 +1,5 @@
 import { doctorsForEncounter } from '../../../utils/doctorAvailability';
+import { useRouter } from '../../../context/RouterContext';
 import { HOSPITAL_SERVICE_SOURCE, NO_ACTIVE_DEPARTMENT_SERVICES, serviceSourceOptions, servicesForSource, retainAvailableServiceIds } from '../../../utils/serviceSelection';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
@@ -40,7 +41,6 @@ import { fetchDepartments, DepartmentService } from '../../../services/departmen
 import { Department } from '../../../types/department';
 import { HospitalService } from '../../../types/serviceRates';
 import { TextInput, Select, Textarea, CNICInput, MultiSelect, ServiceChecklist } from '../../../components/forms/FormControls';
-import { InvoiceDetailModal } from '../billing/InvoiceDetailModal';
 import { useRouter } from '../../../context/RouterContext';
 import { formatPKR } from '../../../utils/formatters';
 import { focusNextField, focusNextFieldOnEnter } from '../../../utils/formNavigation';

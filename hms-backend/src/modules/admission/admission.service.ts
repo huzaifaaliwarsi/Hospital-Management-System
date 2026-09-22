@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs';
+import { invoicePaymentStatus } from '@/shared/invoicePaymentStatus';
 import { Decimal } from '@prisma/client/runtime/library';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
@@ -76,9 +77,9 @@ async function recalcInvoiceTotals(
 /**
  * Find-or-create the single shared "Room / Bed Accommodation Charges"
  * ServiceRate that every automatic day-close charge posts against —
- * mirrors `createPlannedAdmission`'s `ADM-ADVANCE` lookup-by-code pattern.
+ * uses a stable service code for automatic accommodation charges.
  * Its own `standardRate` is never billed; each posted line snapshots the
- * admitted bed/room's OWN configured daily rate instead (rates differ per
+ * admitted room's OWN configured daily rate instead (rates differ per
  * room/bed, one shared rate card wouldn't fit).
  */
 async function getOrCreateRoomChargeServiceRate(tx: Prisma.TransactionClient, fallbackDepartmentId: string, actorId: string) {
@@ -174,15 +175,21 @@ async function postWardFixedChargeIfApplicable(
 
   let serviceRate = await tx.serviceRate.findFirst({
     where: {
-      OR: [{ code: 'WARD-FIXED' }, { name: { contains: 'Ward Fixed / Admission Fee', mode: 'insensitive' } }],
+      OR: [
+        { code: 'WARD-PRICE' },
+        { code: 'WARD-FIXED' },
+        { name: { contains: 'Ward Price', mode: 'insensitive' } },
+        { name: { contains: 'Ward Fixed / Admission Fee', mode: 'insensitive' } },
+        { name: { contains: 'Ward Fixed', mode: 'insensitive' } },
+      ],
     },
   });
 
   if (!serviceRate) {
     serviceRate = await tx.serviceRate.create({
       data: {
-        code: 'WARD-FIXED',
-        name: 'Ward Fixed / Admission Fee',
+        code: 'WARD-PRICE',
+        name: 'Ward Price',
         category: 'Accommodation',
         departmentId: invoice.departmentId ?? ward.departmentId,
         standardRate: new Decimal(0),
@@ -191,6 +198,11 @@ async function postWardFixedChargeIfApplicable(
         isActive: true,
         createdById: actorId,
       },
+    });
+  } else if (/fixed/i.test(serviceRate.name)) {
+    serviceRate = await tx.serviceRate.update({
+      where: { id: serviceRate.id },
+      data: { name: 'Ward Price' },
     });
   }
 
@@ -220,12 +232,44 @@ async function postWardFixedChargeIfApplicable(
     data: {
       subtotal: { increment: wardFixedRate },
       total: { increment: wardFixedRate },
+      status: invoicePaymentStatus(invoice.total.plus(wardFixedRate), invoice.paidTotal),
       patientShare: invoice.panelPatientId ? undefined : { increment: wardFixedRate },
       panelReceivable: invoice.panelPatientId ? { increment: wardFixedRate } : undefined,
     },
   });
 
   return createdLine;
+}
+
+async function postInitialRoomChargeIfApplicable(tx: Prisma.TransactionClient, admissionId: string, bedId: string, actorId: string) {
+  const bed = await tx.bed.findUnique({ where: { id: bedId }, include: { room: true } });
+  const rate = bed?.room?.dailyRoomRate;
+  if (!rate || rate.lessThanOrEqualTo(0)) return;
+  // Intake and check-in share this guard; the first day is posted only once.
+  if (await tx.admissionRoomChargeLog.findFirst({ where: { admissionRecordId: admissionId } })) return;
+  const admission = await tx.admissionRecord.findUnique({
+    where: { id: admissionId },
+    include: { panelPatient: { include: { corporatePanel: { include: { discountRules: true } } } } },
+  });
+  if (!admission) throw new NotFoundError('Admission record not found');
+  const invoice = await tx.hospitalInvoice.findFirst({
+    where: { admissionRecordId: admissionId, sourceType: 'ADMISSION' }, include: { lines: true },
+  });
+  if (!invoice) throw new NotFoundError('Admission invoice not found');
+  const service = await getOrCreateRoomChargeServiceRate(tx, admission.departmentId, actorId);
+  const coverage = resolvePanelCoverage(rate, admission.panelPatient?.corporatePanel?.discountRules, service.id);
+  const line = await tx.invoiceLineItem.create({ data: {
+    hospitalInvoiceId: invoice.id, serviceRateId: service.id, rateSnapshot: rate,
+    quantity: new Decimal(1), lineGross: rate, discountAmount: coverage.discountAmount,
+    discountReason: coverage.discountReason, lineNet: rate.minus(coverage.discountAmount),
+    patientShare: coverage.patientShare, panelReceivable: coverage.panelReceivable, isCompleted: true,
+  } });
+  await tx.admissionRoomChargeLog.create({ data: {
+    admissionRecordId: admissionId,
+    businessDate: new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`),
+    invoiceLineItemId: line.id, ratePosted: rate,
+  } });
+  await recalcInvoiceTotals(tx, invoice, [...invoice.lines, line]);
 }
 
 export const admissionService = {
@@ -275,6 +319,9 @@ export const admissionService = {
           include: { room: { include: { ward: true } }, ward: true },
         });
         if (!bed) throw new NotFoundError('Selected bed not found');
+      if (bed.operationalStatus !== 'ACTIVE' || bed.room?.isActive === false || bed.ward?.isActive === false || bed.room?.ward?.isActive === false) {
+        throw new ValidationError('Selected bed, room and ward must be active and in service.');
+      }
         if (bed.status !== 'AVAILABLE') {
           throw new ValidationError(`Selected bed is currently ${bed.status}. Only AVAILABLE beds can be assigned.`);
         }
@@ -285,7 +332,7 @@ export const admissionService = {
         // (direct Ward -> Bed, or via the bed's Room -> Ward). A standalone
         // Room -> Bed with no ward keeps whatever departmentId was supplied.
         const resolvedWardDeptId = bed.ward?.departmentId ?? bed.room?.ward?.departmentId;
-        if (resolvedWardDeptId) {
+        if (!departmentId && resolvedWardDeptId) {
           departmentId = resolvedWardDeptId;
         }
 
@@ -318,7 +365,8 @@ export const admissionService = {
           doctorStaffId: body.doctorStaffId ?? null,
           bedId: body.preferredBedId ?? null,
           status: 'PLANNED',
-          medicationMode: body.medicationMode,
+          medicationMode: body.medicationMode ?? 'HOSPITAL_MANAGED',
+          outsourcedFulfillmentMode: body.outsourcedFulfillmentMode ?? 'HOSPITAL_MANAGED',
           diagnosis: body.diagnosis,
           weightKg: body.weightKg != null ? new Decimal(body.weightKg) : null,
           expectedAt: body.expectedAt,
@@ -351,62 +399,20 @@ export const admissionService = {
           departmentId: admission.departmentId,
           panelPatientId: admission.panelPatientId,
           selfPayEncounterId: admission.selfPayEncounterId,
-          subtotal: advDecimal,
+          subtotal: new Decimal(0),
           discountTotal: new Decimal(0),
-          total: advDecimal,
+          total: new Decimal(0),
           paidTotal: advDecimal,
-          patientShare: admission.panelPatientId ? new Decimal(0) : advDecimal,
-          panelReceivable: admission.panelPatientId ? advDecimal : new Decimal(0),
-          status: isPaid ? 'PAID' : 'UNPAID',
+          patientShare: new Decimal(0),
+          panelReceivable: new Decimal(0),
+          status: 'PAID',
           createdById: actorId,
         },
       });
 
       let advanceReceipt = null;
       if (isPaid) {
-        // Find or create a ServiceRate for Admission Advance / Room Deposit
-        let advanceService = await tx.serviceRate.findFirst({
-          where: {
-            OR: [
-              { code: 'ADM-ADVANCE' },
-              { name: { contains: 'Admission Advance', mode: 'insensitive' } },
-            ],
-          },
-        });
-
-        if (!advanceService) {
-          advanceService = await tx.serviceRate.create({
-            data: {
-              code: 'ADM-ADVANCE',
-              name: 'Admission Advance / Deposit',
-              category: 'Admission',
-              departmentId,
-              standardRate: new Decimal(0),
-              billingUnit: 'PER_ADMISSION',
-              discountAllowed: false,
-              isActive: true,
-              createdById: actorId,
-            },
-          });
-        }
-
-        // Attach line item so the invoice itemizes the advance amount
-        await tx.invoiceLineItem.create({
-          data: {
-            hospitalInvoiceId: invoice.id,
-            serviceRateId: advanceService.id,
-            rateSnapshot: advDecimal,
-            quantity: new Decimal(1),
-            lineGross: advDecimal,
-            discountAmount: new Decimal(0),
-            lineNet: advDecimal,
-            patientShare: admission.panelPatientId ? new Decimal(0) : advDecimal,
-            panelReceivable: admission.panelPatientId ? advDecimal : new Decimal(0),
-            performedByStaffId: body.doctorStaffId ?? null,
-            isCompleted: true,
-          },
-        });
-
+        // Advance is a payment/credit only; it never creates a service charge.
         const receiptNumber = await generateReceiptNumber(tx);
 
         advanceReceipt = await tx.paymentReceipt.create({
@@ -445,6 +451,9 @@ export const admissionService = {
         );
       }
 
+      if (body.preferredBedId) {
+        await postInitialRoomChargeIfApplicable(tx, admission.id, body.preferredBedId, actorId);
+      }
       return { admission, advanceReceipt, invoice };
     });
   },
@@ -483,7 +492,7 @@ export const admissionService = {
         paymentRequests: true,
       },
       orderBy: { createdAt: 'desc' },
-      take: 100,
+      ...(query.status === 'DISCHARGED' ? {} : { take: 100 }),
     });
   },
 
@@ -609,14 +618,26 @@ export const admissionService = {
       if (admission.status === 'DISCHARGED') throw new ValidationError('Cannot check-in a discharged admission');
 
       // Verify target bed is available
-      const bed = await tx.bed.findUnique({ where: { id: body.bedId } });
+      const bed = await tx.bed.findUnique({ where: { id: body.bedId }, include: { room: { include: { ward: true } }, ward: true } });
       if (!bed) throw new NotFoundError('Selected bed not found');
       if (bed.status !== 'AVAILABLE' && bed.id !== admission.bedId) {
         throw new ValidationError(`Selected bed is currently ${bed.status}. Only AVAILABLE beds can be assigned.`);
       }
 
+      if (bed.id !== admission.bedId) {
+        const claimed = await tx.bed.updateMany({
+          where: { id: bed.id, status: 'AVAILABLE', operationalStatus: 'ACTIVE' },
+          data: { status: 'OCCUPIED' },
+        });
+        if (claimed.count !== 1) throw new ConflictError('Selected bed is no longer available.');
+      }
       // If switching to a different bed from previously assigned bed, free the old bed
       if (admission.bedId && admission.bedId !== bed.id) {
+        if (!body.transferReason?.trim()) throw new ValidationError('Transfer reason is required when changing the assigned bed.');
+        await tx.bedTransferHistory.create({ data: {
+          admissionRecordId: admission.id, fromBedId: admission.bedId, toBedId: bed.id,
+          reason: body.transferReason.trim(), transferredById: actorId,
+        } });
         await tx.bed.update({
           where: { id: admission.bedId },
           data: { status: 'AVAILABLE' },
@@ -686,6 +707,7 @@ export const admissionService = {
 
       // If assigned bed's ward has fixed pricing, post one-time fixed charge line
       await postWardFixedChargeIfApplicable(tx, admission.id, bed.id, actorId);
+      await postInitialRoomChargeIfApplicable(tx, admission.id, bed.id, actorId);
 
       // Initialize 3-Key Discharge Clearances (D16 p.13)
       if (admission.dischargeClearances.length === 0) {
@@ -726,23 +748,28 @@ export const admissionService = {
         throw new ValidationError('Target bed is identical to current assigned bed');
       }
 
-      const targetBed = await tx.bed.findUnique({ where: { id: body.targetBedId } });
+      const targetBed = await tx.bed.findUnique({ where: { id: body.targetBedId }, include: { room: { include: { ward: true } }, ward: true } });
       if (!targetBed) throw new NotFoundError('Target bed not found');
+      if (targetBed.operationalStatus !== 'ACTIVE' || targetBed.room?.isActive === false || targetBed.ward?.isActive === false || targetBed.room?.ward?.isActive === false) {
+        throw new ValidationError('Target bed, room and ward must be active and in service.');
+      }
       if (targetBed.status !== 'AVAILABLE') {
         throw new ValidationError(`Target bed is ${targetBed.status}. Only AVAILABLE beds can receive a transfer.`);
       }
 
-      // Free previous bed
-      await tx.bed.update({
-        where: { id: admission.bedId },
-        data: { status: 'AVAILABLE' },
+      // Compare-and-set the assignment and target bed inside the same transaction.
+      // Concurrent transfers must not occupy two beds for one admission or share a bed.
+      const assignment = await tx.admissionRecord.updateMany({
+        where: { id: admission.id, status: 'ACTIVE', bedId: admission.bedId },
+        data: { bedId: targetBed.id },
       });
-
-      // Occupy target bed
-      await tx.bed.update({
-        where: { id: targetBed.id },
+      if (assignment.count !== 1) throw new ConflictError('Admission location changed. Reload and try again.');
+      const claimed = await tx.bed.updateMany({
+        where: { id: targetBed.id, status: 'AVAILABLE', operationalStatus: 'ACTIVE' },
         data: { status: 'OCCUPIED' },
       });
+      if (claimed.count !== 1) throw new ConflictError('Target bed is no longer available. Select another bed.');
+      await tx.bed.update({ where: { id: admission.bedId }, data: { status: 'AVAILABLE' } });
 
       // Log immutable BedTransferHistory
       const transferLog = await tx.bedTransferHistory.create({
@@ -822,7 +849,8 @@ export const admissionService = {
 
       const rate = serviceRate.standardRate;
       const qty = new Decimal(body.quantity);
-      const isSelf = body.arrangementMode === 'SELF';
+      const arrangementMode = body.arrangementMode ?? (serviceRate.serviceStream === 'LAB' ? admission.outsourcedFulfillmentMode : 'HOSPITAL_MANAGED');
+      const isSelf = arrangementMode === 'SELF';
 
       let lineGross: Decimal;
       let discountAmount: Decimal;
@@ -1602,7 +1630,7 @@ export const admissionService = {
    * bed-assigned admission, so the daily room rate keeps re-billing for
    * as long as the patient stays admitted instead of only charging once
    * at check-in. Nothing here is hardcoded: the rate comes from the
-   * occupied Room/Bed's own configured daily rate, and idempotency is
+   * occupied Room's own configured daily rate, and idempotency is
    * enforced purely in the database —
    *   - `HospitalDayClose.businessDate` is unique, so the same date can
    *     never be closed twice;
@@ -1632,7 +1660,7 @@ export const admissionService = {
       let totalAmountPosted = new Decimal(0);
 
       for (const admission of activeAdmissions) {
-        const dailyRate = admission.bed?.room?.dailyRoomRate ?? admission.bed?.dailyRate ?? null;
+        const dailyRate = admission.bed?.room?.dailyRoomRate ?? null;
         if (!dailyRate || dailyRate.lessThanOrEqualTo(0)) continue; // no configured rate — nothing to bill
 
         // Belt-and-braces idempotency check — the unique constraint on

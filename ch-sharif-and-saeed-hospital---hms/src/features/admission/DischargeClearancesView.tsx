@@ -1,3 +1,4 @@
+import { AdmissionLedgerButton } from './AdmissionLedgerButton';
 import React, { useEffect, useMemo, useState } from 'react';
 import { ShieldCheck, Search, RotateCcw, Eye } from 'lucide-react';
 import { TextInput } from '../../components/forms/FormControls';
@@ -150,6 +151,7 @@ export const DischargeClearancesView: React.FC = () => {
                       <button type="button" title="Open Clearances" onClick={() => setDetailId(a.id)} className="p-1.5 rounded-md text-[#08775A] hover:bg-[#effaf5]">
                         <Eye className="h-3.5 w-3.5" />
                       </button>
+                        <AdmissionLedgerButton admissionId={a.id} />
                     </td>
                   </tr>
                 ))}

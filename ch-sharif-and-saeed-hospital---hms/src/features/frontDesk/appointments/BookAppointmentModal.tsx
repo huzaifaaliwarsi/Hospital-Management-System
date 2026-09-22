@@ -1,4 +1,5 @@
 import { doctorsForEncounter } from '../../../utils/doctorAvailability';
+import { formatDateISO, getHospitalCurrentDate } from '../../../utils/dateConstants';
 import { HOSPITAL_SERVICE_SOURCE, NO_ACTIVE_DEPARTMENT_SERVICES, servicesForSource } from '../../../utils/serviceSelection';
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import {
@@ -27,8 +28,11 @@ import {
 import { PatientGender, GuardianRelation } from '../../../types/patient';
 import { Department } from '../../../types/department';
 import { StaffUser } from '../../../types/staffUser';
-import { formatDateISO, getHospitalCurrentDate } from '../../../utils/dateConstants';
-import { formatPKR } from '../../../utils/formatters';
+import {
+  formatPKR,
+  formatSentenceCase,
+  normalizeSentenceCase,
+} from '../../../utils/formatters';
 import { useToast } from '../../../context/ToastContext';
 import { focusNextField, focusNextFieldOnEnter } from '../../../utils/formNavigation';
 import {
@@ -388,7 +392,7 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
         finalPanelPatientId = regRes.patient.id;
       }
 
-      const userNotes = notes.trim().toUpperCase();
+      const userNotes = notes.trim();
       const formattedNotes = encounterType
         ? (userNotes ? `[${encounterType}] ${userNotes}` : `[${encounterType}]`)
         : (userNotes || undefined);
@@ -796,9 +800,9 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
               label="Notes / Reason for Visit (optional)"
               rows={2}
               placeholder="e.g. Follow-up consultation, fever, BP review, referral note..."
-              className="uppercase"
               value={notes}
-              onChange={(e) => setNotes(e.target.value.toUpperCase())}
+              onChange={(e) => setNotes(formatSentenceCase(e.target.value))}
+              onBlur={(e) => setNotes(normalizeSentenceCase(e.target.value))}
             />
           </div>
 

@@ -192,8 +192,6 @@ function toBed(
     departmentId: ward?.departmentId || '',
     departmentName: ward?.departmentName || '',
     bedType: (raw.bedType as BedType) || 'Other',
-    dailyRate: Number(raw.dailyRate ?? 0),
-    dailyBedRate: Number(raw.dailyRate ?? 0),
     occupancyStatus: OCCUPANCY_FROM_BACKEND[raw.status] || 'Available',
     operationalStatus: OPERATIONAL_FROM_BACKEND[raw.operationalStatus] || 'Active',
     currentPatientId: raw.currentPatientId || undefined,
@@ -438,7 +436,6 @@ export class WardsRoomsBedsService {
         wardId: values.wardId || undefined,
         bedNumber: values.bedNumber.trim(),
         bedType: values.bedType,
-        dailyRate: values.dailyBedRate ?? values.dailyRate ?? 0,
         operationalStatus: OPERATIONAL_TO_BACKEND[values.operationalStatus || 'Active'],
       });
     }
@@ -452,7 +449,6 @@ export class WardsRoomsBedsService {
       wardId: values.wardId || undefined,
       bedNumber: values.bedNumber.trim(),
       bedType: values.bedType,
-      dailyRate: values.dailyBedRate ?? values.dailyRate ?? 0,
       operationalStatus: OPERATIONAL_TO_BACKEND[values.operationalStatus],
     });
     await fetchWardHierarchy();
@@ -464,7 +460,6 @@ export class WardsRoomsBedsService {
       code: values.code?.trim() || undefined,
       bedNumber: values.bedNumber.trim(),
       bedType: values.bedType,
-      dailyRate: values.dailyBedRate ?? values.dailyRate ?? 0,
       status: OCCUPANCY_TO_BACKEND[values.occupancyStatus],
       operationalStatus: OPERATIONAL_TO_BACKEND[values.operationalStatus],
     });
@@ -624,7 +619,7 @@ export class WardsRoomsBedsService {
       const wardCode = String(r['Ward Code'] || r['wardCode'] || '').trim().toUpperCase();
       const roomType = String(r['Room Type'] || r['roomType'] || 'General').trim();
       const capacity = parseInt(r['Capacity'] || r['capacity'] || '2', 10);
-      const dailyRoomRate = parseFloat(r['Daily Room Rate (PKR)'] || r['dailyRoomRate'] || '3500');
+      const dailyRoomRate = parseFloat(r['Daily Room Rate (PKR)'] || r['dailyRoomRate'] || '0');
       const status = String(r['Status'] || r['status'] || 'Active').trim();
 
       // Room Code is optional — left blank, the backend auto-generates a unique one.
@@ -659,7 +654,7 @@ export class WardsRoomsBedsService {
         wardCode,
         roomType,
         capacity: isNaN(capacity) ? 2 : capacity,
-        dailyRoomRate: isNaN(dailyRoomRate) ? 3500 : dailyRoomRate,
+        dailyRoomRate: isNaN(dailyRoomRate) ? 0 : dailyRoomRate,
         status: status.toLowerCase() === 'inactive' ? 'Inactive' : 'Active',
         isValid: errors.length === 0,
         errors,
@@ -724,7 +719,6 @@ export class WardsRoomsBedsService {
       const bedNumber = String(r['Bed Number'] || r['bedNumber'] || '').trim();
       const roomCode = String(r['Room Code'] || r['roomCode'] || '').trim().toUpperCase();
       const bedType = String(r['Bed Type'] || r['bedType'] || 'Standard').trim();
-      const dailyBedRate = parseFloat(r['Daily Bed Rate (PKR)'] || r['dailyBedRate'] || '2000');
       const operationalStatus = String(r['Operational Status'] || r['operationalStatus'] || 'Active').trim();
 
       // Bed Code is optional — left blank, the backend auto-generates a unique one.
@@ -747,7 +741,6 @@ export class WardsRoomsBedsService {
         errors.push(`Parent Room Code "${roomCode}" not found.`);
       }
 
-      if (isNaN(dailyBedRate) || dailyBedRate < 0) errors.push('Daily rate must be >= 0.');
 
       const item: BedImportRow = {
         rowNumber,
@@ -755,7 +748,6 @@ export class WardsRoomsBedsService {
         bedNumber,
         roomCode,
         bedType,
-        dailyBedRate: isNaN(dailyBedRate) ? 2000 : dailyBedRate,
         occupancyStatus: 'Available',
         operationalStatus: operationalStatus.toLowerCase() === 'out of service' ? 'Out of Service' : 'Active',
         isValid: errors.length === 0,
@@ -788,7 +780,6 @@ export class WardsRoomsBedsService {
           roomId: room.id,
           wardId: '',
           bedType: r.bedType as BedType,
-          dailyBedRate: r.dailyBedRate,
           occupancyStatus: 'Available',
           operationalStatus: (r.operationalStatus as BedOperationalStatus) || 'Active',
         });
