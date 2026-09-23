@@ -4,6 +4,10 @@ export type WardType =
   | 'Semi-Private'
   | 'Other';
 
+// Backend stores this as a free-form string with no enum validation — this
+// type is the frontend's own single source of truth, matching
+// `VALID_GENDER_POLICIES`, the CSV import default, and every display check
+// (BedBoardView, AdmissionDashboard) elsewhere in the app.
 export type GenderPolicy =
   | 'Male'
   | 'Female'
@@ -129,7 +133,12 @@ export interface Bed {
 
   currentPatientId?: string;
   currentPatientName?: string;
+  // Self-pay encounters have no permanent MRN by design — stays undefined
+  // for those admissions (panel.md §4.6/§17).
+  currentPatientMrn?: string;
   admissionId?: string;
+  admissionDate?: string;
+  admittingDoctorName?: string;
 
   // Safeguard linkages
   historicalAdmissionCount?: number;
@@ -174,7 +183,9 @@ export interface WardFormValues {
   genderPolicy: GenderPolicy;
   floor: string;
   location: string;
-  description: string;
+  // WardModal never collects this today; service layer already treats it
+  // as optional (`values.description?.trim() || undefined`).
+  description?: string;
   headStaffId?: string;
   fixedPrice?: number | string;
   status: 'Active' | 'Inactive';
@@ -187,7 +198,10 @@ export interface RoomFormValues {
   // Empty string = standalone Room (no parent Ward).
   wardId: string;
   roomType: RoomType;
-  floor: string;
+  // RoomModal never collects this today (Ward already carries floor for the
+  // building) — kept optional to match Room.floor and how the service layer
+  // already treats it (`values.floor?.trim() || undefined`).
+  floor?: string;
   capacity: number;
   dailyRoomRate: number;
   status: 'Active' | 'Inactive';

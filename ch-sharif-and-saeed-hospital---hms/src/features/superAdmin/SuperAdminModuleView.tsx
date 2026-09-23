@@ -1608,7 +1608,7 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
           isOpen={isAddModalOpen}
           onClose={() => setIsAddModalOpen(false)}
           title="Add New Hospital Department"
-          size="md"
+          maxWidth="md"
         >
           <form onSubmit={handleAddDepartment} className="space-y-4">
             <TextInput
@@ -1648,14 +1648,14 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
               <NumberInput
                 label="Doctors Quota"
                 value={deptForm.doctorsCount}
-                onChange={(val) => setDeptForm({ ...deptForm, doctorsCount: val })}
+                onChange={(e) => setDeptForm({ ...deptForm, doctorsCount: Number(e.target.value) })}
                 min={1}
                 max={50}
               />
               <NumberInput
                 label="Staff Quota"
                 value={deptForm.staffCount}
-                onChange={(val) => setDeptForm({ ...deptForm, staffCount: val })}
+                onChange={(e) => setDeptForm({ ...deptForm, staffCount: Number(e.target.value) })}
                 min={1}
                 max={100}
               />
@@ -1685,7 +1685,7 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
           isOpen={isAddModalOpen}
           onClose={() => setIsAddModalOpen(false)}
           title="Register Chargeable Service Tariff"
-          size="md"
+          maxWidth="md"
         >
           <form onSubmit={handleAddService} className="space-y-4">
             <TextInput
@@ -1732,7 +1732,7 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
               <NumberInput
                 label="Standard Rate (PKR)"
                 value={serviceForm.standardRate}
-                onChange={(val) => setServiceForm({ ...serviceForm, standardRate: val })}
+                onChange={(e) => setServiceForm({ ...serviceForm, standardRate: Number(e.target.value) })}
                 min={100}
                 max={1000000}
               />
@@ -1774,7 +1774,7 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
           isOpen={isAddModalOpen}
           onClose={() => setIsAddModalOpen(false)}
           title="Add New Inpatient Bed"
-          size="md"
+          maxWidth="md"
         >
           <form onSubmit={handleAddBed} className="space-y-4">
             <TextInput
@@ -1805,7 +1805,7 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
             <NumberInput
               label="Daily Rate (PKR)"
               value={bedForm.ratePerDay}
-              onChange={(val) => setBedForm({ ...bedForm, ratePerDay: val })}
+              onChange={(e) => setBedForm({ ...bedForm, ratePerDay: Number(e.target.value) })}
               min={500}
               max={50000}
             />
@@ -1834,7 +1834,7 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
           isOpen={isAddModalOpen}
           onClose={() => setIsAddModalOpen(false)}
           title="Provision Administrator Account"
-          size="md"
+          maxWidth="md"
         >
           <form onSubmit={handleAddAdmin} className="space-y-4">
             <TextInput
@@ -1903,7 +1903,7 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
           isOpen={isAddModalOpen}
           onClose={() => setIsAddModalOpen(false)}
           title="Add Hospital Staff Account"
-          size="md"
+          maxWidth="md"
         >
           <form onSubmit={handleAddStaff} className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
@@ -2017,7 +2017,7 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
               <NumberInput
                 label="Credit Limit (PKR)"
                 value={panelForm.creditLimit}
-                onChange={(val) => setPanelForm({ ...panelForm, creditLimit: val })}
+                onChange={(e) => setPanelForm({ ...panelForm, creditLimit: Number(e.target.value) })}
                 min={1000000}
                 max={100000000}
               />
@@ -2061,7 +2061,7 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
           isOpen={isDetailsModalOpen}
           onClose={() => { setIsDetailsModalOpen(false); setSelectedRecord(null); }}
           title={`Institutional Record Details: ${selectedRecord.name || selectedRecord.bedNumber || selectedRecord.roleName || selectedRecord.code}`}
-          size="md"
+          maxWidth="md"
         >
           <div className="space-y-3 text-xs">
             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
@@ -2098,7 +2098,7 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
         title="Confirm Administrative Removal"
         message={`Are you sure you want to delete ${recordToDelete?.name || recordToDelete?.bedNumber || 'this record'} from the institution database?`}
         confirmLabel="Yes, Delete Record"
-        confirmVariant="danger"
+        variant="danger"
       />
 
       {/* Import Excel Modal */}

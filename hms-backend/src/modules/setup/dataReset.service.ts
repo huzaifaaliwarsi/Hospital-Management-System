@@ -8,9 +8,11 @@ export interface ResetSummary {
   paymentReceipts: number;
   userCashBalances: number;
   accountSettlements: number;
+  providerSettlements: number;
   admissions: number;
   selfPayEncounters: number;
   panelPatients: number;
+  corporatePanels: number;
   pharmacyClearances: number;
   pharmacyDispenses: number;
   pharmacyDispenseLines: number;
@@ -20,9 +22,9 @@ export interface ResetSummary {
 export const dataResetService = {
   /**
    * Resets all runtime transactional data (appointments, invoices, receipts,
-   * cashier ledgers, admissions, patient encounters) while preserving all
-   * master setup data (hospital profile, departments, staff, users, services,
-   * corporate panels, wards, rooms, beds).
+   * cashier ledgers, admissions, patient encounters, panel patients, and corporate panels)
+   * while preserving all master setup data (hospital profile, departments, staff,
+   * users, services, wards, rooms, beds).
    */
   resetTransactionalData: async (actorId: string, actorRole?: string): Promise<{ success: boolean; summary: ResetSummary }> => {
     if (actorRole && actorRole !== 'SUPER_ADMIN') {
@@ -45,21 +47,27 @@ export const dataResetService = {
       const deletedUserCashBalances = await tx.userCashBalance.deleteMany();
       const deletedPaymentReceipts = await tx.paymentReceipt.deleteMany();
 
-      // 4. Pharmacy dispenses & clearances linked to admissions/patients
+      // 4. Provider settlements
+      const deletedProviderSettlements = await tx.providerSettlement.deleteMany();
+
+      // 5. Pharmacy dispenses & clearances linked to admissions/patients
       await tx.highCostMedicineAuthorization.deleteMany();
       await tx.pharmacyClearanceLine.deleteMany();
       const deletedPharmacyDispenseLines = await tx.pharmacyDispenseLine.deleteMany();
       const deletedPharmacyDispenses = await tx.pharmacyDispense.deleteMany();
       const deletedPharmacyClearances = await tx.pharmacyClearance.deleteMany();
 
-      // 5. Invoices & line items
+      // 5b. Admission room charge logs (references both admission records and invoice line items)
+      await tx.admissionRoomChargeLog.deleteMany();
+
+      // 6. Invoices & line items
       const deletedInvoiceLines = await tx.invoiceLineItem.deleteMany();
       const deletedInvoices = await tx.hospitalInvoice.deleteMany();
 
-      // 6. Appointments
+      // 7. Appointments
       const deletedAppointments = await tx.appointment.deleteMany();
 
-      // 7. Admissions and clinical discharge
+      // 8. Admissions and clinical discharge
       await tx.dischargeSummary.deleteMany();
       await tx.dualDischargeClearance.deleteMany();
       await tx.admissionPaymentRequest.deleteMany();
@@ -67,11 +75,16 @@ export const dataResetService = {
       await tx.medicationModeHistory.deleteMany();
       const deletedAdmissions = await tx.admissionRecord.deleteMany();
 
-      // 8. Self-pay encounters & Panel patients
+      // 9. Self-pay encounters & Panel patients (with membership history)
       const deletedSelfPayEncounters = await tx.selfPayEncounter.deleteMany();
+      await tx.panelMembershipHistory.deleteMany();
       const deletedPanelPatients = await tx.panelPatient.deleteMany();
 
-      // 9. Reset occupied/reserved beds back to AVAILABLE
+      // 10. Corporate Panels & Discount Rules
+      await tx.panelDiscountRule.deleteMany();
+      const deletedCorporatePanels = await tx.corporatePanel.deleteMany();
+
+      // 11. Reset occupied/reserved beds back to AVAILABLE
       const updatedBeds = await tx.bed.updateMany({
         where: {
           status: {
@@ -83,7 +96,7 @@ export const dataResetService = {
         },
       });
 
-      // 10. Record Audit Log entry
+      // 12. Record Audit Log entry
       await tx.auditLog.create({
         data: {
           actorId,
@@ -97,6 +110,7 @@ export const dataResetService = {
             deletedAdmissions: deletedAdmissions.count,
             deletedSelfPayEncounters: deletedSelfPayEncounters.count,
             deletedPanelPatients: deletedPanelPatients.count,
+            deletedCorporatePanels: deletedCorporatePanels.count,
             resetBedsCount: updatedBeds.count,
           },
         },
@@ -111,9 +125,11 @@ export const dataResetService = {
           paymentReceipts: deletedPaymentReceipts.count,
           userCashBalances: deletedUserCashBalances.count,
           accountSettlements: deletedAccountSettlements.count,
+          providerSettlements: deletedProviderSettlements.count,
           admissions: deletedAdmissions.count,
           selfPayEncounters: deletedSelfPayEncounters.count,
           panelPatients: deletedPanelPatients.count,
+          corporatePanels: deletedCorporatePanels.count,
           pharmacyClearances: deletedPharmacyClearances.count,
           pharmacyDispenses: deletedPharmacyDispenses.count,
           pharmacyDispenseLines: deletedPharmacyDispenseLines.count,

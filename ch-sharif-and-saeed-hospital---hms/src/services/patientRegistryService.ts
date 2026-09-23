@@ -294,117 +294,69 @@ export async function searchPanelPatients(query: string = '', panelId?: string):
   }));
 }
 
-export function checkDuplicates(
-  candidate: { cnic?: string; passportNumber?: string; primaryPhone?: string; fullName?: string; fatherGuardianName?: string; dateOfBirth?: string },
+/**
+ * Server-side, tiered duplicate check (panel.md §17 backlog item 3) —
+ * backed by `GET /patients/check-duplicate`. Previously ran entirely
+ * client-side over a page-200 cache (`getAllPatients()`), which silently
+ * missed anything registered beyond that window or by another session,
+ * and never checked MR number or external member/employee ID at all
+ * (§4.4 explicitly requires both). Tiers, most certain first: MRN/member
+ * ID/CNIC are hard identity anchors (STRONG_EXACT, blocks save); name+DOB
+ * is strong but not certain (HIGH_WARNING); a shared phone or bare name
+ * alone is only a likely-match signal — it can legitimately be a
+ * different, real dependent — so it warns rather than blocks
+ * (WEAK_WARNING). A network failure fails OPEN (treated as no match)
+ * rather than blocking Front Desk from registering any patient at all
+ * because this one auxiliary check hiccupped.
+ */
+export async function checkDuplicates(
+  candidate: {
+    cnic?: string;
+    passportNumber?: string;
+    primaryPhone?: string;
+    fullName?: string;
+    fatherGuardianName?: string;
+    dateOfBirth?: string;
+    panelMemberId?: string;
+    mrNumber?: string;
+  },
   excludePatientId?: string
-): DuplicateCheckResult {
-  const patients = getAllPatients();
-  const otherPatients = excludePatientId ? patients.filter((p) => p.id !== excludePatientId) : patients;
+): Promise<DuplicateCheckResult> {
+  const cnic = normalizeCnic(candidate.cnic) || candidate.passportNumber?.trim().toUpperCase();
+  const params: Record<string, string> = {};
+  if (cnic) params.cnic = cnic;
+  if (candidate.primaryPhone) params.phone = candidate.primaryPhone;
+  if (candidate.mrNumber?.trim()) params.mrNumber = candidate.mrNumber.trim();
+  if (candidate.panelMemberId?.trim()) params.panelMemberId = candidate.panelMemberId.trim();
+  if (candidate.fullName?.trim()) params.fullName = candidate.fullName.trim();
+  if (candidate.dateOfBirth) params.dob = candidate.dateOfBirth;
+  if (excludePatientId) params.excludePatientId = excludePatientId;
 
-  const normalizedCnic = normalizeCnic(candidate.cnic);
-  const normalizedPassport = candidate.passportNumber?.trim().toUpperCase();
-  const normalizedPhone = candidate.primaryPhone?.replace(/\D/g, '');
-  const normalizedName = candidate.fullName?.trim().toLowerCase();
-  const normalizedGuardian = candidate.fatherGuardianName?.trim().toLowerCase();
-  const normalizedDob = candidate.dateOfBirth?.trim();
-
-  if (normalizedCnic && isValidCnic(normalizedCnic)) {
-    const matched = otherPatients.filter((p) => p.cnic && normalizeCnic(p.cnic) === normalizedCnic);
-    if (matched.length > 0) {
-      return {
-        severity: 'STRONG_EXACT',
-        isExactCnic: true,
-        isExactPassport: false,
-        isPossibleDuplicate: false,
-        matchedPatients: matched,
-        reason: `Existing registered patient found with identical CNIC (${normalizedCnic}). Registration blocked to prevent duplicate identity.`,
-        matchType: 'EXACT_CNIC',
-      };
-    }
+  if (Object.keys(params).length === 0 || (!params.cnic && !params.phone && !params.mrNumber && !params.panelMemberId && !params.fullName)) {
+    return { severity: 'NONE', isExactCnic: false, isExactPassport: false, isPossibleDuplicate: false, matchedPatients: [], reason: '' };
   }
 
-  if (normalizedPassport && normalizedPassport.length >= 6) {
-    const matched = otherPatients.filter((p) => p.passportNumber && p.passportNumber.trim().toUpperCase() === normalizedPassport);
-    if (matched.length > 0) {
-      return {
-        severity: 'STRONG_EXACT',
-        isExactCnic: false,
-        isExactPassport: true,
-        isPossibleDuplicate: false,
-        matchedPatients: matched,
-        reason: `Existing registered patient found with identical Passport (${normalizedPassport}). Registration blocked to prevent duplicate identity.`,
-        matchType: 'EXACT_PASSPORT',
-      };
-    }
+  try {
+    const res = await apiClient.get<{ data: Record<string, any> }>('/patients/check-duplicate', { params });
+    const raw = res.data.data;
+    const matchedPatients: Patient[] = [
+      ...(raw.panelPatients || []).map(toPatientFromPanel),
+      ...(raw.selfPayEncounters || []).map((r: any) => toPatientFromSelfPay(r)),
+    ];
+    const severity = (raw.severity || 'NONE') as DuplicateCheckResult['severity'];
+    return {
+      severity,
+      isExactCnic: severity === 'STRONG_EXACT',
+      isExactPassport: false,
+      isPossibleDuplicate: severity === 'HIGH_WARNING' || severity === 'WEAK_WARNING',
+      matchedPatients,
+      reason: raw.reason || '',
+      matchType: raw.matchType,
+    };
+  } catch {
+    // Fail open — see doc comment above.
+    return { severity: 'NONE', isExactCnic: false, isExactPassport: false, isPossibleDuplicate: false, matchedPatients: [], reason: '' };
   }
-
-  if (normalizedName && normalizedDob) {
-    const matched = otherPatients.filter((p) => p.fullName.trim().toLowerCase() === normalizedName && p.dateOfBirth?.trim() === normalizedDob);
-    if (matched.length > 0) {
-      return {
-        severity: 'HIGH_WARNING',
-        isExactCnic: false,
-        isExactPassport: false,
-        isPossibleDuplicate: true,
-        matchedPatients: matched,
-        reason: 'High Probability Duplicate: Matched existing patient with identical Full Name and Date of Birth.',
-        matchType: 'NAME_DOB',
-      };
-    }
-  }
-
-  if (normalizedName && normalizedGuardian && normalizedPhone && normalizedPhone.length >= 10) {
-    const matched = otherPatients.filter(
-      (p) =>
-        p.fullName.trim().toLowerCase() === normalizedName &&
-        p.fatherGuardianName?.trim().toLowerCase() === normalizedGuardian &&
-        p.primaryPhone &&
-        p.primaryPhone.replace(/\D/g, '') === normalizedPhone
-    );
-    if (matched.length > 0) {
-      return {
-        severity: 'HIGH_WARNING',
-        isExactCnic: false,
-        isExactPassport: false,
-        isPossibleDuplicate: true,
-        matchedPatients: matched,
-        reason: 'High Probability Duplicate: Matched existing patient with identical Full Name, Guardian Name, and Contact Phone.',
-        matchType: 'NAME_GUARDIAN_PHONE',
-      };
-    }
-  }
-
-  if (normalizedPhone && normalizedPhone.length >= 10) {
-    const matched = otherPatients.filter((p) => p.primaryPhone && p.primaryPhone.replace(/\D/g, '') === normalizedPhone);
-    if (matched.length > 0) {
-      return {
-        severity: 'WEAK_WARNING',
-        isExactCnic: false,
-        isExactPassport: false,
-        isPossibleDuplicate: true,
-        matchedPatients: matched,
-        reason: 'Shared Contact Warning: Another registered patient shares this primary phone number.',
-        matchType: 'PHONE_ONLY',
-      };
-    }
-  }
-
-  if (normalizedName && normalizedName.length >= 4) {
-    const matched = otherPatients.filter((p) => p.fullName.trim().toLowerCase() === normalizedName);
-    if (matched.length > 0) {
-      return {
-        severity: 'WEAK_WARNING',
-        isExactCnic: false,
-        isExactPassport: false,
-        isPossibleDuplicate: true,
-        matchedPatients: matched,
-        reason: 'Name Match Warning: An existing patient shares this full name.',
-        matchType: 'NAME_ONLY',
-      };
-    }
-  }
-
-  return { severity: 'NONE', isExactCnic: false, isExactPassport: false, isPossibleDuplicate: false, matchedPatients: [], reason: '' };
 }
 
 function toBackendPanelPayload(formData: PatientFormData): Record<string, unknown> {
@@ -482,13 +434,14 @@ export async function createPatient(
   const validationError = validateCommonFields(formData);
   if (validationError) return { success: false, error: validationError };
 
-  const dupCheck = checkDuplicates({
+  const dupCheck = await checkDuplicates({
     cnic: normalizeCnic(formData.cnic),
     passportNumber: formData.passportNumber,
     primaryPhone: formData.primaryPhone,
     fullName: formData.fullName,
     fatherGuardianName: formData.fatherGuardianName,
     dateOfBirth: formData.dateOfBirth,
+    panelMemberId: formData.payerType === 'Corporate / Panel' ? formData.panelMemberId : undefined,
   });
   if (dupCheck.isExactCnic || dupCheck.isExactPassport) {
     return { success: false, error: dupCheck.reason, duplicateInfo: dupCheck };
@@ -523,7 +476,7 @@ export async function updatePatient(
   const validationError = validateCommonFields(formData);
   if (validationError) return { success: false, error: validationError };
 
-  const dupCheck = checkDuplicates(
+  const dupCheck = await checkDuplicates(
     {
       cnic: normalizeCnic(formData.cnic),
       passportNumber: formData.passportNumber,
@@ -531,6 +484,7 @@ export async function updatePatient(
       fullName: formData.fullName,
       fatherGuardianName: formData.fatherGuardianName,
       dateOfBirth: formData.dateOfBirth,
+      panelMemberId: formData.payerType === 'Corporate / Panel' ? formData.panelMemberId : undefined,
     },
     id
   );

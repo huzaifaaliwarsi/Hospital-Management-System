@@ -78,6 +78,7 @@ vi.mock('@/db/client', () => {
     paymentReceipt: {
       create: vi.fn(),
       findMany: vi.fn(),
+      aggregate: vi.fn(),
     },
     userCashBalance: {
       create: vi.fn(),
@@ -1310,7 +1311,61 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
           { amount: 5000, paymentMethod: 'CASH', allocations: [{ invoiceId: 'inv-hs', amount: 5000 }] },
           staffUserId,
         ),
-      ).rejects.toThrow(/exceeds its outstanding balance/);
+      ).rejects.toThrow(/exceeds its outstanding patient balance/);
+    });
+
+    it('caps patient collection at the panel invoice\'s own patientShare, never the full total (bug found via live testing 2026-09-23)', async () => {
+      // Also satisfies reconcileAdmissionDischarge's own internal re-fetch
+      // (same admissionRecord.findUnique mock, called a second time after
+      // collectPayment posts the receipt) — status/hospitalInvoices/
+      // dischargeClearances are what it reads.
+      (prisma.admissionRecord.findUnique as any).mockResolvedValue({
+        id: 'adm-alloc-panel',
+        status: 'ACTIVE',
+        hospitalInvoices: [],
+        dischargeClearances: [],
+      });
+      (prisma.paymentReceipt.aggregate as any).mockResolvedValue({ _sum: { amount: new Decimal(0) } });
+      (prisma.dualDischargeClearance.findMany as any).mockResolvedValue([]);
+      (prisma.hospitalInvoice.findMany as any).mockResolvedValue([
+        {
+          id: 'inv-panel',
+          invoiceNumber: 'INV-PANEL-1',
+          panelPatientId: 'pp-1',
+          total: new Decimal(1000),
+          patientShare: new Decimal(500),
+          panelReceivable: new Decimal(500),
+          paidTotal: new Decimal(0),
+        },
+      ]);
+
+      // Explicit allocation: the panel's 500 must never be collectible as patient cash.
+      await expect(
+        admissionBillingService.collectPayment(
+          'adm-alloc-panel',
+          { amount: 1000, paymentMethod: 'CASH', allocations: [{ invoiceId: 'inv-panel', amount: 1000 }] },
+          staffUserId,
+        ),
+      ).rejects.toThrow(/exceeds its outstanding patient balance \(500\)/);
+
+      (prisma.paymentReceipt.create as any).mockImplementation((args: any) => ({
+        id: `rec-${args.data.hospitalInvoiceId ?? 'advance'}`,
+        ...args.data,
+      }));
+
+      // Auto-allocation (no explicit allocations): collecting the full 1000
+      // must settle only the 500 patient share against the invoice and
+      // bank the other 500 as unallocated credit — never as if the panel's
+      // receivable had been paid by the patient.
+      const result = await admissionBillingService.collectPayment(
+        'adm-alloc-panel',
+        { amount: 1000, paymentMethod: 'CASH' },
+        staffUserId,
+      );
+      const invoiceAllocation = result.allocations.find((a: any) => a.invoiceId === 'inv-panel')!;
+      const advanceAllocation = result.allocations.find((a: any) => a.invoiceId === null)!;
+      expect(invoiceAllocation.amount).toEqual(new Decimal(500));
+      expect(advanceAllocation.amount).toEqual(new Decimal(500));
     });
 
     it('settles outstanding invoices in full and banks the remainder as an unallocated advance credit when the auto-allocated amount exceeds total outstanding', async () => {

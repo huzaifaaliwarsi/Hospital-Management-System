@@ -12,7 +12,6 @@ import {
   CheckCircle2,
   AlertCircle,
   Trash2,
-  ShieldCheck,
   Phone,
   Wallet,
   FileText,
@@ -33,6 +32,16 @@ import { ConfirmModal } from '../../../components/common/ConfirmModal';
 import { TextInput, NumberInput, Textarea, Select } from '../../../components/forms/FormControls';
 
 
+const BILLING_TERMS_OPTIONS = [
+  { label: 'Monthly Invoicing (Standard)', value: 'Monthly' },
+  { label: 'Net 15 Days', value: 'Net 15 Days' },
+  { label: 'Net 30 Days', value: 'Net 30 Days' },
+  { label: 'Net 45 Days', value: 'Net 45 Days' },
+  { label: 'Net 60 Days', value: 'Net 60 Days' },
+  { label: 'Quarterly Invoicing', value: 'Quarterly' },
+  { label: 'Per Encounter / Immediate Settlement', value: 'Per Encounter' },
+];
+
 const EMPTY_FORM: CorporatePanelFormValues = {
   code: '',
   organizationName: '',
@@ -40,7 +49,7 @@ const EMPTY_FORM: CorporatePanelFormValues = {
   legalBillingName: '',
   contactPhone: '',
   contactEmail: '',
-  billingTerms: '',
+  billingTerms: 'Monthly',
   memberIdLabel: 'Employee / Policy ID',
   memberIdRequired: false,
   membershipValidityRequired: false,
@@ -116,6 +125,14 @@ export const SuperAdminCorporatePanelsView: React.FC = () => {
     return { totalPanels, activePanels, totalCreditLimit, totalActivePatients };
   }, [panels]);
 
+  const billingOptions = useMemo(() => {
+    const currentVal = formValues.billingTerms?.trim();
+    if (currentVal && !BILLING_TERMS_OPTIONS.some((o) => o.value.toLowerCase() === currentVal.toLowerCase())) {
+      return [{ label: currentVal, value: currentVal }, ...BILLING_TERMS_OPTIONS];
+    }
+    return BILLING_TERMS_OPTIONS;
+  }, [formValues.billingTerms]);
+
   const handleOpenAdd = () => {
     setEditingPanel(null);
     setFormValues(EMPTY_FORM);
@@ -129,14 +146,18 @@ export const SuperAdminCorporatePanelsView: React.FC = () => {
       code: panel.code,
       organizationName: panel.name,
       category: panel.category,
-      memberIdLabel: panel.memberIdLabel, memberIdRequired: panel.memberIdRequired, membershipValidityRequired: panel.membershipValidityRequired,
-      authorizationRequired: panel.authorizationRequired,
-      legalBillingName: panel.legalBillingName, contactPhone: panel.contactPhone,
-      contactEmail: panel.contactEmail, billingTerms: panel.billingTerms,
-      discountAgreement: panel.discountAgreement,
-      contact: panel.contact,
-      address: panel.address,
-      notes: panel.notes,
+      memberIdLabel: panel.memberIdLabel || 'Employee / Policy ID',
+      memberIdRequired: panel.memberIdRequired ?? false,
+      membershipValidityRequired: panel.membershipValidityRequired ?? false,
+      authorizationRequired: panel.authorizationRequired ?? false,
+      legalBillingName: panel.legalBillingName || '',
+      contactPhone: panel.contactPhone || '',
+      contactEmail: panel.contactEmail || '',
+      billingTerms: panel.billingTerms || 'Monthly',
+      discountAgreement: panel.discountAgreement || '',
+      contact: panel.contact || '',
+      address: panel.address || '',
+      notes: panel.notes || '',
       creditLimit: panel.creditLimit,
       isActive: panel.status === 'Active',
     });
@@ -483,14 +504,14 @@ export const SuperAdminCorporatePanelsView: React.FC = () => {
                 placeholder="e.g. PNL-SLI (leave blank to auto-generate)"
                 value={formValues.code}
                 onChange={(e) => setFormValues({ ...formValues, code: e.target.value })}
-                hint="Unique short identifier for reports and billing vouchers"
+                hint="Unique short identifier for reports and vouchers"
               />
               <TextInput
-                label="Legal / Billing Entity Name"
-                placeholder="Official registered company title"
-                value={formValues.legalBillingName ?? ''}
-                onChange={(e) => setFormValues({ ...formValues, legalBillingName: e.target.value })}
-                hint="Used when issuing institutional bills and claim invoices"
+                label="Member Identity Field Label"
+                placeholder="e.g. Employee ID / Policy No. / Card No."
+                value={formValues.memberIdLabel ?? ''}
+                onChange={(e) => setFormValues({ ...formValues, memberIdLabel: e.target.value })}
+                hint="Label shown on front desk registration (e.g. Employee ID)"
               />
             </div>
           </div>
@@ -517,95 +538,18 @@ export const SuperAdminCorporatePanelsView: React.FC = () => {
                 value={formValues.contactPhone ?? ''}
                 onChange={(e) => setFormValues({ ...formValues, contactPhone: e.target.value })}
               />
-              <TextInput
-                label="Official Email"
-                type="email"
-                placeholder="claims@organization.com.pk"
-                value={formValues.contactEmail ?? ''}
-                onChange={(e) => setFormValues({ ...formValues, contactEmail: e.target.value })}
-              />
-              <TextInput
-                label="Physical / Postal Address"
-                placeholder="Head office / zonal branch address"
-                value={formValues.address}
-                onChange={(e) => setFormValues({ ...formValues, address: e.target.value })}
-              />
-            </div>
-          </div>
-
-          {/* Section 3: Front Desk Policy & Member Validation */}
-          <div className="bg-[#effaf5] border border-[#c2e7db] rounded-xl p-4 space-y-3.5">
-            <div className="flex items-center justify-between pb-2 border-b border-[#c2e7db]/70">
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="h-4 w-4 text-[#08775A]" />
-                <h4 className="text-xs font-bold uppercase tracking-wider text-[#08775A]">
-                  Front Desk Membership & Verification Policy
-                </h4>
+              <div className="md:col-span-2">
+                <TextInput
+                  label="Office / Postal Address"
+                  placeholder="Head office / zonal branch address"
+                  value={formValues.address}
+                  onChange={(e) => setFormValues({ ...formValues, address: e.target.value })}
+                />
               </div>
-              <span className="text-[11px] text-emerald-800 font-medium bg-white/70 px-2 py-0.5 rounded border border-[#c2e7db]">
-                Registration Control
-              </span>
-            </div>
-
-            <div>
-              <TextInput
-                label="Member Identity Field Label"
-                placeholder="e.g. Employee ID / Policy No. / Medical Card No."
-                value={formValues.memberIdLabel ?? ''}
-                onChange={(e) => setFormValues({ ...formValues, memberIdLabel: e.target.value })}
-                hint="This exact label appears on Front Desk Walk-In Intake and Admission registration forms."
-              />
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-              <label className="flex items-start gap-3 p-3 bg-white rounded-lg border border-slate-200 hover:border-[#149E75] transition-colors cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[#149E75] focus:ring-[#149E75] cursor-pointer"
-                  checked={formValues.memberIdRequired ?? false}
-                  onChange={(e) => setFormValues({ ...formValues, memberIdRequired: e.target.checked })}
-                />
-                <div className="space-y-0.5">
-                  <span className="text-xs font-bold text-slate-800 block">Require Member Identity</span>
-                  <span className="text-[11px] text-slate-500 block leading-tight">
-                    Front Desk operator cannot save patient without entering member identity.
-                  </span>
-                </div>
-              </label>
-
-              <label className="flex items-start gap-3 p-3 bg-white rounded-lg border border-slate-200 hover:border-[#149E75] transition-colors cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[#149E75] focus:ring-[#149E75] cursor-pointer"
-                  checked={formValues.membershipValidityRequired ?? false}
-                  onChange={(e) => setFormValues({ ...formValues, membershipValidityRequired: e.target.checked })}
-                />
-                <div className="space-y-0.5">
-                  <span className="text-xs font-bold text-slate-800 block">Require Validity Dates</span>
-                  <span className="text-[11px] text-slate-500 block leading-tight">
-                    Enforces Valid From and Valid Through dates verification on patient cards.
-                  </span>
-                </div>
-              </label>
-
-              <label className="flex items-start gap-3 p-3 bg-white rounded-lg border border-slate-200 hover:border-[#149E75] transition-colors cursor-pointer select-none sm:col-span-2">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[#149E75] focus:ring-[#149E75] cursor-pointer"
-                  checked={formValues.authorizationRequired ?? false}
-                  onChange={(e) => setFormValues({ ...formValues, authorizationRequired: e.target.checked })}
-                />
-                <div className="space-y-0.5">
-                  <span className="text-xs font-bold text-slate-800 block">Require Authorization / Guarantee Reference</span>
-                  <span className="text-[11px] text-slate-500 block leading-tight">
-                    Front Desk and Admission cannot open a new encounter or admission for this company without an authorization/guarantee reference number, and every charge is blocked if it later expires.
-                  </span>
-                </div>
-              </label>
             </div>
           </div>
 
-          {/* Section 4: Financial, Credit & Agreement Terms */}
+          {/* Section 3: Financial, Credit & Agreement Terms */}
           <div className="bg-white border border-slate-200/90 rounded-xl p-4 shadow-2xs space-y-3.5">
             <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
               <Wallet className="h-4 w-4 text-[#08775A]" />
@@ -621,13 +565,13 @@ export const SuperAdminCorporatePanelsView: React.FC = () => {
                 value={formValues.creditLimit}
                 onChange={(e) => setFormValues({ ...formValues, creditLimit: Number(e.target.value) || 0 })}
                 min={0}
-                hint="Maximum outstanding unbilled claim balance allowed"
+                hint="Maximum outstanding claim balance allowed"
               />
-              <TextInput
+              <Select
                 label="Billing Terms"
-                placeholder="e.g. Net 30 Days, Monthly Invoicing, Fortnightly"
-                value={formValues.billingTerms ?? ''}
+                value={formValues.billingTerms || 'Monthly'}
                 onChange={(e) => setFormValues({ ...formValues, billingTerms: e.target.value })}
+                options={billingOptions}
                 hint="Claim settlement schedule agreed in MoU / contract"
               />
               <div className="md:col-span-2">
@@ -636,7 +580,7 @@ export const SuperAdminCorporatePanelsView: React.FC = () => {
                   placeholder="e.g. 15% Institutional Concession, Special OPD Tariff"
                   value={formValues.discountAgreement}
                   onChange={(e) => setFormValues({ ...formValues, discountAgreement: e.target.value })}
-                  hint="Brief summary of contract terms (detailed per-service rules can be configured via Rules button)"
+                  hint="Brief summary of contract terms (detailed rules configured via Rules button)"
                 />
               </div>
               <div className="md:col-span-2">

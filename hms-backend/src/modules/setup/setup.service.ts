@@ -756,33 +756,51 @@ export const setupService = {
 
   /** Resolves the current occupant (if any) for a set of beds from the Admission module — never stored on Bed itself. */
   async currentOccupantsByBedId(bedIds: string[]) {
-    if (bedIds.length === 0) return new Map<string, { admissionId: string; patientName: string }>();
+    type Occupant = {
+      admissionId: string;
+      patientName: string;
+      patientMrNumber?: string;
+      admittedAt?: Date | null;
+      doctorName?: string;
+    };
+    if (bedIds.length === 0) return new Map<string, Occupant>();
     const activeAdmissions = await prisma.admissionRecord.findMany({
       where: { bedId: { in: bedIds }, status: 'ACTIVE' },
       select: {
         id: true,
         bedId: true,
-        panelPatient: { select: { fullName: true } },
+        admittedAt: true,
+        // Self-pay encounters are per-visit and have no permanent MRN by
+        // design (panel.md §4.6/§17) — patientMrNumber stays undefined for
+        // those, which is correct, not a gap.
+        panelPatient: { select: { fullName: true, mrNumber: true } },
         selfPayEncounter: { select: { fullName: true } },
+        doctor: { select: { fullName: true } },
       },
     });
-    const map = new Map<string, { admissionId: string; patientName: string }>();
+    const map = new Map<string, Occupant>();
     for (const admission of activeAdmissions) {
       if (!admission.bedId) continue;
       map.set(admission.bedId, {
         admissionId: admission.id,
         patientName: admission.panelPatient?.fullName || admission.selfPayEncounter?.fullName || 'Unknown Patient',
+        patientMrNumber: admission.panelPatient?.mrNumber,
+        admittedAt: admission.admittedAt,
+        doctorName: admission.doctor?.fullName,
       });
     }
     return map;
   },
 
-  decorateBedRow(bed: any, occupants: Map<string, { admissionId: string; patientName: string }>) {
+  decorateBedRow(bed: any, occupants: Map<string, { admissionId: string; patientName: string; patientMrNumber?: string; admittedAt?: Date | null; doctorName?: string }>) {
     const occupant = occupants.get(bed.id);
     return {
       ...bed,
       currentPatientId: occupant?.admissionId,
       currentPatientName: occupant?.patientName,
+      currentPatientMrn: occupant?.patientMrNumber,
+      admissionDate: occupant?.admittedAt,
+      admittingDoctorName: occupant?.doctorName,
       admissionId: occupant?.admissionId,
       createdByLabel: formatActorFromRelation(bed.createdByUser),
       updatedByLabel: formatActorFromRelation(bed.updatedByUser),

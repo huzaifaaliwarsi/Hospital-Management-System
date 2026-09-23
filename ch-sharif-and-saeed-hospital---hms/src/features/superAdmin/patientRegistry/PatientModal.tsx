@@ -214,7 +214,9 @@ export const PatientModal: React.FC<PatientModalProps> = ({
     setQuickSearchResults(matches.slice(0, 5));
   }, [quickSearchTerm]);
 
-  // Live duplicate detection
+  // Live duplicate detection — now a real backend query (panel.md §17
+  // backlog item 3), so it's debounced (don't fire on every keystroke) and
+  // guards against a stale response landing after a newer keystroke.
   useEffect(() => {
     if (!isOpen) return;
 
@@ -224,9 +226,16 @@ export const PatientModal: React.FC<PatientModalProps> = ({
     const hasPassport = Boolean(formData.passportNumber?.trim());
     const hasNameAndFather = Boolean(formData.fullName.trim() && formData.fatherGuardianName.trim());
     const hasNameAndDob = Boolean(formData.fullName.trim() && formData.dateOfBirth);
+    const hasMemberId = Boolean(formData.payerType === 'Corporate / Panel' && formData.panelMemberId?.trim());
 
-    if (hasCnic || hasPassport || (hasPhone && formData.primaryPhone.length >= 10) || hasNameAndFather || hasNameAndDob) {
-      const check = checkDuplicates(
+    if (!(hasCnic || hasPassport || (hasPhone && formData.primaryPhone.length >= 10) || hasNameAndFather || hasNameAndDob || hasMemberId)) {
+      setDuplicateWarning(null);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      checkDuplicates(
         {
           cnic: normCnic,
           passportNumber: formData.passportNumber,
@@ -234,17 +243,19 @@ export const PatientModal: React.FC<PatientModalProps> = ({
           fullName: formData.fullName,
           fatherGuardianName: formData.fatherGuardianName,
           dateOfBirth: formData.dateOfBirth,
+          panelMemberId: formData.payerType === 'Corporate / Panel' ? formData.panelMemberId : undefined,
         },
         patientToEdit?.id
-      );
+      ).then((check) => {
+        if (cancelled) return;
+        setDuplicateWarning(check.isExactCnic || check.isExactPassport || check.isPossibleDuplicate ? check : null);
+      });
+    }, 400);
 
-      if (check.isExactCnic || check.isExactPassport || check.isPossibleDuplicate) {
-        setDuplicateWarning(check);
-        return;
-      }
-    }
-
-    setDuplicateWarning(null);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [
     formData.cnic,
     formData.passportNumber,
@@ -252,6 +263,8 @@ export const PatientModal: React.FC<PatientModalProps> = ({
     formData.fullName,
     formData.fatherGuardianName,
     formData.dateOfBirth,
+    formData.panelMemberId,
+    formData.payerType,
     isOpen,
     patientToEdit,
   ]);

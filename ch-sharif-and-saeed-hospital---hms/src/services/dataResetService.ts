@@ -7,9 +7,11 @@ export interface ResetSummary {
   paymentReceipts: number;
   userCashBalances: number;
   accountSettlements: number;
+  providerSettlements: number;
   admissions: number;
   selfPayEncounters: number;
   panelPatients: number;
+  corporatePanels: number;
   pharmacyClearances: number;
   pharmacyDispenses: number;
   pharmacyDispenseLines: number;

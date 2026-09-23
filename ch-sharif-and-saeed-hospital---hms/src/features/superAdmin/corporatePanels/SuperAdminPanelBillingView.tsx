@@ -1,11 +1,10 @@
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+﻿import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   Building2,
   Wallet,
   ClipboardList,
   FileSpreadsheet,
   History,
-  Receipt,
   Search,
   RefreshCw,
   Plus,
@@ -13,12 +12,11 @@ import {
   CheckCircle2,
   AlertCircle,
   TrendingUp,
-  CreditCard,
-  Printer,
-  Calendar,
-  Filter,
+  ChevronDown,
+  ChevronUp,
+  User,
 } from 'lucide-react';
-import { Select, TextInput } from '../../../components/forms/FormControls';
+import { Select } from '../../../components/forms/FormControls';
 import { EmptyState, LoadingState, ErrorState } from '../../../components/common/StateViews';
 import { formatPKR } from '../../../utils/formatters';
 import { fetchCorporatePanels, getActiveCorporatePanels, CorporatePanel } from '../../../services/panelService';
@@ -37,65 +35,44 @@ import { PanelInterimStatementSection } from '../../frontDesk/panelBilling/Panel
 import { PanelRemittanceHistorySection } from '../../frontDesk/panelBilling/PanelRemittanceHistorySection';
 import { PanelLedgerSection } from '../../frontDesk/panelBilling/PanelLedgerSection';
 import { RecordPanelRemittanceModal } from '../../frontDesk/panelBilling/RecordPanelRemittanceModal';
-import { PanelBadge } from '../../../components/common/PanelBadge';
 
-type SuperAdminTab = 'ledger' | 'statement' | 'invoices' | 'remittances' | 'verification';
-
-const TABS: { id: SuperAdminTab; label: string; icon: React.ElementType; desc: string }[] = [
-  { id: 'ledger', label: 'Company Ledger', icon: TrendingUp, desc: 'Running-balance statement: charges vs. remittances, patient co-pay kept separate' },
-  { id: 'statement', label: 'Interim Statement & Claims', icon: FileSpreadsheet, desc: 'Per-panel receivable & patient co-pay statement' },
-  { id: 'invoices', label: 'All Panel Invoices Ledger', icon: Receipt, desc: 'Real DB invoices with corporate credit & co-pay' },
-  { id: 'remittances', label: 'Panel Remittances & Receipts', icon: History, desc: 'Incoming company payments & department allocations' },
-  { id: 'verification', label: 'Contract & Coverage Testing', icon: ClipboardList, desc: 'Verify patient cards & contract tariff coverage' },
-];
+type DetailTab = 'ledger' | 'statement' | 'remittances' | 'verification';
 
 export const SuperAdminPanelBillingView: React.FC = () => {
   const [panels, setPanels] = useState<CorporatePanel[]>(() => getActiveCorporatePanels());
   const [isLoadingPanels, setIsLoadingPanels] = useState(true);
   const [selectedPanelId, setSelectedPanelId] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<SuperAdminTab>('ledger');
+  const [showDetails, setShowDetails] = useState(false);
+  const [activeDetailTab, setActiveDetailTab] = useState<DetailTab>('ledger');
 
-  // Company Ledger State
   const [ledger, setLedger] = useState<PanelLedger | null>(null);
   const [isLedgerLoading, setIsLedgerLoading] = useState(false);
   const [ledgerError, setLedgerError] = useState<string | null>(null);
 
-  // Statement State
   const [statement, setStatement] = useState<PanelStatement | null>(null);
   const [isStatementLoading, setIsStatementLoading] = useState(false);
   const [statementError, setStatementError] = useState<string | null>(null);
 
-  // Remittances State
   const [remittances, setRemittances] = useState<PanelRemittanceRecord[]>([]);
   const [isRemittancesLoading, setIsRemittancesLoading] = useState(false);
   const [remittancesError, setRemittancesError] = useState<string | null>(null);
 
-  // Panel Invoices State (Real DB Invoices)
   const [invoices, setInvoices] = useState<InvoiceSummary[]>([]);
   const [isInvoicesLoading, setIsInvoicesLoading] = useState(false);
   const [invoicesError, setInvoicesError] = useState<string | null>(null);
-  const [invoiceSearchQuery, setInvoiceSearchQuery] = useState('');
-  const [invoiceStatusFilter, setInvoiceStatusFilter] = useState<'ALL' | 'UNPAID' | 'PARTIALLY_PAID' | 'PAID'>('ALL');
+  const [invoiceSearch, setInvoiceSearch] = useState('');
 
-  // Active Invoice Detail Modal
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
-
-  // Record Remittance Modal
   const [isRecordRemittanceOpen, setIsRecordRemittanceOpen] = useState(false);
-
-  // Refresh flag for manual button
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // 1. Load active corporate panels from DB on mount
   const loadPanels = useCallback(async () => {
     setIsLoadingPanels(true);
     try {
       const data = await fetchCorporatePanels();
       const active = data.filter((p) => p.status === 'Active');
       setPanels(active);
-      if (active.length > 0 && !selectedPanelId) {
-        setSelectedPanelId(active[0].id);
-      }
+      if (active.length > 0 && !selectedPanelId) setSelectedPanelId(active[0].id);
     } catch (err: any) {
       console.error('Failed to load corporate panels:', err);
     } finally {
@@ -103,88 +80,44 @@ export const SuperAdminPanelBillingView: React.FC = () => {
     }
   }, [selectedPanelId]);
 
-  useEffect(() => {
-    loadPanels();
-  }, [loadPanels]);
+  useEffect(() => { loadPanels(); }, [loadPanels]);
 
-  // Selected Corporate Panel Object
   const currentPanel = useMemo(
     () => panels.find((p) => p.id === selectedPanelId) || (panels.length > 0 ? panels[0] : null),
     [panels, selectedPanelId]
   );
 
-  // 2. Load Company Ledger for Selected Panel
-  const loadLedger = useCallback(async (panelId: string) => {
-    if (!panelId) {
-      setLedger(null);
-      return;
-    }
-    setIsLedgerLoading(true);
-    setLedgerError(null);
-    try {
-      const led = await fetchPanelLedger(panelId);
-      setLedger(led);
-    } catch (err: any) {
-      setLedgerError(err?.message || 'Failed to load company ledger.');
-    } finally {
-      setIsLedgerLoading(false);
-    }
+  const loadLedger = useCallback(async (id: string) => {
+    if (!id) { setLedger(null); return; }
+    setIsLedgerLoading(true); setLedgerError(null);
+    try { setLedger(await fetchPanelLedger(id)); }
+    catch (e: any) { setLedgerError(e?.message || 'Failed to load ledger.'); }
+    finally { setIsLedgerLoading(false); }
   }, []);
 
-  // 2. Load Statement for Selected Panel
-  const loadStatement = useCallback(async (panelId: string) => {
-    if (!panelId) {
-      setStatement(null);
-      return;
-    }
-    setIsStatementLoading(true);
-    setStatementError(null);
-    try {
-      const stmt = await fetchPanelStatement(panelId);
-      setStatement(stmt);
-    } catch (err: any) {
-      setStatementError(err?.message || 'Failed to load panel statement.');
-    } finally {
-      setIsStatementLoading(false);
-    }
+  const loadStatement = useCallback(async (id: string) => {
+    if (!id) { setStatement(null); return; }
+    setIsStatementLoading(true); setStatementError(null);
+    try { setStatement(await fetchPanelStatement(id)); }
+    catch (e: any) { setStatementError(e?.message || 'Failed to load statement.'); }
+    finally { setIsStatementLoading(false); }
   }, []);
 
-  // 3. Load Remittances for Selected Panel
-  const loadRemittances = useCallback(async (panelId: string) => {
-    if (!panelId) {
-      setRemittances([]);
-      return;
-    }
-    setIsRemittancesLoading(true);
-    setRemittancesError(null);
-    try {
-      const rems = await fetchPanelRemittances(panelId);
-      setRemittances(rems);
-    } catch (err: any) {
-      setRemittancesError(err?.message || 'Failed to load remittance history.');
-    } finally {
-      setIsRemittancesLoading(false);
-    }
+  const loadRemittances = useCallback(async (id: string) => {
+    if (!id) { setRemittances([]); return; }
+    setIsRemittancesLoading(true); setRemittancesError(null);
+    try { setRemittances(await fetchPanelRemittances(id)); }
+    catch (e: any) { setRemittancesError(e?.message || 'Failed to load remittances.'); }
+    finally { setIsRemittancesLoading(false); }
   }, []);
 
-  // 4. Load Real Panel Invoices across Hospital
   const loadInvoices = useCallback(async (panelId?: string) => {
-    setIsInvoicesLoading(true);
-    setInvoicesError(null);
-    try {
-      const invs = await fetchInvoices({
-        isPanel: 'true',
-        corporatePanelId: panelId || undefined,
-      });
-      setInvoices(invs);
-    } catch (err: any) {
-      setInvoicesError(err?.message || 'Failed to load panel invoices.');
-    } finally {
-      setIsInvoicesLoading(false);
-    }
+    setIsInvoicesLoading(true); setInvoicesError(null);
+    try { setInvoices(await fetchInvoices({ isPanel: 'true', corporatePanelId: panelId || undefined })); }
+    catch (e: any) { setInvoicesError(e?.message || 'Failed to load invoices.'); }
+    finally { setIsInvoicesLoading(false); }
   }, []);
 
-  // Sync when selected panel changes
   useEffect(() => {
     if (selectedPanelId) {
       loadLedger(selectedPanelId);
@@ -196,498 +129,357 @@ export const SuperAdminPanelBillingView: React.FC = () => {
     }
   }, [selectedPanelId, panels, loadLedger, loadStatement, loadRemittances, loadInvoices]);
 
-  // Comprehensive Refresh
   const handleRefreshAll = async () => {
     setIsRefreshing(true);
     try {
       await loadPanels();
       if (selectedPanelId) {
         await Promise.all([
-          loadLedger(selectedPanelId),
-          loadStatement(selectedPanelId),
-          loadRemittances(selectedPanelId),
-          loadInvoices(selectedPanelId),
+          loadLedger(selectedPanelId), loadStatement(selectedPanelId),
+          loadRemittances(selectedPanelId), loadInvoices(selectedPanelId),
         ]);
       }
-    } finally {
-      setIsRefreshing(false);
-    }
+    } finally { setIsRefreshing(false); }
   };
 
-  // Filtered Invoices for Invoices Tab
-  const filteredInvoices = useMemo(() => {
-    return invoices.filter((inv) => {
-      if (invoiceStatusFilter !== 'ALL' && inv.status !== invoiceStatusFilter) {
-        return false;
-      }
-      if (invoiceSearchQuery.trim()) {
-        const q = invoiceSearchQuery.toLowerCase().trim();
-        const matchesInv = inv.invoiceNumber.toLowerCase().includes(q);
-        const matchesName = inv.patientName.toLowerCase().includes(q);
-        const matchesMr = (inv.patientMr || '').toLowerCase().includes(q);
-        const matchesMember = (inv.panelMemberId || '').toLowerCase().includes(q);
-        const matchesPanel = (inv.panelName || '').toLowerCase().includes(q);
-        if (!matchesInv && !matchesName && !matchesMr && !matchesMember && !matchesPanel) {
-          return false;
-        }
-      }
-      return true;
-    });
-  }, [invoices, invoiceStatusFilter, invoiceSearchQuery]);
+  const totalBilled     = statement?.consolidated?.panelReceivable ?? invoices.reduce((s, i) => s + (i.panelReceivable || 0), 0);
+  const totalPaid       = statement?.consolidated?.panelReceivableRealized ?? remittances.reduce((s, r) => s + (r.amount || 0), 0);
+  const companyOwes     = statement?.consolidated?.panelReceivableOutstanding ?? Math.max(0, totalBilled - totalPaid);
+  const patientCopayDue = statement?.consolidated?.patientShareOutstanding ?? invoices.reduce((s, i) => s + (i.balanceDue || 0), 0);
 
-  // Overall Financial Aggregates
-  const metrics = useMemo(() => {
-    const totalPanelReceivable = invoices.reduce((sum, inv) => sum + (inv.panelReceivable || 0), 0);
-    const totalPatientShare = invoices.reduce((sum, inv) => sum + (inv.patientShare || 0), 0);
-    const totalCollected = invoices.reduce((sum, inv) => sum + (inv.paidTotal || 0), 0);
-    const totalOutstandingPatientShare = invoices.reduce((sum, inv) => sum + (inv.balanceDue || 0), 0);
-    const totalRemittances = remittances.reduce((sum, r) => sum + (r.amount || 0), 0);
-    const totalOutstandingPanelClaim = Math.max(0, totalPanelReceivable - totalRemittances);
+  const unpaidInvoices = useMemo(
+    () => invoices.filter((inv) => inv.status !== 'PAID' && (inv.panelReceivable || 0) > 0),
+    [invoices]
+  );
 
-    return {
-      totalPanelReceivable,
-      totalPatientShare,
-      totalCollected,
-      totalOutstandingPatientShare,
-      totalRemittances,
-      totalOutstandingPanelClaim,
-      totalInvoicesCount: invoices.length,
-      activePanelsCount: panels.length,
-    };
-  }, [invoices, remittances, panels]);
+  const filteredUnpaid = useMemo(() => {
+    if (!invoiceSearch.trim()) return unpaidInvoices;
+    const q = invoiceSearch.toLowerCase();
+    return unpaidInvoices.filter((inv) =>
+      inv.patientName.toLowerCase().includes(q) ||
+      (inv.patientMr || '').toLowerCase().includes(q) ||
+      (inv.panelMemberId || '').toLowerCase().includes(q) ||
+      inv.invoiceNumber.toLowerCase().includes(q)
+    );
+  }, [unpaidInvoices, invoiceSearch]);
 
   const outstandingInvoicesForRemittance = useMemo(
     () => (statement?.invoices || []).filter((inv) => inv.panelReceivableOutstanding > 0),
     [statement]
   );
 
+  const isLoading = isInvoicesLoading || isStatementLoading;
+
   return (
     <div className="space-y-5 animate-in fade-in duration-150 pb-12">
-      {/* Top Header Card */}
-      <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex items-center justify-between flex-wrap gap-4">
-        <div className="flex items-center gap-3">
-          <div className="h-11 w-11 rounded-xl bg-[#effaf5] text-[#08775A] border border-[#c2e7db] flex items-center justify-center shrink-0">
-            <Building2 className="h-6 w-6" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-xl font-bold text-slate-900">Corporate Panel Billing</h1>
-              <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                Live Database
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Consolidated company credit claims, tariff contract resolution, interim statements, and incoming remittances.
-            </p>
-          </div>
-        </div>
 
-        <div className="flex items-center gap-2.5">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">Panel Billing</h1>
+          <p className="text-xs text-slate-500 mt-0.5">Company credit accounts — who owes what</p>
+        </div>
+        <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={handleRefreshAll}
             disabled={isRefreshing}
-            className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-xs font-semibold cursor-pointer transition-colors"
+            className="inline-flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-xs"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin text-[#08775A]' : 'text-slate-500'}`} />
-            <span>Refresh</span>
+            Refresh
           </button>
-
           {currentPanel && (
             <button
               type="button"
               onClick={() => setIsRecordRemittanceOpen(true)}
-              className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#08775A] hover:bg-[#065f46] text-white rounded-lg text-xs font-semibold shadow-xs cursor-pointer transition-all"
+              className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#08775A] hover:bg-[#065f46] text-white rounded-lg text-xs font-bold shadow-sm cursor-pointer transition-all"
             >
               <Wallet className="h-3.5 w-3.5" />
-              <span>Record Panel Remittance</span>
+              Record Payment Received
             </button>
           )}
         </div>
       </div>
 
-      {/* Financial KPIs Banner */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
-        {/* 1. Panel Claims Receivable (Total) */}
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-medium mb-1">
-            <span>Panel Receivable (Claims)</span>
-            <Building2 className="h-4 w-4 text-purple-600" />
-          </div>
-          <div className="text-lg font-bold text-purple-900">
-            {formatPKR(statement ? statement.consolidated.panelReceivable : metrics.totalPanelReceivable)}
-          </div>
-          <p className="text-[11px] text-slate-400 mt-0.5">
-            Credit billed to {currentPanel?.name || 'corporate panels'}
-          </p>
-        </div>
-
-        {/* 2. Remittances Realized */}
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-medium mb-1">
-            <span>Remittances Realized</span>
-            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-          </div>
-          <div className="text-lg font-bold text-emerald-900">
-            {formatPKR(statement ? statement.consolidated.panelReceivableRealized : metrics.totalRemittances)}
-          </div>
-          <p className="text-[11px] text-emerald-700 font-medium mt-0.5">
-            {remittances.length} payment remittance(s) recorded
-          </p>
-        </div>
-
-        {/* 3. Outstanding Panel Balance */}
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-medium mb-1">
-            <span>Outstanding Panel Balance</span>
-            <AlertCircle className="h-4 w-4 text-rose-600" />
-          </div>
-          <div className="text-lg font-bold text-rose-900">
-            {formatPKR(statement ? statement.consolidated.panelReceivableOutstanding : metrics.totalOutstandingPanelClaim)}
-          </div>
-          <p className="text-[11px] text-slate-400 mt-0.5">
-            Pending claims settlement from company
-          </p>
-        </div>
-
-        {/* 4. Patient Co-Pay Outstanding */}
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
-          <div className="flex items-center justify-between text-slate-500 text-xs font-medium mb-1">
-            <span>Patient Co-Pay Outstanding</span>
-            <Wallet className="h-4 w-4 text-amber-600" />
-          </div>
-          <div className="text-lg font-bold text-amber-900">
-            {formatPKR(statement ? statement.consolidated.patientShareOutstanding : metrics.totalOutstandingPatientShare)}
-          </div>
-          <p className="text-[11px] text-slate-400 mt-0.5">
-            Patient self-share remaining due
-          </p>
-        </div>
-      </div>
-
-      {/* Corporate Panel Selector & Details Strip */}
+      {/* Company Selector */}
       {panels.length === 0 && !isLoadingPanels ? (
         <EmptyState
-          title="No Active Corporate Panels Found in Database"
-          description="Create a Corporate Panel from Panel Management > Corporate Panels before panel billing can be processed."
+          title="No Active Corporate Panels"
+          description="Add a corporate panel first from Panel Management > Corporate Panels."
         />
       ) : (
-        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="w-full sm:max-w-md">
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
-                Select Corporate Panel / Organization
-              </label>
-              <Select
-                options={panels.map((p) => ({
-                  label: `${p.name} (${p.code}) — ${p.category || 'Insurance'}`,
-                  value: p.id,
-                }))}
-                value={selectedPanelId}
-                onChange={(e) => setSelectedPanelId(e.target.value)}
-              />
+        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
+          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+            Select Company
+          </label>
+          <Select
+            options={panels.map((p) => ({ label: `${p.name}  (${p.code})`, value: p.id }))}
+            value={selectedPanelId}
+            onChange={(e) => setSelectedPanelId(e.target.value)}
+          />
+          {currentPanel && (
+            <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-slate-500">
+              <span>Category: <strong className="text-slate-800">{currentPanel.category || 'Corporate'}</strong></span>
+              <span>Credit Limit: <strong className="text-[#08775A]">{currentPanel.creditLimit ? formatPKR(currentPanel.creditLimit) : 'No Limit'}</strong></span>
+              <span>Terms: <strong className="text-slate-800">{currentPanel.billingTerms || '30 Days Net'}</strong></span>
             </div>
+          )}
+        </div>
+      )}
 
-            {currentPanel && (
-              <div className="flex items-center gap-3 text-xs bg-slate-50 px-3.5 py-2.5 rounded-lg border border-slate-200 flex-wrap">
-                <div>
-                  <span className="text-[10.5px] text-slate-400 uppercase block font-semibold">Category</span>
-                  <span className="font-bold text-slate-800">{currentPanel.category || 'Corporate'}</span>
-                </div>
-                <div className="h-6 w-px bg-slate-200" />
-                <div>
-                  <span className="text-[10.5px] text-slate-400 uppercase block font-semibold">Credit Limit</span>
-                  <span className="font-bold text-[#08775A]">
-                    {currentPanel.creditLimit ? formatPKR(currentPanel.creditLimit) : 'No Limit'}
-                  </span>
-                </div>
-                <div className="h-6 w-px bg-slate-200" />
-                <div>
-                  <span className="text-[10.5px] text-slate-400 uppercase block font-semibold">Billing Terms</span>
-                  <span className="font-medium text-slate-700">{currentPanel.billingTerms || '30 Days Net'}</span>
-                </div>
+      {/* Main content */}
+      {isLoading ? (
+        <LoadingState message="Loading billing data..." />
+      ) : (
+        <>
+          {/* Big Summary Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {/* Company Owes — PRIMARY */}
+            <div className={`rounded-2xl p-5 border-2 flex flex-col gap-2 ${
+              companyOwes > 0 ? 'bg-rose-50 border-rose-300' : 'bg-emerald-50 border-emerald-300'
+            }`}>
+              <div className="flex items-center gap-2">
+                <Building2 className={`h-5 w-5 ${companyOwes > 0 ? 'text-rose-600' : 'text-emerald-600'}`} />
+                <span className={`text-xs font-bold uppercase tracking-wide ${companyOwes > 0 ? 'text-rose-700' : 'text-emerald-700'}`}>
+                  {currentPanel?.name || 'Company'} Owes Hospital
+                </span>
               </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Main Navigation Tabs */}
-      <div className="border-b border-slate-200 flex items-center gap-2 overflow-x-auto pb-px">
-        {TABS.map((t) => {
-          const Icon = t.icon;
-          const isActive = activeTab === t.id;
-          return (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setActiveTab(t.id)}
-              className={`px-4 py-2.5 text-xs font-bold rounded-t-lg border-b-2 flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
-                isActive
-                  ? 'border-[#08775A] text-[#08775A] bg-emerald-50/50'
-                  : 'border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-              }`}
-            >
-              <Icon className={`h-4 w-4 ${isActive ? 'text-[#08775A]' : 'text-slate-400'}`} />
-              <span>{t.label}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Tab 0: Company Ledger */}
-      {activeTab === 'ledger' && (
-        <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-4">
-          <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-slate-100">
-            <div>
-              <h2 className="text-sm font-bold text-slate-900">
-                Company Ledger — {currentPanel?.name || 'Selected Panel'}
-              </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Running balance: every panel-covered charge is a debit, every remittance a credit. Patient co-pay stays a separate total.
-              </p>
-            </div>
-            {ledger && ledger.entries.length > 0 && (
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg cursor-pointer"
-              >
-                <Printer className="h-3.5 w-3.5 text-slate-500" />
-                <span>Print Ledger</span>
-              </button>
-            )}
-          </div>
-
-          <PanelLedgerSection
-            ledger={ledger}
-            isLoading={isLedgerLoading}
-            loadError={ledgerError}
-            onRetry={() => selectedPanelId && loadLedger(selectedPanelId)}
-          />
-        </div>
-      )}
-
-      {/* Tab 1: Interim Statement */}
-      {activeTab === 'statement' && (
-        <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-4">
-          <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-slate-100">
-            <div>
-              <h2 className="text-sm font-bold text-slate-900">
-                Interim Statement — {currentPanel?.name || 'Selected Panel'}
-              </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Separate accounting for Patient Co-Pay vs. Company Claimable Receivables.
-              </p>
-            </div>
-            {statement && statement.invoices.length > 0 && (
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg cursor-pointer"
-              >
-                <Printer className="h-3.5 w-3.5 text-slate-500" />
-                <span>Print Statement</span>
-              </button>
-            )}
-          </div>
-
-          <PanelInterimStatementSection
-            statement={statement}
-            isLoading={isStatementLoading}
-            loadError={statementError}
-            onRetry={() => selectedPanelId && loadStatement(selectedPanelId)}
-          />
-        </div>
-      )}
-
-      {/* Tab 2: Panel Invoices & Claims */}
-      {activeTab === 'invoices' && (
-        <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-            <div>
-              <h2 className="text-sm font-bold text-slate-900">Corporate Panel Invoices</h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Every encounter and admission invoice backed by company tariff ({invoices.length} total).
-              </p>
+              <div className={`text-4xl font-black ${companyOwes > 0 ? 'text-rose-700' : 'text-emerald-700'}`}>
+                {formatPKR(companyOwes)}
+              </div>
+              {companyOwes === 0 ? (
+                <span className="text-xs font-semibold text-emerald-600 flex items-center gap-1">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> All settled — no outstanding balance
+                </span>
+              ) : (
+                <span className="text-xs text-rose-600 font-medium">Payment pending from company</span>
+              )}
             </div>
 
-            {/* Filter and Search Bar */}
-            <div className="flex items-center gap-2 flex-wrap">
+            {/* Total Billed */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-5 flex flex-col gap-1 shadow-xs">
+              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Total Billed to Company</span>
+              <div className="text-2xl font-black text-slate-800">{formatPKR(totalBilled)}</div>
+              <span className="text-[11px] text-slate-400">{invoices.length} invoice(s) on credit</span>
+            </div>
+
+            {/* Total Received */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-5 flex flex-col gap-1 shadow-xs">
+              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Total Received from Company</span>
+              <div className="text-2xl font-black text-emerald-700">{formatPKR(totalPaid)}</div>
+              <span className="text-[11px] text-slate-400">{remittances.length} payment(s) recorded</span>
+            </div>
+          </div>
+
+          {/* Patient Co-Pay Alert */}
+          {patientCopayDue > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-center gap-3">
+              <AlertCircle className="h-5 w-5 text-amber-600 shrink-0" />
+              <div className="flex-1">
+                <span className="text-sm font-bold text-amber-800">Patient Co-Pay Outstanding: {formatPKR(patientCopayDue)}</span>
+                <span className="block text-xs text-amber-700 mt-0.5">
+                  These are amounts patients owe directly — separate from what the company owes.
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Per-Patient Outstanding List */}
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xs">
+            <div className="flex items-center justify-between p-4 border-b border-slate-100 flex-wrap gap-3">
+              <div>
+                <h2 className="text-sm font-bold text-slate-900">
+                  Which Patients' Bills Are Pending?
+                  {unpaidInvoices.length > 0 && (
+                    <span className="ml-2 px-2 py-0.5 bg-rose-100 text-rose-700 rounded text-[11px] font-bold border border-rose-200">
+                      {unpaidInvoices.length} pending
+                    </span>
+                  )}
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Company credit invoices not yet fully settled
+                </p>
+              </div>
               <div className="relative">
                 <Search className="h-3.5 w-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
                   type="text"
-                  placeholder="Search invoice, patient, MR#, member ID…"
-                  value={invoiceSearchQuery}
-                  onChange={(e) => setInvoiceSearchQuery(e.target.value)}
-                  className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-[#08775A] w-56 sm:w-64"
+                  placeholder="Search patient, MR#, invoice..."
+                  value={invoiceSearch}
+                  onChange={(e) => setInvoiceSearch(e.target.value)}
+                  className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50 focus:outline-none focus:ring-1 focus:ring-[#08775A] w-52"
                 />
               </div>
-
-              <select
-                value={invoiceStatusFilter}
-                onChange={(e) => setInvoiceStatusFilter(e.target.value as any)}
-                className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-[#08775A]"
-              >
-                <option value="ALL">All Statuses</option>
-                <option value="UNPAID">Unpaid</option>
-                <option value="PARTIALLY_PAID">Partially Paid</option>
-                <option value="PAID">Fully Paid</option>
-              </select>
             </div>
-          </div>
 
-          {isInvoicesLoading ? (
-            <LoadingState message="Loading corporate panel invoices from database…" />
-          ) : invoicesError ? (
-            <ErrorState message={invoicesError} onRetry={() => loadInvoices(selectedPanelId)} />
-          ) : filteredInvoices.length === 0 ? (
-            <EmptyState
-              title="No matching panel invoices found"
-              description="Invoices billed to this corporate panel will appear here automatically."
-            />
-          ) : (
-            <div className="border border-slate-200 rounded-lg overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead className="bg-slate-50 border-b border-slate-200">
-                  <tr>
-                    <th className="text-left px-3 py-2.5 font-semibold text-slate-600 whitespace-nowrap">Invoice #</th>
-                    <th className="text-left px-3 py-2.5 font-semibold text-slate-600 whitespace-nowrap">Date</th>
-                    <th className="text-left px-3 py-2.5 font-semibold text-slate-600 whitespace-nowrap">Patient</th>
-                    <th className="text-left px-3 py-2.5 font-semibold text-slate-600 whitespace-nowrap">Panel / Member ID</th>
-                    <th className="text-right px-3 py-2.5 font-semibold text-slate-600 whitespace-nowrap">Gross Total</th>
-                    <th className="text-right px-3 py-2.5 font-semibold text-purple-700 whitespace-nowrap">Panel Receivable</th>
-                    <th className="text-right px-3 py-2.5 font-semibold text-amber-700 whitespace-nowrap">Patient Co-Pay</th>
-                    <th className="text-right px-3 py-2.5 font-semibold text-emerald-700 whitespace-nowrap">Collected</th>
-                    <th className="text-right px-3 py-2.5 font-semibold text-slate-600 whitespace-nowrap">Balance Due</th>
-                    <th className="text-center px-3 py-2.5 font-semibold text-slate-600 whitespace-nowrap">Status</th>
-                    <th className="text-center px-3 py-2.5 font-semibold text-slate-600 whitespace-nowrap">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredInvoices.map((inv) => (
-                    <tr key={inv.id} className="hover:bg-slate-50/70 transition-colors">
-                      <td className="px-3 py-2.5 whitespace-nowrap font-mono font-bold text-slate-800">
-                        {inv.invoiceNumber}
-                      </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap text-slate-500">
-                        {inv.createdAt}
-                      </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap">
-                        <div className="font-semibold text-slate-900">{inv.patientName}</div>
-                        <div className="text-[10px] text-slate-400 font-mono">{inv.patientMr}</div>
-                      </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap">
-                        <span className="font-semibold text-slate-800">{inv.panelName || currentPanel?.name || 'Panel'}</span>
-                        {inv.panelMemberId && (
-                          <span className="block text-[10.5px] font-mono text-slate-500">
-                            ID: {inv.panelMemberId}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap text-right font-medium text-slate-700">
-                        {formatPKR(inv.total)}
-                      </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap text-right font-bold text-purple-700">
-                        {formatPKR(inv.panelReceivable)}
-                      </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap text-right font-semibold text-amber-700">
-                        {formatPKR(inv.patientShare)}
-                      </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap text-right font-medium text-emerald-700">
-                        {formatPKR(inv.paidTotal)}
-                      </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap text-right font-bold text-slate-900">
-                        {formatPKR(inv.balanceDue)}
-                      </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap text-center">
-                        <span
-                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            inv.status === 'PAID'
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : inv.status === 'PARTIALLY_PAID'
-                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                              : 'bg-rose-50 text-rose-700 border border-rose-200'
-                          }`}
-                        >
-                          {inv.status}
+            {isInvoicesLoading ? (
+              <div className="p-6"><LoadingState message="Loading..." /></div>
+            ) : invoicesError ? (
+              <div className="p-6"><ErrorState message={invoicesError} onRetry={() => loadInvoices(selectedPanelId)} /></div>
+            ) : filteredUnpaid.length === 0 ? (
+              <div className="p-8 text-center">
+                <CheckCircle2 className="h-10 w-10 text-emerald-400 mx-auto mb-2" />
+                <p className="text-sm font-bold text-slate-700">
+                  {invoiceSearch ? 'No matching invoices found' : 'No pending invoices!'}
+                </p>
+                <p className="text-xs text-slate-400 mt-1">
+                  {invoiceSearch ? 'Try a different search.' : 'All company-billed invoices have been fully settled.'}
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100">
+                {filteredUnpaid.map((inv) => {
+                  const outstanding = Math.max(0, (inv.panelReceivable || 0) - (inv.paidTotal || 0));
+                  return (
+                    <div key={inv.id} className="flex items-center justify-between px-4 py-3 hover:bg-slate-50/60 transition-colors gap-3 flex-wrap">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="h-8 w-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0">
+                          <User className="h-4 w-4 text-slate-500" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-sm font-bold text-slate-900 truncate">{inv.patientName}</div>
+                          <div className="text-[11px] text-slate-400 font-mono">
+                            MR: {inv.patientMr}
+                            {inv.panelMemberId && <span className="ml-2">Member: {inv.panelMemberId}</span>}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="text-xs text-slate-500 font-mono shrink-0">{inv.invoiceNumber}</div>
+
+                      <div className="flex items-center gap-4 shrink-0 flex-wrap text-right">
+                        <div>
+                          <div className="text-[10px] text-slate-400 font-medium">Company's Bill</div>
+                          <div className="text-sm font-bold text-slate-700">{formatPKR(inv.panelReceivable)}</div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] text-slate-400 font-medium">Received</div>
+                          <div className="text-sm font-bold text-emerald-600">{formatPKR(inv.paidTotal)}</div>
+                        </div>
+                        <div className="bg-rose-50 border border-rose-200 rounded-lg px-3 py-1.5">
+                          <div className="text-[10px] text-rose-600 font-bold uppercase">Still Owes</div>
+                          <div className="text-sm font-black text-rose-700">{formatPKR(outstanding)}</div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          inv.status === 'PARTIALLY_PAID'
+                            ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                            : 'bg-rose-50 text-rose-700 border border-rose-200'
+                        }`}>
+                          {inv.status === 'PARTIALLY_PAID' ? 'Partial' : 'Unpaid'}
                         </span>
-                      </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap text-center">
                         <button
                           type="button"
                           onClick={() => setSelectedInvoiceId(inv.id)}
-                          className="px-2.5 py-1 text-xs font-semibold text-[#08775A] bg-emerald-50 hover:bg-emerald-100 rounded-md border border-emerald-200 inline-flex items-center gap-1 cursor-pointer transition-colors"
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-[#08775A] hover:bg-emerald-50 transition-colors cursor-pointer"
+                          title="View Invoice"
                         >
-                          <Eye className="h-3 w-3" />
-                          <span>View</span>
+                          <Eye className="h-4 w-4" />
                         </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Tab 3: Remittances & Payments History */}
-      {activeTab === 'remittances' && (
-        <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-4">
-          <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-slate-100">
-            <div>
-              <h2 className="text-sm font-bold text-slate-900">
-                Remittances History — {currentPanel?.name || 'Selected Panel'}
-              </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Bulk payments received from the company and allocated across department invoices.
-              </p>
-            </div>
-            {currentPanel && (
-              <button
-                type="button"
-                onClick={() => setIsRecordRemittanceOpen(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#08775A] hover:bg-[#065f46] text-white rounded-lg text-xs font-semibold cursor-pointer shadow-xs"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                <span>New Remittance</span>
-              </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
 
-          <PanelRemittanceHistorySection
-            remittances={remittances}
-            isLoading={isRemittancesLoading}
-            loadError={remittancesError}
-            onRetry={() => selectedPanelId && loadRemittances(selectedPanelId)}
-          />
-        </div>
-      )}
+          {/* Advanced Details — Collapsible */}
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setShowDetails((v) => !v)}
+              className="w-full flex items-center justify-between px-5 py-3.5 text-left hover:bg-slate-50 transition-colors cursor-pointer"
+            >
+              <div className="flex items-center gap-2">
+                <FileSpreadsheet className="h-4 w-4 text-slate-400" />
+                <span className="text-sm font-bold text-slate-700">Advanced Details</span>
+                <span className="text-xs text-slate-400">(Ledger, Statement, Remittances, Contract Testing)</span>
+              </div>
+              {showDetails ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+            </button>
 
-      {/* Tab 4: Patient Verification & Contract Coverage Testing */}
-      {activeTab === 'verification' && (
-        <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-4">
-          <div className="pb-3 border-b border-slate-100">
-            <h2 className="text-sm font-bold text-slate-900">
-              Contract Resolution &amp; Verification Testing
-            </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Verify any panel patient's active status and test service rate coverage % and co-pay caps.
-            </p>
+            {showDetails && (
+              <div className="border-t border-slate-100">
+                <div className="flex items-center gap-1 px-4 pt-3 border-b border-slate-100 overflow-x-auto">
+                  {([
+                    { id: 'ledger' as DetailTab, label: 'Company Ledger', icon: TrendingUp },
+                    { id: 'statement' as DetailTab, label: 'Interim Statement', icon: FileSpreadsheet },
+                    { id: 'remittances' as DetailTab, label: 'Payments Received', icon: History },
+                    { id: 'verification' as DetailTab, label: 'Contract Testing', icon: ClipboardList },
+                  ]).map((t) => {
+                    const Icon = t.icon;
+                    const active = activeDetailTab === t.id;
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setActiveDetailTab(t.id)}
+                        className={`px-3 py-2 text-xs font-semibold rounded-t border-b-2 flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition-all ${
+                          active ? 'border-[#08775A] text-[#08775A]' : 'border-transparent text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        <Icon className="h-3.5 w-3.5" />
+                        {t.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="p-5">
+                  {activeDetailTab === 'ledger' && (
+                    <PanelLedgerSection
+                      ledger={ledger}
+                      isLoading={isLedgerLoading}
+                      loadError={ledgerError}
+                      onRetry={() => selectedPanelId && loadLedger(selectedPanelId)}
+                    />
+                  )}
+                  {activeDetailTab === 'statement' && (
+                    <PanelInterimStatementSection
+                      statement={statement}
+                      isLoading={isStatementLoading}
+                      loadError={statementError}
+                      onRetry={() => selectedPanelId && loadStatement(selectedPanelId)}
+                    />
+                  )}
+                  {activeDetailTab === 'remittances' && (
+                    <>
+                      <div className="flex items-center justify-between mb-4">
+                        <p className="text-xs text-slate-500">All bulk payments received from the company.</p>
+                        {currentPanel && (
+                          <button
+                            type="button"
+                            onClick={() => setIsRecordRemittanceOpen(true)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#08775A] hover:bg-[#065f46] text-white rounded-lg text-xs font-semibold cursor-pointer shadow-xs"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                            New Payment Record
+                          </button>
+                        )}
+                      </div>
+                      <PanelRemittanceHistorySection
+                        remittances={remittances}
+                        isLoading={isRemittancesLoading}
+                        loadError={remittancesError}
+                        onRetry={() => selectedPanelId && loadRemittances(selectedPanelId)}
+                      />
+                    </>
+                  )}
+                  {activeDetailTab === 'verification' && currentPanel && (
+                    <PanelVerificationPanel panel={currentPanel} />
+                  )}
+                </div>
+              </div>
+            )}
           </div>
-
-          {currentPanel && (
-            <PanelVerificationPanel
-              corporatePanelId={currentPanel.id}
-              corporatePanelName={currentPanel.name}
-            />
-          )}
-        </div>
+        </>
       )}
 
-      {/* Record Remittance Modal */}
+      {/* Modals */}
       {isRecordRemittanceOpen && currentPanel && (
         <RecordPanelRemittanceModal
           corporatePanelId={currentPanel.id}
@@ -705,13 +497,11 @@ export const SuperAdminPanelBillingView: React.FC = () => {
           }}
         />
       )}
-
-      {/* Invoice Detail Modal */}
       {selectedInvoiceId && (
         <InvoiceDetailModal
           invoiceId={selectedInvoiceId}
           onClose={() => setSelectedInvoiceId(null)}
-          onInvoiceUpdated={() => {
+          onChanged={() => {
             if (selectedPanelId) {
               loadLedger(selectedPanelId);
               loadStatement(selectedPanelId);

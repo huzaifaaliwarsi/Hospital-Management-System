@@ -803,7 +803,7 @@ export const SuperAdminReportsView: React.FC<SuperAdminReportsViewProps> = ({
         isOpen={isPreviewOpen}
         onClose={() => setIsPreviewOpen(false)}
         title={previewFormat === 'print' ? 'Hospital Print Queue Preview' : `Export Document: ${previewFormat.toUpperCase()}`}
-        size="lg"
+        maxWidth="lg"
       >
         <div className="space-y-4 text-xs">
           {/* Official Hospital Letterhead */}

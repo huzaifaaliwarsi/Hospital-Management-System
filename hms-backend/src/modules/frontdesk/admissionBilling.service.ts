@@ -442,10 +442,18 @@ export const admissionBillingService = {
           const invoice = byId.get(a.invoiceId);
           if (!invoice) throw new ValidationError(`Invoice ${a.invoiceId} does not belong to this admission`);
           const amt = new Decimal(a.amount);
-          const outstanding = invoice.total.minus(invoice.paidTotal);
+          // Patient collection can never exceed the PATIENT's own share —
+          // `invoice.total` also includes the panel company's receivable,
+          // which is only ever realized via a company remittance, never
+          // collected as patient cash (same rule as invoices.service.ts's
+          // `collectPayment`). Bug found via live user testing 2026-09-23:
+          // a panel-patient admission invoice let Front Desk collect the
+          // full total (patient + panel share) as one "patient" payment.
+          const collectibleFromPatient = invoice.panelPatientId ? invoice.patientShare : invoice.total;
+          const outstanding = collectibleFromPatient.minus(invoice.paidTotal);
           if (amt.greaterThan(outstanding)) {
             throw new ValidationError(
-              `Allocation to ${invoice.invoiceNumber} (${amt.toString()}) exceeds its outstanding balance (${outstanding.toString()})`,
+              `Allocation to ${invoice.invoiceNumber} (${amt.toString()}) exceeds its outstanding patient balance (${outstanding.toString()})`,
             );
           }
           sum = sum.plus(amt);
@@ -462,8 +470,15 @@ export const admissionBillingService = {
         const remainder = amountDecimal.minus(sum);
         allocations = remainder.greaterThan(0) ? [...explicit, { invoiceId: null, amount: remainder }] : explicit;
       } else {
+        // Same patient-share-only cap as the explicit-allocation branch
+        // above — auto-allocation must never treat the panel company's
+        // receivable as patient-collectible. Any amount beyond the sum of
+        // every invoice's own patient share correctly falls through to the
+        // unallocated advance/credit branch below, which is legitimate
+        // (a real advance/deposit) — it just never masquerades as having
+        // settled the panel's portion.
         const outstandingByInvoice = invoices
-          .map((inv) => ({ invoice: inv, outstanding: inv.total.minus(inv.paidTotal) }))
+          .map((inv) => ({ invoice: inv, outstanding: (inv.panelPatientId ? inv.patientShare : inv.total).minus(inv.paidTotal) }))
           .filter((x) => x.outstanding.greaterThan(0));
         const totalOutstanding = outstandingByInvoice.reduce((sum, x) => sum.plus(x.outstanding), new Decimal(0));
 

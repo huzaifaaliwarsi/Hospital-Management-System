@@ -555,7 +555,7 @@ export const CentralHospitalLoginScreen: React.FC<CentralHospitalLoginScreenProp
           onClose={() => setShowForgotPassword(false)}
           title="Workstation Password Assistance"
           subtitle="Hospital Security Policy"
-          size="md"
+          maxWidth="md"
         >
           <div className="p-6 space-y-4">
             <div className="p-4 rounded-lg bg-[#e7f6f1] border border-[#c2e7db] text-[#0e7d5a] text-xs sm:text-sm leading-relaxed flex items-start gap-3">

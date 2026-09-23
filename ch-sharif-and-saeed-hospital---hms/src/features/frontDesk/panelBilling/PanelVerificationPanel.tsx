@@ -1,8 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Search, ShieldCheck, ShieldAlert, Loader2, AlertCircle, Calculator } from 'lucide-react';
 import { Select } from '../../../components/forms/FormControls';
 import { formatPKR } from '../../../utils/formatters';
-import { getAllPatients } from '../../../services/patientRegistryService';
+import { searchPanelPatients, PanelPatientSearchResult } from '../../../services/patientRegistryService';
 import { ServiceRatesService } from '../../../services/serviceRatesService';
 import { CorporatePanel } from '../../../services/panelService';
 import {
@@ -42,13 +42,36 @@ export const PanelVerificationPanel: React.FC<PanelVerificationPanelProps> = ({ 
   const [isResolving, setIsResolving] = useState(false);
   const [resolveError, setResolveError] = useState<string | null>(null);
 
-  const searchResults = useMemo(() => {
-    if (!searchTerm.trim()) return [];
-    const q = searchTerm.trim().toLowerCase();
-    return getAllPatients()
-      .filter((p) => p.payerType === 'Corporate / Panel' && p.panelId === panel.id)
-      .filter((p) => p.fullName.toLowerCase().includes(q) || p.mrNumber.toLowerCase().includes(q) || p.primaryPhone.includes(q))
-      .slice(0, 8);
+  // Live, paginated backend search (panel.md §17 backlog item 3) — this
+  // used to scan a client-side patient cache, which silently missed any
+  // patient registered beyond that cache's window or by another session.
+  const [searchResults, setSearchResults] = useState<PanelPatientSearchResult[]>([]);
+  const [isSearchingPatients, setIsSearchingPatients] = useState(false);
+
+  useEffect(() => {
+    const q = searchTerm.trim();
+    if (!q) {
+      setSearchResults([]);
+      return;
+    }
+    let cancelled = false;
+    setIsSearchingPatients(true);
+    const timer = setTimeout(() => {
+      searchPanelPatients(q, panel.id)
+        .then((results) => {
+          if (!cancelled) setSearchResults(results.slice(0, 8));
+        })
+        .catch(() => {
+          if (!cancelled) setSearchResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setIsSearchingPatients(false);
+        });
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [searchTerm, panel.id]);
 
   const services = useMemo(() => ServiceRatesService.getServices().filter((s) => s.status === 'Active'), []);
@@ -101,6 +124,11 @@ export const PanelVerificationPanel: React.FC<PanelVerificationPanelProps> = ({ 
             className="w-full text-xs pl-8.5 pr-3 py-2 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-[#149E75]"
           />
         </div>
+        {isSearchingPatients && (
+          <div className="p-2 flex items-center gap-2 text-slate-400 text-xs">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Searching…
+          </div>
+        )}
         {searchResults.length > 0 && (
           <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-56 overflow-y-auto">
             {searchResults.map((p) => (
@@ -113,7 +141,7 @@ export const PanelVerificationPanel: React.FC<PanelVerificationPanelProps> = ({ 
                 <div>
                   <span className="font-semibold text-slate-900">{p.fullName}</span>
                   <span className="text-slate-400 ml-2">
-                    {p.mrNumber} • {p.primaryPhone}
+                    {p.mrNumber} • {p.phone || 'no phone on file'}
                   </span>
                 </div>
                 <span className="text-[10px] text-slate-400">{p.panelMemberId || 'no member ID'}</span>

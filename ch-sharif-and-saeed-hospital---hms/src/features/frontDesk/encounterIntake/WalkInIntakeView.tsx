@@ -1,4 +1,4 @@
-import PanelMembershipFields from '../../superAdmin/patientRegistry/PanelMembershipFields';
+import PanelMembershipQuickFields from '../../superAdmin/patientRegistry/PanelMembershipQuickFields';
 import type { PanelMembershipDetails } from '../../../types/patient';
 import { doctorsForEncounter } from '../../../utils/doctorAvailability';
 import { InvoiceDetailModal } from '../billing/InvoiceDetailModal';
@@ -1179,7 +1179,7 @@ export const WalkInIntakeView: React.FC = () => {
                     onChange={(e) => setPanelMemberId(e.target.value.toUpperCase())}
                     onKeyDown={handleEnterNext}
                   />
-                  {!selectedExistingPatient && <div className="sm:col-span-2"><PanelMembershipFields value={membershipDetails} onChange={patch => setMembershipDetails(prev => ({ ...prev, ...patch }))} datesRequired={corporatePanels.find(p => p.id === panelId)?.membershipValidityRequired} /></div>}
+                  {!selectedExistingPatient && <div className="sm:col-span-2"><PanelMembershipQuickFields value={membershipDetails} onChange={patch => setMembershipDetails(prev => ({ ...prev, ...patch }))} datesRequired={corporatePanels.find(p => p.id === panelId)?.membershipValidityRequired} /></div>}
                   {corporatePanels.find(p => p.id === panelId)?.authorizationRequired && (
                     <>
                       <TextInput

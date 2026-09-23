@@ -100,7 +100,7 @@ export const SuperAdminDepartmentsView: React.FC = () => {
         name: s.fullName,
         designation: s.designation || (s.staffCategory === 'Doctor' ? 'Consultant' : s.staffCategory),
         department: s.departmentName || 'General',
-        role: s.staffCategory === 'Doctor' ? 'Doctor' : s.staffCategory === 'Admin' ? 'Admin' : 'Staff',
+        role: s.staffCategory === 'Doctor' ? 'Doctor' : s.staffCategory === 'Administrative Support' ? 'Admin' : 'Staff',
       }));
   }, [staffUsers]);
 

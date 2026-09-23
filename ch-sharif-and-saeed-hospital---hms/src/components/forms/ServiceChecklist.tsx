@@ -238,7 +238,7 @@ export const ServiceChecklist: React.FC<ServiceChecklistProps> = ({
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0">
-                      {service.billingUnit && service.billingUnit !== 'ONE_TIME' && (
+                      {service.billingUnit && service.billingUnit !== 'One-Time' && (
                         <span className="text-[10px] text-slate-400 uppercase">
                           {service.billingUnit.replace('_', ' ')}
                         </span>

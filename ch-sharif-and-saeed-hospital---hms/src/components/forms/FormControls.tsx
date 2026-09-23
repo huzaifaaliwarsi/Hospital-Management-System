@@ -241,7 +241,9 @@ export const TextInput: React.FC<TextInputProps> = (props) => {
 export interface NumberInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type'>, BaseInputProps {
   min?: number;
   max?: number;
-  step?: number;
+  // 'any' is a real, standard HTML `step` value (removes the decimal-step
+  // restriction) — several money inputs rely on it.
+  step?: number | 'any';
 }
 
 export const NumberInput: React.FC<NumberInputProps> = ({

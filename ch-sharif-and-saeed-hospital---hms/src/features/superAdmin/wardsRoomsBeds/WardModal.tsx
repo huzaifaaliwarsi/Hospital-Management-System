@@ -6,6 +6,7 @@ import { StaffUser } from '../../../types/staffUser';
 import {
   WardsRoomsBedsService,
   VALID_WARD_TYPES,
+  VALID_GENDER_POLICIES,
 } from '../../../services/wardsRoomsBedsService';
 
 interface WardModalProps {
@@ -36,7 +37,7 @@ export const WardModal: React.FC<WardModalProps> = ({
     wardType: 'General',
     floor: floors[0]?.name || '1st Floor',
     location: '',
-    genderPolicy: 'None',
+    genderPolicy: 'Not Applicable',
     headStaffId: '',
     fixedPrice: '',
     status: 'Active',
@@ -54,7 +55,7 @@ export const WardModal: React.FC<WardModalProps> = ({
         wardType: ward.wardType,
         floor: ward.floor || (floors[0]?.name ?? '1st Floor'),
         location: ward.location || '',
-        genderPolicy: ward.genderPolicy || 'None',
+        genderPolicy: ward.genderPolicy || 'Not Applicable',
         headStaffId: ward.headStaffId || '',
         fixedPrice: ward.fixedPrice != null ? ward.fixedPrice : '',
         status: ward.status,
@@ -69,7 +70,7 @@ export const WardModal: React.FC<WardModalProps> = ({
         wardType: 'General',
         floor: floors[0]?.name || 'Ground Floor',
         location: '',
-        genderPolicy: 'None',
+        genderPolicy: 'Not Applicable',
         headStaffId: '',
         fixedPrice: '',
         status: 'Active',
@@ -284,10 +285,11 @@ export const WardModal: React.FC<WardModalProps> = ({
                 }
                 className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A]"
               >
-                <option value="None">None (Co-ed / All)</option>
-                <option value="Male Only">Male Only</option>
-                <option value="Female Only">Female Only</option>
-                <option value="Pediatric">Pediatric</option>
+                {VALID_GENDER_POLICIES.map((g) => (
+                  <option key={g} value={g}>
+                    {g === 'Not Applicable' ? 'Not Applicable (Co-ed / All)' : g}
+                  </option>
+                ))}
               </select>
             </div>
 

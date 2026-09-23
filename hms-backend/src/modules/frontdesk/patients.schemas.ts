@@ -19,12 +19,23 @@ const phoneSchema = z.string().transform((val, ctx) => {
   return normalized;
 });
 
+// panel.md §17 backlog item 3 — the full identity-matching surface a
+// duplicate check must cover (§4.4): MRN, external member ID, CNIC/B-Form,
+// phone, and name + DOB. Every field optional/independent so a caller can
+// probe with whatever the form currently has filled in.
 export const checkDuplicateQuerySchema = z
   .object({
     cnic: z.string().optional(),
     phone: z.string().optional(),
+    mrNumber: z.string().trim().min(1).optional(),
+    panelMemberId: z.string().trim().min(1).optional(),
+    fullName: z.string().trim().min(1).optional(),
+    dob: z.coerce.date().optional(),
+    excludePatientId: z.string().uuid().optional(),
   })
-  .refine((v) => v.cnic || v.phone, { message: 'Provide at least one of cnic or phone' });
+  .refine((v) => v.cnic || v.phone || v.mrNumber || v.panelMemberId || (v.fullName && v.dob) || v.fullName, {
+    message: 'Provide at least one of cnic, phone, mrNumber, panelMemberId, or fullName',
+  });
 export type CheckDuplicateQuery = z.infer<typeof checkDuplicateQuerySchema>;
 
 /** Permanent, reusable identity — always tied to a Corporate Panel (D16 p.7). */

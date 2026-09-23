@@ -64,6 +64,7 @@ export const WardTab: React.FC<WardTabProps> = ({
   const resetFilters = () => {
     setFilters({
       searchTerm: '',
+      departmentId: 'All',
       wardType: 'All',
       status: 'All',
     });

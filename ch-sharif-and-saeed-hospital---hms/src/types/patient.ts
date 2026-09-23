@@ -148,7 +148,7 @@ export interface DuplicateCheckResult {
   isPossibleDuplicate: boolean;
   matchedPatients: Patient[];
   reason: string;
-  matchType?: 'EXACT_CNIC' | 'EXACT_PASSPORT' | 'NAME_DOB' | 'NAME_GUARDIAN_PHONE' | 'NAME_ONLY' | 'PHONE_ONLY';
+  matchType?: 'EXACT_CNIC' | 'EXACT_PASSPORT' | 'EXACT_MRN' | 'EXACT_MEMBER_ID' | 'NAME_DOB' | 'NAME_GUARDIAN_PHONE' | 'NAME_ONLY' | 'PHONE_ONLY' | 'NONE';
 }
 
 export interface ImportPatientRowResult {

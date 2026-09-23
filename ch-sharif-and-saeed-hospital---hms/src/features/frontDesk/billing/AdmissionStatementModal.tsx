@@ -67,7 +67,10 @@ export const AdmissionStatementModal: React.FC<AdmissionStatementModalProps> = (
   );
 
   const manualSum = useMemo(
-    () => Object.values(manualAmounts).reduce((s: number, v) => s + (v === '' || v == null ? 0 : Number(v)), 0),
+    // Explicit <number> — TS's reduce() overload otherwise infers the
+    // accumulator as `number | ''` from the array's own element type here,
+    // not just the callback's actual (always-number) return type.
+    () => Object.values(manualAmounts).reduce<number>((s, v) => s + (v === '' || v == null ? 0 : Number(v)), 0),
     [manualAmounts],
   );
 

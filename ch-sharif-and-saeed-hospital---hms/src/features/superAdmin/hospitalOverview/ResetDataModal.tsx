@@ -59,10 +59,14 @@ export const ResetDataModal: React.FC<ResetDataModalProps> = ({
 
   const handleClose = () => {
     if (isSubmitting) return;
+    const shouldReload = !!summaryResult;
     setConfirmationText('');
     setError(null);
     setSummaryResult(null);
     onClose();
+    if (shouldReload) {
+      window.location.reload();
+    }
   };
 
   return (
@@ -128,8 +132,16 @@ export const ResetDataModal: React.FC<ResetDataModalProps> = ({
                     <span className="font-bold text-[#111827]">{summaryResult.admissions}</span>
                   </div>
                   <div className="p-2.5 bg-white rounded-lg border border-[#e2eae5] flex justify-between">
+                    <span className="text-[#52665e]">Panel Patients:</span>
+                    <span className="font-bold text-[#111827]">{summaryResult.panelPatients}</span>
+                  </div>
+                  <div className="p-2.5 bg-white rounded-lg border border-[#e2eae5] flex justify-between">
                     <span className="text-[#52665e]">Self-Pay Visits:</span>
                     <span className="font-bold text-[#111827]">{summaryResult.selfPayEncounters}</span>
+                  </div>
+                  <div className="p-2.5 bg-white rounded-lg border border-[#e2eae5] flex justify-between">
+                    <span className="text-[#52665e]">Corporate Panels:</span>
+                    <span className="font-bold text-[#111827]">{summaryResult.corporatePanels}</span>
                   </div>
                   <div className="p-2.5 bg-white rounded-lg border border-[#e2eae5] flex justify-between">
                     <span className="text-[#52665e]">Beds Reset:</span>
@@ -172,7 +184,8 @@ export const ResetDataModal: React.FC<ResetDataModalProps> = ({
                     <li>All Invoices & Payments</li>
                     <li>Cashier Shifts & Cashbook</li>
                     <li>Admissions & Bed Stays</li>
-                    <li>Registered Test Patients</li>
+                    <li>All Patients (Panel & Self-Pay)</li>
+                    <li>Corporate Panel Companies</li>
                   </ul>
                 </div>
 
@@ -185,7 +198,7 @@ export const ResetDataModal: React.FC<ResetDataModalProps> = ({
                     <li>Doctors & Staff Users</li>
                     <li>Departments & Shifts</li>
                     <li>Services & Charge Rates</li>
-                    <li>Corporate Panels & Wards</li>
+                    <li>Hospital Profile & Ward/Bed Setup</li>
                   </ul>
                 </div>
               </div>
