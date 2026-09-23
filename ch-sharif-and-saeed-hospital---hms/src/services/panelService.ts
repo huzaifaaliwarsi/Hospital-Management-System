@@ -42,6 +42,7 @@ export interface CorporatePanel {
   memberIdLabel?: string;
   memberIdRequired?: boolean;
   membershipValidityRequired?: boolean;
+  authorizationRequired?: boolean;
   discountAgreement: string;
   contact: string;
   address: string;
@@ -75,6 +76,7 @@ function toCorporatePanel(raw: Record<string, any>): CorporatePanel {
     contactEmail: raw.contactEmail || '', billingTerms: raw.billingTerms || '',
     memberIdLabel: raw.memberIdLabel || '', memberIdRequired: raw.memberIdRequired ?? false,
     membershipValidityRequired: raw.membershipValidityRequired ?? false,
+    authorizationRequired: raw.authorizationRequired ?? false,
     discountAgreement: raw.discountAgreement || '',
     contact: raw.contact || '',
     address: raw.address || '',
@@ -134,6 +136,7 @@ export interface CorporatePanelFormValues {
   memberIdLabel?: string;
   memberIdRequired?: boolean;
   membershipValidityRequired?: boolean;
+  authorizationRequired?: boolean;
   discountAgreement: string;
   contact: string;
   address: string;
@@ -154,6 +157,7 @@ export async function createCorporatePanel(values: CorporatePanelFormValues): Pr
     memberIdLabel: values.memberIdLabel?.trim() || null,
     memberIdRequired: values.memberIdRequired ?? false,
     membershipValidityRequired: values.membershipValidityRequired ?? false,
+    authorizationRequired: values.authorizationRequired ?? false,
     discountAgreement: values.discountAgreement?.trim() || undefined,
     contact: values.contact?.trim() || undefined,
     address: values.address?.trim() || undefined,
@@ -178,6 +182,7 @@ export async function updateCorporatePanel(id: string, values: CorporatePanelFor
     memberIdLabel: values.memberIdLabel?.trim() || null,
     memberIdRequired: values.memberIdRequired ?? false,
     membershipValidityRequired: values.membershipValidityRequired ?? false,
+    authorizationRequired: values.authorizationRequired ?? false,
     discountAgreement: values.discountAgreement?.trim() || undefined,
     contact: values.contact?.trim() || undefined,
     address: values.address?.trim() || undefined,

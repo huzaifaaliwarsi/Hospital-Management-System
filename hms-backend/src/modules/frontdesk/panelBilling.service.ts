@@ -107,29 +107,36 @@ export const panelBillingService = {
     const corporatePanel = await prisma.corporatePanel.findUnique({ where: { id: corporatePanelId } });
     if (!corporatePanel) throw new NotFoundError('Corporate panel not found');
 
-    const patientWhere: Prisma.PanelPatientWhereInput = panelPatientId
-      ? { id: panelPatientId, corporatePanelId }
-      : { corporatePanelId };
-    const panelPatients = await prisma.panelPatient.findMany({
-      where: patientWhere,
-      select: { id: true, fullName: true, mrNumber: true, panelMemberId: true },
-    });
-    if (panelPatientId && panelPatients.length === 0) {
-      throw new NotFoundError('Panel patient not found in this panel');
+    if (panelPatientId) {
+      const patient = await prisma.panelPatient.findUnique({ where: { id: panelPatientId }, select: { id: true } });
+      if (!patient) throw new NotFoundError('Panel patient not found');
     }
-    const patientIds = panelPatients.map((p) => p.id);
 
-    const invoices =
-      patientIds.length === 0
-        ? []
-        : await prisma.hospitalInvoice.findMany({
-            where: { panelPatientId: { in: patientIds }, panelReceivable: { gt: 0 } },
-            include: {
-              department: { select: { id: true, name: true, code: true } },
-              panelPatient: { select: { id: true, fullName: true, mrNumber: true } },
-            },
-            orderBy: { createdAt: 'desc' },
-          });
+    // "Active patients" reports this panel's CURRENT roster — a distinct
+    // question from which invoices historically belong to this company
+    // (below), which must not shrink just because a patient later
+    // transferred to a different company.
+    const currentRoster = await prisma.panelPatient.findMany({
+      where: panelPatientId ? { id: panelPatientId, corporatePanelId } : { corporatePanelId },
+      select: { id: true },
+    });
+    const activePatientsCount = currentRoster.length;
+
+    // Keyed off the invoice's own frozen corporatePanelId (panel.md §14
+    // backlog item 1), never re-derived from panelPatient's CURRENT
+    // company — a receivable stays on the books of the company it was
+    // actually billed to, even after the patient transfers elsewhere.
+    const invoiceWhere: Prisma.HospitalInvoiceWhereInput = panelPatientId
+      ? { corporatePanelId, panelPatientId, panelReceivable: { gt: 0 } }
+      : { corporatePanelId, panelReceivable: { gt: 0 } };
+    const invoices = await prisma.hospitalInvoice.findMany({
+      where: invoiceWhere,
+      include: {
+        department: { select: { id: true, name: true, code: true } },
+        panelPatient: { select: { id: true, fullName: true, mrNumber: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
 
     const invoiceIds = invoices.map((inv) => inv.id);
     const realizedGroups =
@@ -182,7 +189,7 @@ export const panelBillingService = {
     return {
       corporatePanelId: corporatePanel.id,
       corporatePanelName: corporatePanel.organizationName,
-      activePatientsCount: panelPatients.length,
+      activePatientsCount,
       invoices: rows,
       consolidated,
     };
@@ -199,15 +206,13 @@ export const panelBillingService = {
       const corporatePanel = await tx.corporatePanel.findUnique({ where: { id: corporatePanelId } });
       if (!corporatePanel) throw new NotFoundError('Corporate panel not found');
 
-      const panelPatientIds = (await tx.panelPatient.findMany({ where: { corporatePanelId }, select: { id: true } })).map(
-        (p) => p.id,
-      );
-      const invoices =
-        panelPatientIds.length === 0
-          ? []
-          : await tx.hospitalInvoice.findMany({
-              where: { panelPatientId: { in: panelPatientIds }, panelReceivable: { gt: 0 } },
-            });
+      // Keyed off each invoice's own frozen corporatePanelId (panel.md §14
+      // backlog item 1) so a remittance always allocates against the exact
+      // company it was actually paid by, even for invoices whose patient
+      // has since transferred to a different company.
+      const invoices = await tx.hospitalInvoice.findMany({
+        where: { corporatePanelId, panelReceivable: { gt: 0 } },
+      });
       if (invoices.length === 0) {
         throw new NotFoundError('No panel-receivable invoices exist for this panel');
       }
@@ -291,6 +296,109 @@ export const panelBillingService = {
 
       return remittance;
     });
+  },
+
+  /**
+   * Panel Company Ledger — one chronological, running-balance statement of
+   * the company's payable: every panel-covered invoice is a debit (the
+   * company's receivable portion only, never the patient's share) and every
+   * recorded remittance is a credit. Patient co-pay is reported alongside as
+   * a separate total and never folded into the company balance (v7.2 hard
+   * rule: patient share and panel receivable are always distinct).
+   */
+  async getPanelLedger(corporatePanelId: string) {
+    const corporatePanel = await prisma.corporatePanel.findUnique({ where: { id: corporatePanelId } });
+    if (!corporatePanel) throw new NotFoundError('Corporate panel not found');
+
+    // Both keyed off each invoice's own frozen corporatePanelId (panel.md
+    // §14 backlog item 1) — the company that actually owns this ledger, not
+    // whichever company the patient currently belongs to.
+    const [chargeInvoices, allPatientInvoices, remittances] = await Promise.all([
+      prisma.hospitalInvoice.findMany({
+        where: { corporatePanelId, panelReceivable: { gt: 0 } },
+        select: {
+          id: true,
+          invoiceNumber: true,
+          createdAt: true,
+          panelReceivable: true,
+          sourceType: true,
+          panelPatient: { select: { fullName: true, mrNumber: true } },
+          department: { select: { name: true } },
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+      prisma.hospitalInvoice.findMany({
+        where: { corporatePanelId },
+        select: { patientShare: true, paidTotal: true },
+      }),
+      prisma.panelRemittance.findMany({
+        where: { corporatePanelId },
+        select: { id: true, remittanceNumber: true, amount: true, receivedAt: true, method: true, reference: true },
+        orderBy: { receivedAt: 'asc' },
+      }),
+    ]);
+
+    type LedgerEntry = {
+      date: Date;
+      type: 'CHARGE' | 'REMITTANCE';
+      reference: string;
+      description: string;
+      patientName: string | null;
+      debit: Decimal;
+      credit: Decimal;
+    };
+
+    const entries: LedgerEntry[] = [
+      ...chargeInvoices.map((inv) => ({
+        date: inv.createdAt,
+        type: 'CHARGE' as const,
+        reference: inv.invoiceNumber,
+        description: [inv.sourceType, inv.department?.name].filter(Boolean).join(' — '),
+        patientName: inv.panelPatient?.fullName ?? null,
+        debit: inv.panelReceivable,
+        credit: new Decimal(0),
+      })),
+      ...remittances.map((r) => ({
+        date: r.receivedAt,
+        type: 'REMITTANCE' as const,
+        reference: r.remittanceNumber,
+        description: [r.method, r.reference].filter(Boolean).join(' — ') || 'Remittance received',
+        patientName: null,
+        debit: new Decimal(0),
+        credit: r.amount,
+      })),
+    ].sort((a, b) => a.date.getTime() - b.date.getTime());
+
+    let runningBalance = new Decimal(0);
+    const rows = entries.map((e) => {
+      runningBalance = runningBalance.plus(e.debit).minus(e.credit);
+      return { ...e, runningBalance };
+    });
+
+    const totalDebit = entries.reduce((sum, e) => sum.plus(e.debit), new Decimal(0));
+    const totalCredit = entries.reduce((sum, e) => sum.plus(e.credit), new Decimal(0));
+
+    const patientShareTotal = allPatientInvoices.reduce((sum, inv) => sum.plus(inv.patientShare), new Decimal(0));
+    const patientShareCollected = allPatientInvoices.reduce((sum, inv) => {
+      const collected = inv.paidTotal.lessThan(inv.patientShare) ? inv.paidTotal : inv.patientShare;
+      return sum.plus(collected);
+    }, new Decimal(0));
+
+    return {
+      corporatePanelId: corporatePanel.id,
+      corporatePanelName: corporatePanel.organizationName,
+      entries: rows,
+      totals: {
+        totalDebit,
+        totalCredit,
+        closingBalance: runningBalance,
+      },
+      patientCoPay: {
+        total: patientShareTotal,
+        collected: patientShareCollected,
+        outstanding: patientShareTotal.minus(patientShareCollected),
+      },
+    };
   },
 
   async listRemittances(corporatePanelId: string) {

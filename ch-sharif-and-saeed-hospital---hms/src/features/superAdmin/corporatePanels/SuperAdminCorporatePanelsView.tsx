@@ -12,6 +12,10 @@ import {
   CheckCircle2,
   AlertCircle,
   Trash2,
+  ShieldCheck,
+  Phone,
+  Wallet,
+  FileText,
 } from 'lucide-react';
 import { formatPKR } from '../../../utils/formatters';
 import {
@@ -33,6 +37,14 @@ const EMPTY_FORM: CorporatePanelFormValues = {
   code: '',
   organizationName: '',
   category: '',
+  legalBillingName: '',
+  contactPhone: '',
+  contactEmail: '',
+  billingTerms: '',
+  memberIdLabel: 'Employee / Policy ID',
+  memberIdRequired: false,
+  membershipValidityRequired: false,
+  authorizationRequired: false,
   discountAgreement: '',
   contact: '',
   address: '',
@@ -118,6 +130,7 @@ export const SuperAdminCorporatePanelsView: React.FC = () => {
       organizationName: panel.name,
       category: panel.category,
       memberIdLabel: panel.memberIdLabel, memberIdRequired: panel.memberIdRequired, membershipValidityRequired: panel.membershipValidityRequired,
+      authorizationRequired: panel.authorizationRequired,
       legalBillingName: panel.legalBillingName, contactPhone: panel.contactPhone,
       contactEmail: panel.contactEmail, billingTerms: panel.billingTerms,
       discountAgreement: panel.discountAgreement,
@@ -397,86 +410,245 @@ export const SuperAdminCorporatePanelsView: React.FC = () => {
         isOpen={isFormOpen}
         onClose={() => setIsFormOpen(false)}
         title={editingPanel ? 'Edit Corporate Panel' : 'Register Corporate Panel'}
-        maxWidth="md"
+        subtitle={
+          editingPanel
+            ? `Update institutional contract profile and validation rules for ${editingPanel.name}`
+            : 'Register a new institutional insurance or corporate panel partner'
+        }
+        maxWidth="3xl"
         closeOnBackdropClick={false}
-      >
-        <form onSubmit={handleSave} className="space-y-4">
-          {formError && (
-            <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700 font-medium">{formError}</div>
-          )}
-          <TextInput
-            label="Panel Code"
-            placeholder="e.g. PNL-SLI (optional — leave blank to auto-generate)"
-            value={formValues.code}
-            onChange={(e) => setFormValues({ ...formValues, code: e.target.value })}
-          />
-          <TextInput
-            label="Organization / Panel Name"
-            value={formValues.organizationName}
-            onChange={(e) => setFormValues({ ...formValues, organizationName: e.target.value })}
-            required
-          />
-          <Select
-            label="Category"
-            value={formValues.category}
-            onChange={(e) => setFormValues({ ...formValues, category: e.target.value })}
-            options={[{ label: 'Select category', value: '' }, ...categories.map((c) => ({ label: c.name, value: c.name }))]}
-            required
-          />
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <TextInput label="Legal / Billing Name" value={formValues.legalBillingName ?? ''} onChange={e => setFormValues({ ...formValues, legalBillingName: e.target.value })} />
-            <TextInput label="Phone" value={formValues.contactPhone ?? ''} onChange={e => setFormValues({ ...formValues, contactPhone: e.target.value })} />
-            <TextInput label="Email" type="email" value={formValues.contactEmail ?? ''} onChange={e => setFormValues({ ...formValues, contactEmail: e.target.value })} />
-            <TextInput label="Member identity label" placeholder="Employee ID / Policy ID / Referral ID" value={formValues.memberIdLabel ?? ''} onChange={e => setFormValues({ ...formValues, memberIdLabel: e.target.value })} />
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={formValues.memberIdRequired ?? false} onChange={e => setFormValues({ ...formValues, memberIdRequired: e.target.checked })} />Require member identity</label>
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={formValues.membershipValidityRequired ?? false} onChange={e => setFormValues({ ...formValues, membershipValidityRequired: e.target.checked })} />Require membership start and end dates</label>
-            <TextInput label="Billing Terms" value={formValues.billingTerms ?? ''} onChange={e => setFormValues({ ...formValues, billingTerms: e.target.value })} />
+        footer={
+          <div className="flex items-center justify-between w-full">
+            <span className="text-xs text-slate-500">
+              <span className="text-rose-500 font-bold">*</span> Indicates required fields
+            </span>
+            <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => setIsFormOpen(false)}
+                className="px-4 py-2 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                form="corporate-panel-modal-form"
+                disabled={isSaving}
+                className="inline-flex items-center gap-2 px-5 py-2 bg-[#149E75] hover:bg-[#08775A] disabled:opacity-60 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+              >
+                {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                {isSaving ? 'Saving…' : editingPanel ? 'Save Changes' : 'Register Corporate Panel'}
+              </button>
+            </div>
           </div>
-          <TextInput
-            label="Discount Agreement Summary"
-            placeholder="e.g. 15% Institutional Concession"
-            value={formValues.discountAgreement}
-            onChange={(e) => setFormValues({ ...formValues, discountAgreement: e.target.value })}
-          />
-          <TextInput
-            label="Focal Person / Contact"
-            value={formValues.contact}
-            onChange={(e) => setFormValues({ ...formValues, contact: e.target.value })}
-          />
-          <Textarea
-            label="Address"
-            value={formValues.address}
-            onChange={(e) => setFormValues({ ...formValues, address: e.target.value })}
-            rows={2}
-          />
-          <NumberInput
-            label="Credit Limit (PKR)"
-            value={formValues.creditLimit}
-            onChange={(e) => setFormValues({ ...formValues, creditLimit: Number(e.target.value) || 0 })}
-            min={0}
-          />
-          <Textarea
-            label="Notes"
-            value={formValues.notes}
-            onChange={(e) => setFormValues({ ...formValues, notes: e.target.value })}
-            rows={2}
-          />
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-            <button
-              type="button"
-              onClick={() => setIsFormOpen(false)}
-              className="px-4 py-2 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-semibold"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSaving}
-              className="inline-flex items-center gap-2 px-5 py-2 bg-[#149E75] hover:bg-[#08775A] disabled:opacity-60 text-white rounded-lg text-xs font-semibold"
-            >
-              {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-              {isSaving ? 'Saving…' : editingPanel ? 'Save Changes' : 'Register Panel'}
-            </button>
+        }
+      >
+        <form id="corporate-panel-modal-form" onSubmit={handleSave} className="space-y-5 py-1">
+          {formError && (
+            <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700 font-medium flex items-center gap-2 animate-in fade-in">
+              <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
+              <span>{formError}</span>
+            </div>
+          )}
+
+          {/* Section 1: Organization & Identity */}
+          <div className="bg-white border border-slate-200/90 rounded-xl p-4 shadow-2xs space-y-3.5">
+            <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
+              <Building2 className="h-4 w-4 text-[#08775A]" />
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                Organization & Identification
+              </h4>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+              <TextInput
+                label="Organization / Panel Name"
+                placeholder="e.g. State Life Insurance, Askari General"
+                value={formValues.organizationName}
+                onChange={(e) => setFormValues({ ...formValues, organizationName: e.target.value })}
+                required
+              />
+              <Select
+                label="Panel Category"
+                value={formValues.category}
+                onChange={(e) => setFormValues({ ...formValues, category: e.target.value })}
+                options={[
+                  { label: 'Select category', value: '' },
+                  ...categories.map((c) => ({ label: c.name, value: c.name })),
+                ]}
+                required
+              />
+              <TextInput
+                label="Panel Code"
+                placeholder="e.g. PNL-SLI (leave blank to auto-generate)"
+                value={formValues.code}
+                onChange={(e) => setFormValues({ ...formValues, code: e.target.value })}
+                hint="Unique short identifier for reports and billing vouchers"
+              />
+              <TextInput
+                label="Legal / Billing Entity Name"
+                placeholder="Official registered company title"
+                value={formValues.legalBillingName ?? ''}
+                onChange={(e) => setFormValues({ ...formValues, legalBillingName: e.target.value })}
+                hint="Used when issuing institutional bills and claim invoices"
+              />
+            </div>
+          </div>
+
+          {/* Section 2: Contact & Liaison */}
+          <div className="bg-white border border-slate-200/90 rounded-xl p-4 shadow-2xs space-y-3.5">
+            <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
+              <Phone className="h-4 w-4 text-[#08775A]" />
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                Focal Person & Contact Details
+              </h4>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+              <TextInput
+                label="Focal Person / Liaison"
+                placeholder="e.g. Mr. Tariq Mehmood (Manager Claims)"
+                value={formValues.contact}
+                onChange={(e) => setFormValues({ ...formValues, contact: e.target.value })}
+              />
+              <TextInput
+                label="Contact Phone"
+                placeholder="e.g. +92 300 1234567 / 051-9876543"
+                value={formValues.contactPhone ?? ''}
+                onChange={(e) => setFormValues({ ...formValues, contactPhone: e.target.value })}
+              />
+              <TextInput
+                label="Official Email"
+                type="email"
+                placeholder="claims@organization.com.pk"
+                value={formValues.contactEmail ?? ''}
+                onChange={(e) => setFormValues({ ...formValues, contactEmail: e.target.value })}
+              />
+              <TextInput
+                label="Physical / Postal Address"
+                placeholder="Head office / zonal branch address"
+                value={formValues.address}
+                onChange={(e) => setFormValues({ ...formValues, address: e.target.value })}
+              />
+            </div>
+          </div>
+
+          {/* Section 3: Front Desk Policy & Member Validation */}
+          <div className="bg-[#effaf5] border border-[#c2e7db] rounded-xl p-4 space-y-3.5">
+            <div className="flex items-center justify-between pb-2 border-b border-[#c2e7db]/70">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="h-4 w-4 text-[#08775A]" />
+                <h4 className="text-xs font-bold uppercase tracking-wider text-[#08775A]">
+                  Front Desk Membership & Verification Policy
+                </h4>
+              </div>
+              <span className="text-[11px] text-emerald-800 font-medium bg-white/70 px-2 py-0.5 rounded border border-[#c2e7db]">
+                Registration Control
+              </span>
+            </div>
+
+            <div>
+              <TextInput
+                label="Member Identity Field Label"
+                placeholder="e.g. Employee ID / Policy No. / Medical Card No."
+                value={formValues.memberIdLabel ?? ''}
+                onChange={(e) => setFormValues({ ...formValues, memberIdLabel: e.target.value })}
+                hint="This exact label appears on Front Desk Walk-In Intake and Admission registration forms."
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <label className="flex items-start gap-3 p-3 bg-white rounded-lg border border-slate-200 hover:border-[#149E75] transition-colors cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[#149E75] focus:ring-[#149E75] cursor-pointer"
+                  checked={formValues.memberIdRequired ?? false}
+                  onChange={(e) => setFormValues({ ...formValues, memberIdRequired: e.target.checked })}
+                />
+                <div className="space-y-0.5">
+                  <span className="text-xs font-bold text-slate-800 block">Require Member Identity</span>
+                  <span className="text-[11px] text-slate-500 block leading-tight">
+                    Front Desk operator cannot save patient without entering member identity.
+                  </span>
+                </div>
+              </label>
+
+              <label className="flex items-start gap-3 p-3 bg-white rounded-lg border border-slate-200 hover:border-[#149E75] transition-colors cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[#149E75] focus:ring-[#149E75] cursor-pointer"
+                  checked={formValues.membershipValidityRequired ?? false}
+                  onChange={(e) => setFormValues({ ...formValues, membershipValidityRequired: e.target.checked })}
+                />
+                <div className="space-y-0.5">
+                  <span className="text-xs font-bold text-slate-800 block">Require Validity Dates</span>
+                  <span className="text-[11px] text-slate-500 block leading-tight">
+                    Enforces Valid From and Valid Through dates verification on patient cards.
+                  </span>
+                </div>
+              </label>
+
+              <label className="flex items-start gap-3 p-3 bg-white rounded-lg border border-slate-200 hover:border-[#149E75] transition-colors cursor-pointer select-none sm:col-span-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[#149E75] focus:ring-[#149E75] cursor-pointer"
+                  checked={formValues.authorizationRequired ?? false}
+                  onChange={(e) => setFormValues({ ...formValues, authorizationRequired: e.target.checked })}
+                />
+                <div className="space-y-0.5">
+                  <span className="text-xs font-bold text-slate-800 block">Require Authorization / Guarantee Reference</span>
+                  <span className="text-[11px] text-slate-500 block leading-tight">
+                    Front Desk and Admission cannot open a new encounter or admission for this company without an authorization/guarantee reference number, and every charge is blocked if it later expires.
+                  </span>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          {/* Section 4: Financial, Credit & Agreement Terms */}
+          <div className="bg-white border border-slate-200/90 rounded-xl p-4 shadow-2xs space-y-3.5">
+            <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
+              <Wallet className="h-4 w-4 text-[#08775A]" />
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                Financial, Credit & Agreement Terms
+              </h4>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+              <NumberInput
+                label="Credit Limit (PKR)"
+                placeholder="0"
+                value={formValues.creditLimit}
+                onChange={(e) => setFormValues({ ...formValues, creditLimit: Number(e.target.value) || 0 })}
+                min={0}
+                hint="Maximum outstanding unbilled claim balance allowed"
+              />
+              <TextInput
+                label="Billing Terms"
+                placeholder="e.g. Net 30 Days, Monthly Invoicing, Fortnightly"
+                value={formValues.billingTerms ?? ''}
+                onChange={(e) => setFormValues({ ...formValues, billingTerms: e.target.value })}
+                hint="Claim settlement schedule agreed in MoU / contract"
+              />
+              <div className="md:col-span-2">
+                <TextInput
+                  label="Discount Agreement Summary"
+                  placeholder="e.g. 15% Institutional Concession, Special OPD Tariff"
+                  value={formValues.discountAgreement}
+                  onChange={(e) => setFormValues({ ...formValues, discountAgreement: e.target.value })}
+                  hint="Brief summary of contract terms (detailed per-service rules can be configured via Rules button)"
+                />
+              </div>
+              <div className="md:col-span-2">
+                <Textarea
+                  label="Internal Contract Notes / Remarks"
+                  placeholder="Additional contractual notes, special instructions, or focal point numbers..."
+                  value={formValues.notes}
+                  onChange={(e) => setFormValues({ ...formValues, notes: e.target.value })}
+                  rows={2}
+                />
+              </div>
+            </div>
           </div>
         </form>
       </Modal>

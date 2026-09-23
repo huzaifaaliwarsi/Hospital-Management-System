@@ -825,12 +825,11 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
               {/* Date & Time Slot */}
               <TextInput
                 label="Appointment Date"
-                lang="en-GB" type="date"
+                type="date"
                 required
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
                 onKeyDown={handleEnterNext}
-                hint={date ? `Selected: ${formatDisplayDate(date)} (DD/MM/YYYY)` : undefined}
               />
               <TextInput
                 label="Time Slot"

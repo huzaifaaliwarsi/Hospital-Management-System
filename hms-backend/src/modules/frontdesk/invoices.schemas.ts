@@ -27,6 +27,12 @@ export const createEncounterSchema = z.object({
   departmentId: z.string().uuid().optional(),
   doctorStaffId: z.string().uuid().optional(),
   notes: z.string().optional(),
+  // Case authorization/guarantee (panel.md §15 backlog item 2) — required
+  // up front when the panel company's authorizationRequired policy is on;
+  // re-checked against every service line added afterward too.
+  authorizationNumber: z.string().trim().max(100).optional(),
+  authorizationLimit: z.coerce.number().nonnegative().optional(),
+  authorizationValidUntil: z.coerce.date().optional(),
 }).refine(
   (data) => data.panelPatientId || data.selfPayEncounterId || data.newSelfPayPatient,
   { message: 'Either panelPatientId, selfPayEncounterId, or newSelfPayPatient is required' },
@@ -58,6 +64,20 @@ export const applyDiscountSchema = z.object({
 );
 
 export type ApplyDiscountBody = z.infer<typeof applyDiscountSchema>;
+
+// Case authorization/guarantee (panel.md §15 backlog item 2) — lets Front
+// Desk capture or renew the reference on an already-open panel encounter,
+// e.g. when a service line turns out to need it under its own rule even
+// though the company-wide policy didn't already require one at intake.
+export const setInvoiceAuthorizationSchema = z.object({
+  authorizationNumber: z.string().trim().max(100).optional(),
+  authorizationLimit: z.coerce.number().nonnegative().optional(),
+  authorizationValidUntil: z.coerce.date().optional(),
+}).refine(
+  (data) => data.authorizationNumber !== undefined || data.authorizationLimit !== undefined || data.authorizationValidUntil !== undefined,
+  { message: 'Provide at least one of authorizationNumber, authorizationLimit or authorizationValidUntil' },
+);
+export type SetInvoiceAuthorizationBody = z.infer<typeof setInvoiceAuthorizationSchema>;
 
 export const approveDiscountSchema = z.object({
   discountApprovalNotes: z.string().optional(),

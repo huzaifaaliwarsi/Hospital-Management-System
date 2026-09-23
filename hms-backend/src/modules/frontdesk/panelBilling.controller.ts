@@ -34,6 +34,11 @@ export const panelBillingController = {
     res.status(201).json({ data: result });
   },
 
+  getLedger: async (req: Request, res: Response) => {
+    const result = await panelBillingService.getPanelLedger(req.params.corporatePanelId as string);
+    res.json({ data: result });
+  },
+
   listRemittances: async (req: Request, res: Response) => {
     const result = await panelBillingService.listRemittances(req.params.corporatePanelId as string);
     res.json({ data: result });

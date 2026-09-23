@@ -55,6 +55,12 @@ export const PatientModal: React.FC<PatientModalProps> = ({
   onOpenExistingPatient,
 }) => {
   const isEditMode = Boolean(patientToEdit);
+  // Company transfer is allowed (panel.md §14 backlog item 1 — every past
+  // invoice now freezes its own payer, so moving a patient's live
+  // membership forward can no longer misattribute old receivables), but it
+  // stays an explicit, confirmed action rather than a plain editable field —
+  // this is a real transfer of the patient's active company, not a typo fix.
+  const [allowCompanyTransfer, setAllowCompanyTransfer] = useState(false);
   const [panels, setPanels] = useState<CorporatePanel[]>(getActiveCorporatePanels);
   const [panelLoadError, setPanelLoadError] = useState('');
   const activePanels = panels.filter(p => p.status === 'Active' || p.id === patientToEdit?.panelId);
@@ -115,6 +121,7 @@ export const PatientModal: React.FC<PatientModalProps> = ({
       setIgnoreWeakDuplicateWarning(false);
       setQuickSearchTerm('');
       setQuickSearchResults([]);
+      setAllowCompanyTransfer(false);
 
       if (patientToEdit) {
         setFormData({
@@ -1000,11 +1007,27 @@ export const PatientModal: React.FC<PatientModalProps> = ({
               {formData.payerType === 'Corporate / Panel' && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 border-t border-slate-100">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Corporate Panel Entity <span className="text-red-500">*</span>
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-slate-700">
+                        Corporate Panel Entity <span className="text-red-500">*</span>
+                      </label>
+                      {isEditMode && !allowCompanyTransfer && (
+                        <button
+                          type="button"
+                          onClick={() => setAllowCompanyTransfer(true)}
+                          className="text-[10.5px] font-semibold text-[#08775A] hover:underline"
+                        >
+                          Transfer to another company
+                        </button>
+                      )}
+                    </div>
+                    {isEditMode && allowCompanyTransfer && (
+                      <p className="text-[10.5px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5 mb-1.5">
+                        Past invoices stay billed to the original company and are unaffected — only new charges after saving will use the new company.
+                      </p>
+                    )}
                     <select
-                      disabled={isEditMode}
+                      disabled={isEditMode && !allowCompanyTransfer}
                       value={formData.panelId}
                       onChange={(e) => {
                         const selectedId = e.target.value;
@@ -1015,7 +1038,7 @@ export const PatientModal: React.FC<PatientModalProps> = ({
                           panelName: p ? p.name : '',
                         });
                       }}
-                      className={`w-full px-3 py-2 bg-slate-50 border rounded-lg text-sm text-slate-800 focus:outline-hidden focus:bg-white ${
+                      className={`w-full px-3 py-2 bg-slate-50 border rounded-lg text-sm text-slate-800 focus:outline-hidden focus:bg-white disabled:opacity-60 ${
                         errors.panelId ? 'border-red-400' : 'border-slate-300 focus:border-[#08775A]'
                       }`}
                     >

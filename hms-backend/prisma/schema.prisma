@@ -1004,6 +1004,11 @@ model CorporatePanel {
   memberIdLabel String? @map("member_id_label")
   memberIdRequired Boolean @default(false) @map("member_id_required")
   membershipValidityRequired Boolean @default(false) @map("membership_validity_required")
+  // panel.md §4.1/§15 backlog item 2 — company-wide preauthorization policy.
+  // A specific PanelDiscountRule.preauthorizationRequired can also demand
+  // authorization for just that rule even when this company-wide flag is
+  // off; both are enforced (see src/shared/panelAuthorization.ts).
+  authorizationRequired Boolean @default(false) @map("authorization_required")
   discountAgreement String?  @map("discount_agreement")
   contact           String?
   address           String?
@@ -1011,9 +1016,10 @@ model CorporatePanel {
   creditLimit       Decimal? @map("credit_limit") @db.Decimal(14, 2)
   isActive          Boolean  @default(true) @map("is_active")
 
-  discountRules PanelDiscountRule[]
-  panelPatients PanelPatient[]
-  remittances   PanelRemittance[]
+  discountRules    PanelDiscountRule[]
+  panelPatients    PanelPatient[]
+  remittances      PanelRemittance[]
+  hospitalInvoices HospitalInvoice[]
 
   createdAt     DateTime    @default(now()) @map("created_at")
   createdById   String?     @map("created_by")
@@ -1258,6 +1264,15 @@ model HospitalInvoice {
   admissionRecord    AdmissionRecord?  @relation(fields: [admissionRecordId], references: [id])
   panelPatientId     String?           @map("panel_patient_id")
   panelPatient       PanelPatient?     @relation(fields: [panelPatientId], references: [id])
+  // Historical payer ownership (panel.md §14 backlog item 1): frozen at
+  // posting time from panelPatient.corporatePanelId, never re-derived from
+  // the patient's CURRENT company. A later membership transfer (patient
+  // moves to a different company) must not silently move this invoice's
+  // receivable to the new company or drop it from the old company's
+  // statement/ledger — every panel-receivable query keys off this field,
+  // not off panelPatient's live corporatePanelId.
+  corporatePanelId   String?           @map("corporate_panel_id")
+  corporatePanel     CorporatePanel?   @relation(fields: [corporatePanelId], references: [id])
   selfPayEncounterId String?           @map("self_pay_encounter_id")
   selfPayEncounter   SelfPayEncounter? @relation(fields: [selfPayEncounterId], references: [id])
   // v7.2 §2.2/§3.3 — tags which department this invoice belongs to
@@ -1269,6 +1284,14 @@ model HospitalInvoice {
   // aggregation layer.
   departmentId       String?           @map("department_id")
   department         Department?       @relation(fields: [departmentId], references: [id])
+
+  // Case authorization / guarantee for non-admission encounters (Walk-In,
+  // OPD, Observation, Emergency) — panel.md §4.5/§15 backlog item 2. The
+  // admission equivalent lives on AdmissionRecord above; enforcement is
+  // shared via src/shared/panelAuthorization.ts.
+  authorizationNumber     String?   @map("authorization_number")
+  authorizationLimit      Decimal?  @map("authorization_limit") @db.Decimal(14, 2)
+  authorizationValidUntil DateTime? @map("authorization_valid_until")
 
   subtotal        Decimal       @default(0) @db.Decimal(14, 2)
   discountTotal   Decimal       @default(0) @map("discount_total") @db.Decimal(14, 2)
@@ -1295,6 +1318,7 @@ model HospitalInvoice {
   @@index([panelPatientId])
   @@index([selfPayEncounterId])
   @@index([admissionRecordId])
+  @@index([corporatePanelId])
   @@map("hospital_invoices")
 }
 
@@ -1455,6 +1479,13 @@ model AdmissionRecord {
   admittedAt         DateTime?         @map("admitted_at")
   dischargedAt       DateTime?         @map("discharged_at")
   estimatedAmount    Decimal?          @map("estimated_amount") @db.Decimal(14, 2)
+  // Case authorization / guarantee (panel.md §4.6/§15 backlog item 2) —
+  // captured once at intake, re-checked on every subsequent charge posted
+  // to this admission (ward/room/procedure), not only at intake time.
+  // Enforcement lives in src/shared/panelAuthorization.ts.
+  authorizationNumber     String?   @map("authorization_number")
+  authorizationLimit      Decimal?  @map("authorization_limit") @db.Decimal(14, 2)
+  authorizationValidUntil DateTime? @map("authorization_valid_until")
   // Intake notes captured at admission creation (04/23 PDFs' "notes" field on
   // the New Admission form); Check-In's own notes are appended here too
   // rather than overwriting, so neither moment's note is lost.

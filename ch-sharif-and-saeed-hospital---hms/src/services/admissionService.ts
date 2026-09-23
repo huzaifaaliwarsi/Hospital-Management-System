@@ -79,6 +79,10 @@ export interface CreateAdmissionFormValues {
   advanceAmount: number | '';
   paymentMethod: AdmissionPaymentMethod;
   paymentReference: string;
+  /** Case authorization/guarantee — required by the backend when the selected panel company's `authorizationRequired` policy is on (panel.md §15 backlog item 2). */
+  authorizationNumber?: string;
+  authorizationLimit?: number | '';
+  authorizationValidUntil?: string;
 }
 
 export interface AdmissionAdvanceReceipt {
@@ -438,6 +442,9 @@ export async function createAdmission(
         advanceAmount: values.advanceAmount === '' ? undefined : Number(values.advanceAmount),
         paymentMethod: values.paymentMethod,
         paymentReference: values.paymentReference?.trim() || undefined,
+        authorizationNumber: values.authorizationNumber?.trim() || undefined,
+        authorizationLimit: values.authorizationLimit === '' || values.authorizationLimit == null ? undefined : Number(values.authorizationLimit),
+        authorizationValidUntil: values.authorizationValidUntil || undefined,
       },
     );
     const { admission, advanceReceipt, invoice } = res.data.data;

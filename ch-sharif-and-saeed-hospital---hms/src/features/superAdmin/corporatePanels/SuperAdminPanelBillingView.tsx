@@ -25,20 +25,24 @@ import { fetchCorporatePanels, getActiveCorporatePanels, CorporatePanel } from '
 import {
   fetchPanelStatement,
   fetchPanelRemittances,
+  fetchPanelLedger,
   PanelStatement,
   PanelRemittanceRecord,
+  PanelLedger,
 } from '../../../services/panelBillingService';
 import { fetchInvoices, InvoiceSummary } from '../../../services/invoiceService';
 import { InvoiceDetailModal } from '../../frontDesk/billing/InvoiceDetailModal';
 import { PanelVerificationPanel } from '../../frontDesk/panelBilling/PanelVerificationPanel';
 import { PanelInterimStatementSection } from '../../frontDesk/panelBilling/PanelInterimStatementSection';
 import { PanelRemittanceHistorySection } from '../../frontDesk/panelBilling/PanelRemittanceHistorySection';
+import { PanelLedgerSection } from '../../frontDesk/panelBilling/PanelLedgerSection';
 import { RecordPanelRemittanceModal } from '../../frontDesk/panelBilling/RecordPanelRemittanceModal';
 import { PanelBadge } from '../../../components/common/PanelBadge';
 
-type SuperAdminTab = 'statement' | 'invoices' | 'remittances' | 'verification';
+type SuperAdminTab = 'ledger' | 'statement' | 'invoices' | 'remittances' | 'verification';
 
 const TABS: { id: SuperAdminTab; label: string; icon: React.ElementType; desc: string }[] = [
+  { id: 'ledger', label: 'Company Ledger', icon: TrendingUp, desc: 'Running-balance statement: charges vs. remittances, patient co-pay kept separate' },
   { id: 'statement', label: 'Interim Statement & Claims', icon: FileSpreadsheet, desc: 'Per-panel receivable & patient co-pay statement' },
   { id: 'invoices', label: 'All Panel Invoices Ledger', icon: Receipt, desc: 'Real DB invoices with corporate credit & co-pay' },
   { id: 'remittances', label: 'Panel Remittances & Receipts', icon: History, desc: 'Incoming company payments & department allocations' },
@@ -49,7 +53,12 @@ export const SuperAdminPanelBillingView: React.FC = () => {
   const [panels, setPanels] = useState<CorporatePanel[]>(() => getActiveCorporatePanels());
   const [isLoadingPanels, setIsLoadingPanels] = useState(true);
   const [selectedPanelId, setSelectedPanelId] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<SuperAdminTab>('statement');
+  const [activeTab, setActiveTab] = useState<SuperAdminTab>('ledger');
+
+  // Company Ledger State
+  const [ledger, setLedger] = useState<PanelLedger | null>(null);
+  const [isLedgerLoading, setIsLedgerLoading] = useState(false);
+  const [ledgerError, setLedgerError] = useState<string | null>(null);
 
   // Statement State
   const [statement, setStatement] = useState<PanelStatement | null>(null);
@@ -103,6 +112,24 @@ export const SuperAdminPanelBillingView: React.FC = () => {
     () => panels.find((p) => p.id === selectedPanelId) || (panels.length > 0 ? panels[0] : null),
     [panels, selectedPanelId]
   );
+
+  // 2. Load Company Ledger for Selected Panel
+  const loadLedger = useCallback(async (panelId: string) => {
+    if (!panelId) {
+      setLedger(null);
+      return;
+    }
+    setIsLedgerLoading(true);
+    setLedgerError(null);
+    try {
+      const led = await fetchPanelLedger(panelId);
+      setLedger(led);
+    } catch (err: any) {
+      setLedgerError(err?.message || 'Failed to load company ledger.');
+    } finally {
+      setIsLedgerLoading(false);
+    }
+  }, []);
 
   // 2. Load Statement for Selected Panel
   const loadStatement = useCallback(async (panelId: string) => {
@@ -160,13 +187,14 @@ export const SuperAdminPanelBillingView: React.FC = () => {
   // Sync when selected panel changes
   useEffect(() => {
     if (selectedPanelId) {
+      loadLedger(selectedPanelId);
       loadStatement(selectedPanelId);
       loadRemittances(selectedPanelId);
       loadInvoices(selectedPanelId);
     } else if (panels.length > 0) {
       setSelectedPanelId(panels[0].id);
     }
-  }, [selectedPanelId, panels, loadStatement, loadRemittances, loadInvoices]);
+  }, [selectedPanelId, panels, loadLedger, loadStatement, loadRemittances, loadInvoices]);
 
   // Comprehensive Refresh
   const handleRefreshAll = async () => {
@@ -175,6 +203,7 @@ export const SuperAdminPanelBillingView: React.FC = () => {
       await loadPanels();
       if (selectedPanelId) {
         await Promise.all([
+          loadLedger(selectedPanelId),
           loadStatement(selectedPanelId),
           loadRemittances(selectedPanelId),
           loadInvoices(selectedPanelId),
@@ -406,6 +435,51 @@ export const SuperAdminPanelBillingView: React.FC = () => {
         })}
       </div>
 
+      {/* Tab 0: Company Ledger */}
+      {activeTab === 'ledger' && (
+        <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-slate-100">
+            <div>
+              <h2 className="text-sm font-bold text-slate-900">
+                Company Ledger — {currentPanel?.name || 'Selected Panel'}
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Running balance: every panel-covered charge is a debit, every remittance a credit. Patient co-pay stays a separate total.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              {ledger && ledger.entries.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg cursor-pointer"
+                >
+                  <Printer className="h-3.5 w-3.5 text-slate-500" />
+                  <span>Print Ledger</span>
+                </button>
+              )}
+              {currentPanel && (
+                <button
+                  type="button"
+                  onClick={() => setIsRecordRemittanceOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#08775A] hover:bg-[#065f46] text-white rounded-lg text-xs font-semibold cursor-pointer shadow-xs"
+                >
+                  <Wallet className="h-3.5 w-3.5" />
+                  <span>Record Company Payment</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          <PanelLedgerSection
+            ledger={ledger}
+            isLoading={isLedgerLoading}
+            loadError={ledgerError}
+            onRetry={() => selectedPanelId && loadLedger(selectedPanelId)}
+          />
+        </div>
+      )}
+
       {/* Tab 1: Interim Statement */}
       {activeTab === 'statement' && (
         <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-4">
@@ -635,6 +709,7 @@ export const SuperAdminPanelBillingView: React.FC = () => {
           onRecorded={() => {
             setIsRecordRemittanceOpen(false);
             if (selectedPanelId) {
+              loadLedger(selectedPanelId);
               loadStatement(selectedPanelId);
               loadRemittances(selectedPanelId);
               loadInvoices(selectedPanelId);
@@ -650,6 +725,7 @@ export const SuperAdminPanelBillingView: React.FC = () => {
           onClose={() => setSelectedInvoiceId(null)}
           onInvoiceUpdated={() => {
             if (selectedPanelId) {
+              loadLedger(selectedPanelId);
               loadStatement(selectedPanelId);
               loadInvoices(selectedPanelId);
             }

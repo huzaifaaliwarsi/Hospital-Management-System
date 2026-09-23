@@ -225,6 +225,69 @@ export async function recordPanelRemittance(
   }
 }
 
+export interface PanelLedgerEntry {
+  date: string;
+  type: 'CHARGE' | 'REMITTANCE';
+  reference: string;
+  description: string;
+  patientName: string | null;
+  debit: number;
+  credit: number;
+  runningBalance: number;
+}
+
+export interface PanelLedger {
+  corporatePanelId: string;
+  corporatePanelName: string;
+  entries: PanelLedgerEntry[];
+  totals: {
+    totalDebit: number;
+    totalCredit: number;
+    closingBalance: number;
+  };
+  patientCoPay: {
+    total: number;
+    collected: number;
+    outstanding: number;
+  };
+}
+
+function toLedger(raw: Record<string, any>): PanelLedger {
+  return {
+    corporatePanelId: raw.corporatePanelId,
+    corporatePanelName: raw.corporatePanelName,
+    entries: (raw.entries || []).map((e: any) => ({
+      date: e.date,
+      type: e.type,
+      reference: e.reference,
+      description: e.description || '',
+      patientName: e.patientName ?? null,
+      debit: toNumber(e.debit),
+      credit: toNumber(e.credit),
+      runningBalance: toNumber(e.runningBalance),
+    })),
+    totals: {
+      totalDebit: toNumber(raw.totals?.totalDebit),
+      totalCredit: toNumber(raw.totals?.totalCredit),
+      closingBalance: toNumber(raw.totals?.closingBalance),
+    },
+    patientCoPay: {
+      total: toNumber(raw.patientCoPay?.total),
+      collected: toNumber(raw.patientCoPay?.collected),
+      outstanding: toNumber(raw.patientCoPay?.outstanding),
+    },
+  };
+}
+
+export async function fetchPanelLedger(corporatePanelId: string): Promise<PanelLedger> {
+  try {
+    const res = await apiClient.get<{ data: Record<string, any> }>(`/panel-billing/panels/${corporatePanelId}/ledger`);
+    return toLedger(res.data.data);
+  } catch (err) {
+    throw new Error(toErrorMessage(err));
+  }
+}
+
 export async function fetchPanelRemittances(corporatePanelId: string): Promise<PanelRemittanceRecord[]> {
   try {
     const res = await apiClient.get<{ data: Record<string, any>[] }>(`/panel-billing/panels/${corporatePanelId}/remittances`);

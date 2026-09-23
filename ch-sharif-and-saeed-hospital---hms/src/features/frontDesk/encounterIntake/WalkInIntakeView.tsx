@@ -48,7 +48,7 @@ import { fetchServices } from '../../../services/serviceRatesService';
 import { fetchDepartments, DepartmentService } from '../../../services/departmentService';
 import { Department } from '../../../types/department';
 import { HospitalService } from '../../../types/serviceRates';
-import { TextInput, Select, Textarea, CNICInput, MultiSelect, ServiceChecklist } from '../../../components/forms/FormControls';
+import { TextInput, Select, Textarea, CNICInput, MultiSelect, ServiceChecklist, NumberInput } from '../../../components/forms/FormControls';
 import { formatPKR } from '../../../utils/formatters';
 import { focusNextField, focusNextFieldOnEnter } from '../../../utils/formNavigation';
 
@@ -147,6 +147,12 @@ export const WalkInIntakeView: React.FC = () => {
   const [panelMemberId, setPanelMemberId] = useState('');
   const [membershipDetails, setMembershipDetails] = useState<PanelMembershipDetails>({});
   const [selectedExistingPatient, setSelectedExistingPatient] = useState<PanelPatientSearchResult | null>(null);
+  // Case authorization/guarantee (panel.md §15 backlog item 2) — required
+  // by the backend before this encounter can be created when the selected
+  // company's authorizationRequired policy is on.
+  const [authorizationNumber, setAuthorizationNumber] = useState('');
+  const [authorizationLimit, setAuthorizationLimit] = useState<number | ''>('');
+  const [authorizationValidUntil, setAuthorizationValidUntil] = useState('');
 
   const handleUseExistingPatient = (match: PanelPatientSearchResult) => {
     setFullName(match.fullName.toUpperCase());
@@ -178,6 +184,9 @@ export const WalkInIntakeView: React.FC = () => {
     setPanelId('');
     setPanelMemberId('');
     setMembershipDetails({});
+    setAuthorizationNumber('');
+    setAuthorizationLimit('');
+    setAuthorizationValidUntil('');
   };
 
   // Department & Doctor selection (Department is Required)
@@ -437,6 +446,9 @@ export const WalkInIntakeView: React.FC = () => {
     setPanelId('');
     setPanelMemberId('');
     setMembershipDetails({});
+    setAuthorizationNumber('');
+    setAuthorizationLimit('');
+    setAuthorizationValidUntil('');
     setCnic('');
     setEncounterType(queryType || '');
     setDepartmentId('');
@@ -488,6 +500,10 @@ export const WalkInIntakeView: React.FC = () => {
       }
       if (corporatePanels.find(p => p.id === panelId)?.memberIdRequired && !panelMemberId.trim()) {
         setFormError('Panel Member ID / Card Number is required for Corporate / Panel billing.');
+        return;
+      }
+      if (corporatePanels.find(p => p.id === panelId)?.authorizationRequired && !authorizationNumber.trim()) {
+        setFormError('Authorization / Guarantee Number is required by this company before billing.');
         return;
       }
     }
@@ -620,6 +636,9 @@ export const WalkInIntakeView: React.FC = () => {
           departmentId: effectiveDeptId || undefined,
           doctorStaffId: doctorId || undefined,
           notes: combinedNotes,
+          authorizationNumber: authorizationNumber.trim() || undefined,
+          authorizationLimit: authorizationLimit === '' ? undefined : Number(authorizationLimit),
+          authorizationValidUntil: authorizationValidUntil || undefined,
         });
         targetInvoiceId = invoice.id;
       }
@@ -1161,6 +1180,34 @@ export const WalkInIntakeView: React.FC = () => {
                     onKeyDown={handleEnterNext}
                   />
                   {!selectedExistingPatient && <div className="sm:col-span-2"><PanelMembershipFields value={membershipDetails} onChange={patch => setMembershipDetails(prev => ({ ...prev, ...patch }))} datesRequired={corporatePanels.find(p => p.id === panelId)?.membershipValidityRequired} /></div>}
+                  {corporatePanels.find(p => p.id === panelId)?.authorizationRequired && (
+                    <>
+                      <TextInput
+                        label="Authorization / Guarantee Number"
+                        required
+                        placeholder="e.g. AUTH-2026-00123"
+                        value={authorizationNumber}
+                        onChange={(e) => setAuthorizationNumber(e.target.value.toUpperCase())}
+                        onKeyDown={handleEnterNext}
+                        hint="Required by this company before billing."
+                      />
+                      <NumberInput
+                        label="Authorization Limit (PKR)"
+                        placeholder="Optional case control"
+                        value={authorizationLimit}
+                        onChange={(e) => setAuthorizationLimit(e.target.value === '' ? '' : Number(e.target.value))}
+                        onKeyDown={handleEnterNext}
+                      />
+                      <TextInput
+                        label="Authorization Valid Until"
+                        lang="en-GB" type="date"
+                        value={authorizationValidUntil}
+                        onChange={(e) => setAuthorizationValidUntil(e.target.value)}
+                        onKeyDown={handleEnterNext}
+                        hint="Charges are blocked once this date passes, until renewed."
+                      />
+                    </>
+                  )}
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <CNICInput

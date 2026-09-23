@@ -30,6 +30,13 @@ router.get(
   asyncHandler(c.getStatement),
 );
 
+router.get(
+  '/panels/:corporatePanelId/ledger',
+  view,
+  validate({ params: s.corporatePanelIdParamsSchema }),
+  asyncHandler(c.getLedger),
+);
+
 router.post(
   '/panels/:corporatePanelId/remittances',
   create,

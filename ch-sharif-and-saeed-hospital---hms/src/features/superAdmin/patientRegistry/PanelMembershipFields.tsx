@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import type { PanelMembershipDetails } from '../../../types/patient';
 import apiClient from '../../../services/apiClient';
 import { formatDateDDMMYYYY, formatDateTimeDDMMYYYY } from '../../../utils/formatters';
+import { DateInputControl } from '../../../components/forms/FormControls';
 
 interface Revision {
   id: string;
@@ -50,8 +51,20 @@ export default function PanelMembershipFields({ value, onChange, patientId, date
         </select>
       </label>
       <div className="text-xs text-slate-500 self-center">Expiry is checked from the saved dates. Membership status is separate from patient status.</div>
-      <label className="text-xs">Valid from{datesRequired ? ' *' : ''}<input className={inputClass} lang="en-GB" type="date" required={datesRequired} value={value.membershipValidFrom || ''} max={value.membershipValidTo || undefined} onChange={e => onChange({ membershipValidFrom: e.target.value })} /></label>
-      <label className="text-xs">Valid through{datesRequired ? ' *' : ''}<input className={inputClass} lang="en-GB" type="date" required={datesRequired} value={value.membershipValidTo || ''} min={value.membershipValidFrom || undefined} onChange={e => onChange({ membershipValidTo: e.target.value })} /></label>
+      <DateInputControl
+        label={`Valid from${datesRequired ? ' *' : ''}`}
+        required={datesRequired}
+        value={value.membershipValidFrom || ''}
+        max={value.membershipValidTo || undefined}
+        onChange={e => onChange({ membershipValidFrom: e.target.value })}
+      />
+      <DateInputControl
+        label={`Valid through${datesRequired ? ' *' : ''}`}
+        required={datesRequired}
+        value={value.membershipValidTo || ''}
+        min={value.membershipValidFrom || undefined}
+        onChange={e => onChange({ membershipValidTo: e.target.value })}
+      />
       {detailFields.map(([key, label]) => <label key={key} className="text-xs">{label}<input className={inputClass} maxLength={key === 'memberRelationship' ? 100 : 150} value={value[key] || ''} onChange={e => onChange({ [key]: e.target.value })} /></label>)}
     </div>
     {patientId && <details className="rounded-lg border p-3">

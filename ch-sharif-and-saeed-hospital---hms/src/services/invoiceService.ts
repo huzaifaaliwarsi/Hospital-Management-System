@@ -163,7 +163,7 @@ function toInvoiceSummary(raw: Record<string, any>): InvoiceSummary {
     balanceDue, patientShare, panelReceivable,
     hasRefund: reversedReceipts.length > 0,
     refundedAmount: reversedReceipts.reduce((sum, r) => sum + Math.abs(Number(r.amount ?? 0)), 0),
-    panelName: raw.panelPatient?.corporatePanel?.organizationName || raw.panelName || '',
+    panelName: raw.corporatePanel?.organizationName || raw.panelPatient?.corporatePanel?.organizationName || raw.panelName || '',
     panelMemberId: raw.panelPatient?.panelMemberId || '',
     departmentName: raw.department?.name || '',
     createdAt: formatTimestamp(raw.createdAt),
@@ -294,6 +294,10 @@ export interface CreateEncounterFormValues {
   departmentId?: string;
   doctorStaffId?: string;
   notes?: string;
+  /** Case authorization/guarantee — required by the backend when the selected panel company's `authorizationRequired` policy is on (panel.md §15 backlog item 2). */
+  authorizationNumber?: string;
+  authorizationLimit?: number;
+  authorizationValidUntil?: string;
 }
 
 /** `POST /encounters` — Walk-In / Encounter Intake (OPD/Observation/Emergency), creates the invoice shell. */
@@ -306,6 +310,9 @@ export async function createEncounter(values: CreateEncounterFormValues): Promis
     departmentId: values.departmentId || undefined,
     doctorStaffId: values.doctorStaffId || undefined,
     notes: values.notes?.trim() || undefined,
+    authorizationNumber: values.authorizationNumber?.trim() || undefined,
+    authorizationLimit: values.authorizationLimit,
+    authorizationValidUntil: values.authorizationValidUntil || undefined,
   });
   return toInvoiceDetail(res.data.data);
 }

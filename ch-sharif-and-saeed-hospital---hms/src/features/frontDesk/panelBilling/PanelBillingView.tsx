@@ -1,18 +1,27 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Building2, Wallet, ClipboardList, FileSpreadsheet, History } from 'lucide-react';
+import { Building2, Wallet, ClipboardList, FileSpreadsheet, History, TrendingUp } from 'lucide-react';
 import { Select } from '../../../components/forms/FormControls';
 import { EmptyState } from '../../../components/common/StateViews';
 import { formatPKR } from '../../../utils/formatters';
 import { getActiveCorporatePanels, fetchCorporatePanels, CorporatePanel } from '../../../services/panelService';
-import { fetchPanelStatement, fetchPanelRemittances, PanelStatement, PanelRemittanceRecord } from '../../../services/panelBillingService';
+import {
+  fetchPanelStatement,
+  fetchPanelRemittances,
+  fetchPanelLedger,
+  PanelStatement,
+  PanelRemittanceRecord,
+  PanelLedger,
+} from '../../../services/panelBillingService';
 import { PanelVerificationPanel } from './PanelVerificationPanel';
 import { PanelInterimStatementSection } from './PanelInterimStatementSection';
 import { PanelRemittanceHistorySection } from './PanelRemittanceHistorySection';
+import { PanelLedgerSection } from './PanelLedgerSection';
 import { RecordPanelRemittanceModal } from './RecordPanelRemittanceModal';
 
-type Tab = 'verification' | 'statement' | 'remittances';
+type Tab = 'ledger' | 'verification' | 'statement' | 'remittances';
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
+  { id: 'ledger', label: 'Company Ledger', icon: TrendingUp },
   { id: 'verification', label: 'Verification & Contract Resolution', icon: ClipboardList },
   { id: 'statement', label: 'Interim Statement', icon: FileSpreadsheet },
   { id: 'remittances', label: 'Remittances', icon: History },
@@ -27,7 +36,7 @@ const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
 export const PanelBillingView: React.FC = () => {
   const [panels, setPanels] = useState<CorporatePanel[]>(() => getActiveCorporatePanels());
   const [corporatePanelId, setCorporatePanelId] = useState<string>('');
-  const [tab, setTab] = useState<Tab>('verification');
+  const [tab, setTab] = useState<Tab>('ledger');
 
   useEffect(() => {
     fetchCorporatePanels()
@@ -41,6 +50,10 @@ export const PanelBillingView: React.FC = () => {
       .catch(() => {});
   }, []);
 
+  const [ledger, setLedger] = useState<PanelLedger | null>(null);
+  const [isLedgerLoading, setIsLedgerLoading] = useState(true);
+  const [ledgerError, setLedgerError] = useState<string | null>(null);
+
   const [statement, setStatement] = useState<PanelStatement | null>(null);
   const [isStatementLoading, setIsStatementLoading] = useState(true);
   const [statementError, setStatementError] = useState<string | null>(null);
@@ -52,6 +65,18 @@ export const PanelBillingView: React.FC = () => {
   const [isRecordOpen, setIsRecordOpen] = useState(false);
 
   const selectedPanel = panels.find((p) => p.id === corporatePanelId) || null;
+
+  const loadLedger = async (panelId: string) => {
+    setIsLedgerLoading(true);
+    setLedgerError(null);
+    try {
+      setLedger(await fetchPanelLedger(panelId));
+    } catch (err: any) {
+      setLedgerError(err?.message || 'Failed to load company ledger.');
+    } finally {
+      setIsLedgerLoading(false);
+    }
+  };
 
   const loadStatement = async (panelId: string) => {
     setIsStatementLoading(true);
@@ -79,6 +104,7 @@ export const PanelBillingView: React.FC = () => {
 
   useEffect(() => {
     if (!corporatePanelId) return;
+    loadLedger(corporatePanelId);
     loadStatement(corporatePanelId);
     loadRemittances(corporatePanelId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -165,6 +191,13 @@ export const PanelBillingView: React.FC = () => {
             <div className="p-4">
               {!selectedPanel ? (
                 <EmptyState title="Select a panel" description="Choose a Corporate Panel above to continue." />
+              ) : tab === 'ledger' ? (
+                <PanelLedgerSection
+                  ledger={ledger}
+                  isLoading={isLedgerLoading}
+                  loadError={ledgerError}
+                  onRetry={() => loadLedger(corporatePanelId)}
+                />
               ) : tab === 'verification' ? (
                 <PanelVerificationPanel panel={selectedPanel} />
               ) : tab === 'statement' ? (
@@ -195,6 +228,7 @@ export const PanelBillingView: React.FC = () => {
           onClose={() => setIsRecordOpen(false)}
           onRecorded={() => {
             setIsRecordOpen(false);
+            loadLedger(corporatePanelId);
             loadStatement(corporatePanelId);
             loadRemittances(corporatePanelId);
           }}

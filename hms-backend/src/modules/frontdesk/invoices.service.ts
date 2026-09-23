@@ -1,5 +1,6 @@
 import { resolvePanelCoverage } from '@/shared/panelCoverage';
 import { assertMembershipEligible } from '@/shared/panelMembership';
+import { assertCaseAuthorization } from '@/shared/panelAuthorization';
 import { invoicePaymentStatus } from '@/shared/invoicePaymentStatus';
 import { Decimal } from '@prisma/client/runtime/library';
 import type { Prisma } from '@prisma/client';
@@ -13,6 +14,7 @@ import type {
   CollectPaymentBody,
   RefundPaymentBody,
   ListInvoicesQuery,
+  SetInvoiceAuthorizationBody,
 } from './invoices.schemas';
 
 import { generateInvoiceNumber, generateReceiptNumber } from '@/shared/idGenerator';
@@ -89,6 +91,10 @@ export const invoicesService = {
         const patient = await tx.panelPatient.findUnique({ where: { id: body.panelPatientId }, include: { corporatePanel: true } });
         if (!patient?.isActive || patient.status !== 'ACTIVE' || !patient.corporatePanel.isActive) throw new ValidationError('Panel patient and company must be active');
         assertMembershipEligible(patient);
+        assertCaseAuthorization(patient.corporatePanel.authorizationRequired, false, {
+          authorizationNumber: body.authorizationNumber,
+          authorizationValidUntil: body.authorizationValidUntil,
+        });
       }
 
       const invoiceNumber = await generateInvoiceNumber(tx);
@@ -107,6 +113,9 @@ export const invoicesService = {
           paidTotal: new Decimal(0),
           status: 'UNPAID',
           createdById: actorId,
+          authorizationNumber: body.panelPatientId ? body.authorizationNumber || null : null,
+          authorizationLimit: body.panelPatientId && body.authorizationLimit != null ? new Decimal(body.authorizationLimit) : null,
+          authorizationValidUntil: body.panelPatientId ? body.authorizationValidUntil || null : null,
         },
         include: {
           panelPatient: true,
@@ -175,7 +184,16 @@ export const invoicesService = {
         serviceRate.id, new Date(), serviceRate.departmentId, qty, invoice.panelPatient);
       if (invoice.panelPatientId) {
         if (!invoice.panelPatient?.isActive || invoice.panelPatient.status !== 'ACTIVE' || !invoice.panelPatient.corporatePanel.isActive) throw new ValidationError('Panel patient and company must be active');
-        if (invoice.sourceType !== 'ADMISSION') assertMembershipEligible(invoice.panelPatient);
+        if (invoice.sourceType !== 'ADMISSION') {
+          assertMembershipEligible(invoice.panelPatient);
+          // Admission invoices carry their authorization on AdmissionRecord
+          // instead (checked in admission.service.ts); this invoice's own
+          // authorizationNumber only applies to WALK_IN/OPD/OBS/ER encounters.
+          assertCaseAuthorization(invoice.panelPatient.corporatePanel.authorizationRequired, coverage.matchedRule?.preauthorizationRequired, {
+            authorizationNumber: invoice.authorizationNumber,
+            authorizationValidUntil: invoice.authorizationValidUntil,
+          });
+        }
         if ((body.discountPercent ?? 0) > 0 || (body.discountAmount ?? 0) > 0 || body.manualRateOverride !== undefined) {
           throw new ValidationError('Panel charges use configured contract rates; manual overrides require a separate audited adjustment');
         }
@@ -269,6 +287,29 @@ export const invoicesService = {
       }
 
       return createdLine;
+    });
+  },
+
+  /**
+   * Capture or renew a panel encounter's case authorization/guarantee
+   * reference after it was already opened (panel.md §15 backlog item 2) —
+   * e.g. a service line turns out to match a rule that independently
+   * requires preauthorization even though the company-wide policy didn't
+   * demand one at intake. Never blocked by an already-expired reference:
+   * that is exactly the situation this exists to fix.
+   */
+  async setAuthorization(invoiceId: string, body: SetInvoiceAuthorizationBody) {
+    const invoice = await prisma.hospitalInvoice.findUnique({ where: { id: invoiceId } });
+    if (!invoice) throw new NotFoundError('Invoice not found');
+    if (!invoice.panelPatientId) throw new ValidationError('Authorization only applies to panel-billed encounters');
+    if (invoice.status === 'VOID') throw new ValidationError('Cannot modify a void invoice');
+    return prisma.hospitalInvoice.update({
+      where: { id: invoiceId },
+      data: {
+        authorizationNumber: body.authorizationNumber !== undefined ? body.authorizationNumber || null : undefined,
+        authorizationLimit: body.authorizationLimit !== undefined ? new Decimal(body.authorizationLimit) : undefined,
+        authorizationValidUntil: body.authorizationValidUntil !== undefined ? body.authorizationValidUntil : undefined,
+      },
     });
   },
 
@@ -730,7 +771,11 @@ export const invoicesService = {
     if (query.hasRefund === 'true') where.paymentReceipts = { some: { isReversed: true } };
     if (query.hasPayment === 'true') where.paymentReceipts = { some: {} };
     if (query.isPanel === 'true') where.panelPatientId = { not: null };
-    if (query.corporatePanelId) where.panelPatient = { corporatePanelId: query.corporatePanelId };
+    // Keyed off the invoice's own frozen corporatePanelId (panel.md §14
+    // backlog item 1), not the patient's CURRENT company — an invoice
+    // stays listed under the company it was actually billed to even after
+    // the patient later transfers to a different company.
+    if (query.corporatePanelId) where.corporatePanelId = query.corporatePanelId;
     // Outstanding = still owed: UNPAID or PARTIALLY_PAID only (PAID/VOID have
     // no remaining balance). Only applied when the caller didn't already ask
     // for a specific status — an explicit `status` filter always wins.
@@ -750,6 +795,11 @@ export const invoicesService = {
             corporatePanel: { select: { id: true, code: true, organizationName: true } },
           },
         },
+        // The invoice's own frozen payer (panel.md §14 backlog item 1) —
+        // authoritative for display even if the patient later transfers to
+        // a different company; panelPatient.corporatePanel above stays
+        // useful for the CURRENT membership context only.
+        corporatePanel: { select: { id: true, code: true, organizationName: true } },
         selfPayEncounter: { select: { id: true, fullName: true } },
         department: { select: { id: true, name: true, code: true } },
         lines: { select: { id: true, lineNet: true, quantity: true } },

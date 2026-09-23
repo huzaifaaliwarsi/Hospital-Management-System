@@ -61,6 +61,13 @@ invoicesRouter.post(
 );
 
 invoicesRouter.post(
+  '/:id/authorization',
+  invWrite,
+  validate({ params: s.invoiceIdParamsSchema, body: s.setInvoiceAuthorizationSchema }),
+  asyncHandler(c.setAuthorization),
+);
+
+invoicesRouter.post(
   '/:id/discounts',
   invWrite,
   validate({ params: s.invoiceIdParamsSchema, body: s.applyDiscountSchema }),

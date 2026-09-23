@@ -40,6 +40,12 @@ export const createPlannedAdmissionSchema = z.object({
   advanceAmount: z.coerce.number().nonnegative().optional(),
   paymentMethod: z.enum(['CASH', 'CARD', 'BANK', 'ONLINE']).optional().default('CASH'),
   paymentReference: z.string().optional(),
+  // Case authorization/guarantee (panel.md §15 backlog item 2) — required
+  // up front when the panel company's authorizationRequired policy is on;
+  // re-checked against every ward/room/procedure charge posted afterward.
+  authorizationNumber: z.string().trim().max(100).optional(),
+  authorizationLimit: z.coerce.number().nonnegative().optional(),
+  authorizationValidUntil: z.coerce.date().optional(),
 }).refine(
   (data) => data.panelPatientId || data.selfPayEncounterId || data.newSelfPayPatient,
   { message: 'Either panelPatientId, selfPayEncounterId, or newSelfPayPatient is required' },
@@ -54,6 +60,11 @@ export const updatePlannedAdmissionSchema = z.object({
   diagnosis: z.string().optional(),
   estimatedAmount: z.coerce.number().nonnegative().optional(),
   notes: z.string().optional(),
+  // Lets Front Desk/Admission capture or renew a case authorization that
+  // wasn't available at intake, or extend one before it expires mid-stay.
+  authorizationNumber: z.string().trim().max(100).optional(),
+  authorizationLimit: z.coerce.number().nonnegative().optional(),
+  authorizationValidUntil: z.coerce.date().optional(),
 });
 
 export type UpdatePlannedAdmissionBody = z.infer<typeof updatePlannedAdmissionSchema>;

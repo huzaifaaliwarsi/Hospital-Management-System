@@ -8,6 +8,7 @@ import type {
   CollectPaymentBody,
   RefundPaymentBody,
   ListInvoicesQuery,
+  SetInvoiceAuthorizationBody,
 } from './invoices.schemas';
 
 function actorId(req: Request): string {
@@ -37,6 +38,14 @@ export const invoicesController = {
       actorRole(req),
     );
     res.status(201).json({ data: line });
+  },
+
+  setAuthorization: async (req: Request, res: Response) => {
+    const updated = await invoicesService.setAuthorization(
+      req.params.id as string,
+      req.body as SetInvoiceAuthorizationBody,
+    );
+    res.json({ data: updated });
   },
 
   applyDiscount: async (req: Request, res: Response) => {

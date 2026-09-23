@@ -534,3 +534,92 @@ User constraint: keep the existing server running while the user tests. No serve
 3. Duplicate/dependent identity handling, policy-ID validation formats and dependent requirements; complete demographic mappings.
 4. Pharmacy/historical ledger reconciliation, discharge financial clearance, claim lifecycle and concurrent remittance allocation checks.
 5. Repair legacy migration/test baseline and run authenticated browser end-to-end checks when available.
+
+## 14. Company Ledger tab - 2026-09-23
+
+User manually tested company add + coverage rule add + Front Desk billing today (data: Al-Noor Textiles 50% global rule, invoice INV-26-0011 total 2000 -> patientShare 1000 / panelReceivable 1000; Al-Haram 50% global rule, invoice INV-26-0012 total 1500 -> patientShare 750 / panelReceivable 750; both reconcile P+R=Total, no remittances recorded yet). Verified this data directly against the live `chss_hms` database with a temporary read-only script (removed after use) — underlying invoice math was already correct.
+
+User asked for the Super Admin Panel Billing screen to have "a proper company ledger with all amounts, and the patient's payable shown separately." Confirmed via AskUserQuestion this meant a transaction-style running-balance ledger (debit = charge, credit = remittance, running balance), not just the existing per-invoice table.
+
+### 14.1 Implemented
+
+- Backend: `panelBillingService.getPanelLedger(corporatePanelId)` in `hms-backend/src/modules/frontdesk/panelBilling.service.ts` — merges every panel-receivable invoice (debit = `panelReceivable` only, never the patient's share) and every `PanelRemittance` (credit) into one chronological list sorted by date, with a running balance, plus a separate `patientCoPay` total/collected/outstanding block computed across ALL of that panel's invoices (not just receivable ones) so patient share is never folded into the company balance.
+- New route `GET /api/v1/panel-billing/panels/:corporatePanelId/ledger` (`panelBilling.routes.ts`, `panelBilling.controller.ts::getLedger`), same `frontdesk:view` authorization as the existing statement/remittance endpoints.
+- Frontend: `fetchPanelLedger()` + `PanelLedger`/`PanelLedgerEntry` types in `ch-sharif-and-saeed-hospital---hms/src/services/panelBillingService.ts`; new `PanelLedgerSection.tsx` component (KPI strip: Total Charged / Total Remitted / Closing Balance / Patient Co-Pay separate; table: Date, Reference, Description, Debit, Credit, Running Balance).
+- Wired as a new "Company Ledger" tab (now the default tab) in both `SuperAdminPanelBillingView.tsx` (Super Admin, the screen the user pointed at) and the Front Desk `PanelBillingView.tsx` (same shared component, kept in sync since both already share the other panel-billing sections). Refresh/record-remittance/invoice-update handlers reload the ledger alongside the existing statement/invoices/remittances.
+
+### 14.2 Verification performed
+
+- Exercised `panelBillingService.getPanelLedger()` directly against the live `chss_hms` database for all 3 existing corporate panels via a temporary script (removed after use, no writes): Al-Noor Textiles and Al-Haram each returned exactly one CHARGE entry with debit = panelReceivable (1000 / 750), zero credits (no remittances yet), correct running balance, and patientCoPay.total matching the known patientShare. Isysware (no patients/invoices yet) returned an empty ledger with zero totals, not an error.
+- Backend `tsc --noEmit` and `npm run build` both pass. Frontend `tsc --noEmit` (`npm run lint`) and `npm run build` both pass (pre-existing large-bundle Vite warning only, not new).
+- Not yet done: recording an actual remittance and confirming it shows as a credit row that reduces the running balance in the browser (browser tooling was unavailable this session — no Chrome extension access, no CUA/agent-browser). Ask the user to record one test remittance next session and re-check the Company Ledger tab.
+
+### 14.2b Follow-up same day
+
+User pointed out the Company Ledger tab had no visible way to collect a company payment. The header-level "Record Panel Remittance" / "Record Remittance" button (opens `RecordPanelRemittanceModal`, pre-existing from the original Panel Billing build) was already present and functional, but only inside `SuperAdminPanelBillingView.tsx`'s top header card, not inside the Ledger tab body itself. Added a "Record Company Payment" button directly in the Company Ledger tab (next to "Print Ledger") in `SuperAdminPanelBillingView.tsx`, opening the same existing modal/state (`isRecordRemittanceOpen`) — no new modal or backend endpoint needed. Front Desk's `PanelBillingView.tsx` already shows its header "Record Remittance" button on every tab including Ledger (that file has no per-tab header), so it needed no change.
+
+### 14.3 Next session
+
+1. User to record a remittance against Al-Noor Textiles or Al-Haram from either Panel Billing screen and confirm the Company Ledger tab shows it as a credit with a correctly reduced running balance.
+2. Continue the 13.4 backlog (historical payer ownership is next in order) — this ledger tab did not touch that work.
+
+## 15. Historical payer ownership + controlled company transfer - 2026-09-23
+
+Completed 13.4 backlog item 1 in full: "Historical payer ownership at encounter/admission/invoice level; safe backfill; controlled company transfers using one permanent MRN."
+
+### 15.1 Implemented
+
+1. **Schema (additive):** `hms-backend/prisma/migrations/20260923140000_hospital_invoice_corporate_panel_snapshot/migration.sql` adds `HospitalInvoice.corporatePanelId` (nullable FK to `corporate_panels`, `ON DELETE RESTRICT`) + index, and backfills every existing invoice from its current `panelPatient.corporatePanelId` (best-effort — company transfer was blocked until this change, so every pre-existing invoice really was posted under its patient's current company). Applied to the local `chss_hms` database.
+2. **Auto-snapshot at posting time:** `prisma.$use` middleware added in `hms-backend/src/db/client.ts` — intercepts every `HospitalInvoice.create` and fills `corporatePanelId` from the linked `panelPatient.corporatePanelId` when the caller didn't already set it. Centralized deliberately (same reasoning as the existing `omit` config in that file) instead of editing the 7+ scattered `hospitalInvoice.create(...)` call sites across `invoices.service.ts`/`admission.service.ts`/`appointments.service.ts` — those call sites were NOT touched and still work unmodified. Verified it fires correctly even inside `prisma.$transaction(async (tx) => …)` interactive transactions (the pattern every one of those call sites uses).
+3. **Read-side fixes — every panel-receivable query is now keyed off the invoice's own frozen `corporatePanelId`, never re-derived from the patient's CURRENT company:**
+   - `panelBillingService.getPanelStatement` (interim statement)
+   - `panelBillingService.recordRemittance` (which invoices a remittance can allocate against)
+   - `panelBillingService.getPanelLedger` (the new Company Ledger tab from §14 — both its charge rows and its patient-co-pay total)
+   - `invoicesService.listInvoices` `corporatePanelId` filter (the "All Panel Invoices Ledger" tab)
+   - `listInvoices`/frontend `invoiceService.ts` also now surface the invoice's own `corporatePanel` relation for the `panelName` display column, preferred over the patient's current company.
+4. **Controlled company transfer enabled:** `patientsService.updatePanelPatient` no longer hard-blocks `corporatePanelId` changes. A transfer validates the target company is active and satisfies ITS membership requirements, then records an ordinary membership-history revision (already versioned per §13) with an added `transferredFromCorporatePanelId` marker so the audit trail reads as a transfer, not a same-company edit. No existing invoice is touched by a transfer.
+5. **Frontend:** `PatientModal.tsx` (Patient Registry edit) replaces the flat `disabled={isEditMode}` block on the Corporate Panel select with an explicit "Transfer to another company" toggle plus an inline warning ("past invoices stay billed to the original company... only new charges after saving will use the new company") — a transfer is now a deliberate confirmed action, not a plain editable field or a silently blocked one.
+
+### 15.2 Verification performed
+
+- Backend `tsc --noEmit` and `npm run build` pass; frontend `tsc --noEmit` (`npm run lint`) and `npm run build` pass (pre-existing large-bundle Vite warning only).
+- Full backend `vitest run`: fixed one regression I introduced (`getPanelStatement`'s active-patient count switched from `prisma.panelPatient.count` back to the already-used `findMany` pattern, since the phase8 test's hand-rolled `prisma` mock doesn't implement `count` — matches this test suite's existing mocking convention rather than expanding it). Final state: **235 passing**, with the exact same **16 pre-existing failures** as before this session (14 in `phase5_admission.test.ts`, previously documented in §12.2; 2 in `admissionEstimate.test.ts`, newly confirmed via `git stash` to fail identically with none of this session's changes applied — not caused by this work, and `admission.service.ts` itself was not touched this session).
+- Live end-to-end check against the real `chss_hms` database using a temporary script (removed after use): created two throwaway corporate panels + one throwaway patient + one invoice (confirmed the `$use` middleware snapshotted `corporatePanelId` correctly), transferred the patient to the second company via the real `patientsService.updatePanelPatient`, then confirmed — the original company's statement/ledger still shows the old invoice and its correct receivable/balance; the new company's statement shows nothing (no invoice silently moved); membership history recorded the transfer with `transferredFromCorporatePanelId`. All throwaway data was deleted afterward; the user's real panels/patients/invoices (Isysware, Al-Noor Textiles, Al-Haram, Huzaifa Ali Warsi, Waqas) were not touched by this test.
+
+### 15.3 Next session — continuing the 13.4 backlog in order
+
+1. ~~Historical payer ownership + controlled company transfer~~ — done (this section).
+2. ~~Case authorization~~ — done (section 16 below); guarantee/referral-type metadata and category-specific required documents remain unaddressed (see 16.4).
+3. Duplicate/dependent identity handling, policy-ID validation formats and dependent requirements; complete demographic mappings.
+4. Pharmacy/historical ledger reconciliation, discharge financial clearance, claim lifecycle and concurrent remittance allocation checks.
+5. Repair legacy migration/test baseline (16 pre-existing failures, see §15.2) and run authenticated browser end-to-end checks when available.
+
+## 16. Case authorization enforcement - 2026-09-23
+
+Completed 13.4 backlog item 2's core: "Case authorization references, limits, validity... Current preauthorization flags alone are not enforcement." Turned the existing `PanelDiscountRule.preauthorizationRequired` checkbox (metadata only until now) into an actually-enforced gate, and added a new company-wide policy flag alongside it.
+
+### 16.1 Implemented
+
+1. **Schema (additive):** `hms-backend/prisma/migrations/20260923150000_panel_case_authorization/migration.sql` adds `CorporatePanel.authorizationRequired` (company-wide policy, mirrors the existing `memberIdRequired`/`membershipValidityRequired` pattern), and `authorizationNumber` / `authorizationLimit` / `authorizationValidUntil` on both `AdmissionRecord` (the admission case) and `HospitalInvoice` (Walk-In/OPD/OBS/ER encounters — an admission's own fields live on the admission, not its invoice). Applied to the local `chss_hms` database.
+2. **Shared enforcement helper:** `hms-backend/src/shared/panelAuthorization.ts` — `assertCaseAuthorization(companyRequires, ruleRequires, {authorizationNumber, authorizationValidUntil})` throws when either trigger is true and no reference is on file, or when a reference is on file but `authorizationValidUntil` has passed; `caseAuthorizationIneligibilityReasons(...)` is the non-throwing form used inside the one batch job that must not abort other patients (see point 5). Two independent triggers, both enforced: the **company's** `authorizationRequired` (checked once, before a case/encounter can even open) and a specific matched **rule's** `preauthorizationRequired` (checked per charge — a rule can demand it even when the company flag is off).
+3. **Walk-In/OPD/OBS/ER (`invoices.service.ts`):** `createEncounter` rejects opening a panel encounter when the company requires authorization and none was supplied (or an already-expired one was); `addServiceLine` re-checks both the company flag and the specific line's matched rule (skipped for `sourceType === 'ADMISSION'` invoices, which use the admission's own fields instead — same split as the existing membership-eligibility check). New `POST /api/v1/invoices/:id/authorization` (`invoicesService.setAuthorization`) lets Front Desk capture or renew the reference on an already-open encounter — needed because a rule-level requirement on a specific service can only be discovered once that line is actually being added, after the encounter already exists.
+4. **Admission (`admission.service.ts`):** `createPlannedAdmission` rejects opening an admission the same way; all four charge-posting sites now re-check company + matched-rule authorization before creating a line — the one-time ward charge, the initial room charge, ad-hoc `addAdmissionService` procedures (skipped for Self-Managed/External lines, which create no internal charge at all), and the recurring daily room charge. `updatePlannedAdmissionSchema`/`updatePlannedAdmission` also accept these three fields, so Admission can capture/renew authorization that wasn't available at intake.
+5. **`closeHospitalDay` (daily room-charge batch) is the one exception to throwing:** it runs ALL active admissions inside one shared transaction, so a `ValidationError` for one patient's missing/expired authorization would have aborted the whole hospital's day-close. Uses the non-throwing `caseAuthorizationIneligibilityReasons` instead and `continue`s past just that admission (same idiom as the existing zero-configured-rate skip) — that admission's room charge simply doesn't post until the reference is renewed, checked again automatically on the next day's run.
+6. **Frontend:** `CorporatePanel`/`CorporatePanelFormValues` (`panelService.ts`) gained `authorizationRequired`; `SuperAdminCorporatePanelsView.tsx` company form has a new "Require Authorization / Guarantee Reference" checkbox next to the existing member-ID/validity ones. `NewAdmissionView.tsx` and `WalkInIntakeView.tsx` both show Authorization Number (required)/Limit/Valid Until fields conditionally, only when the selected panel's `authorizationRequired` is on, with matching client-side validation before submit; both post the fields through to the backend (`admissionService.ts`'s `CreateAdmissionFormValues`/`createAdmission`, `invoiceService.ts`'s `CreateEncounterFormValues`/`createEncounter`).
+
+### 16.2 Verification performed
+
+- Backend `tsc --noEmit` and `npm run build` pass; frontend `tsc --noEmit` (`npm run lint`) and `npm run build` pass (pre-existing large-bundle Vite warning only).
+- Full backend `vitest run`: **235 passing**, exact same 16 pre-existing failures as §15.2 (14 in `phase5_admission.test.ts`, 2 in `admissionEstimate.test.ts`) — no new regressions from this session's `admission.service.ts`/`invoices.service.ts` edits.
+- Live end-to-end checks against the real `chss_hms` database using two temporary scripts (removed after use, all throwaway companies/patients/admissions cleaned up afterward — the user's real data was not touched): (1) company-level requirement blocks/allows walk-in encounter creation correctly, an already-expired reference is rejected even at creation, a valid encounter's service line posts fine, a *different* company with the flag OFF can still open an encounter, but a rule with its own `preauthorizationRequired: true` still blocks that specific service line, and the new `setAuthorization` endpoint fixes exactly that gap after the fact; admission creation enforces the same company-level gate and persists the reference correctly. (2) A dedicated ward-charge check: admission creation with a ward assigned rejects with no authorization, then succeeds and posts the correct ward charge line once a reference is supplied.
+
+### 16.3 Quick user test
+
+1. Edit a company (Super Admin > Corporate Panels): check "Require Authorization / Guarantee Reference", save.
+2. Try a new Walk-In/OPD encounter or a New Admission for that company's patient with the Authorization Number left blank — expect a specific rejection, and the new field to appear on the form once that company is selected.
+3. Fill in the number (and optionally limit/valid-until in the past) and retry — an already-expired valid-until date should still be rejected; a future one should succeed.
+4. In Panel Coverage Rules (Super Admin), turn on "Authorization Required" on one specific rule for a company that does NOT have the company-wide flag on — confirm opening the encounter succeeds, but adding a service line matching that rule is rejected until authorized.
+
+### 16.4 Remaining gap in this backlog item (deferred, not done)
+
+Guarantee/referral-type metadata (distinguishing an insurance pre-auth from an employer guarantee from a referral) and category-specific required-document/clearance policies (panel.md §4.2's per-category settings) were not built — this session only implemented the reference/limit/validity/enforcement mechanics common to all categories. Authorization LIMIT is stored but not consumed/tracked against cumulative charges during a stay (decision flagged as open in §10, still open). Continue with 13.4 backlog item 3 (duplicate/dependent identity handling) next, or return to these deferred pieces if the user prioritizes them.

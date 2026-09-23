@@ -131,6 +131,12 @@ export const NewAdmissionView: React.FC = () => {
   const [panelId, setPanelId] = useState('');
   const [panelMemberId, setPanelMemberId] = useState('');
   const [membershipDetails, setMembershipDetails] = useState<PanelMembershipDetails>({});
+  // Case authorization/guarantee (panel.md §15 backlog item 2) — required
+  // by the backend before this admission can be created when the selected
+  // company's authorizationRequired policy is on.
+  const [authorizationNumber, setAuthorizationNumber] = useState('');
+  const [authorizationLimit, setAuthorizationLimit] = useState<number | ''>('');
+  const [authorizationValidUntil, setAuthorizationValidUntil] = useState('');
 
   // Panel Patient Registry search (admission.md §2.1 point 2 — "search the permanent Panel Patient
   // Registry, validate active membership" — reuse an existing record instead of always
@@ -277,6 +283,9 @@ export const NewAdmissionView: React.FC = () => {
     setPanelId('');
     setPanelMemberId('');
     setMembershipDetails({});
+    setAuthorizationNumber('');
+    setAuthorizationLimit('');
+    setAuthorizationValidUntil('');
     setSelectedWardId('');
     setSelectedRoomId('');
     setFormValues(emptyForm());
@@ -339,6 +348,9 @@ export const NewAdmissionView: React.FC = () => {
     setPanelId('');
     setPanelMemberId('');
     setMembershipDetails({});
+    setAuthorizationNumber('');
+    setAuthorizationLimit('');
+    setAuthorizationValidUntil('');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -382,6 +394,10 @@ export const NewAdmissionView: React.FC = () => {
       }
       if (corporatePanels.find(p => p.id === panelId)?.memberIdRequired && !panelMemberId.trim()) {
         setFormError('Panel Member ID / Card Number is required.');
+        return;
+      }
+      if (corporatePanels.find(p => p.id === panelId)?.authorizationRequired && !authorizationNumber.trim()) {
+        setFormError('Authorization / Guarantee Number is required by this company before admission.');
         return;
       }
       // §2.1 point 2 — "validate active membership" before admitting against this registry record.
@@ -469,6 +485,9 @@ export const NewAdmissionView: React.FC = () => {
         notes: extraNotesParts.join(' | '),
         panelPatientId: activePatient.payerType === 'Corporate / Panel' ? activePatient.id : '',
         selfPayEncounterId: activePatient.payerType === 'Self Pay' ? activePatient.id : '',
+        authorizationNumber: activePatient.payerType === 'Corporate / Panel' ? authorizationNumber.trim() || undefined : undefined,
+        authorizationLimit: activePatient.payerType === 'Corporate / Panel' ? authorizationLimit : '',
+        authorizationValidUntil: activePatient.payerType === 'Corporate / Panel' ? authorizationValidUntil || undefined : undefined,
       };
       const { admission, advanceReceipt, invoice } = await createAdmission(admissionPayload);
       setCreatedAdmission(admission);
@@ -906,6 +925,34 @@ export const NewAdmissionView: React.FC = () => {
                     onKeyDown={handleEnterNext}
                   />
                   {!selectedExistingPatient && <div className="sm:col-span-2"><PanelMembershipFields value={membershipDetails} onChange={patch => setMembershipDetails(prev => ({ ...prev, ...patch }))} datesRequired={corporatePanels.find(p => p.id === panelId)?.membershipValidityRequired} /></div>}
+                  {corporatePanels.find(p => p.id === panelId)?.authorizationRequired && (
+                    <>
+                      <TextInput
+                        label="Authorization / Guarantee Number"
+                        required
+                        placeholder="e.g. AUTH-2026-00123"
+                        value={authorizationNumber}
+                        onChange={(e) => setAuthorizationNumber(e.target.value.toUpperCase())}
+                        onKeyDown={handleEnterNext}
+                        hint="Required by this company before admission can be created."
+                      />
+                      <NumberInput
+                        label="Authorization Limit (PKR)"
+                        placeholder="Optional case control"
+                        value={authorizationLimit}
+                        onChange={(e) => setAuthorizationLimit(e.target.value === '' ? '' : Number(e.target.value))}
+                        onKeyDown={handleEnterNext}
+                      />
+                      <TextInput
+                        label="Authorization Valid Until"
+                        type="date"
+                        value={authorizationValidUntil}
+                        onChange={(e) => setAuthorizationValidUntil(e.target.value)}
+                        onKeyDown={handleEnterNext}
+                        hint="Charges are blocked once this date passes, until renewed."
+                      />
+                    </>
+                  )}
                 </div>
               </div>
             )}
@@ -1083,11 +1130,10 @@ export const NewAdmissionView: React.FC = () => {
             <div>
               <TextInput
                 label="Expected Admission Date"
-                lang="en-GB" type="date"
+                type="date"
                 value={formValues.expectedAt}
                 onChange={(e) => setFormValues({ ...formValues, expectedAt: e.target.value })}
                 onKeyDown={handleEnterNext}
-                hint={formValues.expectedAt ? `Selected: ${formatDisplayDate(formValues.expectedAt)} (DD/MM/YYYY)` : undefined}
               />
             </div>
 

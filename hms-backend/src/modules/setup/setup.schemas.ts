@@ -222,6 +222,7 @@ export const createCorporatePanelSchema = z.object({
   memberIdLabel: z.string().trim().max(100).nullable().optional(),
   memberIdRequired: z.boolean().optional(),
   membershipValidityRequired: z.boolean().optional(),
+  authorizationRequired: z.boolean().optional(),
   discountAgreement: z.string().max(300).optional(),
   contact: z.string().optional(),
   address: z.string().optional(),

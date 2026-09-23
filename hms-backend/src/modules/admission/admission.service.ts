@@ -5,6 +5,7 @@ import { prisma } from '@/db/client';
 import { AuthenticationError, ConflictError, NotFoundError, ValidationError } from '@/shared/errors/AppError';
 import { resolvePanelCoverage } from '@/shared/panelCoverage';
 import { assertMembershipEligible } from '@/shared/panelMembership';
+import { assertCaseAuthorization, caseAuthorizationIneligibilityReasons } from '@/shared/panelAuthorization';
 import type {
   CreatePlannedAdmissionBody,
   UpdatePlannedAdmissionBody,
@@ -219,6 +220,13 @@ async function postWardFixedChargeIfApplicable(
     where: { id: invoice.panelPatientId }, include: { corporatePanel: { include: { discountRules: true } } },
   }) : null;
   const coverage = resolvePanelCoverage(wardFixedRate, panelPatient?.corporatePanel.discountRules, serviceRate.id, new Date(), ward.departmentId, new Decimal(1), panelPatient);
+  if (panelPatient) {
+    const authFields = await tx.admissionRecord.findUnique({
+      where: { id: admissionId },
+      select: { authorizationNumber: true, authorizationValidUntil: true },
+    });
+    assertCaseAuthorization(panelPatient.corporatePanel.authorizationRequired, coverage.matchedRule?.preauthorizationRequired, authFields ?? {});
+  }
   const createdLine = await tx.invoiceLineItem.create({
     data: {
       hospitalInvoiceId: invoice.id,
@@ -258,6 +266,9 @@ async function postInitialRoomChargeIfApplicable(tx: Prisma.TransactionClient, a
   if (!invoice) throw new NotFoundError('Admission invoice not found');
   const service = await getOrCreateRoomChargeServiceRate(tx, admission.departmentId, actorId);
   const coverage = resolvePanelCoverage(rate, admission.panelPatient?.corporatePanel?.discountRules, service.id, new Date(), admission.departmentId, new Decimal(1), admission.panelPatient);
+  if (admission.panelPatient) {
+    assertCaseAuthorization(admission.panelPatient.corporatePanel?.authorizationRequired, coverage.matchedRule?.preauthorizationRequired, admission);
+  }
   const line = await tx.invoiceLineItem.create({ data: {
     hospitalInvoiceId: invoice.id, serviceRateId: service.id, rateSnapshot: rate,
     quantity: new Decimal(1), lineGross: rate, discountAmount: coverage.discountAmount,
@@ -310,6 +321,10 @@ export const admissionService = {
           throw new ValidationError('Corporate panel is inactive');
         }
         assertMembershipEligible(panelPatient);
+        assertCaseAuthorization(panelPatient.corporatePanel?.authorizationRequired, false, {
+          authorizationNumber: body.authorizationNumber,
+          authorizationValidUntil: body.authorizationValidUntil,
+        });
       }
 
       let departmentId = body.departmentId;
@@ -373,6 +388,9 @@ export const admissionService = {
           expectedAt: body.expectedAt,
           estimatedAmount: body.estimatedAmount !== undefined ? new Decimal(body.estimatedAmount) : null,
           notes: body.notes,
+          authorizationNumber: body.panelPatientId ? body.authorizationNumber || null : null,
+          authorizationLimit: body.panelPatientId && body.authorizationLimit != null ? new Decimal(body.authorizationLimit) : null,
+          authorizationValidUntil: body.panelPatientId ? body.authorizationValidUntil || null : null,
           createdById: actorId,
         },
         include: {
@@ -571,6 +589,7 @@ export const admissionService = {
       data: {
         ...body,
         estimatedAmount: body.estimatedAmount !== undefined ? new Decimal(body.estimatedAmount) : undefined,
+        authorizationLimit: body.authorizationLimit !== undefined ? new Decimal(body.authorizationLimit) : undefined,
       },
       include: {
         doctor: true,
@@ -874,6 +893,9 @@ export const admissionService = {
         // v7.2 §2.5 — Patient Share vs Panel Receivable, same resolution
         // `appointments.service.ts` uses (Panel Service rule → else NOT_COVERED).
         const coverage = resolvePanelCoverage(lineGross, admission.panelPatient?.corporatePanel?.discountRules, serviceRate.id, new Date(), serviceRate.departmentId ?? admission.departmentId, qty, admission.panelPatient);
+        if (admission.panelPatient) {
+          assertCaseAuthorization(admission.panelPatient.corporatePanel?.authorizationRequired, coverage.matchedRule?.preauthorizationRequired, admission);
+        }
         discountAmount = coverage.discountAmount;
         discountReason = coverage.discountReason ?? body.notes ?? null;
         lineNet = lineGross.minus(discountAmount);
@@ -1665,6 +1687,18 @@ export const admissionService = {
       for (const admission of activeAdmissions) {
         const dailyRate = admission.bed?.room?.dailyRoomRate ?? null;
         if (!dailyRate || dailyRate.lessThanOrEqualTo(0)) continue; // no configured rate — nothing to bill
+        // Missing/expired case authorization skips only THIS admission's
+        // daily room charge for today, never the whole hospital day-close
+        // batch (this loop runs one shared transaction across every active
+        // admission) — the charge posts once the reference is renewed, same
+        // as the zero-rate skip above. Rule-level requirement is checked
+        // per-service below with the real coverage.matchedRule, not here.
+        if (
+          admission.panelPatient &&
+          caseAuthorizationIneligibilityReasons(!!admission.panelPatient.corporatePanel?.authorizationRequired, admission).length > 0
+        ) {
+          continue;
+        }
 
         // Belt-and-braces idempotency check — the unique constraint on
         // AdmissionRoomChargeLog is the real guarantee against double-billing,
@@ -1702,6 +1736,12 @@ export const admissionService = {
         }
 
         const coverage = resolvePanelCoverage(dailyRate, admission.panelPatient?.corporatePanel?.discountRules, serviceRate.id, new Date(), admission.departmentId, new Decimal(1), admission.panelPatient);
+        if (
+          admission.panelPatient &&
+          caseAuthorizationIneligibilityReasons(!!coverage.matchedRule?.preauthorizationRequired, admission).length > 0
+        ) {
+          continue; // rule specifically requires authorization — skip only this admission's charge for today, not the batch
+        }
         const lineNet = dailyRate.minus(coverage.discountAmount);
 
         const createdLine = await tx.invoiceLineItem.create({

@@ -1985,7 +1985,7 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
           isOpen={isAddModalOpen}
           onClose={() => setIsAddModalOpen(false)}
           title="Register Corporate Panel / Insurance Partner"
-          size="md"
+          maxWidth="2xl"
         >
           <form onSubmit={handleAddPanel} className="space-y-4">
             <TextInput

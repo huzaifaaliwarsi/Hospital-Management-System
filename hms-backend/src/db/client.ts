@@ -43,6 +43,35 @@ if (env.NODE_ENV === 'development') {
   globalThis.__prisma = prisma;
 }
 
+/**
+ * Historical payer ownership (panel.md §14 backlog item 1): every
+ * `HospitalInvoice` freezes the panel patient's company at posting time
+ * into `corporatePanelId`, instead of every statement/ledger/remittance
+ * query re-deriving "this invoice's company" from the patient's CURRENT
+ * `corporatePanelId` (which breaks the moment a patient transfers company —
+ * old receivables would silently move, or vanish from the original
+ * company's books). Centralized here — like the `omit` config above — so
+ * every existing and future `HospitalInvoice.create()` call site gets the
+ * snapshot automatically; it is not something 7+ scattered call sites can
+ * be trusted to remember individually. Only fires when the caller didn't
+ * already set `corporatePanelId` explicitly (never overrides an explicit
+ * value), and only reads the referenced patient's company — it never writes
+ * outside the invoice being created.
+ */
+prisma.$use(async (params, next) => {
+  if (params.model === 'HospitalInvoice' && params.action === 'create') {
+    const data = params.args?.data as { panelPatientId?: string | null; corporatePanelId?: string | null } | undefined;
+    if (data && data.panelPatientId && data.corporatePanelId === undefined) {
+      const patient = await prisma.panelPatient.findUnique({
+        where: { id: data.panelPatientId },
+        select: { corporatePanelId: true },
+      });
+      if (patient) data.corporatePanelId = patient.corporatePanelId;
+    }
+  }
+  return next(params);
+});
+
 if (env.NODE_ENV === 'development') {
   prisma.$on('query', (e: { query: string; duration: number }) => {
     logger.debug('prisma:query', { query: e.query, durationMs: e.duration });

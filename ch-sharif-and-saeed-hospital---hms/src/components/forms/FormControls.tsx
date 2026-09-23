@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { cn, formatCnicInput } from '../../utils/formatters';
 export { formatCnicInput };
 import { Calendar, ChevronDown, Check, UploadCloud, X, Search, FileText, Clock } from 'lucide-react';
@@ -19,21 +19,186 @@ export interface TextInputProps extends React.InputHTMLAttributes<HTMLInputEleme
   rightElement?: React.ReactNode;
 }
 
-export const TextInput: React.FC<TextInputProps> = ({
+// Helper utilities for strictly Day/Month/Year input format
+function toDDMMYYYY(val?: string | number | readonly string[]): string {
+  if (!val || typeof val !== 'string') return '';
+  const match = val.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) {
+    return `${match[3]}/${match[2]}/${match[1]}`;
+  }
+  return val;
+}
+
+function toISO(val: string): string {
+  const match = val.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (match) {
+    const [, d, m, y] = match;
+    const day = parseInt(d, 10);
+    const month = parseInt(m, 10);
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+      return `${y}-${m}-${d}`;
+    }
+  }
+  return '';
+}
+
+function formatTypedDate(input: string): string {
+  const digits = input.replace(/\D/g, '').slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+}
+
+export const DateInputControl: React.FC<TextInputProps> = ({
   label,
   error,
   hint,
   required,
   className,
   id,
-  icon,
-  rightElement,
+  value,
+  onChange,
   disabled,
+  min,
+  max,
+  type: _type, // strip out — we always render type="text" for the visible input
   ...props
 }) => {
   const inputId = id || (label ? label.toLowerCase().replace(/\s+/g, '-') : undefined);
-  // Force DD/MM/YYYY display for all date inputs regardless of OS locale
-  const dateLocaleProps = props.type === 'date' ? { lang: 'en-GB' } : {};
+  const hiddenPickerRef = useRef<HTMLInputElement>(null);
+
+  // Maintain display string strictly in DD/MM/YYYY format
+  const [displayValue, setDisplayValue] = useState(() => toDDMMYYYY(value));
+
+  useEffect(() => {
+    setDisplayValue(toDDMMYYYY(value));
+  }, [value]);
+
+  const handleTextChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const formatted = formatTypedDate(e.target.value);
+    setDisplayValue(formatted);
+
+    const iso = toISO(formatted);
+    if (iso) {
+      if (onChange) {
+        const syntheticEvent = {
+          ...e,
+          target: { ...e.target, value: iso, name: props.name || '' },
+          currentTarget: { ...e.currentTarget, value: iso, name: props.name || '' },
+        };
+        onChange(syntheticEvent as any);
+      }
+    } else if (formatted === '') {
+      if (onChange) {
+        const syntheticEvent = {
+          ...e,
+          target: { ...e.target, value: '', name: props.name || '' },
+          currentTarget: { ...e.currentTarget, value: '', name: props.name || '' },
+        };
+        onChange(syntheticEvent as any);
+      }
+    }
+  };
+
+  const handlePickerChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const isoVal = e.target.value;
+    setDisplayValue(toDDMMYYYY(isoVal));
+    if (onChange) {
+      onChange(e);
+    }
+  };
+
+  const openPicker = () => {
+    if (disabled) return;
+    try {
+      hiddenPickerRef.current?.showPicker();
+    } catch {
+      hiddenPickerRef.current?.focus();
+      hiddenPickerRef.current?.click();
+    }
+  };
+
+  const isoMin = typeof min === 'string' ? min : undefined;
+  const isoMax = typeof max === 'string' ? max : undefined;
+  const currentIsoValue = typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value) ? value : toISO(displayValue);
+
+  return (
+    <div className={cn('w-full flex flex-col gap-1', className)}>
+      {label && (
+        <label htmlFor={inputId} className="text-xs font-semibold text-slate-700">
+          {label} {required && <span className="text-rose-500">*</span>}
+        </label>
+      )}
+      <div className="relative flex items-center">
+        <input
+          id={inputId}
+          disabled={disabled}
+          type="text"
+          inputMode="numeric"
+          placeholder="DD/MM/YYYY"
+          maxLength={10}
+          value={displayValue}
+          onChange={handleTextChange}
+          className={cn(
+            'w-full rounded-lg border bg-white px-3 py-2 pr-10 text-xs text-slate-900 placeholder:text-slate-400 font-medium transition-colors',
+            'focus:outline-hidden focus:ring-2 focus:ring-[#129b70]/20 focus:border-[#129b70]',
+            disabled && 'bg-slate-50 text-slate-400 cursor-not-allowed border-slate-200',
+            error ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500/20' : 'border-slate-300'
+          )}
+          {...props}
+        />
+
+        {/* Hidden native date picker with button trigger */}
+        <div className="absolute right-1.5 flex items-center">
+          <input
+            ref={hiddenPickerRef}
+            type="date"
+            tabIndex={-1}
+            aria-hidden="true"
+            value={currentIsoValue}
+            min={isoMin}
+            max={isoMax}
+            onChange={handlePickerChange}
+            className="absolute inset-0 w-full h-full opacity-0 pointer-events-none -z-10"
+          />
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={openPicker}
+            disabled={disabled}
+            className="p-1 rounded-md text-slate-400 hover:text-[#08775A] hover:bg-slate-100 transition-colors cursor-pointer"
+            title="Open calendar (DD/MM/YYYY)"
+          >
+            <Calendar className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      {error && <span className="text-[11px] text-rose-600 font-medium">{error}</span>}
+      {!error && hint && <span className="text-[11px] text-slate-500">{hint}</span>}
+    </div>
+  );
+};
+
+export const DateInput = DateInputControl;
+
+export const TextInput: React.FC<TextInputProps> = (props) => {
+  if (props.type === 'date') {
+    return <DateInputControl {...props} />;
+  }
+
+  const {
+    label,
+    error,
+    hint,
+    required,
+    className,
+    id,
+    icon,
+    rightElement,
+    disabled,
+    ...restProps
+  } = props;
+  const inputId = id || (label ? label.toLowerCase().replace(/\s+/g, '-') : undefined);
   return (
     <div className={cn('w-full flex flex-col gap-1', className)}>
       {label && (
@@ -58,8 +223,7 @@ export const TextInput: React.FC<TextInputProps> = ({
             icon && 'pl-9',
             rightElement && 'pr-9'
           )}
-          {...dateLocaleProps}
-          {...props}
+          {...restProps}
         />
         {rightElement && (
           <div className="absolute right-3 flex items-center text-slate-400">

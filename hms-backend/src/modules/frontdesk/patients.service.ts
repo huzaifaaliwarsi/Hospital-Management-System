@@ -125,22 +125,45 @@ export const patientsService = {
       const existing = await tx.panelPatient.findUnique({ where: { id }, include: { corporatePanel: true } });
       if (!existing) throw new NotFoundError('Panel patient not found');
 
-      // Company transfers still require per-case payer links; history alone is insufficient.
-      if (body.corporatePanelId && body.corporatePanelId !== existing.corporatePanelId) {
-        throw new ValidationError('Changing a patient company requires membership history; keep the existing permanent record');
+      // Controlled company transfer (panel.md §14 backlog item 1): now safe
+      // because every HospitalInvoice freezes its own corporatePanelId at
+      // posting time — an old receivable stays on the books of the company
+      // that was actually billed, so moving the patient's live membership
+      // forward can no longer misattribute or hide past debt. The new
+      // company must be active and satisfy its own membership requirements;
+      // the transfer itself is recorded as an ordinary membership-history
+      // revision below (the snapshot already carries corporatePanelId), plus
+      // an explicit marker so the audit trail reads as a transfer, not a
+      // same-company edit.
+      const isCompanyTransfer = body.corporatePanelId !== undefined && body.corporatePanelId !== existing.corporatePanelId;
+      let targetCompany = existing.corporatePanel;
+      if (isCompanyTransfer) {
+        const newCompany = await tx.corporatePanel.findUnique({ where: { id: body.corporatePanelId } });
+        if (!newCompany) throw new NotFoundError('Target company not found');
+        if (!newCompany.isActive) throw new ValidationError('Cannot transfer a patient to an inactive company');
+        targetCompany = newCompany;
       }
+
       const merged = { ...existing, ...body };
       const snapshot = membershipSnapshot(merged);
       const membershipChanged = JSON.stringify(snapshot) !== JSON.stringify(membershipSnapshot(existing));
       // An unrelated demographic edit must remain possible for an expired membership.
-      if (membershipChanged) validateMembershipDetails(merged, existing.corporatePanel);
+      if (membershipChanged) validateMembershipDetails(merged, targetCompany);
       const data: Prisma.PanelPatientUncheckedUpdateInput = { ...body, updatedById };
       if (body.status !== undefined) {
         data.isActive = body.status === 'ACTIVE';
       }
 
       if (membershipChanged) {
-        await tx.panelMembershipHistory.create({ data: { panelPatientId: id, snapshot, recordedById: updatedById } });
+        await tx.panelMembershipHistory.create({
+          data: {
+            panelPatientId: id,
+            snapshot: isCompanyTransfer
+              ? { ...snapshot, transferredFromCorporatePanelId: existing.corporatePanelId }
+              : snapshot,
+            recordedById: updatedById,
+          },
+        });
       }
       const updated = await tx.panelPatient.update({ where: { id }, data, include: panelPatientInclude });
       return decoratePanelPatient(updated as any);
