@@ -556,7 +556,9 @@ User asked for the Super Admin Panel Billing screen to have "a proper company le
 
 ### 14.2b Follow-up same day
 
-User pointed out the Company Ledger tab had no visible way to collect a company payment. The header-level "Record Panel Remittance" / "Record Remittance" button (opens `RecordPanelRemittanceModal`, pre-existing from the original Panel Billing build) was already present and functional, but only inside `SuperAdminPanelBillingView.tsx`'s top header card, not inside the Ledger tab body itself. Added a "Record Company Payment" button directly in the Company Ledger tab (next to "Print Ledger") in `SuperAdminPanelBillingView.tsx`, opening the same existing modal/state (`isRecordRemittanceOpen`) — no new modal or backend endpoint needed. Front Desk's `PanelBillingView.tsx` already shows its header "Record Remittance" button on every tab including Ledger (that file has no per-tab header), so it needed no change.
+User pointed out the Company Ledger tab had no visible way to collect a company payment. Added a "Record Company Payment" button directly in the Company Ledger tab (next to "Print Ledger") in `SuperAdminPanelBillingView.tsx`, opening the existing `RecordPanelRemittanceModal`/`isRecordRemittanceOpen` state.
+
+**Reverted the same day** — user found having it in both the top header card AND the Ledger tab confusing/redundant ("complex nahi karo bas"). Removed the tab-level button; the header's "Record Panel Remittance" button (visible on every tab, including Ledger) remains the single entry point in `SuperAdminPanelBillingView.tsx`. Front Desk's `PanelBillingView.tsx` never had the duplicate — its header "Record Remittance" button already covers every tab (that file has no per-tab header), so it needed no change either time.
 
 ### 14.3 Next session
 

@@ -447,28 +447,16 @@ export const SuperAdminPanelBillingView: React.FC = () => {
                 Running balance: every panel-covered charge is a debit, every remittance a credit. Patient co-pay stays a separate total.
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              {ledger && ledger.entries.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => window.print()}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg cursor-pointer"
-                >
-                  <Printer className="h-3.5 w-3.5 text-slate-500" />
-                  <span>Print Ledger</span>
-                </button>
-              )}
-              {currentPanel && (
-                <button
-                  type="button"
-                  onClick={() => setIsRecordRemittanceOpen(true)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#08775A] hover:bg-[#065f46] text-white rounded-lg text-xs font-semibold cursor-pointer shadow-xs"
-                >
-                  <Wallet className="h-3.5 w-3.5" />
-                  <span>Record Company Payment</span>
-                </button>
-              )}
-            </div>
+            {ledger && ledger.entries.length > 0 && (
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg cursor-pointer"
+              >
+                <Printer className="h-3.5 w-3.5 text-slate-500" />
+                <span>Print Ledger</span>
+              </button>
+            )}
           </div>
 
           <PanelLedgerSection
