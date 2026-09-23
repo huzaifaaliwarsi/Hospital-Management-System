@@ -96,6 +96,8 @@ export const listInvoicesQuerySchema = z.object({
   hasDiscount: z.enum(['true', 'false']).optional(),
   hasRefund: z.enum(['true', 'false']).optional(),
   hasPayment: z.enum(['true', 'false']).optional(),
+  isPanel: z.enum(['true', 'false']).optional(),
+  corporatePanelId: z.string().uuid().optional(),
   /** Outstanding Balances nav item — UNPAID or PARTIALLY_PAID only (PAID/VOID carry no remaining balance). */
   hasOutstandingBalance: z.enum(['true', 'false']).optional(),
 });

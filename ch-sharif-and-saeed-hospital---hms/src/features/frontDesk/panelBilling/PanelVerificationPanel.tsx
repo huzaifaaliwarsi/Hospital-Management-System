@@ -17,7 +17,7 @@ interface PanelVerificationPanelProps {
 }
 
 const SOURCE_LABEL: Record<ContractResolution['source'], string> = {
-  COVERAGE: 'Coverage % rule',
+  COVERAGE: 'Configured coverage rule',
   LEGACY_DISCOUNT: 'Legacy flat discount',
   NOT_COVERED: 'Not covered — patient pays in full',
 };
@@ -153,6 +153,7 @@ export const PanelVerificationPanel: React.FC<PanelVerificationPanelProps> = ({ 
                 {verification.panelPatient.mrNumber} • {verification.corporatePanel.organizationName} (
                 {verification.panelPatient.panelMemberId || 'no member ID'})
               </span>
+              <p className="text-[11px] text-slate-500">{verification.panelPatient.membershipStatus || 'ACTIVE'} ? Valid from {verification.panelPatient.membershipValidFrom?.slice(0, 10) || 'not specified'} through {verification.panelPatient.membershipValidTo?.slice(0, 10) || 'not specified'}</p>
               {verification.reasons.length > 0 && (
                 <ul className="mt-1.5 space-y-0.5">
                   {verification.reasons.map((r) => (
@@ -206,6 +207,8 @@ export const PanelVerificationPanel: React.FC<PanelVerificationPanelProps> = ({ 
             </div>
           ) : contract ? (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+              <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200"><span className="text-[10px] text-slate-500 uppercase block">Standard Gross</span><span className="font-bold">{formatPKR(contract.grossAmount)}</span></div>
+              <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200"><span className="text-[10px] text-slate-500 uppercase block">Contract Adjustment</span><span className="font-bold">{formatPKR(contract.discountAmount)}</span><span className="block text-slate-500">{contract.matchedScope ?? 'No matching rule'}</span></div>
               <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
                 <span className="text-[10px] text-slate-500 uppercase block">Contract Amount</span>
                 <span className="font-bold text-slate-800">{formatPKR(contract.contractAmount)}</span>

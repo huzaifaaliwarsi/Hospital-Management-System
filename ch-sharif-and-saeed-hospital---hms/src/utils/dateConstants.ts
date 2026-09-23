@@ -18,19 +18,23 @@ export const getHospitalCurrentDate = (_context?: HospitalDateContext): Date => 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-export const formatDisplayDate = (d: Date = new Date()): string => {
-  const day = String(d.getDate()).padStart(2, '0');
-  const month = MONTH_NAMES[d.getMonth()];
-  const year = d.getFullYear();
-  return `${day} ${month} ${year}`;
+export const formatDisplayDate = (d: Date | string = new Date()): string => {
+  const dateObj = typeof d === 'string' ? new Date(d) : d;
+  if (!dateObj || Number.isNaN(dateObj.getTime())) return '';
+  const day = String(dateObj.getDate()).padStart(2, '0');
+  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const year = dateObj.getFullYear();
+  return `${day}/${month}/${year}`;
 };
 
-export const formatHeaderDate = (d: Date = new Date()): string => {
-  const dayName = DAY_NAMES[d.getDay()];
-  const day = String(d.getDate()).padStart(2, '0');
-  const month = MONTH_NAMES[d.getMonth()];
-  const year = d.getFullYear();
-  return `${dayName}, ${day} ${month} ${year}`;
+export const formatHeaderDate = (d: Date | string = new Date()): string => {
+  const dateObj = typeof d === 'string' ? new Date(d) : d;
+  if (!dateObj || Number.isNaN(dateObj.getTime())) return '';
+  const dayName = DAY_NAMES[dateObj.getDay()];
+  const day = String(dateObj.getDate()).padStart(2, '0');
+  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const year = dateObj.getFullYear();
+  return `${dayName}, ${day}/${month}/${year}`;
 };
 
 export const formatDateISO = (d: Date = new Date()): string => {

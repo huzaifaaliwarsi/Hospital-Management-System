@@ -682,6 +682,7 @@ model Department {
 
   staff            Staff[]
   wards            Ward[]
+  panelCoverageRules PanelDiscountRule[]
   serviceRates     ServiceRate[]
   shifts           Shift[]
   staffDepartments StaffDepartment[] // junction for multi-department doctor assignment
@@ -985,11 +986,24 @@ model Shift {
 }
 
 /// Corporate/insurer panel master (§4.2 "Corporate Panels"; = §6.5 `panels`).
+model PanelCategory {
+  name String @id
+  isActive Boolean @default(true) @map("is_active")
+  @@map("panel_categories")
+}
+
 model CorporatePanel {
   id                String   @id @default(uuid())
   code              String?  @unique
   organizationName  String   @map("organization_name")
   category          String? // e.g. Govt Health Insurance / Private Insurance / Armed Forces Welfare / Corporate Enterprise
+  legalBillingName String? @map("legal_billing_name")
+  contactPhone String? @map("contact_phone")
+  contactEmail String? @map("contact_email")
+  billingTerms String? @map("billing_terms")
+  memberIdLabel String? @map("member_id_label")
+  memberIdRequired Boolean @default(false) @map("member_id_required")
+  membershipValidityRequired Boolean @default(false) @map("membership_validity_required")
   discountAgreement String?  @map("discount_agreement")
   contact           String?
   address           String?
@@ -1017,8 +1031,19 @@ model PanelDiscountRule {
   id                       String         @id @default(uuid())
   corporatePanelId         String         @map("corporate_panel_id")
   corporatePanel           CorporatePanel @relation(fields: [corporatePanelId], references: [id])
-  serviceRateId            String         @map("service_rate_id")
-  serviceRate              ServiceRate    @relation(fields: [serviceRateId], references: [id])
+  serviceRateId            String?        @map("service_rate_id")
+  serviceRate              ServiceRate?   @relation(fields: [serviceRateId], references: [id], onDelete: Restrict)
+  departmentId             String?        @map("department_id")
+  department               Department?    @relation(fields: [departmentId], references: [id])
+  scope                    String         @default("SERVICE")
+  coverageType             String         @default("LEGACY_DISCOUNT") @map("coverage_type")
+  fixedPatientShare        Decimal?       @map("fixed_patient_share") @db.Decimal(14, 2)
+  contractRate             Decimal?       @map("contract_rate") @db.Decimal(14, 2)
+  isActive                 Boolean        @default(true) @map("is_active")
+  notes                    String?
+  archivedAt               DateTime?      @map("archived_at")
+  createdAt                DateTime       @default(now()) @map("created_at")
+  createdById              String?        @map("created_by")
   discountPercent          Decimal        @map("discount_percent") @db.Decimal(5, 2)
   // v7.2 Panel Management enhancements (HMS_V7.2_NEW_REQUIREMENTS.md §2.5) —
   // `discountPercent` above stays as the legacy simple knock-off; these are
@@ -1031,7 +1056,7 @@ model PanelDiscountRule {
   effectiveFrom            DateTime       @map("effective_from") @db.Date
   effectiveTo              DateTime?      @map("effective_to") @db.Date
 
-  @@unique([corporatePanelId, serviceRateId, effectiveFrom])
+  @@index([corporatePanelId, archivedAt])
   @@map("panel_discount_rules")
 }
 
@@ -1119,6 +1144,14 @@ model PanelPatient {
   corporatePanelId         String         @map("corporate_panel_id")
   corporatePanel           CorporatePanel @relation(fields: [corporatePanelId], references: [id])
   panelMemberId            String?        @map("panel_member_id")
+  membershipStatus         String         @default("ACTIVE") @map("membership_status")
+  membershipValidFrom      DateTime?      @db.Date @map("membership_valid_from")
+  membershipValidTo        DateTime?      @db.Date @map("membership_valid_to")
+  policyNumber             String?        @map("policy_number")
+  planName                 String?        @map("plan_name")
+  principalMemberName      String?        @map("principal_member_name")
+  memberRelationship       String?        @map("member_relationship")
+  membershipHistory        PanelMembershipHistory[]
   isActive                 Boolean        @default(true) @map("is_active")
 
   appointments      Appointment[]
@@ -1136,9 +1169,19 @@ model PanelPatient {
   @@map("panel_patients")
 }
 
-/// Temporary, per-visit self-pay identity — not reused across future
-/// visits; the visit's invoices/receipts still retain the snapshot
-/// permanently even after the encounter closes (D16 p.7).
+/// Append-only membership revisions for the permanent patient identity.
+model PanelMembershipHistory {
+  id String @id @default(uuid())
+  panelPatientId String @map("panel_patient_id")
+  panelPatient PanelPatient @relation(fields: [panelPatientId], references: [id], onDelete: Restrict)
+  snapshot Json
+  recordedAt DateTime @default(now()) @map("recorded_at")
+  recordedById String? @map("recorded_by")
+  @@index([panelPatientId, recordedAt], map: "panel_membership_history_patient_date_idx")
+  @@map("panel_membership_history")
+}
+
+/// Temporary per-visit self-pay identity; historical billing remains linked.
 model SelfPayEncounter {
   id             String    @id @default(uuid())
   fullName       String    @map("full_name")
@@ -1258,6 +1301,7 @@ model HospitalInvoice {
 /// = §6.8 `invoice_lines`. `rateSnapshot` is frozen at billing time — later
 /// ServiceRate.standardRate changes must never rewrite a posted line (D15 §15).
 model InvoiceLineItem {
+  coverageSnapshot Json? @map("coverage_snapshot")
   id                 String          @id @default(uuid())
   hospitalInvoiceId  String          @map("hospital_invoice_id")
   hospitalInvoice    HospitalInvoice @relation(fields: [hospitalInvoiceId], references: [id])

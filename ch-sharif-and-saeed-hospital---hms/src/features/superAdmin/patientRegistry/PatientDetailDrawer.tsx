@@ -18,6 +18,7 @@ import {
   Pill,
 } from 'lucide-react';
 import { Patient, PatientStatus } from '../../../types/patient';
+import { formatDateDDMMYYYY, formatDateTimeDDMMYYYY } from '../../../utils/formatters';
 
 interface PatientDetailDrawerProps {
   isOpen: boolean;
@@ -328,21 +329,21 @@ export const PatientDetailDrawer: React.FC<PatientDetailDrawerProps> = ({
                 <span className="text-slate-400 block">Created By</span>
                 <span className="font-semibold text-slate-800">{patient.createdBy}</span>
                 <span className="text-[11px] text-slate-400 block font-mono">
-                  {patient.createdAt ? new Date(patient.createdAt).toLocaleString() : '—'}
+                  {patient.createdAt ? formatDateTimeDDMMYYYY(patient.createdAt) : '—'}
                 </span>
               </div>
               <div>
                 <span className="text-slate-400 block">Last Updated By</span>
                 <span className="font-semibold text-slate-800">{patient.updatedBy}</span>
                 <span className="text-[11px] text-slate-400 block font-mono">
-                  {patient.updatedAt ? new Date(patient.updatedAt).toLocaleString() : '—'}
+                  {patient.updatedAt ? formatDateTimeDDMMYYYY(patient.updatedAt) : '—'}
                 </span>
               </div>
               <div>
                 <span className="text-slate-400 block">Last Clinical Visit</span>
                 <span className="font-medium text-slate-700">
                   {patient.lastVisitDate ? (
-                    <span className="font-mono">{patient.lastVisitDate}</span>
+                    <span className="font-mono">{formatDateDDMMYYYY(patient.lastVisitDate)}</span>
                   ) : (
                     <span className="italic text-slate-400">Never visited</span>
                   )}

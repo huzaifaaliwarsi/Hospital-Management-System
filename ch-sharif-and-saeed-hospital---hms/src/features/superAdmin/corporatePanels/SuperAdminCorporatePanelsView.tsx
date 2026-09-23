@@ -1,9 +1,9 @@
+import { PanelCoverageRulesModal } from './PanelCoverageRulesModal';
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Building2,
   Plus,
   Search,
-  Eye,
   Edit2,
   Power,
   Percent,
@@ -11,32 +11,28 @@ import {
   AlertTriangle,
   CheckCircle2,
   AlertCircle,
-  X,
   Trash2,
 } from 'lucide-react';
-import { useAuth } from '../../../context/AuthContext';
 import { formatPKR } from '../../../utils/formatters';
 import {
   CorporatePanel,
   CorporatePanelFormValues,
   fetchCorporatePanels,
+  fetchPanelCategories,
   createCorporatePanel,
   updateCorporatePanel,
   deleteCorporatePanel,
   toggleCorporatePanelStatus,
-  replaceDiscountRules,
 } from '../../../services/panelService';
-import { ServiceRatesService } from '../../../services/serviceRatesService';
 import { Modal } from '../../../components/common/Modal';
 import { ConfirmModal } from '../../../components/common/ConfirmModal';
 import { TextInput, NumberInput, Textarea, Select } from '../../../components/forms/FormControls';
 
-const PANEL_CATEGORIES = ['Govt Health Insurance', 'Private Insurance', 'Armed Forces Welfare', 'Corporate Enterprise'];
 
 const EMPTY_FORM: CorporatePanelFormValues = {
   code: '',
   organizationName: '',
-  category: 'Corporate Enterprise',
+  category: '',
   discountAgreement: '',
   contact: '',
   address: '',
@@ -46,7 +42,7 @@ const EMPTY_FORM: CorporatePanelFormValues = {
 };
 
 export const SuperAdminCorporatePanelsView: React.FC = () => {
-  const { currentUser } = useAuth();
+  const [categories, setCategories] = useState<{ name: string; isActive: boolean }[]>([]);
   const [panels, setPanels] = useState<CorporatePanel[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -75,7 +71,8 @@ export const SuperAdminCorporatePanelsView: React.FC = () => {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const list = await fetchCorporatePanels();
+      const [list, categoryList] = await Promise.all([fetchCorporatePanels(), fetchPanelCategories()]);
+      setCategories(categoryList);
       setPanels(list);
     } catch (err: any) {
       setLoadError(err?.message || 'Failed to load corporate panels from the server.');
@@ -120,6 +117,9 @@ export const SuperAdminCorporatePanelsView: React.FC = () => {
       code: panel.code,
       organizationName: panel.name,
       category: panel.category,
+      memberIdLabel: panel.memberIdLabel, memberIdRequired: panel.memberIdRequired, membershipValidityRequired: panel.membershipValidityRequired,
+      legalBillingName: panel.legalBillingName, contactPhone: panel.contactPhone,
+      contactEmail: panel.contactEmail, billingTerms: panel.billingTerms,
       discountAgreement: panel.discountAgreement,
       contact: panel.contact,
       address: panel.address,
@@ -137,6 +137,7 @@ export const SuperAdminCorporatePanelsView: React.FC = () => {
       setFormError('Organization / Panel name is required.');
       return;
     }
+    if (!formValues.category) { setFormError('Select a configured panel category.'); return; }
     setIsSaving(true);
     setFormError(null);
     try {
@@ -239,7 +240,7 @@ export const SuperAdminCorporatePanelsView: React.FC = () => {
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Manage corporate agreements, health insurance policies, credit ceilings, and service discount tariffs.
+            Manage corporate agreements, health insurance policies, credit ceilings, and coverage rules and contract tariffs.
           </p>
         </div>
         <button
@@ -309,7 +310,7 @@ export const SuperAdminCorporatePanelsView: React.FC = () => {
                 <th className="py-2.5 px-4">Category</th>
                 <th className="py-2.5 px-4 text-right">Credit Ceiling</th>
                 <th className="py-2.5 px-4 text-center">Active Patients</th>
-                <th className="py-2.5 px-4 text-center">Discount Rules</th>
+                <th className="py-2.5 px-4 text-center">Coverage Rules</th>
                 <th className="py-2.5 px-4">Status</th>
                 <th className="py-2.5 px-4 text-right">Actions</th>
               </tr>
@@ -419,8 +420,18 @@ export const SuperAdminCorporatePanelsView: React.FC = () => {
             label="Category"
             value={formValues.category}
             onChange={(e) => setFormValues({ ...formValues, category: e.target.value })}
-            options={PANEL_CATEGORIES.map((c) => ({ label: c, value: c }))}
+            options={[{ label: 'Select category', value: '' }, ...categories.map((c) => ({ label: c.name, value: c.name }))]}
+            required
           />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <TextInput label="Legal / Billing Name" value={formValues.legalBillingName ?? ''} onChange={e => setFormValues({ ...formValues, legalBillingName: e.target.value })} />
+            <TextInput label="Phone" value={formValues.contactPhone ?? ''} onChange={e => setFormValues({ ...formValues, contactPhone: e.target.value })} />
+            <TextInput label="Email" type="email" value={formValues.contactEmail ?? ''} onChange={e => setFormValues({ ...formValues, contactEmail: e.target.value })} />
+            <TextInput label="Member identity label" placeholder="Employee ID / Policy ID / Referral ID" value={formValues.memberIdLabel ?? ''} onChange={e => setFormValues({ ...formValues, memberIdLabel: e.target.value })} />
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={formValues.memberIdRequired ?? false} onChange={e => setFormValues({ ...formValues, memberIdRequired: e.target.checked })} />Require member identity</label>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={formValues.membershipValidityRequired ?? false} onChange={e => setFormValues({ ...formValues, membershipValidityRequired: e.target.checked })} />Require membership start and end dates</label>
+            <TextInput label="Billing Terms" value={formValues.billingTerms ?? ''} onChange={e => setFormValues({ ...formValues, billingTerms: e.target.value })} />
+          </div>
           <TextInput
             label="Discount Agreement Summary"
             placeholder="e.g. 15% Institutional Concession"
@@ -503,7 +514,7 @@ export const SuperAdminCorporatePanelsView: React.FC = () => {
 
       {/* Discount Rules Modal */}
       {discountPanel && (
-        <DiscountRulesModal
+        <PanelCoverageRulesModal
           panel={discountPanel}
           onClose={() => setDiscountPanel(null)}
           onSaved={async () => {
@@ -513,189 +524,5 @@ export const SuperAdminCorporatePanelsView: React.FC = () => {
         />
       )}
     </div>
-  );
-};
-
-interface DiscountRulesModalProps {
-  panel: CorporatePanel;
-  onClose: () => void;
-  onSaved: () => void;
-}
-
-const DiscountRulesModal: React.FC<DiscountRulesModalProps> = ({ panel, onClose, onSaved }) => {
-  const services = ServiceRatesService.getServices();
-  const [rows, setRows] = useState(
-    panel.discountRules.map((r) => ({ ...r, key: r.id }))
-  );
-  const [isSaving, setIsSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const addRow = () => {
-    setRows([
-      ...rows,
-      {
-        key: `new-${Date.now()}`,
-        id: '',
-        serviceRateId: services[0]?.id || '',
-        discountPercent: 0,
-        coveragePercent: undefined,
-        preauthorizationRequired: false,
-        capAmount: undefined,
-        effectiveFrom: new Date().toISOString().slice(0, 10),
-        effectiveTo: undefined,
-      },
-    ]);
-  };
-
-  const removeRow = (key: string) => setRows(rows.filter((r) => r.key !== key));
-
-  const handleSave = async () => {
-    if (rows.some((r) => !r.serviceRateId)) {
-      setError('Every discount rule row needs a selected service.');
-      return;
-    }
-    setIsSaving(true);
-    setError(null);
-    try {
-      await replaceDiscountRules(
-        panel.id,
-        rows.map((r) => ({
-          serviceRateId: r.serviceRateId,
-          discountPercent: r.discountPercent,
-          coveragePercent: r.coveragePercent,
-          preauthorizationRequired: r.preauthorizationRequired,
-          capAmount: r.capAmount,
-          effectiveFrom: r.effectiveFrom,
-          effectiveTo: r.effectiveTo,
-        }))
-      );
-      onSaved();
-    } catch (err: any) {
-      setError(err?.message || 'Failed to save discount rules.');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  return (
-    <Modal isOpen onClose={onClose} title={`Discount Rules — ${panel.name}`} maxWidth="lg" closeOnBackdropClick={false}>
-      <div className="space-y-3">
-        {error && <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700 font-medium">{error}</div>}
-        {services.length === 0 && (
-          <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
-            No services found — configure Services &amp; Rates first before adding discount rules.
-          </div>
-        )}
-        <div className="space-y-2 max-h-96 overflow-y-auto">
-          {rows.map((row) => (
-            <div key={row.key} className="space-y-1.5 bg-slate-50 p-2 rounded-lg border border-slate-200">
-              <div className="grid grid-cols-12 gap-2 items-center">
-                <select
-                  className="col-span-5 text-xs px-2 py-1.5 border border-slate-200 rounded-lg bg-white"
-                  value={row.serviceRateId}
-                  onChange={(e) => setRows(rows.map((r) => (r.key === row.key ? { ...r, serviceRateId: e.target.value } : r)))}
-                >
-                  <option value="">Select a service…</option>
-                  {services.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.code} — {s.name}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  className="col-span-2 text-xs px-2 py-1.5 border border-slate-200 rounded-lg"
-                  value={row.discountPercent}
-                  onChange={(e) => setRows(rows.map((r) => (r.key === row.key ? { ...r, discountPercent: Number(e.target.value) || 0 } : r)))}
-                  placeholder="%"
-                />
-                <input
-                  lang="en-GB" type="date"
-                  className="col-span-2 text-xs px-2 py-1.5 border border-slate-200 rounded-lg"
-                  value={row.effectiveFrom}
-                  onChange={(e) => setRows(rows.map((r) => (r.key === row.key ? { ...r, effectiveFrom: e.target.value } : r)))}
-                />
-                <input
-                  lang="en-GB" type="date"
-                  className="col-span-2 text-xs px-2 py-1.5 border border-slate-200 rounded-lg"
-                  value={row.effectiveTo || ''}
-                  onChange={(e) => setRows(rows.map((r) => (r.key === row.key ? { ...r, effectiveTo: e.target.value || undefined } : r)))}
-                />
-                <button type="button" onClick={() => removeRow(row.key)} className="col-span-1 p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg flex justify-center">
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-              {/* v7.2 Panel Management enhancements (HMS_V7.2_NEW_REQUIREMENTS.md §2.5) */}
-              <div className="grid grid-cols-12 gap-2 items-center pl-0.5">
-                <div className="col-span-4 flex items-center gap-1">
-                  <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    placeholder="Coverage %"
-                    className="w-full text-[11px] px-2 py-1 border border-slate-200 rounded-lg bg-white"
-                    value={row.coveragePercent ?? ''}
-                    onChange={(e) =>
-                      setRows(
-                        rows.map((r) =>
-                          r.key === row.key ? { ...r, coveragePercent: e.target.value === '' ? undefined : Number(e.target.value) } : r
-                        )
-                      )
-                    }
-                    title="Panel Coverage % — the covered portion; the complement is the patient's co-pay share"
-                  />
-                </div>
-                <div className="col-span-4">
-                  <input
-                    type="number"
-                    min={0}
-                    placeholder="Cap Amount (PKR)"
-                    className="w-full text-[11px] px-2 py-1 border border-slate-200 rounded-lg bg-white"
-                    value={row.capAmount ?? ''}
-                    onChange={(e) =>
-                      setRows(rows.map((r) => (r.key === row.key ? { ...r, capAmount: e.target.value === '' ? undefined : Number(e.target.value) } : r)))
-                    }
-                  />
-                </div>
-                <label className="col-span-4 flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={!!row.preauthorizationRequired}
-                    onChange={(e) => setRows(rows.map((r) => (r.key === row.key ? { ...r, preauthorizationRequired: e.target.checked } : r)))}
-                    className="rounded text-[#08775A] focus:ring-[#08775A]"
-                  />
-                  Preauthorization Required
-                </label>
-              </div>
-            </div>
-          ))}
-        </div>
-        <button
-          type="button"
-          onClick={addRow}
-          disabled={services.length === 0}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#08775A] hover:underline disabled:opacity-50 disabled:no-underline"
-        >
-          <Plus className="h-3.5 w-3.5" /> Add Discount Rule
-        </button>
-
-        <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-          <button type="button" onClick={onClose} className="px-4 py-2 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-semibold">
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={isSaving}
-            className="inline-flex items-center gap-2 px-5 py-2 bg-[#149E75] hover:bg-[#08775A] disabled:opacity-60 text-white rounded-lg text-xs font-semibold"
-          >
-            {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-            {isSaving ? 'Saving…' : 'Save Discount Rules'}
-          </button>
-        </div>
-      </div>
-    </Modal>
   );
 };

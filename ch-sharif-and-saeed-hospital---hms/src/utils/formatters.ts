@@ -106,4 +106,31 @@ export function normalizeTitleCase(val?: string | null): string {
   return formatTitleCase(val);
 }
 
+/**
+ * Formats a Date object or ISO date string into standard Pakistani / UK DD/MM/YYYY format
+ * e.g. "2026-09-23" -> "23/09/2026"
+ */
+export function formatDateDDMMYYYY(date?: Date | string | null): string {
+  if (!date) return '';
+  const d = typeof date === 'string' ? new Date(date) : date;
+  if (isNaN(d.getTime())) return String(date);
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
+}
+
+/**
+ * Formats a Date object or ISO timestamp into DD/MM/YYYY, hh:mm A
+ * e.g. "2026-09-23T10:15:00Z" -> "23/09/2026, 10:15 AM"
+ */
+export function formatDateTimeDDMMYYYY(date?: Date | string | null): string {
+  if (!date) return '';
+  const d = typeof date === 'string' ? new Date(date) : date;
+  if (isNaN(d.getTime())) return String(date);
+  const dateStr = formatDateDDMMYYYY(d);
+  const timeStr = d.toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' });
+  return `${dateStr}, ${timeStr}`;
+}
+
 

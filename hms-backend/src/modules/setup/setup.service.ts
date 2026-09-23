@@ -1103,10 +1103,10 @@ export const setupService = {
 
   // ── Corporate Panels ─────────────────────────────────────────────────
   corporatePanelInclude: {
-    discountRules: true,
+    discountRules: { where: { archivedAt: null }, orderBy: { createdAt: 'asc' as const } },
     createdByUser: actorSelect,
     updatedByUser: actorSelect,
-    _count: { select: { panelPatients: true } },
+    _count: { select: { panelPatients: { where: { isActive: true, status: 'ACTIVE' } } } },
   } satisfies Prisma.CorporatePanelInclude,
 
   decorateCorporatePanel(
@@ -1133,7 +1133,18 @@ export const setupService = {
     return rows.map((r) => this.decorateCorporatePanel(r as any));
   },
 
+  async listPanelCategories() {
+    return prisma.panelCategory.findMany({ where: { isActive: true }, orderBy: { name: 'asc' } });
+  },
+
+  async validatePanelCategory(category: string | undefined) {
+    if (!category || !await prisma.panelCategory.findFirst({ where: { name: category, isActive: true } })) {
+      throw new ValidationError('Select an active configured panel category');
+    }
+  },
+
   async createCorporatePanel(body: CreateCorporatePanelBody, createdById: string) {
+    await this.validatePanelCategory(body.category);
     const code = normalizeCode(body.code) ?? (await generateUniqueCode('corporatePanel', 'PNL'));
     try {
       const created = await prisma.corporatePanel.create({ data: { ...body, code, createdById }, include: this.corporatePanelInclude });
@@ -1147,6 +1158,7 @@ export const setupService = {
   },
 
   async updateCorporatePanel(id: string, body: UpdateCorporatePanelBody, updatedById: string) {
+    if (body.category !== undefined) await this.validatePanelCategory(body.category);
     await this.assertExists('corporatePanel', id);
     try {
       const updated = await prisma.corporatePanel.update({
@@ -1163,20 +1175,51 @@ export const setupService = {
     }
   },
 
-  async replaceDiscountRules(corporatePanelId: string, body: ReplaceDiscountRulesBody) {
+  async listPanelRuleHistory(corporatePanelId: string) {
+    await this.assertExists('corporatePanel', corporatePanelId);
+    const rules = await prisma.panelDiscountRule.findMany({
+      where: { corporatePanelId }, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], take: 500,
+      include: { serviceRate: { select: { name: true } }, department: { select: { name: true } } },
+    });
+    const actors = await prisma.portalUser.findMany({
+      where: { id: { in: [...new Set(rules.flatMap(r => r.createdById ? [r.createdById] : []))] } },
+      select: { id: true, displayName: true, username: true },
+    });
+    const names = new Map(actors.map(a => [a.id, a.displayName ?? a.username]));
+    return rules.map(r => ({ ...r, createdByLabel: r.createdById ? names.get(r.createdById) ?? 'Unavailable' : 'Legacy record' }));
+  },
+
+  async replaceDiscountRules(corporatePanelId: string, body: ReplaceDiscountRulesBody, actorId: string) {
     await this.assertExists('corporatePanel', corporatePanelId);
     return prisma.$transaction(async (tx) => {
-      await tx.panelDiscountRule.deleteMany({ where: { corporatePanelId } });
-      if (body.rules.length === 0) return [];
-      await tx.panelDiscountRule.createMany({
-        data: body.rules.map((rule) => ({ ...rule, corporatePanelId })),
+      // Serialize full rule-set replacements for this company; preserve every old version.
+      await tx.$queryRaw`SELECT id FROM corporate_panels WHERE id = ${corporatePanelId} FOR UPDATE`;
+      for (const rule of body.rules) {
+        if (rule.serviceRateId) {
+          const service = await tx.serviceRate.findFirst({ where: { id: rule.serviceRateId, ...(rule.isActive ? { isActive: true, isDeleted: false } : {}) } });
+          if (!service) throw new ValidationError('Select an active service for every service rule');
+          if (rule.contractRate != null && new Prisma.Decimal(rule.contractRate).greaterThan(service.standardRate)) {
+            throw new ValidationError('Contract tariff cannot exceed the standard service rate');
+          }
+        }
+        if (rule.departmentId && !await tx.department.findFirst({ where: { id: rule.departmentId, ...(rule.isActive ? { isActive: true } : {}) } })) {
+          throw new ValidationError('Select an active department for every department rule');
+        }
+      }
+      await tx.panelDiscountRule.updateMany({ where: { corporatePanelId, archivedAt: null }, data: { archivedAt: new Date() } });
+      if (body.rules.length) await tx.panelDiscountRule.createMany({
+        data: body.rules.map(rule => ({ ...rule, corporatePanelId, createdById: actorId,
+          coverageType: rule.coverageType ?? (rule.coveragePercent != null ? 'PERCENTAGE' : 'LEGACY_DISCOUNT') })),
       });
-      return tx.panelDiscountRule.findMany({ where: { corporatePanelId } });
+      return tx.panelDiscountRule.findMany({ where: { corporatePanelId, archivedAt: null }, orderBy: { createdAt: 'asc' } });
     });
   },
 
   async deleteCorporatePanel(id: string) {
     const existing = await this.assertExists('corporatePanel', id);
+    if (await prisma.panelDiscountRule.count({ where: { corporatePanelId: id } })) {
+      throw new ConflictError('This panel has contract history. Deactivate it to preserve its records.');
+    }
     const linkedPatientsCount = await prisma.panelPatient.count({
       where: { corporatePanelId: id },
     });

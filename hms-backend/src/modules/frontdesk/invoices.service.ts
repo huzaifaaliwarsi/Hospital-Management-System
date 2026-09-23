@@ -1,3 +1,5 @@
+import { resolvePanelCoverage } from '@/shared/panelCoverage';
+import { assertMembershipEligible } from '@/shared/panelMembership';
 import { invoicePaymentStatus } from '@/shared/invoicePaymentStatus';
 import { Decimal } from '@prisma/client/runtime/library';
 import type { Prisma } from '@prisma/client';
@@ -83,6 +85,12 @@ export const invoicesService = {
         selfPayEncounterId = createdSelfPay.id;
       }
 
+      if (body.panelPatientId) {
+        const patient = await tx.panelPatient.findUnique({ where: { id: body.panelPatientId }, include: { corporatePanel: true } });
+        if (!patient?.isActive || patient.status !== 'ACTIVE' || !patient.corporatePanel.isActive) throw new ValidationError('Panel patient and company must be active');
+        assertMembershipEligible(patient);
+      }
+
       const invoiceNumber = await generateInvoiceNumber(tx);
 
       const invoice = await tx.hospitalInvoice.create({
@@ -136,6 +144,9 @@ export const invoicesService = {
 
       if (!invoice) throw new NotFoundError('Invoice not found');
       if (invoice.status === 'VOID') throw new ValidationError('Cannot modify a void invoice');
+      if (invoice.panelPatientId && invoice.lines.some(line => !line.patientShare.plus(line.panelReceivable).equals(line.lineNet))) {
+        throw new ValidationError('Historical panel lines need payer reconciliation before adding charges');
+      }
 
       const serviceRate = await tx.serviceRate.findUnique({
         where: { id: body.serviceRateId },
@@ -160,15 +171,16 @@ export const invoicesService = {
       let discountAmount = new Decimal(0);
       let discountReason = body.discountReason ?? null;
 
-      // 1. Check corporate panel discount rule
-      if (invoice.panelPatient?.corporatePanel) {
-        const panelRule = invoice.panelPatient.corporatePanel.discountRules.find(
-          (r) => r.serviceRateId === serviceRate.id,
-        );
-        if (panelRule) {
-          discountAmount = lineGross.mul(panelRule.discountPercent).div(100);
-          discountReason = `Panel discount: ${panelRule.discountPercent}%`;
+      const coverage = resolvePanelCoverage(lineGross, invoice.panelPatient?.corporatePanel?.discountRules,
+        serviceRate.id, new Date(), serviceRate.departmentId, qty, invoice.panelPatient);
+      if (invoice.panelPatientId) {
+        if (!invoice.panelPatient?.isActive || invoice.panelPatient.status !== 'ACTIVE' || !invoice.panelPatient.corporatePanel.isActive) throw new ValidationError('Panel patient and company must be active');
+        if (invoice.sourceType !== 'ADMISSION') assertMembershipEligible(invoice.panelPatient);
+        if ((body.discountPercent ?? 0) > 0 || (body.discountAmount ?? 0) > 0 || body.manualRateOverride !== undefined) {
+          throw new ValidationError('Panel charges use configured contract rates; manual overrides require a separate audited adjustment');
         }
+        discountAmount = coverage.discountAmount;
+        discountReason = coverage.discountReason;
       }
 
       // 2. Manual discount override if provided
@@ -210,6 +222,9 @@ export const invoicesService = {
           discountAmount,
           discountReason,
           lineNet,
+          patientShare: invoice.panelPatientId ? coverage.patientShare : lineNet,
+          panelReceivable: invoice.panelPatientId ? coverage.panelReceivable : new Decimal(0),
+          coverageSnapshot: invoice.panelPatientId ? coverage.coverageSnapshot : undefined,
           performedByStaffId: body.performedByStaffId ?? null,
           isCompleted: true,
         },
@@ -237,6 +252,8 @@ export const invoicesService = {
           subtotal: newSubtotal,
           discountTotal: newDiscountTotal,
           total: newTotal,
+          patientShare: allLines.reduce((sum, line) => sum.plus(line.patientShare ?? line.lineNet), new Decimal(0)),
+          panelReceivable: allLines.reduce((sum, line) => sum.plus(line.panelReceivable ?? 0), new Decimal(0)),
           status: newStatus,
           ...(invoice.departmentId ? {} : { departmentId: serviceRate.departmentId }),
         },
@@ -282,6 +299,7 @@ export const invoicesService = {
       });
 
       if (!invoice) throw new NotFoundError('Invoice not found');
+      if (invoice.panelPatientId) throw new ValidationError('Posted panel charges cannot be manually repriced; use an audited contract adjustment');
       if (invoice.lines.length === 0) throw new ValidationError('Cannot discount an empty invoice');
 
       if (body.lineItemId) {
@@ -461,9 +479,9 @@ export const invoicesService = {
       if (invoice.status === 'VOID') throw new ValidationError('Cannot pay a void invoice');
 
       const amountDecimal = new Decimal(body.amount);
-      const remainingBalance = invoice.total.minus(invoice.paidTotal);
+      const remainingBalance = (invoice.panelPatientId ? invoice.patientShare : invoice.total).minus(invoice.paidTotal);
 
-      if (invoice.sourceType !== 'ADMISSION' && amountDecimal.greaterThan(remainingBalance)) {
+      if ((invoice.panelPatientId || invoice.sourceType !== 'ADMISSION') && amountDecimal.greaterThan(remainingBalance)) {
         throw new ValidationError(
           `Payment amount of PKR ${amountDecimal.toFixed(2)} exceeds remaining balance of PKR ${remainingBalance.toFixed(2)}`,
         );
@@ -617,7 +635,7 @@ export const invoicesService = {
 
     const hospitalProfile = await prisma.hospitalProfile.findFirst();
 
-    const outstanding = Decimal.max(0, invoice.total.minus(invoice.paidTotal));
+    const outstanding = Decimal.max(0, (invoice.panelPatientId ? invoice.patientShare : invoice.total).minus(invoice.paidTotal));
 
     return {
       hospital: {
@@ -639,6 +657,8 @@ export const invoicesService = {
         total: invoice.total,
         paidTotal: invoice.paidTotal,
         outstandingBalance: outstanding,
+        patientShare: invoice.panelPatientId ? invoice.patientShare : invoice.total,
+        panelReceivable: invoice.panelReceivable,
       },
       patient: invoice.panelPatient
         ? {
@@ -709,6 +729,8 @@ export const invoicesService = {
     if (query.hasDiscount === 'true') where.discountTotal = { gt: 0 };
     if (query.hasRefund === 'true') where.paymentReceipts = { some: { isReversed: true } };
     if (query.hasPayment === 'true') where.paymentReceipts = { some: {} };
+    if (query.isPanel === 'true') where.panelPatientId = { not: null };
+    if (query.corporatePanelId) where.panelPatient = { corporatePanelId: query.corporatePanelId };
     // Outstanding = still owed: UNPAID or PARTIALLY_PAID only (PAID/VOID have
     // no remaining balance). Only applied when the caller didn't already ask
     // for a specific status — an explicit `status` filter always wins.
@@ -719,13 +741,22 @@ export const invoicesService = {
     return prisma.hospitalInvoice.findMany({
       where,
       include: {
-        panelPatient: { select: { id: true, fullName: true, mrNumber: true } },
+        panelPatient: {
+          select: {
+            id: true,
+            fullName: true,
+            mrNumber: true,
+            panelMemberId: true,
+            corporatePanel: { select: { id: true, code: true, organizationName: true } },
+          },
+        },
         selfPayEncounter: { select: { id: true, fullName: true } },
+        department: { select: { id: true, name: true, code: true } },
         lines: { select: { id: true, lineNet: true, quantity: true } },
         paymentReceipts: { select: { id: true, receiptNumber: true, amount: true, method: true, isReversed: true } },
       },
       orderBy: { createdAt: 'desc' },
-      take: 100,
+      take: 200,
     });
   },
 

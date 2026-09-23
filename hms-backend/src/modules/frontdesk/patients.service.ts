@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
-import { NotFoundError, ConflictError } from '@/shared/errors/AppError';
+import { membershipSnapshot, validateMembershipDetails } from '@/shared/panelMembership';
+import { NotFoundError, ConflictError, ValidationError } from '@/shared/errors/AppError';
 import { normalizeCnic, normalizePhone } from '@/shared/validators';
 import { actorSelect, formatActorFromRelation, type ActorRelation } from '@/shared/actorLabel';
 import type {
@@ -62,6 +63,7 @@ export const patientsService = {
       where.OR = [
         { fullName: { contains: query.search, mode: 'insensitive' } },
         { mrNumber: { contains: query.search, mode: 'insensitive' } },
+        { panelMemberId: { contains: query.search, mode: 'insensitive' } },
         { cnicOrPassport: { contains: query.search, mode: 'insensitive' } },
         { phone: { contains: query.search, mode: 'insensitive' } },
       ];
@@ -92,6 +94,9 @@ export const patientsService = {
   },
 
   async createPanelPatient(body: CreatePanelPatientBody, createdById: string) {
+    const company = await prisma.corporatePanel.findUnique({ where: { id: body.corporatePanelId } });
+    if (!company?.isActive) throw new ValidationError('Panel patients can only be registered under an active company');
+    validateMembershipDetails(body, company);
     const mrNumber = await generateMrNumber();
     try {
       const created = await prisma.panelPatient.create({
@@ -101,6 +106,7 @@ export const patientsService = {
           isActive: body.status !== 'INACTIVE' && body.status !== 'DECEASED',
           createdById,
           updatedById: createdById,
+          membershipHistory: { create: { snapshot: membershipSnapshot(body), recordedById: createdById } },
         } as Prisma.PanelPatientUncheckedCreateInput,
         include: panelPatientInclude,
       });
@@ -114,16 +120,41 @@ export const patientsService = {
   },
 
   async updatePanelPatient(id: string, body: UpdatePanelPatientBody, updatedById: string) {
-    const existing = await prisma.panelPatient.findUnique({ where: { id } });
-    if (!existing) throw new NotFoundError('Panel patient not found');
+    return prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM panel_patients WHERE id = ${id} FOR UPDATE`;
+      const existing = await tx.panelPatient.findUnique({ where: { id }, include: { corporatePanel: true } });
+      if (!existing) throw new NotFoundError('Panel patient not found');
 
-    const data: Prisma.PanelPatientUncheckedUpdateInput = { ...body, updatedById };
-    if (body.status !== undefined) {
-      data.isActive = body.status === 'ACTIVE';
-    }
+      // Company transfers still require per-case payer links; history alone is insufficient.
+      if (body.corporatePanelId && body.corporatePanelId !== existing.corporatePanelId) {
+        throw new ValidationError('Changing a patient company requires membership history; keep the existing permanent record');
+      }
+      const merged = { ...existing, ...body };
+      const snapshot = membershipSnapshot(merged);
+      const membershipChanged = JSON.stringify(snapshot) !== JSON.stringify(membershipSnapshot(existing));
+      // An unrelated demographic edit must remain possible for an expired membership.
+      if (membershipChanged) validateMembershipDetails(merged, existing.corporatePanel);
+      const data: Prisma.PanelPatientUncheckedUpdateInput = { ...body, updatedById };
+      if (body.status !== undefined) {
+        data.isActive = body.status === 'ACTIVE';
+      }
 
-    const updated = await prisma.panelPatient.update({ where: { id }, data, include: panelPatientInclude });
-    return decoratePanelPatient(updated as any);
+      if (membershipChanged) {
+        await tx.panelMembershipHistory.create({ data: { panelPatientId: id, snapshot, recordedById: updatedById } });
+      }
+      const updated = await tx.panelPatient.update({ where: { id }, data, include: panelPatientInclude });
+      return decoratePanelPatient(updated as any);
+    });
+  },
+
+  async membershipHistory(id: string, page: number, pageSize: number) {
+    if (!await prisma.panelPatient.findUnique({ where: { id }, select: { id: true } })) throw new NotFoundError('Panel patient not found');
+    const [rows, totalItems] = await prisma.$transaction([
+      prisma.panelMembershipHistory.findMany({ where: { panelPatientId: id }, orderBy: [{ recordedAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize }),
+      prisma.panelMembershipHistory.count({ where: { panelPatientId: id } }),
+    ]);
+    const actors = await prisma.portalUser.findMany({ where: { id: { in: [...new Set(rows.flatMap(row => row.recordedById ? [row.recordedById] : []))] } }, select: { id: true, ...actorSelect.select } });
+    return { rows: rows.map(row => ({ ...row, recordedByLabel: formatActorFromRelation(actors.find(actor => actor.id === row.recordedById) ?? null) })), meta: { page, pageSize, totalItems, totalPages: Math.max(1, Math.ceil(totalItems / pageSize)) } };
   },
 
   listSelfPayEncounters(search?: string) {

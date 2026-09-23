@@ -1,3 +1,4 @@
+import PanelMembershipFields from './PanelMembershipFields';
 import React, { useState, useEffect } from 'react';
 import {
   X,
@@ -36,7 +37,7 @@ import {
   generateNextMrNumber,
   getAllPatients,
 } from '../../../services/patientRegistryService';
-import { getActiveCorporatePanels } from '../../../services/panelService';
+import { getActiveCorporatePanels, fetchCorporatePanels, type CorporatePanel } from '../../../services/panelService';
 
 interface PatientModalProps {
   isOpen: boolean;
@@ -54,7 +55,16 @@ export const PatientModal: React.FC<PatientModalProps> = ({
   onOpenExistingPatient,
 }) => {
   const isEditMode = Boolean(patientToEdit);
-  const activePanels = getActiveCorporatePanels();
+  const [panels, setPanels] = useState<CorporatePanel[]>(getActiveCorporatePanels);
+  const [panelLoadError, setPanelLoadError] = useState('');
+  const activePanels = panels.filter(p => p.status === 'Active' || p.id === patientToEdit?.panelId);
+  useEffect(() => {
+    if (!isOpen) return;
+    let ignore = false;
+    setPanelLoadError('');
+    fetchCorporatePanels().then(list => { if (!ignore) setPanels(list); }).catch(error => { if (!ignore) setPanelLoadError(error.message || 'Could not refresh companies'); });
+    return () => { ignore = true; };
+  }, [isOpen]);
 
   // Quick lookup search for existing patient
   const [quickSearchTerm, setQuickSearchTerm] = useState('');
@@ -130,6 +140,13 @@ export const PatientModal: React.FC<PatientModalProps> = ({
           panelId: patientToEdit.panelId || '',
           panelName: patientToEdit.panelName || '',
           panelMemberId: patientToEdit.panelMemberId || '',
+          membershipStatus: patientToEdit.membershipStatus || 'ACTIVE',
+          membershipValidFrom: patientToEdit.membershipValidFrom || '',
+          membershipValidTo: patientToEdit.membershipValidTo || '',
+          policyNumber: patientToEdit.policyNumber || '',
+          planName: patientToEdit.planName || '',
+          principalMemberName: patientToEdit.principalMemberName || '',
+          memberRelationship: patientToEdit.memberRelationship || '',
           emergencyContactName: patientToEdit.emergencyContactName || '',
           emergencyContactRelation: patientToEdit.emergencyContactRelation || '',
           emergencyContactPhone: patientToEdit.emergencyContactPhone || '',
@@ -334,7 +351,7 @@ export const PatientModal: React.FC<PatientModalProps> = ({
       if (!formData.panelId) {
         newErrors.panelId = 'Please select a Corporate Panel.';
       }
-      if (!formData.panelMemberId.trim()) {
+      if (activePanels.find(p => p.id === formData.panelId)?.memberIdRequired && !formData.panelMemberId.trim()) {
         newErrors.panelMemberId = 'Panel Member ID / Card Number is required.';
       }
     }
@@ -978,6 +995,7 @@ export const PatientModal: React.FC<PatientModalProps> = ({
                 </div>
               </div>
 
+              {panelLoadError && <p role="alert" className="text-xs text-red-600">{panelLoadError}</p>}
               {/* Corporate Panel Fields */}
               {formData.payerType === 'Corporate / Panel' && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 border-t border-slate-100">
@@ -986,6 +1004,7 @@ export const PatientModal: React.FC<PatientModalProps> = ({
                       Corporate Panel Entity <span className="text-red-500">*</span>
                     </label>
                     <select
+                      disabled={isEditMode}
                       value={formData.panelId}
                       onChange={(e) => {
                         const selectedId = e.target.value;
@@ -1014,7 +1033,7 @@ export const PatientModal: React.FC<PatientModalProps> = ({
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Panel Member ID / Card Number <span className="text-red-500">*</span>
+                      {activePanels.find(p => p.id === formData.panelId)?.memberIdLabel || 'Panel Member ID / Card Number'}
                     </label>
                     <input
                       type="text"
@@ -1036,13 +1055,14 @@ export const PatientModal: React.FC<PatientModalProps> = ({
                 </div>
               )}
 
+              {formData.payerType === 'Corporate / Panel' && <PanelMembershipFields key={patientToEdit?.id || 'new'} value={formData} onChange={patch => setFormData(prev => ({ ...prev, ...patch }))} patientId={patientToEdit?.id} datesRequired={activePanels.find(p => p.id === formData.panelId)?.membershipValidityRequired} />}
+
               {/* Informational note for Panel Changes */}
               {isEditMode && (
                 <div className="mt-3.5 flex items-start gap-2 p-2.5 bg-blue-50 border border-blue-100 rounded-lg text-xs text-blue-800">
                   <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
                   <span>
-                    Updated payer information will apply to future transactions. Historical billing
-                    records retain their original payer details.
+                    Membership changes are recorded in history. The permanent MR number and company remain unchanged.
                   </span>
                 </div>
               )}

@@ -59,10 +59,15 @@ export interface InvoiceSummary {
   total: number;
   paidTotal: number;
   balanceDue: number;
+  patientShare: number;
+  panelReceivable: number;
   /** True when at least one reversed (refund) receipt has been posted against this invoice. */
   hasRefund: boolean;
   /** Sum of reversed receipt amounts — what has actually been refunded, not the current balance. */
   refundedAmount: number;
+  panelName?: string;
+  panelMemberId?: string;
+  departmentName?: string;
   createdAt: string;
   createdAtIso: string;
 }
@@ -139,7 +144,9 @@ function toInvoiceSummary(raw: Record<string, any>): InvoiceSummary {
   const receipts: any[] = Array.isArray(raw.paymentReceipts) ? raw.paymentReceipts : [];
   const reversedReceipts = receipts.filter((r) => r.isReversed);
   const paidTotal = Number(raw.paidTotal ?? 0);
-  const balanceDue = Math.max(0, Number(raw.total ?? 0) - paidTotal);
+  const patientShare = Number(isPanel ? raw.patientShare ?? 0 : raw.total ?? 0);
+  const panelReceivable = Number(raw.panelReceivable ?? 0);
+  const balanceDue = Math.max(0, patientShare - paidTotal);
   return {
     id: raw.id,
     invoiceNumber: raw.invoiceNumber,
@@ -153,9 +160,12 @@ function toInvoiceSummary(raw: Record<string, any>): InvoiceSummary {
     discountTotal: Number(raw.discountTotal ?? 0),
     total: Number(raw.total ?? 0),
     paidTotal,
-    balanceDue,
+    balanceDue, patientShare, panelReceivable,
     hasRefund: reversedReceipts.length > 0,
     refundedAmount: reversedReceipts.reduce((sum, r) => sum + Math.abs(Number(r.amount ?? 0)), 0),
+    panelName: raw.panelPatient?.corporatePanel?.organizationName || raw.panelName || '',
+    panelMemberId: raw.panelPatient?.panelMemberId || '',
+    departmentName: raw.department?.name || '',
     createdAt: formatTimestamp(raw.createdAt),
     createdAtIso: raw.createdAt || '',
   };
@@ -227,6 +237,9 @@ export async function fetchInvoices(params?: {
   hasRefund?: boolean;
   hasPayment?: boolean;
   hasOutstandingBalance?: boolean;
+  isPanel?: 'true' | 'false';
+  corporatePanelId?: string;
+  panelPatientId?: string;
 }): Promise<InvoiceSummary[]> {
   const res = await apiClient.get<{ data: Record<string, any>[] }>('/invoices', { params });
   return res.data.data.map(toInvoiceSummary);

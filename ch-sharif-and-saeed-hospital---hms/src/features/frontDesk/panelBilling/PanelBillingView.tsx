@@ -3,7 +3,7 @@ import { Building2, Wallet, ClipboardList, FileSpreadsheet, History } from 'luci
 import { Select } from '../../../components/forms/FormControls';
 import { EmptyState } from '../../../components/common/StateViews';
 import { formatPKR } from '../../../utils/formatters';
-import { getActiveCorporatePanels } from '../../../services/panelService';
+import { getActiveCorporatePanels, fetchCorporatePanels, CorporatePanel } from '../../../services/panelService';
 import { fetchPanelStatement, fetchPanelRemittances, PanelStatement, PanelRemittanceRecord } from '../../../services/panelBillingService';
 import { PanelVerificationPanel } from './PanelVerificationPanel';
 import { PanelInterimStatementSection } from './PanelInterimStatementSection';
@@ -22,14 +22,24 @@ const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
  * Panel Billing (HMS_V7.2_NEW_REQUIREMENTS.md §2.5/§3.3) — the Front Desk
  * portal's last remaining nav item. Panel Verification, Contract
  * Resolution, Panel Interim Statement and Panel Remittance, consolidated
- * onto one page with tabs behind a single Corporate Panel selector — same
- * multi-nav-item-to-one-page consolidation `HospitalInvoicesView` already
- * uses for `hospital_invoices`/`payments_receipts`/`discounts`/`refunds`.
+ * onto one page with tabs behind a single Corporate Panel selector.
  */
 export const PanelBillingView: React.FC = () => {
-  const panels = useMemo(() => getActiveCorporatePanels(), []);
-  const [corporatePanelId, setCorporatePanelId] = useState(panels[0]?.id ?? '');
+  const [panels, setPanels] = useState<CorporatePanel[]>(() => getActiveCorporatePanels());
+  const [corporatePanelId, setCorporatePanelId] = useState<string>('');
   const [tab, setTab] = useState<Tab>('verification');
+
+  useEffect(() => {
+    fetchCorporatePanels()
+      .then((data) => {
+        const active = data.filter((p) => p.status === 'Active');
+        setPanels(active);
+        if (active.length > 0) {
+          setCorporatePanelId((prev) => prev || active[0].id);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const [statement, setStatement] = useState<PanelStatement | null>(null);
   const [isStatementLoading, setIsStatementLoading] = useState(true);

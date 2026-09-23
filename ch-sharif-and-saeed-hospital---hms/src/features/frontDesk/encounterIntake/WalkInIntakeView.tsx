@@ -1,4 +1,7 @@
+import PanelMembershipFields from '../../superAdmin/patientRegistry/PanelMembershipFields';
+import type { PanelMembershipDetails } from '../../../types/patient';
 import { doctorsForEncounter } from '../../../utils/doctorAvailability';
+import { InvoiceDetailModal } from '../billing/InvoiceDetailModal';
 import { useRouter } from '../../../context/RouterContext';
 import { HOSPITAL_SERVICE_SOURCE, NO_ACTIVE_DEPARTMENT_SERVICES, serviceSourceOptions, servicesForSource, retainAvailableServiceIds } from '../../../utils/serviceSelection';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
@@ -16,13 +19,18 @@ import {
   Plus,
   X,
   FlaskConical,
+  Calendar,
 } from 'lucide-react';
+import { formatDisplayDate } from '../../../utils/dateConstants';
 import { PatientGender, PayerType, GuardianRelation, GUARDIAN_RELATIONS } from '../../../types/patient';
 import {
   createPatient,
   normalizePhone,
   isValidPhone,
+  calculateAgeFromDob,
+  PanelPatientSearchResult,
 } from '../../../services/patientRegistryService';
+import { PanelPatientSearchSection } from '../../../components/common/PanelPatientSearchSection';
 import {
   fetchCorporatePanels,
   getActiveCorporatePanels,
@@ -41,7 +49,6 @@ import { fetchDepartments, DepartmentService } from '../../../services/departmen
 import { Department } from '../../../types/department';
 import { HospitalService } from '../../../types/serviceRates';
 import { TextInput, Select, Textarea, CNICInput, MultiSelect, ServiceChecklist } from '../../../components/forms/FormControls';
-import { useRouter } from '../../../context/RouterContext';
 import { formatPKR } from '../../../utils/formatters';
 import { focusNextField, focusNextFieldOnEnter } from '../../../utils/formNavigation';
 
@@ -138,6 +145,40 @@ export const WalkInIntakeView: React.FC = () => {
   // Panel Specific Fields
   const [panelId, setPanelId] = useState('');
   const [panelMemberId, setPanelMemberId] = useState('');
+  const [membershipDetails, setMembershipDetails] = useState<PanelMembershipDetails>({});
+  const [selectedExistingPatient, setSelectedExistingPatient] = useState<PanelPatientSearchResult | null>(null);
+
+  const handleUseExistingPatient = (match: PanelPatientSearchResult) => {
+    setFullName(match.fullName.toUpperCase());
+    setFatherGuardianName((match.guardianName || '').toUpperCase());
+    setGuardianRelation((match.guardianRelation as GuardianRelation) || 'Father');
+    setPrimaryPhone(match.phone || '');
+    if (match.dob) {
+      const ageNum = calculateAgeFromDob(match.dob);
+      setAge(String(ageNum));
+    }
+    setGender((match.gender as PatientGender) || 'Male');
+    setCnic(match.cnicOrPassport || '');
+    setAddress(match.addressLine1 || '');
+    setPanelId(match.panelId);
+    setPanelMemberId(match.panelMemberId || '');
+    setSelectedExistingPatient(match);
+  };
+
+  const handleClearExistingPatient = () => {
+    setSelectedExistingPatient(null);
+    setFullName('');
+    setFatherGuardianName('');
+    setGuardianRelation('Father');
+    setPrimaryPhone('');
+    setAge('');
+    setGender('Male');
+    setCnic('');
+    setAddress('');
+    setPanelId('');
+    setPanelMemberId('');
+    setMembershipDetails({});
+  };
 
   // Department & Doctor selection (Department is Required)
   const [departments, setDepartments] = useState<Department[]>(() => DepartmentService.getDepartments().filter((d) => d.status === 'Active'));
@@ -395,6 +436,7 @@ export const WalkInIntakeView: React.FC = () => {
     setPayerType('Self Pay');
     setPanelId('');
     setPanelMemberId('');
+    setMembershipDetails({});
     setCnic('');
     setEncounterType(queryType || '');
     setDepartmentId('');
@@ -403,6 +445,7 @@ export const WalkInIntakeView: React.FC = () => {
     setSelectedServiceIds([]);
     setFormError(null);
     setCreatedInvoiceId(null);
+    setSelectedExistingPatient(null);
   };
 
   const handleCreateEncounter = async () => {
@@ -443,7 +486,7 @@ export const WalkInIntakeView: React.FC = () => {
         setFormError('Please select a Corporate Panel.');
         return;
       }
-      if (!panelMemberId.trim()) {
+      if (corporatePanels.find(p => p.id === panelId)?.memberIdRequired && !panelMemberId.trim()) {
         setFormError('Panel Member ID / Card Number is required for Corporate / Panel billing.');
         return;
       }
@@ -526,48 +569,54 @@ export const WalkInIntakeView: React.FC = () => {
         });
         targetInvoiceId = invoice.id;
       } else {
-        // Corporate / Panel: Register panel patient then create encounter & invoice
-        const regRes = await createPatient(
-          {
-            fullName: fullName.trim(),
-            fatherGuardianName: fatherGuardianName.trim(),
-            guardianRelation,
-            dateOfBirth: dob,
-            age: ageNum,
-            ageIsEstimated: true,
-            gender,
-            cnic: cnic.trim(),
-            passportNumber: '',
-            primaryPhone: normalizePhone(primaryPhone),
-            alternatePhone: '',
-            email: '',
-            addressLine1: '',
-            addressLine2: '',
-            city: 'Lahore',
-            province: 'Punjab',
-            country: 'Pakistan',
-            bloodGroup: 'Unknown',
-            payerType: 'Corporate / Panel',
-            panelId,
-            panelName: corporatePanels.find((p) => p.id === panelId)?.name || '',
-            panelMemberId: panelMemberId.trim(),
-            emergencyContactName: '',
-            emergencyContactRelation: '',
-            emergencyContactPhone: '',
-            status: 'ACTIVE',
-          },
-          null
-        );
+        // Corporate / Panel: Reuse selected existing panel patient or register new
+        let panelPatientIdToUse = selectedExistingPatient?.id;
 
-        if (!regRes.success || !regRes.patient) {
-          setFormError(regRes.error || 'Failed to register panel patient.');
-          setIsSaving(false);
-          return;
+        if (!panelPatientIdToUse) {
+          const regRes = await createPatient(
+            {
+              fullName: fullName.trim(),
+              fatherGuardianName: fatherGuardianName.trim(),
+              guardianRelation,
+              dateOfBirth: dob,
+              age: ageNum,
+              ageIsEstimated: true,
+              gender,
+              cnic: cnic.trim(),
+              passportNumber: '',
+              primaryPhone: normalizePhone(primaryPhone),
+              alternatePhone: '',
+              email: '',
+              addressLine1: address.trim(),
+              addressLine2: '',
+              city: 'Lahore',
+              province: 'Punjab',
+              country: 'Pakistan',
+              bloodGroup: 'Unknown',
+              payerType: 'Corporate / Panel',
+              panelId,
+              panelName: corporatePanels.find((p) => p.id === panelId)?.name || '',
+              panelMemberId: panelMemberId.trim(),
+              ...membershipDetails,
+              emergencyContactName: '',
+              emergencyContactRelation: '',
+              emergencyContactPhone: '',
+              status: 'ACTIVE',
+            },
+            null
+          );
+
+          if (!regRes.success || !regRes.patient) {
+            setFormError(regRes.error || 'Failed to register panel patient.');
+            setIsSaving(false);
+            return;
+          }
+          panelPatientIdToUse = regRes.patient.id;
         }
 
         const invoice = await createEncounter({
           encounterType,
-          panelPatientId: regRes.patient.id,
+          panelPatientId: panelPatientIdToUse,
           departmentId: effectiveDeptId || undefined,
           doctorStaffId: doctorId || undefined,
           notes: combinedNotes,
@@ -639,6 +688,10 @@ export const WalkInIntakeView: React.FC = () => {
           )}
         </div>
         <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold border bg-slate-50 text-slate-700 border-slate-200">
+            <Calendar className="h-3.5 w-3.5 text-[#08775A]" />
+            <span>Entry Date: {formatDisplayDate(new Date())}</span>
+          </div>
           <span
             className={`px-2.5 py-1 rounded-md text-xs font-bold border uppercase tracking-wide ${encounterType === 'OPD'
               ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
@@ -909,7 +962,12 @@ export const WalkInIntakeView: React.FC = () => {
               {/* New Patient (Self Pay) Card */}
               <button
                 type="button"
-                onClick={() => setPayerType('Self Pay')}
+                onClick={() => {
+                  setPayerType('Self Pay');
+                  if (selectedExistingPatient) {
+                    handleClearExistingPatient();
+                  }
+                }}
                 className={`p-3 rounded-xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${payerType === 'Self Pay'
                   ? 'border-[#08775A] bg-[#effaf5] shadow-xs ring-1 ring-[#08775A]/20'
                   : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
@@ -970,18 +1028,32 @@ export const WalkInIntakeView: React.FC = () => {
           <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-3.5">
             <div className="flex items-center justify-between pb-2.5 border-b border-slate-100">
               <span className="text-xs font-bold text-slate-800 uppercase tracking-wide flex items-center gap-1.5">
-                <User className="h-3.5 w-3.5 text-[#08775A]" /> 2. Patient Information (New Registration)
+                <User className="h-3.5 w-3.5 text-[#08775A]" /> 2. Patient Information
               </span>
-              <span className="text-[10.5px] text-slate-500 font-medium bg-slate-100 px-2 py-0.5 rounded">
-                Instant Walk-In Entry
+              <span className={`text-[10.5px] font-medium px-2 py-0.5 rounded ${
+                selectedExistingPatient
+                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                  : 'bg-slate-100 text-slate-500'
+              }`}>
+                {selectedExistingPatient ? `From Panel Registry (${selectedExistingPatient.mrNumber})` : 'Instant Walk-In Entry'}
               </span>
             </div>
+
+            {/* Corporate / Panel Search Section (When Panel is active) */}
+            {payerType === 'Corporate / Panel' && (
+              <PanelPatientSearchSection
+                selectedPatient={selectedExistingPatient}
+                onSelectPatient={handleUseExistingPatient}
+                onClearPatient={handleClearExistingPatient}
+              />
+            )}
 
             {/* Full Name & Father / Guardian */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <TextInput
                 label="Patient Full Name"
                 required
+                disabled={!!selectedExistingPatient}
                 placeholder="Patient's legal name"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value.toUpperCase())}
@@ -990,6 +1062,7 @@ export const WalkInIntakeView: React.FC = () => {
               <TextInput
                 label="Father / Guardian Name"
                 required
+                disabled={!!selectedExistingPatient}
                 placeholder="Father / Husband / Guardian"
                 value={fatherGuardianName}
                 onChange={(e) => setFatherGuardianName(e.target.value.toUpperCase())}
@@ -1002,6 +1075,7 @@ export const WalkInIntakeView: React.FC = () => {
               <TextInput
                 label="Contact Phone"
                 required
+                disabled={!!selectedExistingPatient}
                 placeholder="0300-1234567"
                 value={primaryPhone}
                 onChange={(e) => setPrimaryPhone(e.target.value)}
@@ -1010,6 +1084,7 @@ export const WalkInIntakeView: React.FC = () => {
               <TextInput
                 label="Age (Years)"
                 required
+                disabled={!!selectedExistingPatient}
                 type="number"
                 min="0"
                 max="130"
@@ -1041,8 +1116,11 @@ export const WalkInIntakeView: React.FC = () => {
                   <button
                     key={g}
                     type="button"
+                    disabled={!!selectedExistingPatient}
                     onClick={() => setGender(g)}
-                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all cursor-pointer ${gender === g
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
+                      selectedExistingPatient ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'
+                    } ${gender === g
                       ? 'bg-[#08775A] text-white border-[#08775A] shadow-xs'
                       : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                       }`}
@@ -1064,6 +1142,7 @@ export const WalkInIntakeView: React.FC = () => {
                   <Select
                     label="Corporate Panel"
                     required
+                    disabled={!!selectedExistingPatient}
                     options={[
                       { label: '-- Select Corporate Panel --', value: '' },
                       ...corporatePanels.map((p) => ({ label: `${p.name} (${p.code})`, value: p.id })),
@@ -1073,17 +1152,20 @@ export const WalkInIntakeView: React.FC = () => {
                     onKeyDown={handleEnterNext}
                   />
                   <TextInput
-                    label="Panel Member ID / Card #"
-                    required
+                    label={corporatePanels.find(p => p.id === panelId)?.memberIdLabel || 'Panel Member ID / Card #'}
+                    required={corporatePanels.find(p => p.id === panelId)?.memberIdRequired}
+                    disabled={!!selectedExistingPatient}
                     placeholder="e.g. EMP-99214 / CRD-4412"
                     value={panelMemberId}
                     onChange={(e) => setPanelMemberId(e.target.value.toUpperCase())}
                     onKeyDown={handleEnterNext}
                   />
+                  {!selectedExistingPatient && <div className="sm:col-span-2"><PanelMembershipFields value={membershipDetails} onChange={patch => setMembershipDetails(prev => ({ ...prev, ...patch }))} datesRequired={corporatePanels.find(p => p.id === panelId)?.membershipValidityRequired} /></div>}
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <CNICInput
                     label="CNIC (optional)"
+                    disabled={!!selectedExistingPatient}
                     placeholder="XXXXX-XXXXXXX-X"
                     value={cnic}
                     onChange={(e) => setCnic(e.target.value)}
@@ -1091,6 +1173,7 @@ export const WalkInIntakeView: React.FC = () => {
                   />
                   <Select
                     label="Guardian Relation (optional)"
+                    disabled={!!selectedExistingPatient}
                     options={GUARDIAN_RELATIONS.map((r) => ({ label: r, value: r }))}
                     value={guardianRelation}
                     onChange={(e) => setGuardianRelation(e.target.value as GuardianRelation)}

@@ -1,6 +1,7 @@
 import { AdmissionLedgerButton } from './AdmissionLedgerButton';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Pill, Eye } from 'lucide-react';
+import { formatDateTimeDDMMYYYY } from '../../utils/formatters';
 import { Select, TextInput } from '../../components/forms/FormControls';
 import { LoadingState, ErrorState, EmptyState } from '../../components/common/StateViews';
 import { pharmacyApiService } from '../../services/pharmacyApiService';
@@ -41,7 +42,7 @@ function toRow(raw: any): PharmacyRequestRow {
     medicines: (raw.lines || []).map((l: any) => `${l.medicine?.name || 'Medicine'} × ${Number(l.requestedQuantity)}`).join(', '),
     status: raw.status,
     requestedByLabel: raw.requestedBy?.username || '—',
-    requestedAt: raw.requestedAt ? new Date(raw.requestedAt).toLocaleString('en-PK', { dateStyle: 'medium', timeStyle: 'short' }) : '—',
+    requestedAt: raw.requestedAt ? formatDateTimeDDMMYYYY(raw.requestedAt) : '—',
   };
 }
 

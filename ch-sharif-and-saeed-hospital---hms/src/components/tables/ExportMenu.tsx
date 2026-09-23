@@ -3,6 +3,7 @@ import { Download, FileText, Printer, FileSpreadsheet, ChevronDown, Check, Eye }
 import { Modal } from '../common/Modal';
 import { HOSPITAL_INFO, SOFTWARE_PROVIDER } from '../../constants';
 import { useToast } from '../../context/ToastContext';
+import { formatDateTimeDDMMYYYY } from '../../utils/formatters';
 
 export interface ExportMenuProps {
   reportTitle: string;
@@ -204,16 +205,7 @@ export const ExportMenu: React.FC<ExportMenuProps> = ({
                   Generation Date & Time
                 </span>
                 <span className="font-medium text-slate-700">
-                  {new Date().toLocaleDateString('en-PK', {
-                    day: 'numeric',
-                    month: 'short',
-                    year: 'numeric',
-                  })}{' '}
-                  -{' '}
-                  {new Date().toLocaleTimeString('en-PK', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
+                  {formatDateTimeDDMMYYYY(new Date())}
                 </span>
               </div>
             </div>

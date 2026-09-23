@@ -15,6 +15,11 @@ function actorId(req: Request): string {
 }
 
 export const patientsController = {
+  membershipHistory: async (req: Request, res: Response) => {
+    const query = req.query as unknown as ListPanelPatientsQuery;
+    const { rows, meta } = await patientsService.membershipHistory(req.params.id as string, query.page, query.pageSize);
+    res.json({ data: rows, meta: { pagination: meta } });
+  },
   checkDuplicate: async (req: Request, res: Response) => {
     res.json({ data: await patientsService.checkDuplicate(req.query as unknown as CheckDuplicateQuery) });
   },

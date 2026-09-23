@@ -15,10 +15,12 @@ function formatTimestamp(iso?: string | null): string {
   if (!iso) return '';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  return `${d.toLocaleDateString('en-PK', { day: '2-digit', month: 'short', year: 'numeric' })}, ${d.toLocaleTimeString('en-PK', {
-    hour: '2-digit',
-    minute: '2-digit',
-  })}`;
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  const dateStr = `${day}/${month}/${year}`;
+  const timeStr = d.toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' });
+  return `${dateStr}, ${timeStr}`;
 }
 
 /** Panel Remittance history — every recorded remittance with its per-invoice allocation breakdown. */

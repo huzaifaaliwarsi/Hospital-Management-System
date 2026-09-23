@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
 import { NotFoundError, ValidationError } from '@/shared/errors/AppError';
 import { resolvePanelCoverage } from '@/shared/panelCoverage';
+import { assertMembershipEligible, membershipIneligibilityReasons } from '@/shared/panelMembership';
 import type { ContractResolutionQuery, RecordPanelRemittanceBody } from './panelBilling.schemas';
 
 import { generateRemittanceNumber } from '@/shared/idGenerator';
@@ -24,10 +25,7 @@ export const panelBillingService = {
     });
     if (!panelPatient) throw new NotFoundError('Panel patient not found');
 
-    const reasons: string[] = [];
-    if (!panelPatient.isActive) reasons.push('Panel patient record is inactive');
-    if (panelPatient.status !== 'ACTIVE') reasons.push(`Panel patient status is ${panelPatient.status}`);
-    if (!panelPatient.corporatePanel.isActive) reasons.push('Corporate panel is inactive');
+    const reasons = membershipIneligibilityReasons(panelPatient);
 
     return {
       panelPatient: {
@@ -35,6 +33,9 @@ export const panelBillingService = {
         mrNumber: panelPatient.mrNumber,
         fullName: panelPatient.fullName,
         panelMemberId: panelPatient.panelMemberId,
+        membershipStatus: panelPatient.membershipStatus,
+        membershipValidFrom: panelPatient.membershipValidFrom,
+        membershipValidTo: panelPatient.membershipValidTo,
         status: panelPatient.status,
         isActive: panelPatient.isActive,
       },
@@ -63,21 +64,24 @@ export const panelBillingService = {
     const quantity = new Decimal(query.quantity ?? 1);
     const contractAmount = serviceRate.standardRate.mul(quantity);
 
-    const resolution = resolvePanelCoverage(contractAmount, panelPatient.corporatePanel?.discountRules, query.serviceRateId);
-
-    const now = new Date();
-    const matchingRule = panelPatient.corporatePanel?.discountRules.find(
-      (r) => r.serviceRateId === query.serviceRateId && r.effectiveFrom <= now && (!r.effectiveTo || r.effectiveTo >= now),
-    );
-    const source: 'COVERAGE' | 'LEGACY_DISCOUNT' | 'NOT_COVERED' =
-      matchingRule?.coveragePercent != null ? 'COVERAGE' : matchingRule ? 'LEGACY_DISCOUNT' : 'NOT_COVERED';
+    if (panelPatient.isActive === false || (panelPatient.status && panelPatient.status !== 'ACTIVE') || panelPatient.corporatePanel.isActive === false) {
+      throw new ValidationError('Panel patient and company must be active');
+    }
+    if (serviceRate.isActive === false || serviceRate.isDeleted) throw new ValidationError('Service is inactive');
+    assertMembershipEligible(panelPatient);
+    const resolution = resolvePanelCoverage(contractAmount, panelPatient.corporatePanel.discountRules, query.serviceRateId, new Date(), serviceRate.departmentId, quantity, panelPatient);
+    const matchingRule = resolution.matchedRule;
+    const source = resolution.source;
 
     return {
       serviceRateId: serviceRate.id,
       serviceCode: serviceRate.code,
       serviceName: serviceRate.name,
       quantity: quantity.toNumber(),
-      contractAmount,
+      contractAmount: resolution.eligibleNet,
+      grossAmount: contractAmount,
+      matchedScope: matchingRule?.scope ?? (matchingRule ? 'SERVICE' : null),
+      coverageSnapshot: resolution.coverageSnapshot,
       patientShare: resolution.patientShare,
       panelReceivable: resolution.panelReceivable,
       discountAmount: resolution.discountAmount,

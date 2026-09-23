@@ -506,12 +506,16 @@ describe('Phase 4: Front Desk Billing, Appointments & Doctor Commission Engine',
     it('automatically applies panel discount when adding service for corporate panel patient', async () => {
       (prisma.hospitalInvoice.findUnique as any).mockResolvedValue({
         id: 'inv-panel-1',
+        panelPatientId: 'panel-patient-1',
         status: 'UNPAID',
         paidTotal: new Decimal(0),
         panelPatient: {
+          isActive: true, status: 'ACTIVE',
           corporatePanel: {
+            isActive: true,
             discountRules: [
-              { serviceRateId, discountPercent: new Decimal(20) }, // 20% panel discount
+              { serviceRateId, discountPercent: new Decimal(20), coveragePercent: null, capAmount: null,
+                effectiveFrom: new Date('2020-01-01'), effectiveTo: null }, // 20% hospital-funded discount
             ],
           },
         },

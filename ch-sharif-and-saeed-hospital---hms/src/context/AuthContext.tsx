@@ -16,6 +16,7 @@ import { primeCorporatePanelsCache } from '../services/panelService';
 import { primeOutsourcedProvidersCache } from '../services/outsourcedProviderService';
 import { AUTH_TOKEN_REFRESHED_EVENT, AUTH_SESSION_EXPIRED_EVENT } from '../services/apiClient';
 import { primePatientRegistryCache } from '../services/patientRegistryService';
+import { formatDateTimeDDMMYYYY } from '../utils/formatters';
 
 // Operational staff demo fallback accounts (Admin and Super Admin are authoritatively managed in AdminUserService)
 export const MOCK_STAFF_ACCOUNTS: Record<string, StaffAccount> = {
@@ -483,14 +484,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Establish authenticated session for staff account
     const now = new Date();
-    const loginTimeStr = new Intl.DateTimeFormat('en-PK', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-    }).format(now);
+    const loginTimeStr = formatDateTimeDDMMYYYY(now);
 
     const userWithLogin: User = {
       ...account.user,

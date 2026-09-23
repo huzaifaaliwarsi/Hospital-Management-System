@@ -22,6 +22,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { HOSPITAL_INFO } from '../../constants';
 import { formatPKR } from '../../utils/formatters';
+import { formatDisplayDate } from '../../utils/dateConstants';
 import { Modal } from '../../components/common/Modal';
 
 interface SuperAdminReportsViewProps {
@@ -93,7 +94,7 @@ export const SuperAdminReportsView: React.FC<SuperAdminReportsViewProps> = ({
   const formatDateLabel = (dateStr: string) => {
     try {
       const d = new Date(dateStr);
-      return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+      return formatDisplayDate(d);
     } catch {
       return dateStr;
     }

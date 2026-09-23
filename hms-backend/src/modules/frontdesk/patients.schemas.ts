@@ -50,7 +50,14 @@ export const createPanelPatientSchema = z.object({
   emergencyContactPhone: z.string().optional(),
   status: z.enum(['ACTIVE', 'INACTIVE', 'DECEASED']).optional(),
   corporatePanelId: z.string().uuid(),
-  panelMemberId: z.string().optional(),
+  panelMemberId: z.string().trim().max(150).nullable().optional(),
+  membershipStatus: z.enum(['ACTIVE', 'SUSPENDED', 'CANCELLED']).optional(),
+  membershipValidFrom: z.string().date().transform(value => new Date(value)).nullable().optional(),
+  membershipValidTo: z.string().date().transform(value => new Date(value)).nullable().optional(),
+  policyNumber: z.string().trim().max(150).nullable().optional(),
+  planName: z.string().trim().max(150).nullable().optional(),
+  principalMemberName: z.string().trim().max(150).nullable().optional(),
+  memberRelationship: z.string().trim().max(100).nullable().optional(),
 });
 export type CreatePanelPatientBody = z.infer<typeof createPanelPatientSchema>;
 export const updatePanelPatientSchema = createPanelPatientSchema.partial();

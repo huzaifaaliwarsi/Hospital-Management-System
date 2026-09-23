@@ -15,7 +15,7 @@ import {
   GUARDIAN_RELATIONS,
 } from '../types/patient';
 import { User } from '../types';
-import { getPanelByCode } from './panelService';
+import { getPanelByCode, getPanelById } from './panelService';
 
 /**
  * Live Patient Registry service. This Super Admin screen is the
@@ -113,6 +113,13 @@ function toPatientFromPanel(raw: Record<string, any>): Patient {
     panelId: raw.corporatePanelId,
     panelName: raw.corporatePanel?.organizationName || '',
     panelMemberId: raw.panelMemberId || undefined,
+    membershipStatus: raw.membershipStatus || undefined,
+    membershipValidFrom: raw.membershipValidFrom?.slice(0, 10) || undefined,
+    membershipValidTo: raw.membershipValidTo?.slice(0, 10) || undefined,
+    policyNumber: raw.policyNumber || undefined,
+    planName: raw.planName || undefined,
+    principalMemberName: raw.principalMemberName || undefined,
+    memberRelationship: raw.memberRelationship || undefined,
     emergencyContactName: raw.emergencyContactName || undefined,
     emergencyContactRelation: raw.emergencyContactRelation || undefined,
     emergencyContactPhone: raw.emergencyContactPhone || undefined,
@@ -259,12 +266,12 @@ export interface PanelPatientSearchResult {
  * Lets New Admission reuse an existing panel patient instead of always
  * inline-registering a brand-new record for the same real person.
  */
-export async function searchPanelPatients(query: string): Promise<PanelPatientSearchResult[]> {
+export async function searchPanelPatients(query: string = '', panelId?: string): Promise<PanelPatientSearchResult[]> {
   const trimmed = query.trim();
-  if (!trimmed) return [];
-  const res = await apiClient.get<{ data: Record<string, any>[] }>('/patients/panel', {
-    params: { search: trimmed, pageSize: 10 },
-  });
+  const params: Record<string, any> = { pageSize: 25 };
+  if (trimmed) params.search = trimmed;
+  if (panelId) params.corporatePanelId = panelId;
+  const res = await apiClient.get<{ data: Record<string, any>[] }>('/patients/panel', { params });
   return res.data.data.map((raw) => ({
     id: raw.id,
     fullName: raw.fullName,
@@ -424,7 +431,14 @@ function toBackendPanelPayload(formData: PatientFormData): Record<string, unknow
       : (formData.emergencyContactPhone ? normalizePhone(formData.emergencyContactPhone) : undefined),
     status: formData.status || 'ACTIVE',
     corporatePanelId: formData.panelId,
-    panelMemberId: formData.panelMemberId?.trim() || undefined,
+    panelMemberId: formData.panelMemberId?.trim() || null,
+    membershipStatus: formData.membershipStatus === undefined ? undefined : (formData.membershipStatus || 'ACTIVE'),
+    membershipValidFrom: formData.membershipValidFrom === undefined ? undefined : (formData.membershipValidFrom || null),
+    membershipValidTo: formData.membershipValidTo === undefined ? undefined : (formData.membershipValidTo || null),
+    policyNumber: formData.policyNumber === undefined ? undefined : (formData.policyNumber || null),
+    planName: formData.planName === undefined ? undefined : (formData.planName || null),
+    principalMemberName: formData.principalMemberName === undefined ? undefined : (formData.principalMemberName || null),
+    memberRelationship: formData.memberRelationship === undefined ? undefined : (formData.memberRelationship || null),
   };
 }
 
@@ -455,7 +469,7 @@ function validateCommonFields(formData: PatientFormData): string | null {
   if (!formData.payerType) return 'Payer Type is required.';
   if (formData.payerType === 'Corporate / Panel') {
     if (!formData.panelId) return 'Please select a Corporate Panel.';
-    if (!formData.panelMemberId.trim()) return 'Panel Member ID / Card Number is required for Corporate / Panel payer.';
+    if (getPanelById(formData.panelId)?.memberIdRequired && !formData.panelMemberId.trim()) return 'Panel Member ID / Card Number is required for Corporate / Panel payer.';
   }
   return null;
 }

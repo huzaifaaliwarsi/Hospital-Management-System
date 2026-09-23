@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Coins, Loader2, AlertTriangle, Banknote, CreditCard, RotateCcw } from 'lucide-react';
-import { formatPKR } from '../../../utils/formatters';
+import { formatPKR, formatDateTimeDDMMYYYY } from '../../../utils/formatters';
 import { frontdeskApiService } from '../../../services/frontdeskApiService';
 
 interface BalanceSheetTransaction {
@@ -178,7 +178,7 @@ export const MyBalanceSheetView: React.FC = () => {
                       {t.direction === 'IN' ? '+' : '-'}{formatPKR(t.amount)}
                     </td>
                     <td className="py-2 px-3 text-right text-slate-500 font-mono text-[11px]">
-                      {new Date(t.occurredAt).toLocaleString('en-PK', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                      {formatDateTimeDDMMYYYY(t.occurredAt)}
                     </td>
                   </tr>
                 ))

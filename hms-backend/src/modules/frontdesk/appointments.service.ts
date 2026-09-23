@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
 import { NotFoundError, ValidationError } from '@/shared/errors/AppError';
 import { resolvePanelCoverage } from '@/shared/panelCoverage';
+import { assertMembershipEligible } from '@/shared/panelMembership';
 import type {
   BookAppointmentBody,
   ListAppointmentsQuery,
@@ -63,6 +64,7 @@ export const appointmentsService = {
         if (panelPatient.corporatePanel && !panelPatient.corporatePanel.isActive) {
           throw new ValidationError('Corporate panel is inactive');
         }
+        assertMembershipEligible(panelPatient, body.slotAt);
       }
 
       const estimatedAmount = body.estimatedAmount !== undefined
@@ -209,6 +211,11 @@ export const appointmentsService = {
     if (['CANCELLED', 'COMPLETED'].includes(existing.status)) {
       throw new ValidationError(`Cannot update appointment in ${existing.status} status`);
     }
+    if (body.slotAt && existing.panelPatientId) {
+      const patient = await prisma.panelPatient.findUnique({ where: { id: existing.panelPatientId }, include: { corporatePanel: true } });
+      if (!patient) throw new NotFoundError('Panel patient not found');
+      assertMembershipEligible(patient, body.slotAt);
+    }
 
     return prisma.appointment.update({
       where: { id },
@@ -330,6 +337,7 @@ export const appointmentsService = {
       }
 
       // If invoice already created, just update status
+      if (appointment.panelPatient) assertMembershipEligible(appointment.panelPatient);
       let invoice = appointment.hospitalInvoices[0];
 
       if (!invoice) {
@@ -337,10 +345,11 @@ export const appointmentsService = {
         // v7.2 §2.5/§20/§21 — Patient Share vs Panel Receivable split. Panel
         // Service rule (only tier that exists today) → else NOT_COVERED —
         // shared with `admission.service.ts` via `resolvePanelCoverage`.
-        const { discountAmount, discountReason, patientShare, panelReceivable } = resolvePanelCoverage(
+        const { discountAmount, discountReason, patientShare, panelReceivable, coverageSnapshot } = resolvePanelCoverage(
           rate,
           appointment.panelPatient?.corporatePanel?.discountRules,
-          appointment.serviceRateId,
+          appointment.serviceRateId, new Date(), appointment.serviceRate.departmentId ?? appointment.departmentId,
+          new Decimal(1), appointment.panelPatient,
         );
 
         const lineNet = rate.minus(discountAmount);
@@ -393,7 +402,7 @@ export const appointmentsService = {
                 lineGross: rate,
                 discountAmount,
                 discountReason,
-                lineNet,
+                lineNet, patientShare, panelReceivable, coverageSnapshot,
                 performedByStaffId: appointment.doctorStaffId,
                 isCompleted: true,
               },

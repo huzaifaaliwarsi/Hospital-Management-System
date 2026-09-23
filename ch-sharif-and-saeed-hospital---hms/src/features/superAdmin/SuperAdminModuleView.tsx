@@ -50,6 +50,7 @@ import { HighCostMedicinePolicyView } from './highCostMedicine/HighCostMedicineP
 import { ProviderSettlementsView } from './providerSettlements/ProviderSettlementsView';
 import { DoctorCommissionView } from './doctorCommission/DoctorCommissionView';
 import { HospitalInvoicesView } from '../frontDesk/billing/HospitalInvoicesView';
+import { SuperAdminPanelBillingView } from './corporatePanels/SuperAdminPanelBillingView';
 import { AppointmentsView } from '../frontDesk/appointments/AppointmentsView';
 import { ActiveAdmissionsView } from '../admission/ActiveAdmissionsView';
 import {
@@ -368,12 +369,7 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
   }
 
   if (activeModuleId === 'panel_billing') {
-    return (
-      <HospitalInvoicesView
-        title="Corporate Panel Billing"
-        subtitle="All panel and corporate credit invoices, pre-authorizations, and claims."
-      />
-    );
+    return <SuperAdminPanelBillingView />;
   }
 
   // 2. Check if this is a Report Page (Global Reporting Standard)

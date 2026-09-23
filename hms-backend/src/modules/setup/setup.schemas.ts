@@ -188,7 +188,9 @@ export const createBedSchema = z
     wardId: z.string().uuid().optional().nullable(),
     bedNumber: z.string().min(1).max(20),
     bedType: z.string().optional(),
-    operationalStatus: z.enum(['ACTIVE', 'CLEANING', 'MAINTENANCE', 'OUT_OF_SERVICE', 'DECOMMISSIONED']).optional(),
+    operationalStatus: z
+      .enum(['ACTIVE', 'CLEANING', 'MAINTENANCE', 'OUT_OF_SERVICE', 'DECOMMISSIONED'])
+      .optional(),
   })
   .refine((data) => Boolean(data.roomId) || Boolean(data.wardId), {
     message: 'A bed must be assigned to a Ward, a Room, or both — it cannot be left unassigned.',
@@ -202,7 +204,9 @@ export const updateBedSchema = z.object({
   // AVAILABLE / RESERVED / OCCUPIED / OUT_OF_SERVICE ("Under Maintenance") — occupancy, owned by Admission workflow.
   status: z.enum(['AVAILABLE', 'RESERVED', 'OCCUPIED', 'OUT_OF_SERVICE']).optional(),
   // Orthogonal: whether the bed itself is fit for use right now.
-  operationalStatus: z.enum(['ACTIVE', 'CLEANING', 'MAINTENANCE', 'OUT_OF_SERVICE', 'DECOMMISSIONED']).optional(),
+  operationalStatus: z
+    .enum(['ACTIVE', 'CLEANING', 'MAINTENANCE', 'OUT_OF_SERVICE', 'DECOMMISSIONED'])
+    .optional(),
 });
 export type UpdateBedBody = z.infer<typeof updateBedSchema>;
 
@@ -210,7 +214,14 @@ export type UpdateBedBody = z.infer<typeof updateBedSchema>;
 export const createCorporatePanelSchema = z.object({
   code: z.string().max(20).optional(),
   organizationName: z.string().min(1).max(200),
-  category: z.string().max(100).optional(),
+  category: z.string().trim().min(1).max(100).optional(),
+  legalBillingName: z.string().trim().max(200).nullable().optional(),
+  contactPhone: z.string().trim().max(50).nullable().optional(),
+  contactEmail: z.string().email().or(z.literal('')).nullable().optional(),
+  billingTerms: z.string().trim().max(1000).nullable().optional(),
+  memberIdLabel: z.string().trim().max(100).nullable().optional(),
+  memberIdRequired: z.boolean().optional(),
+  membershipValidityRequired: z.boolean().optional(),
   discountAgreement: z.string().max(300).optional(),
   contact: z.string().optional(),
   address: z.string().optional(),
@@ -222,27 +233,90 @@ export type CreateCorporatePanelBody = z.infer<typeof createCorporatePanelSchema
 export const updateCorporatePanelSchema = createCorporatePanelSchema.partial();
 export type UpdateCorporatePanelBody = z.infer<typeof updateCorporatePanelSchema>;
 
-export const discountRuleSchema = z.object({
-  serviceRateId: z.string().uuid(),
-  discountPercent: z.coerce.number().min(0).max(100),
-  effectiveFrom: z.coerce.date(),
-  effectiveTo: z.coerce.date().optional(),
-  // v7.2 Panel Management enhancements (HMS_V7.2_NEW_REQUIREMENTS.md §2.5) —
-  // additive/optional so existing rules built against `discountPercent`
-  // alone keep working unchanged.
-  coveragePercent: z.coerce.number().min(0).max(100).optional(),
-  preauthorizationRequired: z.boolean().optional(),
-  capAmount: z.coerce.number().nonnegative().optional(),
-});
-export const replaceDiscountRulesSchema = z.object({
-  rules: z.array(discountRuleSchema),
-});
+export const discountRuleSchema = z
+  .object({
+    scope: z.enum(['SERVICE', 'DEPARTMENT', 'GLOBAL']).default('SERVICE'),
+    serviceRateId: z.string().uuid().nullable().optional(),
+    departmentId: z.string().uuid().nullable().optional(),
+    coverageType: z
+      .enum(['PERCENTAGE', 'FIXED_PATIENT_SHARE', 'FULL', 'NOT_COVERED', 'LEGACY_DISCOUNT'])
+      .optional(),
+    discountPercent: z.coerce.number().min(0).max(100).default(0),
+    coveragePercent: z.coerce.number().min(0).max(100).multipleOf(0.01).nullable().optional(),
+    fixedPatientShare: z.coerce.number().nonnegative().multipleOf(0.01).nullable().optional(),
+    contractRate: z.coerce.number().nonnegative().multipleOf(0.01).nullable().optional(),
+    capAmount: z.coerce.number().nonnegative().multipleOf(0.01).nullable().optional(),
+    effectiveFrom: z.coerce.date().transform((d) => new Date(d.toISOString().slice(0, 10))),
+    effectiveTo: z.coerce
+      .date()
+      .transform((d) => new Date(d.toISOString().slice(0, 10)))
+      .nullable()
+      .optional(),
+    preauthorizationRequired: z.boolean().default(false),
+    isActive: z.boolean().default(true),
+    notes: z.string().trim().max(1000).nullable().optional(),
+  })
+  .superRefine((r, ctx) => {
+    const error = (path: string, message: string) =>
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [path], message });
+    if (r.scope === 'SERVICE' && (!r.serviceRateId || r.departmentId))
+      error('serviceRateId', 'Service scope requires only a service');
+    if (r.scope === 'DEPARTMENT' && (!r.departmentId || r.serviceRateId))
+      error('departmentId', 'Department scope requires only a department');
+    if (r.scope === 'GLOBAL' && (r.serviceRateId || r.departmentId))
+      error('scope', 'Global scope cannot target a service or department');
+    if (r.effectiveTo && r.effectiveTo < r.effectiveFrom)
+      error('effectiveTo', 'End date must be on or after start date');
+    const type = r.coverageType ?? (r.coveragePercent != null ? 'PERCENTAGE' : 'LEGACY_DISCOUNT');
+    if (type === 'PERCENTAGE' && r.coveragePercent == null)
+      error('coveragePercent', 'Coverage percentage is required');
+    if (type === 'FIXED_PATIENT_SHARE' && r.fixedPatientShare == null)
+      error('fixedPatientShare', 'Fixed patient share is required');
+    if (type === 'LEGACY_DISCOUNT' && r.contractRate != null)
+      error('contractRate', 'Legacy discount cannot also set a contract tariff');
+    if (type !== 'LEGACY_DISCOUNT' && r.discountPercent !== 0)
+      error('discountPercent', 'Use contract tariff for coverage adjustments, not legacy discount');
+    if (r.contractRate != null && r.scope !== 'SERVICE')
+      error('contractRate', 'A unit tariff must target a specific service');
+  });
+export const replaceDiscountRulesSchema = z
+  .object({ rules: z.array(discountRuleSchema).max(500) })
+  .superRefine(({ rules }, ctx) => {
+    rules.forEach((r, i) => {
+      if (!r.isActive) return;
+      const overlapping = rules
+        .slice(0, i)
+        .some(
+          (other) =>
+            other.isActive &&
+            other.scope === r.scope &&
+            (other.serviceRateId ?? null) === (r.serviceRateId ?? null) &&
+            (other.departmentId ?? null) === (r.departmentId ?? null) &&
+            (!other.effectiveTo || r.effectiveFrom <= other.effectiveTo) &&
+            (!r.effectiveTo || other.effectiveFrom <= r.effectiveTo),
+        );
+      if (overlapping)
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['rules', i, 'effectiveFrom'],
+          message: 'Active rules for the same target cannot have overlapping dates',
+        });
+    });
+  });
 export type ReplaceDiscountRulesBody = z.infer<typeof replaceDiscountRulesSchema>;
 
 // ── Shifts (Shift Master) ────────────────────────────────────────────
 const TIME_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
 const timeSchema = z.string().regex(TIME_REGEX, 'Time must be in HH:mm 24-hour format');
-export const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] as const;
+export const WEEKDAYS = [
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+  'Sunday',
+] as const;
 
 // ── Outsourced Providers (HMS_V7.2_NEW_REQUIREMENTS.md §2.1) ────────────
 export const createOutsourcedProviderSchema = z.object({

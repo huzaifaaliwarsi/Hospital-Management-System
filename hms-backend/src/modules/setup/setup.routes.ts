@@ -57,11 +57,13 @@ router.patch('/shifts/:id', write, validate({ params: s.idParamsSchema, body: s.
 router.post('/shifts/:id/deactivate', write, validate({ params: s.idParamsSchema }), asyncHandler(c.deactivateShift));
 
 // Corporate Panels
+router.get('/panel-categories', view, asyncHandler(c.listPanelCategories));
 router.get('/corporate-panels', view, asyncHandler(c.listCorporatePanels));
 router.post('/corporate-panels', create, validate({ body: s.createCorporatePanelSchema }), asyncHandler(c.createCorporatePanel));
 router.patch('/corporate-panels/:id', write, validate({ params: s.idParamsSchema, body: s.updateCorporatePanelSchema }), asyncHandler(c.updateCorporatePanel));
 router.delete('/corporate-panels/:id', remove, validate({ params: s.idParamsSchema }), asyncHandler(c.deleteCorporatePanel));
 router.put('/corporate-panels/:id/discount-rules', write, validate({ params: s.idParamsSchema, body: s.replaceDiscountRulesSchema }), asyncHandler(c.replaceDiscountRules));
+router.get('/corporate-panels/:id/rule-history', view, validate({ params: s.idParamsSchema }), asyncHandler(c.listPanelRuleHistory));
 
 // Outsourced Providers (HMS_V7.2_NEW_REQUIREMENTS.md §2.1)
 router.get('/outsourced-providers', view, asyncHandler(c.listOutsourcedProviders));

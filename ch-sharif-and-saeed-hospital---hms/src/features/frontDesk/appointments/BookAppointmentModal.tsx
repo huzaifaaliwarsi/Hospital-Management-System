@@ -1,3 +1,5 @@
+import PanelMembershipFields from '../../superAdmin/patientRegistry/PanelMembershipFields';
+import type { PanelMembershipDetails } from '../../../types/patient';
 import { doctorsForEncounter } from '../../../utils/doctorAvailability';
 import { formatDateISO, getHospitalCurrentDate } from '../../../utils/dateConstants';
 import { HOSPITAL_SERVICE_SOURCE, NO_ACTIVE_DEPARTMENT_SERVICES, servicesForSource } from '../../../utils/serviceSelection';
@@ -18,7 +20,8 @@ import { Select, TextInput, Textarea, NumberInput, Toggle, CNICInput } from '../
 import { DepartmentService, fetchDepartments } from '../../../services/departmentService';
 import { StaffUserService, fetchStaffUsers } from '../../../services/staffUserService';
 import { ServiceRatesService, fetchServices } from '../../../services/serviceRatesService';
-import { normalizePhone, createPatient } from '../../../services/patientRegistryService';
+import { normalizePhone, createPatient, calculateAgeFromDob, PanelPatientSearchResult } from '../../../services/patientRegistryService';
+import { PanelPatientSearchSection } from '../../../components/common/PanelPatientSearchSection';
 import {
   fetchCorporatePanels,
   getActiveCorporatePanels,
@@ -34,6 +37,7 @@ import {
   normalizeSentenceCase,
 } from '../../../utils/formatters';
 import { useToast } from '../../../context/ToastContext';
+import { formatDisplayDate } from '../../../utils/dateConstants';
 import { focusNextField, focusNextFieldOnEnter } from '../../../utils/formNavigation';
 import {
   appointmentsApiService,
@@ -158,6 +162,36 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
   // Panel specific fields (when Corporate / Panel is selected)
   const [panelId, setPanelId] = useState('');
   const [panelMemberId, setPanelMemberId] = useState('');
+  const [membershipDetails, setMembershipDetails] = useState<PanelMembershipDetails>({});
+  const [selectedExistingPatient, setSelectedExistingPatient] = useState<PanelPatientSearchResult | null>(null);
+
+  const handleUseExistingPatient = (match: PanelPatientSearchResult) => {
+    setFullName(match.fullName.toUpperCase());
+    setFatherGuardianName((match.guardianName || '').toUpperCase());
+    setPrimaryPhone(match.phone || '');
+    if (match.dob) {
+      const ageNum = calculateAgeFromDob(match.dob);
+      setAge(String(ageNum));
+    }
+    setGender((match.gender as PatientGender) || 'Male');
+    setCnic(match.cnicOrPassport || '');
+    setPanelId(match.panelId);
+    setPanelMemberId(match.panelMemberId || '');
+    setSelectedExistingPatient(match);
+  };
+
+  const handleClearExistingPatient = () => {
+    setSelectedExistingPatient(null);
+    setFullName('');
+    setFatherGuardianName('');
+    setPrimaryPhone('');
+    setAge('');
+    setGender('Male');
+    setCnic('');
+    setPanelId('');
+    setPanelMemberId('');
+    setMembershipDetails({});
+  };
 
   // 3. Encounter Service / Type (No default OPD — user must choose)
   const initialEncounterType = rescheduleAppointment?.notes?.includes('[EMERGENCY]')
@@ -314,7 +348,7 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
         setFormError('Please select a Corporate Panel company.');
         return;
       }
-      if (!panelMemberId.trim()) {
+      if (corporatePanels.find(p => p.id === panelId)?.memberIdRequired && !panelMemberId.trim()) {
         setFormError('Panel Member ID / Card # is required.');
         return;
       }
@@ -349,47 +383,54 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
       let finalPanelPatientId: string | undefined = undefined;
 
       if (payerType === 'Corporate / Panel') {
-        // Register panel patient in master registry (matching Walk-In)
-        const selectedPanelObj = corporatePanels.find((p) => p.id === panelId);
-        const regRes = await createPatient(
-          {
-            fullName: fullName.trim().toUpperCase(),
-            fatherGuardianName: fatherGuardianName.trim().toUpperCase(),
-            guardianRelation: 'Father' as GuardianRelation,
-            dateOfBirth: computedDob,
-            age: ageNum,
-            ageIsEstimated: true,
-            gender: gender === 'Other / Not Specified' ? 'Other / Not Specified' : gender,
-            cnic: cnic.trim(),
-            passportNumber: '',
-            primaryPhone: normalizePhone(primaryPhone),
-            alternatePhone: '',
-            email: '',
-            addressLine1: '',
-            addressLine2: '',
-            city: 'Lahore',
-            province: 'Punjab',
-            country: 'Pakistan',
-            bloodGroup: 'Unknown',
-            payerType: 'Corporate / Panel',
-            panelId,
-            panelName: selectedPanelObj?.name || '',
-            panelMemberId: panelMemberId.trim().toUpperCase(),
-            emergencyContactName: '',
-            emergencyContactRelation: '',
-            emergencyContactPhone: '',
-            status: 'ACTIVE',
-          },
-          null
-        );
+        let panelPatientIdToUse = selectedExistingPatient?.id;
 
-        if (!regRes.success || !regRes.patient) {
-          setFormError(regRes.error || 'Failed to register panel patient.');
-          setIsSaving(false);
-          return;
+        if (!panelPatientIdToUse) {
+          // Register panel patient in master registry (matching Walk-In)
+          const selectedPanelObj = corporatePanels.find((p) => p.id === panelId);
+          const regRes = await createPatient(
+            {
+              fullName: fullName.trim().toUpperCase(),
+              fatherGuardianName: fatherGuardianName.trim().toUpperCase(),
+              guardianRelation: 'Father' as GuardianRelation,
+              dateOfBirth: computedDob,
+              age: ageNum,
+              ageIsEstimated: true,
+              gender: gender === 'Other / Not Specified' ? 'Other / Not Specified' : gender,
+              cnic: cnic.trim(),
+              passportNumber: '',
+              primaryPhone: normalizePhone(primaryPhone),
+              alternatePhone: '',
+              email: '',
+              addressLine1: '',
+              addressLine2: '',
+              city: 'Lahore',
+              province: 'Punjab',
+              country: 'Pakistan',
+              bloodGroup: 'Unknown',
+              payerType: 'Corporate / Panel',
+              panelId,
+              panelName: selectedPanelObj?.name || '',
+              panelMemberId: panelMemberId.trim().toUpperCase(),
+              ...membershipDetails,
+              emergencyContactName: '',
+              emergencyContactRelation: '',
+              emergencyContactPhone: '',
+              status: 'ACTIVE',
+            },
+            null
+          );
+
+          if (!regRes.success || !regRes.patient) {
+            setFormError(regRes.error || 'Failed to register panel patient.');
+            setIsSaving(false);
+            return;
+          }
+
+          panelPatientIdToUse = regRes.patient.id;
         }
 
-        finalPanelPatientId = regRes.patient.id;
+        finalPanelPatientId = panelPatientIdToUse;
       }
 
       const userNotes = notes.trim();
@@ -491,7 +532,12 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
                   {/* New Patient (Self Pay) Card */}
                   <button
                     type="button"
-                    onClick={() => setPayerType('Self Pay')}
+                    onClick={() => {
+                      setPayerType('Self Pay');
+                      if (selectedExistingPatient) {
+                        handleClearExistingPatient();
+                      }
+                    }}
                     className={`p-3 rounded-xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${
                       payerType === 'Self Pay'
                         ? 'border-[#08775A] bg-[#effaf5] shadow-xs ring-1 ring-[#08775A]/20'
@@ -554,10 +600,23 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
                   <span className="text-xs font-bold text-slate-800 uppercase tracking-wide flex items-center gap-1.5">
                     <User className="h-3.5 w-3.5 text-[#08775A]" /> 2. Patient Information
                   </span>
-                  <span className="text-[10.5px] text-slate-500 font-semibold bg-slate-100 px-2 py-0.5 rounded">
-                    {payerType === 'Corporate / Panel' ? 'Panel Registration' : 'Fast Entry'}
+                  <span className={`text-[10.5px] font-semibold px-2 py-0.5 rounded ${
+                    selectedExistingPatient
+                      ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                      : 'bg-slate-100 text-slate-500'
+                  }`}>
+                    {selectedExistingPatient ? `From Panel Registry (${selectedExistingPatient.mrNumber})` : payerType === 'Corporate / Panel' ? 'Panel Registration' : 'Fast Entry'}
                   </span>
                 </div>
+
+                {/* Corporate / Panel Search Section */}
+                {payerType === 'Corporate / Panel' && (
+                  <PanelPatientSearchSection
+                    selectedPatient={selectedExistingPatient}
+                    onSelectPatient={handleUseExistingPatient}
+                    onClearPatient={handleClearExistingPatient}
+                  />
+                )}
 
                 {/* Full Name & Father / Guardian */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -566,6 +625,7 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
                     autoFocus={!isReschedule}
                     label="Patient Full Name"
                     required
+                    disabled={!!selectedExistingPatient}
                     placeholder="Patient's legal name"
                     className="uppercase"
                     value={fullName}
@@ -575,6 +635,7 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
                   <TextInput
                     label="Father / Guardian Name"
                     required
+                    disabled={!!selectedExistingPatient}
                     placeholder="Father / Husband / Guardian"
                     className="uppercase"
                     value={fatherGuardianName}
@@ -588,6 +649,7 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
                   <TextInput
                     label="Contact Phone"
                     required
+                    disabled={!!selectedExistingPatient}
                     placeholder="0300-1234567"
                     value={primaryPhone}
                     onChange={(e) => setPrimaryPhone(e.target.value)}
@@ -596,6 +658,7 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
                   <TextInput
                     label="Age (Years)"
                     required
+                    disabled={!!selectedExistingPatient}
                     type="number"
                     min="0"
                     max="130"
@@ -606,6 +669,7 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
                   />
                   <CNICInput
                     label="CNIC (optional)"
+                    disabled={!!selectedExistingPatient}
                     placeholder="XXXXX-XXXXXXX-X"
                     value={cnic}
                     onChange={(e) => setCnic(e.target.value)}
@@ -623,8 +687,11 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
                       <button
                         key={g}
                         type="button"
+                        disabled={!!selectedExistingPatient}
                         onClick={() => setGender(g)}
-                        className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all cursor-pointer ${
+                        className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
+                          selectedExistingPatient ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'
+                        } ${
                           gender === g
                             ? 'bg-[#08775A] text-white border-[#08775A] shadow-xs font-bold'
                             : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
@@ -647,6 +714,7 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
                       <Select
                         label="Corporate Panel"
                         required
+                        disabled={!!selectedExistingPatient}
                         options={[
                           { label: '-- Select Corporate Panel --', value: '' },
                           ...corporatePanels.map((p) => ({ label: `${p.name} (${p.code})`, value: p.id })),
@@ -665,14 +733,16 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
                         }}
                       />
                       <TextInput
-                        label="Panel Member ID / Card #"
-                        required
+                        label={corporatePanels.find(p => p.id === panelId)?.memberIdLabel || 'Panel Member ID / Card #'}
+                    required={corporatePanels.find(p => p.id === panelId)?.memberIdRequired}
+                        disabled={!!selectedExistingPatient}
                         placeholder="e.g. EMP-99214 / CRD-4412"
                         className="uppercase"
                         value={panelMemberId}
                         onChange={(e) => setPanelMemberId(e.target.value.toUpperCase())}
                         onKeyDown={handleEnterNext}
                       />
+                  {!selectedExistingPatient && <div className="sm:col-span-2"><PanelMembershipFields value={membershipDetails} onChange={patch => setMembershipDetails(prev => ({ ...prev, ...patch }))} datesRequired={corporatePanels.find(p => p.id === panelId)?.membershipValidityRequired} /></div>}
                     </div>
                   </div>
                 )}
@@ -760,6 +830,7 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
                 onKeyDown={handleEnterNext}
+                hint={date ? `Selected: ${formatDisplayDate(date)} (DD/MM/YYYY)` : undefined}
               />
               <TextInput
                 label="Time Slot"

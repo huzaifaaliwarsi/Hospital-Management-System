@@ -187,7 +187,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
   }, [invoice]);
 
   const hasHospitalServices = eligibleHospitalServicesGross > 0;
-  const isDiscountDisabled = !hasHospitalServices;
+  const isDiscountDisabled = invoice?.payerType === 'Corporate / Panel' || !hasHospitalServices;
 
   // Pre-fill payment amount and automatically focus the Discount field on open
   useEffect(() => {
@@ -471,14 +471,15 @@ ${invoice?.sourceType === 'ADMISSION' ? `<div class="meta-row"><span class="meta
           <div class="summary-box">
             <div class="summary-row"><span>Total Charges</span><span class="val">${formatPKR(invoice?.subtotal || 0)}</span></div>
             <div class="summary-row"><span>Discount</span><span class="val" style="color: #b45309;">${invoice?.discountTotal ? `- ${formatPKR(invoice.discountTotal)}` : formatPKR(0)}</span></div>
-            <div class="summary-row total"><span>Net Payable</span><span class="val">${formatPKR(invoice?.total || 0)}</span></div>
+            <div class="summary-row total"><span>Patient Share</span><span class="val">${formatPKR(invoice?.patientShare || 0)}</span></div>
+            ${invoice?.payerType === 'Corporate / Panel' ? '<div class="summary-row"><span>Panel Receivable (separate)</span><span class="val">' + formatPKR(invoice.panelReceivable) + '</span></div>' : ''}
             ${invoice?.advancePaid ? `<div class="summary-row"><span>Advance Paid / Deposit Received</span><span>${formatPKR(invoice.advancePaid)}</span></div>` : ''}
             <div class="summary-row"><span>${invoice?.advancePaid ? 'Amount Paid (including advance)' : 'Amount Paid'}</span><span class="val" style="color: #08775A;">${formatPKR(invoice?.paidTotal || 0)}</span></div>
             <div class="summary-row" style="font-weight: 600; border-top: 1px solid #cbd5e1; padding-top: 6px;">
               <span>Current Remaining</span>
-              <span class="val" style="color: ${(invoice?.paidTotal || 0) > (invoice?.total || 0) ? '#08775A' : '#991b1b'};">
-                ${(invoice?.paidTotal || 0) > (invoice?.total || 0)
-                  ? `${formatPKR((invoice?.paidTotal || 0) - (invoice?.total || 0))} (Patient Credit)`
+              <span class="val" style="color: ${(invoice?.paidTotal || 0) > (invoice?.patientShare || 0) ? '#08775A' : '#991b1b'};">
+                ${(invoice?.paidTotal || 0) > (invoice?.patientShare || 0)
+                  ? `${formatPKR((invoice?.paidTotal || 0) - (invoice?.patientShare || 0))} (Patient Credit)`
                   : (invoice?.balanceDue || 0) > 0
                   ? `${formatPKR(invoice?.balanceDue || 0)} (Due)`
                   : `${formatPKR(0)} (Settled)`}
@@ -648,7 +649,7 @@ ${invoice?.sourceType === 'ADMISSION' ? `<div class="meta-row"><span class="meta
           {(() => {
             const currentDiscountInput = typeof discountAmount === 'number' ? discountAmount : 0;
             const liveDiscountTotal = (invoice.discountTotal || 0) + (isFullyPaid ? 0 : currentDiscountInput);
-            const liveNetPayable = Math.max(0, (invoice.subtotal || 0) - liveDiscountTotal);
+            const liveNetPayable = invoice.payerType === 'Corporate / Panel' ? invoice.patientShare : Math.max(0, (invoice.subtotal || 0) - liveDiscountTotal);
             const currentPaymentInput = typeof paymentAmount === 'number' ? paymentAmount : 0;
             const livePaidTotal = (invoice.paidTotal || 0) + (activeAction === 'payment' ? currentPaymentInput : 0);
             const liveBalanceDue = Math.max(0, liveNetPayable - livePaidTotal);
@@ -678,7 +679,7 @@ ${invoice?.sourceType === 'ADMISSION' ? `<div class="meta-row"><span class="meta
                           <Plus className="h-3 w-3" /> Add Service
                         </button>
                       )}
-                      {!isVoid && !isFullyPaid && hasHospitalServices && (
+                      {!isVoid && !isFullyPaid && hasHospitalServices && invoice.payerType !== 'Corporate / Panel' && (
                         <button
                           type="button"
                           onClick={() => setActiveAction('discount')}
@@ -716,9 +717,10 @@ ${invoice?.sourceType === 'ADMISSION' ? `<div class="meta-row"><span class="meta
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-xs text-slate-900 font-extrabold pt-1 border-t border-slate-200">
-                    <span className="font-bold">Net Payable</span>
+                    <span className="font-bold">{invoice.payerType === 'Corporate / Panel' ? 'Patient Share' : 'Net Payable'}</span>
                     <span className="font-extrabold text-slate-900 text-sm">{formatPKR(liveNetPayable)}</span>
                   </div>
+                  {invoice.payerType === 'Corporate / Panel' && <div className="flex justify-between text-xs text-purple-800"><span>Panel Receivable (separate)</span><strong>{formatPKR(invoice.panelReceivable)}</strong></div>}
                   {invoice.advancePaid > 0 && (
                     <div className="flex items-center justify-between text-xs text-slate-700 font-semibold">
                       <span>Advance Paid / Deposit Received</span>

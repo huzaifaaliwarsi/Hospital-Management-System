@@ -1,10 +1,10 @@
 import bcrypt from 'bcryptjs';
-import { invoicePaymentStatus } from '@/shared/invoicePaymentStatus';
 import { Decimal } from '@prisma/client/runtime/library';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
 import { AuthenticationError, ConflictError, NotFoundError, ValidationError } from '@/shared/errors/AppError';
 import { resolvePanelCoverage } from '@/shared/panelCoverage';
+import { assertMembershipEligible } from '@/shared/panelMembership';
 import type {
   CreatePlannedAdmissionBody,
   UpdatePlannedAdmissionBody,
@@ -38,7 +38,7 @@ import {
  */
 async function recalcInvoiceTotals(
   tx: Prisma.TransactionClient,
-  invoice: { id: string; paidTotal: Decimal },
+  invoice: { id: string; paidTotal: Decimal; panelPatientId?: string | null },
   allLines: {
     lineGross: Decimal | null;
     discountAmount: Decimal | null;
@@ -47,6 +47,9 @@ async function recalcInvoiceTotals(
     panelReceivable: Decimal | null;
   }[],
 ) {
+  if (invoice.panelPatientId && allLines.some(line => !new Decimal(line.patientShare ?? 0).plus(line.panelReceivable ?? 0).equals(line.lineNet ?? 0))) {
+    throw new ValidationError('Historical panel lines need payer reconciliation before adding charges');
+  }
   const newSubtotal = allLines.reduce((acc, l) => acc.plus(l.lineGross ?? 0), new Decimal(0));
   const newDiscountTotal = allLines.reduce((acc, l) => acc.plus(l.discountAmount ?? 0), new Decimal(0));
   const newTotal = allLines.reduce((acc, l) => acc.plus(l.lineNet ?? 0), new Decimal(0));
@@ -212,6 +215,10 @@ async function postWardFixedChargeIfApplicable(
     return null;
   }
 
+  const panelPatient = invoice.panelPatientId ? await tx.panelPatient.findUnique({
+    where: { id: invoice.panelPatientId }, include: { corporatePanel: { include: { discountRules: true } } },
+  }) : null;
+  const coverage = resolvePanelCoverage(wardFixedRate, panelPatient?.corporatePanel.discountRules, serviceRate.id, new Date(), ward.departmentId, new Decimal(1), panelPatient);
   const createdLine = await tx.invoiceLineItem.create({
     data: {
       hospitalInvoiceId: invoice.id,
@@ -219,24 +226,17 @@ async function postWardFixedChargeIfApplicable(
       rateSnapshot: wardFixedRate,
       quantity: new Decimal(1),
       lineGross: wardFixedRate,
-      discountAmount: new Decimal(0),
-      lineNet: wardFixedRate,
-      patientShare: invoice.panelPatientId ? new Decimal(0) : wardFixedRate,
-      panelReceivable: invoice.panelPatientId ? wardFixedRate : new Decimal(0),
+      discountAmount: coverage.discountAmount,
+      discountReason: coverage.discountReason,
+      lineNet: coverage.eligibleNet,
+      patientShare: coverage.patientShare,
+      panelReceivable: coverage.panelReceivable,
+      coverageSnapshot: coverage.coverageSnapshot,
       isCompleted: true,
     },
   });
 
-  await tx.hospitalInvoice.update({
-    where: { id: invoice.id },
-    data: {
-      subtotal: { increment: wardFixedRate },
-      total: { increment: wardFixedRate },
-      status: invoicePaymentStatus(invoice.total.plus(wardFixedRate), invoice.paidTotal),
-      patientShare: invoice.panelPatientId ? undefined : { increment: wardFixedRate },
-      panelReceivable: invoice.panelPatientId ? { increment: wardFixedRate } : undefined,
-    },
-  });
+  await recalcInvoiceTotals(tx, invoice, [...invoice.lines, createdLine]);
 
   return createdLine;
 }
@@ -257,12 +257,12 @@ async function postInitialRoomChargeIfApplicable(tx: Prisma.TransactionClient, a
   });
   if (!invoice) throw new NotFoundError('Admission invoice not found');
   const service = await getOrCreateRoomChargeServiceRate(tx, admission.departmentId, actorId);
-  const coverage = resolvePanelCoverage(rate, admission.panelPatient?.corporatePanel?.discountRules, service.id);
+  const coverage = resolvePanelCoverage(rate, admission.panelPatient?.corporatePanel?.discountRules, service.id, new Date(), admission.departmentId, new Decimal(1), admission.panelPatient);
   const line = await tx.invoiceLineItem.create({ data: {
     hospitalInvoiceId: invoice.id, serviceRateId: service.id, rateSnapshot: rate,
     quantity: new Decimal(1), lineGross: rate, discountAmount: coverage.discountAmount,
     discountReason: coverage.discountReason, lineNet: rate.minus(coverage.discountAmount),
-    patientShare: coverage.patientShare, panelReceivable: coverage.panelReceivable, isCompleted: true,
+    patientShare: coverage.patientShare, panelReceivable: coverage.panelReceivable, coverageSnapshot: coverage.coverageSnapshot, isCompleted: true,
   } });
   await tx.admissionRoomChargeLog.create({ data: {
     admissionRecordId: admissionId,
@@ -309,6 +309,7 @@ export const admissionService = {
         if (panelPatient.corporatePanel && !panelPatient.corporatePanel.isActive) {
           throw new ValidationError('Corporate panel is inactive');
         }
+        assertMembershipEligible(panelPatient);
       }
 
       let departmentId = body.departmentId;
@@ -858,6 +859,7 @@ export const admissionService = {
       let lineNet: Decimal;
       let patientShare: Decimal;
       let panelReceivable: Decimal;
+      let coverageSnapshot: Prisma.InputJsonValue | undefined;
 
       if (isSelf) {
         // Self-arranged by patient outside: Record for clinical tracking, but Rs 0 charge (no ledger debt)
@@ -871,12 +873,13 @@ export const admissionService = {
         lineGross = rate.mul(qty);
         // v7.2 §2.5 — Patient Share vs Panel Receivable, same resolution
         // `appointments.service.ts` uses (Panel Service rule → else NOT_COVERED).
-        const coverage = resolvePanelCoverage(lineGross, admission.panelPatient?.corporatePanel?.discountRules, serviceRate.id);
+        const coverage = resolvePanelCoverage(lineGross, admission.panelPatient?.corporatePanel?.discountRules, serviceRate.id, new Date(), serviceRate.departmentId ?? admission.departmentId, qty, admission.panelPatient);
         discountAmount = coverage.discountAmount;
         discountReason = coverage.discountReason ?? body.notes ?? null;
         lineNet = lineGross.minus(discountAmount);
         patientShare = coverage.patientShare;
         panelReceivable = coverage.panelReceivable;
+        coverageSnapshot = coverage.coverageSnapshot;
       }
 
       const createdLine = await tx.invoiceLineItem.create({
@@ -890,7 +893,7 @@ export const admissionService = {
           discountReason,
           lineNet,
           patientShare,
-          panelReceivable,
+          panelReceivable, coverageSnapshot,
           performedByStaffId: body.performedByStaffId ?? admission.doctorStaffId,
           isCompleted: true,
         },
@@ -1698,7 +1701,7 @@ export const admissionService = {
           });
         }
 
-        const coverage = resolvePanelCoverage(dailyRate, admission.panelPatient?.corporatePanel?.discountRules, serviceRate.id);
+        const coverage = resolvePanelCoverage(dailyRate, admission.panelPatient?.corporatePanel?.discountRules, serviceRate.id, new Date(), admission.departmentId, new Decimal(1), admission.panelPatient);
         const lineNet = dailyRate.minus(coverage.discountAmount);
 
         const createdLine = await tx.invoiceLineItem.create({
@@ -1713,6 +1716,7 @@ export const admissionService = {
             lineNet,
             patientShare: coverage.patientShare,
             panelReceivable: coverage.panelReceivable,
+            coverageSnapshot: coverage.coverageSnapshot,
             isCompleted: true,
           },
         });

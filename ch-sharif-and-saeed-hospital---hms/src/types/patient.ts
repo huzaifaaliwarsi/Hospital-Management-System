@@ -29,7 +29,17 @@ export const GUARDIAN_RELATIONS: GuardianRelation[] = [
   'Other',
 ];
 
-export interface Patient {
+export interface PanelMembershipDetails {
+  membershipStatus?: 'ACTIVE' | 'SUSPENDED' | 'CANCELLED';
+  membershipValidFrom?: string;
+  membershipValidTo?: string;
+  policyNumber?: string;
+  planName?: string;
+  principalMemberName?: string;
+  memberRelationship?: string;
+}
+
+export interface Patient extends PanelMembershipDetails {
   id: string;
   mrNumber: string; // Permanent, unique (e.g. MR-000001)
 
@@ -81,7 +91,7 @@ export interface Patient {
   updatedAt: string;
 }
 
-export interface PatientFormData {
+export interface PatientFormData extends PanelMembershipDetails {
   fullName: string;
   fatherGuardianName: string;
   guardianRelation: GuardianRelation;

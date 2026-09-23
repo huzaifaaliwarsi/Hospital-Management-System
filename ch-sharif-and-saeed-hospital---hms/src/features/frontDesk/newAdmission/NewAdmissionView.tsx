@@ -1,5 +1,7 @@
+import PanelMembershipFields from '../../superAdmin/patientRegistry/PanelMembershipFields';
+import type { PanelMembershipDetails } from '../../../types/patient';
 import { doctorsForEncounter } from '../../../utils/doctorAvailability';
-import { formatDateISO, getHospitalCurrentDate } from '../../../utils/dateConstants';
+import { formatDateISO, getHospitalCurrentDate, formatDisplayDate } from '../../../utils/dateConstants';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   BedDouble,
@@ -15,6 +17,7 @@ import {
   Search,
   X,
   Loader2,
+  Calendar,
 } from 'lucide-react';
 import { PatientGender, PayerType, GuardianRelation, GUARDIAN_RELATIONS } from '../../../types/patient';
 import {
@@ -27,6 +30,7 @@ import {
   searchPanelPatients,
   PanelPatientSearchResult,
 } from '../../../services/patientRegistryService';
+import { PanelPatientSearchSection } from '../../../components/common/PanelPatientSearchSection';
 import {
   fetchCorporatePanels,
   getActiveCorporatePanels,
@@ -126,6 +130,7 @@ export const NewAdmissionView: React.FC = () => {
   const [payerType, setPayerType] = useState<PayerType>('Self Pay');
   const [panelId, setPanelId] = useState('');
   const [panelMemberId, setPanelMemberId] = useState('');
+  const [membershipDetails, setMembershipDetails] = useState<PanelMembershipDetails>({});
 
   // Panel Patient Registry search (admission.md §2.1 point 2 — "search the permanent Panel Patient
   // Registry, validate active membership" — reuse an existing record instead of always
@@ -271,6 +276,7 @@ export const NewAdmissionView: React.FC = () => {
     setPayerType('Self Pay');
     setPanelId('');
     setPanelMemberId('');
+    setMembershipDetails({});
     setSelectedWardId('');
     setSelectedRoomId('');
     setFormValues(emptyForm());
@@ -332,6 +338,7 @@ export const NewAdmissionView: React.FC = () => {
     setAddress('');
     setPanelId('');
     setPanelMemberId('');
+    setMembershipDetails({});
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -373,7 +380,7 @@ export const NewAdmissionView: React.FC = () => {
         setFormError('Please select a Corporate Panel.');
         return;
       }
-      if (!panelMemberId.trim()) {
+      if (corporatePanels.find(p => p.id === panelId)?.memberIdRequired && !panelMemberId.trim()) {
         setFormError('Panel Member ID / Card Number is required.');
         return;
       }
@@ -429,6 +436,7 @@ export const NewAdmissionView: React.FC = () => {
             panelId: payerType === 'Corporate / Panel' ? panelId : '',
             panelName: payerType === 'Corporate / Panel' ? corporatePanels.find((p) => p.id === panelId)?.name || '' : '',
             panelMemberId: payerType === 'Corporate / Panel' ? panelMemberId.trim() : '',
+              ...membershipDetails,
             emergencyContactName: fatherGuardianName.trim(),
             emergencyContactRelation: guardianRelation,
             emergencyContactPhone: guardianCnic.trim() ? normalizeCnic(guardianCnic) : normalizePhone(primaryPhone),
@@ -618,6 +626,10 @@ export const NewAdmissionView: React.FC = () => {
           <span className="text-slate-900 font-bold">New Admission</span>
         </div>
         <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold border bg-slate-50 text-slate-700 border-slate-200">
+            <Calendar className="h-3.5 w-3.5 text-[#08775A]" />
+            <span>Entry Date: {formatDisplayDate(new Date())}</span>
+          </div>
           <span className="px-2.5 py-1 rounded-md text-xs font-bold border uppercase tracking-wide bg-[#effaf5] text-[#08775A] border-[#c2e7db]">
             Inpatient Admission Intake
           </span>
@@ -864,94 +876,11 @@ export const NewAdmissionView: React.FC = () => {
                   <span>Panel Contract &amp; Card Information</span>
                 </div>
 
-                {selectedExistingPatient ? (
-                  <div className="flex items-start justify-between gap-3 bg-white border border-emerald-200 rounded-lg p-3">
-                    <div className="flex items-start gap-2 min-w-0">
-                      <CheckCircle2 className="h-4 w-4 text-[#08775A] mt-0.5 shrink-0" />
-                      <div className="min-w-0">
-                        <p className="text-xs font-bold text-slate-900 truncate">
-                          Using existing registry record — {selectedExistingPatient.fullName}
-                        </p>
-                        <p className="text-[11px] text-slate-500 mt-0.5">
-                          MR# {selectedExistingPatient.mrNumber} • {selectedExistingPatient.panelName} • Member ID:{' '}
-                          {selectedExistingPatient.panelMemberId || '—'} •{' '}
-                          <span className={selectedExistingPatient.status === 'ACTIVE' ? 'text-[#08775A] font-semibold' : 'text-rose-600 font-semibold'}>
-                            {selectedExistingPatient.status}
-                          </span>
-                        </p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleClearExistingPatient}
-                      className="shrink-0 px-2.5 py-1.5 text-[11px] font-semibold text-slate-500 hover:text-slate-800 border border-slate-200 rounded-lg hover:bg-slate-50 inline-flex items-center gap-1 cursor-pointer"
-                    >
-                      <X className="h-3 w-3" /> Use Different / New Patient
-                    </button>
-                  </div>
-                ) : (
-                  <div className="bg-white border border-amber-200 rounded-lg p-3 space-y-2">
-                    <label className="block text-[11px] font-semibold text-slate-700">
-                      Search Panel Patient Registry — name, MR#, CNIC or phone
-                    </label>
-                    <div className="flex gap-2">
-                      <div className="flex-1">
-                        <TextInput
-                          placeholder="e.g. Ahmed Khan, MR-000123, 35202-1928371-1"
-                          value={panelSearchQuery}
-                          onChange={(e) => setPanelSearchQuery(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              handleSearchPanelPatients();
-                            }
-                          }}
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleSearchPanelPatients}
-                        disabled={isSearchingPanel || !panelSearchQuery.trim()}
-                        className="shrink-0 px-3.5 py-2 text-xs font-semibold text-white bg-slate-800 hover:bg-slate-900 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5 cursor-pointer"
-                      >
-                        {isSearchingPanel ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
-                        Search
-                      </button>
-                    </div>
-
-                    {panelSearchError && <p className="text-[11px] text-rose-600 font-medium">{panelSearchError}</p>}
-
-                    {panelSearchResults.length > 0 && (
-                      <div className="space-y-1.5 max-h-48 overflow-y-auto pr-0.5">
-                        {panelSearchResults.map((m) => (
-                          <button
-                            key={m.id}
-                            type="button"
-                            onClick={() => handleUseExistingPatient(m)}
-                            className="w-full text-left p-2.5 bg-slate-50 hover:bg-[#effaf5] border border-slate-200 hover:border-[#c2e7db] rounded-lg transition-colors cursor-pointer"
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-xs font-bold text-slate-900">{m.fullName}</span>
-                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${m.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
-                                {m.status}
-                              </span>
-                            </div>
-                            <span className="block text-[10.5px] text-slate-500 mt-0.5">
-                              MR# {m.mrNumber} • {m.panelName} • Member ID: {m.panelMemberId || '—'}
-                              {m.phone ? ` • ${m.phone}` : ''}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
-                    {hasSearchedPanel && panelSearchResults.length === 0 && !isSearchingPanel && !panelSearchError && (
-                      <p className="text-[11px] text-slate-500">
-                        No existing patient found in the registry — fill in the details below to register a new one.
-                      </p>
-                    )}
-                  </div>
-                )}
+                <PanelPatientSearchSection
+                  selectedPatient={selectedExistingPatient}
+                  onSelectPatient={handleUseExistingPatient}
+                  onClearPatient={handleClearExistingPatient}
+                />
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Select
@@ -968,14 +897,15 @@ export const NewAdmissionView: React.FC = () => {
                     hint={selectedExistingPatient ? "From the patient's registry record." : undefined}
                   />
                   <TextInput
-                    label="Panel Member ID / Card #"
-                    required
+                    label={corporatePanels.find(p => p.id === panelId)?.memberIdLabel || 'Panel Member ID / Card #'}
+                    required={corporatePanels.find(p => p.id === panelId)?.memberIdRequired}
                     disabled={!!selectedExistingPatient}
                     placeholder="e.g. EMP-99214 / CRD-4412"
                     value={panelMemberId}
                     onChange={(e) => setPanelMemberId(e.target.value.toUpperCase())}
                     onKeyDown={handleEnterNext}
                   />
+                  {!selectedExistingPatient && <div className="sm:col-span-2"><PanelMembershipFields value={membershipDetails} onChange={patch => setMembershipDetails(prev => ({ ...prev, ...patch }))} datesRequired={corporatePanels.find(p => p.id === panelId)?.membershipValidityRequired} /></div>}
                 </div>
               </div>
             )}
@@ -1157,6 +1087,7 @@ export const NewAdmissionView: React.FC = () => {
                 value={formValues.expectedAt}
                 onChange={(e) => setFormValues({ ...formValues, expectedAt: e.target.value })}
                 onKeyDown={handleEnterNext}
+                hint={formValues.expectedAt ? `Selected: ${formatDisplayDate(formValues.expectedAt)} (DD/MM/YYYY)` : undefined}
               />
             </div>
 

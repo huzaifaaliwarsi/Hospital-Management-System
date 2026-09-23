@@ -18,6 +18,9 @@ export interface PanelMembershipVerification {
     mrNumber: string;
     fullName: string;
     panelMemberId?: string;
+    membershipStatus?: string;
+    membershipValidFrom?: string | null;
+    membershipValidTo?: string | null;
     status: string;
     isActive: boolean;
   };
@@ -37,6 +40,8 @@ export interface ContractResolution {
   serviceName: string;
   quantity: number;
   contractAmount: number;
+  grossAmount: number;
+  matchedScope: string | null;
   patientShare: number;
   panelReceivable: number;
   discountAmount: number;
@@ -107,6 +112,8 @@ function toContractResolution(raw: Record<string, any>): ContractResolution {
     serviceName: raw.serviceName,
     quantity: toNumber(raw.quantity) || 1,
     contractAmount: toNumber(raw.contractAmount),
+    grossAmount: toNumber(raw.grossAmount ?? raw.contractAmount),
+    matchedScope: raw.matchedScope ?? null,
     patientShare: toNumber(raw.patientShare),
     panelReceivable: toNumber(raw.panelReceivable),
     discountAmount: toNumber(raw.discountAmount),

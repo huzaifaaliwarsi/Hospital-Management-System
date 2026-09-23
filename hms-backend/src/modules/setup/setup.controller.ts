@@ -107,6 +107,9 @@ export const setupController = {
   },
 
   // Corporate Panels
+  listPanelCategories: async (_req: Request, res: Response) => {
+    res.json({ data: await setupService.listPanelCategories() });
+  },
   listCorporatePanels: async (req: Request, res: Response) => {
     res.json({ data: await setupService.listCorporatePanels(req.query.activeOnly === 'true') });
   },
@@ -116,8 +119,11 @@ export const setupController = {
   updateCorporatePanel: async (req: Request, res: Response) => {
     res.json({ data: await setupService.updateCorporatePanel(req.params.id as string, req.body, actorId(req)) });
   },
+  listPanelRuleHistory: async (req: Request, res: Response) => {
+    res.json({ data: await setupService.listPanelRuleHistory(req.params.id as string) });
+  },
   replaceDiscountRules: async (req: Request, res: Response) => {
-    res.json({ data: await setupService.replaceDiscountRules(req.params.id as string, req.body) });
+    res.json({ data: await setupService.replaceDiscountRules(req.params.id as string, req.body, actorId(req)) });
   },
   deleteCorporatePanel: async (req: Request, res: Response) => {
     await setupService.deleteCorporatePanel(req.params.id as string);
