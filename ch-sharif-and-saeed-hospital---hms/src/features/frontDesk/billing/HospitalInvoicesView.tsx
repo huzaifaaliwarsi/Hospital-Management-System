@@ -520,22 +520,22 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
 
       {/* Main Ledger Table */}
       <div className="bg-white rounded-xl border border-[#e2eae5] shadow-2xs overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)] min-h-[320px]">
           <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="bg-[#f8faf9] border-b border-[#e2eae5] text-[11px] font-bold text-[#52665e] uppercase tracking-wider">
-                <th className="py-3 px-4">Invoice #</th>
-                <th className="py-3 px-4">Patient Info</th>
-                <th className="py-3 px-4">Care Type</th>
-                <th className="py-3 px-4">Payer</th>
-                <th className="py-3 px-4 text-right">Gross</th>
-                <th className="py-3 px-4 text-right">Discount</th>
-                <th className="py-3 px-4 text-right font-bold text-[#111827]">Net Payable</th>
-                <th className="py-3 px-4 text-right font-bold text-emerald-800">Paid</th>
-                <th className="py-3 px-4 text-right font-bold text-rose-800">Due</th>
-                <th className="py-3 px-4 text-center">Status</th>
-                <th className="py-3 px-4 text-right">Date</th>
-                <th className="py-3 px-4 text-center">Actions</th>
+            <thead className="sticky top-0 z-10 bg-[#f8faf9] shadow-2xs">
+              <tr className="border-b border-[#e2eae5] text-[11px] font-bold text-[#52665e] uppercase tracking-wider">
+                <th className="py-3 px-4 whitespace-nowrap">Invoice #</th>
+                <th className="py-3 px-4 whitespace-nowrap">Patient Info</th>
+                <th className="py-3 px-4 whitespace-nowrap">Care Type</th>
+                <th className="py-3 px-4 whitespace-nowrap">Payer</th>
+                <th className="py-3 px-4 text-right whitespace-nowrap">Gross</th>
+                <th className="py-3 px-4 text-right whitespace-nowrap">Discount</th>
+                <th className="py-3 px-4 text-right font-bold text-[#111827] whitespace-nowrap">Net Payable</th>
+                <th className="py-3 px-4 text-right font-bold text-emerald-800 whitespace-nowrap">Paid</th>
+                <th className="py-3 px-4 text-right font-bold text-rose-800 whitespace-nowrap">Due</th>
+                <th className="py-3 px-4 text-center whitespace-nowrap">Status</th>
+                <th className="py-3 px-4 text-right whitespace-nowrap">Date</th>
+                <th className="py-3 px-4 text-center whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#e2eae5] text-slate-700">
@@ -552,53 +552,53 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
                     onClick={() => openInvoice(inv.id)}
                   >
                     {/* Invoice # */}
-                    <td className="py-3 px-4 font-mono font-bold text-slate-900 group-hover:text-[#08775A]">
+                    <td className="py-3 px-4 font-mono font-bold text-slate-900 group-hover:text-[#08775A] whitespace-nowrap">
                       {inv.invoiceNumber}
                     </td>
 
                     {/* Patient Info */}
-                    <td className="py-3 px-4">
-                      <span className="font-semibold text-slate-900 block">{inv.patientName}</span>
+                    <td className="py-3 px-4 whitespace-nowrap">
+                      <span className="font-semibold text-slate-900 block whitespace-nowrap">{inv.patientName}</span>
                       {inv.patientMr && (
-                        <span className="inline-block mt-0.5 font-mono text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200">
+                        <span className="inline-block mt-0.5 font-mono text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200 whitespace-nowrap">
                           {inv.patientMr}
                         </span>
                       )}
                     </td>
 
                     {/* Clean Care Type Badge */}
-                    <td className="py-3 px-4">
+                    <td className="py-3 px-4 whitespace-nowrap">
                       {careQueue === 'OPD' && (
-                        <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                        <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200 whitespace-nowrap">
                           OPD
                         </span>
                       )}
                       {careQueue === 'ER' && (
-                        <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                        <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200 whitespace-nowrap">
                           Emergency
                         </span>
                       )}
                       {careQueue === 'OBS' && (
-                        <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                        <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 whitespace-nowrap">
                           Observation
                         </span>
                       )}
                       {careQueue === 'ADM' && (
-                        <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-[#effaf5] text-[#08775A] border border-[#c2e7db]">
+                        <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-[#effaf5] text-[#08775A] border border-[#c2e7db] whitespace-nowrap">
                           Admission
                         </span>
                       )}
                       {careQueue === 'CUSTOM' && (
-                        <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                        <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 whitespace-nowrap">
                           Custom Billing
                         </span>
                       )}
                     </td>
 
                     {/* Payer Type */}
-                    <td className="py-3 px-4">
+                    <td className="py-3 px-4 whitespace-nowrap">
                       <span
-                        className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${
+                        className={`text-[10px] font-semibold px-2 py-0.5 rounded border whitespace-nowrap ${
                           inv.payerType === 'Corporate / Panel'
                             ? 'bg-amber-50 text-amber-800 border-amber-200'
                             : 'bg-slate-50 text-slate-600 border-slate-200'
@@ -609,14 +609,14 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
                     </td>
 
                     {/* Gross */}
-                    <td className="py-3 px-4 text-right font-mono text-slate-500">
+                    <td className="py-3 px-4 text-right font-mono text-slate-500 whitespace-nowrap">
                       {formatPKR(inv.subtotal || inv.total + inv.discountTotal)}
                     </td>
 
                     {/* Discount */}
-                    <td className="py-3 px-4 text-right font-mono text-slate-500">
+                    <td className="py-3 px-4 text-right font-mono text-slate-500 whitespace-nowrap">
                       {inv.discountTotal > 0 ? (
-                        <span className="text-amber-700 font-semibold">
+                        <span className="text-amber-700 font-semibold whitespace-nowrap">
                           -{formatPKR(inv.discountTotal)}
                         </span>
                       ) : (
@@ -625,39 +625,39 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
                     </td>
 
                     {/* Net Payable */}
-                    <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
+                    <td className="py-3 px-4 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
                       {formatPKR(inv.total)}
                     </td>
 
                     {/* Paid (with a Refunded tag when applicable) */}
-                    <td className="py-3 px-4 text-right font-mono font-bold text-emerald-700">
+                    <td className="py-3 px-4 text-right font-mono font-bold text-emerald-700 whitespace-nowrap">
                       {formatPKR(inv.paidTotal)}
                       {inv.hasRefund && (
-                        <span className="block text-[10px] font-semibold text-rose-700 mt-0.5">
+                        <span className="block text-[10px] font-semibold text-rose-700 mt-0.5 whitespace-nowrap">
                           Refunded {formatPKR(inv.refundedAmount)}
                         </span>
                       )}
                     </td>
 
                     {/* Balance Due / Remaining */}
-                    <td className="py-3 px-4 text-right font-mono font-bold">
+                    <td className="py-3 px-4 text-right font-mono font-bold whitespace-nowrap">
                       {inv.balanceDue > 0 ? (
-                        <span className="text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                        <span className="text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200 whitespace-nowrap">
                           {formatPKR(inv.balanceDue)}
                         </span>
                       ) : inv.paidTotal > inv.total ? (
-                        <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 text-[11px]" title="Excess deposit remaining / refundable">
+                        <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 text-[11px] whitespace-nowrap" title="Excess deposit remaining / refundable">
                           +{formatPKR(inv.paidTotal - inv.total)} Ref
                         </span>
                       ) : (
-                        <span className="text-slate-400 font-normal">Settled</span>
+                        <span className="text-slate-400 font-normal whitespace-nowrap">Settled</span>
                       )}
                     </td>
 
                     {/* Bill Status */}
-                    <td className="py-3 px-4 text-center">
+                    <td className="py-3 px-4 text-center whitespace-nowrap">
                       <span
-                        className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${
+                        className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border whitespace-nowrap ${
                           isPaid
                             ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
                             : isPartiallyPaid
@@ -676,11 +676,9 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
                       {inv.createdAt}
                     </td>
 
-                    {/* Actions: View, Add Service, Refund — Refund only ever shown when
-                        something has actually been collected (matches the backend's
-                        `refundAmount <= paidTotal` guard), Add Service hidden once Void. */}
-                    <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center justify-center gap-1.5">
+                    {/* Actions */}
+                    <td className="py-3 px-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-center gap-1.5 whitespace-nowrap">
                         <button
                           type="button"
                           onClick={() => openInvoice(inv.id)}

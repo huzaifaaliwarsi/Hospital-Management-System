@@ -4,26 +4,47 @@ import { ValidationError } from '@/shared/errors/AppError';
 import type { SubmitSettlementBody } from './settlement.schemas';
 
 /**
- * My Account Settlement (HMS_V7.2_NEW_REQUIREMENTS.md §3.3) — closes out a
- * cashier's shift: every currently-unsettled `UserCashBalance` row (the same
- * ledger `cashService.getCashierBalanceSheet` reads) is bundled into one
- * `AccountSettlement`, variance is computed against the cashier's own
- * physical count, and those rows flip `isSettled = true` so they never
- * appear on a future balance sheet or settlement again.
+ * My Account Settlement (HMS_V7.2_NEW_REQUIREMENTS.md §3.3; Balance Sheet &
+ * Account Settlement Guide §5.1) — closes out a cashier's shift: every
+ * currently-unsettled `UserCashBalance` row (the same ledger
+ * `cashService.getCashierBalanceSheet` reads) is bundled into one
+ * `AccountSettlement` and flips `isSettled = true` — a transaction, once
+ * accounted for in a settlement, is never left dangling or arbitrarily
+ * picked apart.
+ *
+ * A cash SHORTFALL doesn't vanish, though: `carryForwardAmount` records
+ * exactly what's still owed as a pure liability figure (not tied to any
+ * specific transaction row), and the next call to this function — or to
+ * `cashService.getCashierBalanceSheet` — folds the most recent settlement's
+ * `carryForwardAmount` back into `expectedCash`, so it keeps showing up
+ * until it's actually paid down. This is deliberately NOT the same thing as
+ * an "Opening Float" (a fixed till amount handed to a cashier at shift
+ * start) — that's a separate, not-yet-built feature.
  *
  * Scoped to `moduleScope: 'BILLING'` — the only scope a Front Desk cashier
- * ever writes to. Review/approval of a submitted settlement (Admin/Super
- * Admin side) is a separate, not-yet-built screen; this only covers the
- * cashier's own submit + history.
+ * ever writes to.
  */
 export const settlementService = {
   async submitSettlement(portalUserId: string, body: SubmitSettlementBody) {
     return prisma.$transaction(async (tx) => {
-      const unsettled = await tx.userCashBalance.findMany({
-        where: { portalUserId, isSettled: false },
-        orderBy: { occurredAt: 'asc' },
-      });
-      if (unsettled.length === 0) {
+      const [unsettled, previousSettlement] = await Promise.all([
+        tx.userCashBalance.findMany({
+          where: { portalUserId, isSettled: false },
+          orderBy: { occurredAt: 'asc' },
+        }),
+        // The most recent non-reversed settlement carries this user's
+        // current outstanding liability forward — a reversal already
+        // re-opens its linked rows (`financeControlService.reverseSettlement`),
+        // so a reversed settlement's carry-forward must never be counted.
+        tx.accountSettlement.findFirst({
+          where: { portalUserId, moduleScope: 'BILLING', status: { not: 'REVERSED' } },
+          orderBy: { createdAt: 'desc' },
+          select: { carryForwardAmount: true },
+        }),
+      ]);
+
+      const broughtForward = previousSettlement?.carryForwardAmount ?? new Decimal(0);
+      if (unsettled.length === 0 && broughtForward.isZero()) {
         throw new ValidationError('No unsettled transactions to settle.');
       }
 
@@ -35,9 +56,13 @@ export const settlementService = {
           else physicalCashOut = physicalCashOut.plus(t.amount);
         }
       }
-      const expectedCash = physicalCashIn.minus(physicalCashOut);
+      const expectedCash = physicalCashIn.minus(physicalCashOut).plus(broughtForward);
       const physicalCash = new Decimal(body.physicalCash);
       const variance = physicalCash.minus(expectedCash);
+      // A shortfall (physicalCash < expectedCash) becomes next period's
+      // liability; an overage never carries forward as one — it's found
+      // cash, not money still owed.
+      const carryForwardAmount = variance.isNegative() ? variance.abs() : new Decimal(0);
 
       if (!variance.isZero() && !body.varianceReason?.trim()) {
         throw new ValidationError(
@@ -45,9 +70,10 @@ export const settlementService = {
         );
       }
 
+      const now = new Date();
       const occurredDates = unsettled.map((t) => t.occurredAt.getTime());
-      const periodStart = new Date(Math.min(...occurredDates));
-      const periodEnd = new Date(Math.max(...occurredDates));
+      const periodStart = unsettled.length > 0 ? new Date(Math.min(...occurredDates)) : now;
+      const periodEnd = unsettled.length > 0 ? new Date(Math.max(...occurredDates)) : now;
 
       const settlement = await tx.accountSettlement.create({
         data: {
@@ -60,21 +86,22 @@ export const settlementService = {
           variance,
           varianceReason: body.varianceReason?.trim() || null,
           handoverAmount: body.handoverAmount != null ? new Decimal(body.handoverAmount) : null,
-          carryForwardAmount: new Decimal(0),
+          carryForwardAmount,
           status: 'SUBMITTED',
-          submittedAt: new Date(),
+          submittedAt: now,
           remarks: body.remarks?.trim() || null,
         },
       });
 
-      await tx.settlementTransaction.createMany({
-        data: unsettled.map((t) => ({ accountSettlementId: settlement.id, userCashBalanceId: t.id })),
-      });
-
-      await tx.userCashBalance.updateMany({
-        where: { id: { in: unsettled.map((t) => t.id) } },
-        data: { isSettled: true },
-      });
+      if (unsettled.length > 0) {
+        await tx.settlementTransaction.createMany({
+          data: unsettled.map((t) => ({ accountSettlementId: settlement.id, userCashBalanceId: t.id })),
+        });
+        await tx.userCashBalance.updateMany({
+          where: { id: { in: unsettled.map((t) => t.id) } },
+          data: { isSettled: true },
+        });
+      }
 
       return settlement;
     });

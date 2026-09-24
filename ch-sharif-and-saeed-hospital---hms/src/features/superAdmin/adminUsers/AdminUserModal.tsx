@@ -86,8 +86,10 @@ export const AdminUserModal: React.FC<AdminUserModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Security Check: If editing a Super Admin and actor is an Admin, block modal
-  if (isEditing && editingUser?.role === 'SUPER_ADMIN' && !isActorSuperAdmin) {
+  // Security Check: an Admin actor may never create a new Admin-tier account,
+  // nor edit an existing Admin or Super Admin account — only a Super Admin can
+  // (mirrors the backend's `assertActorMayManageRole` in `portalUser.service.ts`).
+  if (!isActorSuperAdmin && (!isEditing || editingUser?.role === 'SUPER_ADMIN' || editingUser?.role === 'ADMIN')) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
         <div className="bg-white rounded-2xl max-w-md w-full p-6 text-center shadow-xl border border-slate-200">
@@ -98,7 +100,9 @@ export const AdminUserModal: React.FC<AdminUserModalProps> = ({
             Protected Account
           </h3>
           <p className="text-xs text-slate-600 mb-6">
-            This Super Admin account is protected and cannot be modified by an Admin user.
+            {isEditing
+              ? 'This account is protected and cannot be modified by an Admin user.'
+              : 'Only a Super Admin can provision Admin or Super Admin accounts. Use Staff Users to add operational staff.'}
           </p>
           <button
             type="button"

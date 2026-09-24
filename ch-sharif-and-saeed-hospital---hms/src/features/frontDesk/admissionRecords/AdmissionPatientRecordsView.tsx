@@ -160,64 +160,64 @@ export const AdmissionPatientRecordsView: React.FC = () => {
         ) : loadError ? (
           <ErrorState message={loadError} onRetry={() => load()} />
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)] min-h-[300px]">
             <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="bg-[#f8faf9] border-b border-[#e2eae5] text-[11px] font-bold text-[#52665e] uppercase tracking-wider">
-                  <th className="py-3 px-4">Admission No.</th>
-                  <th className="py-3 px-4">Patient</th>
-                  <th className="py-3 px-4">Payer Type</th>
-                  <th className="py-3 px-4">Admission Date</th>
-                  <th className="py-3 px-4">Ward / Room / Bed</th>
-                  <th className="py-3 px-4 text-right">Current Charges</th>
-                  <th className="py-3 px-4 text-right">Total Paid</th>
-                  <th className="py-3 px-4 text-right">Outstanding</th>
-                  <th className="py-3 px-4 text-center">Clinical Status</th>
-                  <th className="py-3 px-4 text-center">Billing Status</th>
-                  <th className="py-3 px-4 text-center">Actions</th>
+              <thead className="sticky top-0 z-10 bg-[#f8faf9] shadow-2xs">
+                <tr className="border-b border-[#e2eae5] text-[11px] font-bold text-[#52665e] uppercase tracking-wider">
+                  <th className="py-3 px-4 whitespace-nowrap">Admission No.</th>
+                  <th className="py-3 px-4 whitespace-nowrap">Patient</th>
+                  <th className="py-3 px-4 whitespace-nowrap">Payer Type</th>
+                  <th className="py-3 px-4 whitespace-nowrap">Admission Date</th>
+                  <th className="py-3 px-4 whitespace-nowrap">Ward / Room / Bed</th>
+                  <th className="py-3 px-4 text-right whitespace-nowrap">Current Charges</th>
+                  <th className="py-3 px-4 text-right whitespace-nowrap">Total Paid</th>
+                  <th className="py-3 px-4 text-right whitespace-nowrap">Outstanding</th>
+                  <th className="py-3 px-4 text-center whitespace-nowrap">Clinical Status</th>
+                  <th className="py-3 px-4 text-center whitespace-nowrap">Billing Status</th>
+                  <th className="py-3 px-4 text-center whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#e2eae5] text-slate-700">
                 {filteredRows.map((r) => (
                   <tr key={r.id} className="hover:bg-[#f8fcfa] transition-colors cursor-pointer" onClick={() => setOpenAdmissionId(r.id)}>
-                    <td className="py-3 px-4 font-mono font-bold text-slate-900">{r.admissionNumber}</td>
-                    <td className="py-3 px-4">
-                      <span className="font-semibold text-slate-900 block">{r.patientName}</span>
+                    <td className="py-3 px-4 font-mono font-bold text-slate-900 whitespace-nowrap">{r.admissionNumber}</td>
+                    <td className="py-3 px-4 whitespace-nowrap">
+                      <span className="font-semibold text-slate-900 block whitespace-nowrap">{r.patientName}</span>
                       {r.patientMrNumber && (
-                        <span className="inline-block mt-0.5 font-mono text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200">
+                        <span className="inline-block mt-0.5 font-mono text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200 whitespace-nowrap">
                           {r.patientMrNumber}
                         </span>
                       )}
                     </td>
-                    <td className="py-3 px-4">
+                    <td className="py-3 px-4 whitespace-nowrap">
                       {r.payerType === 'PANEL' ? <PanelBadge /> : (
-                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-600">Self-Pay</span>
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-600 whitespace-nowrap">Self-Pay</span>
                       )}
                     </td>
                     <td className="py-3 px-4 whitespace-nowrap text-slate-600">{r.admittedAt ? formatTimestamp(r.admittedAt) : 'Pending check-in'}</td>
                     <td className="py-3 px-4 whitespace-nowrap text-slate-600">
                       {[r.ward, r.room, r.bed].filter(Boolean).join(' / ') || '—'}
                     </td>
-                    <td className="py-3 px-4 text-right font-mono font-semibold text-slate-900">{formatPKR(r.currentCharges)}</td>
-                    <td className="py-3 px-4 text-right font-mono font-semibold text-emerald-700">{formatPKR(r.totalPaid)}</td>
-                    <td className="py-3 px-4 text-right font-mono font-bold">
+                    <td className="py-3 px-4 text-right font-mono font-semibold text-slate-900 whitespace-nowrap">{formatPKR(r.currentCharges)}</td>
+                    <td className="py-3 px-4 text-right font-mono font-semibold text-emerald-700 whitespace-nowrap">{formatPKR(r.totalPaid)}</td>
+                    <td className="py-3 px-4 text-right font-mono font-bold whitespace-nowrap">
                       {r.outstanding > 0 ? (
-                        <span className="text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">{formatPKR(r.outstanding)}</span>
+                        <span className="text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200 whitespace-nowrap">{formatPKR(r.outstanding)}</span>
                       ) : r.availableCredit > 0 ? (
-                        <span className="text-[#08775A] bg-[#effaf5] px-2 py-0.5 rounded border border-[#c2e7db]" title="Available advance / credit">
+                        <span className="text-[#08775A] bg-[#effaf5] px-2 py-0.5 rounded border border-[#c2e7db] whitespace-nowrap" title="Available advance / credit">
                           Credit {formatPKR(r.availableCredit)}
                         </span>
                       ) : (
-                        <span className="text-slate-400 font-normal">Settled</span>
+                        <span className="text-slate-400 font-normal whitespace-nowrap">Settled</span>
                       )}
                     </td>
-                    <td className="py-3 px-4 text-center">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${CLINICAL_STATUS_BADGE[r.clinicalStatus] || 'bg-slate-100 text-slate-600'}`}>
+                    <td className="py-3 px-4 text-center whitespace-nowrap">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold whitespace-nowrap ${CLINICAL_STATUS_BADGE[r.clinicalStatus] || 'bg-slate-100 text-slate-600'}`}>
                         {['PLANNED', 'CONFIRMED'].includes(r.clinicalStatus) ? 'PENDING CHECK-IN' : r.clinicalStatus.replace(/_/g, ' ')}
                       </span>
                     </td>
-                    <td className="py-3 px-4 text-center">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${BILLING_STATUS_BADGE[r.billingStatus]}`}>
+                    <td className="py-3 px-4 text-center whitespace-nowrap">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold whitespace-nowrap ${BILLING_STATUS_BADGE[r.billingStatus]}`}>
                         {r.billingStatus.replace(/_/g, ' ')}
                       </span>
                     </td>

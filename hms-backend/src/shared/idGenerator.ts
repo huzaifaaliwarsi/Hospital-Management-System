@@ -90,10 +90,37 @@ export async function generateReceiptNumber(tx?: PrismaClientOrTx): Promise<stri
 /**
  * Professional Medical Record Number (MRN): e.g. `MR-000001`
  * Lifelong patient identifier without year prefix.
+ *
+ * A patient is EITHER a `PanelPatient` OR a `SelfPayEncounter` row, but
+ * both draw from this one shared sequence — a self-pay visitor and a panel
+ * patient must never be handed the same MR number. `generateSequentialId`
+ * only checks one model, so this counts and probes across both.
  */
 export async function generateMrNumber(tx?: PrismaClientOrTx): Promise<string> {
+  const db = tx || prisma;
   const prefix = 'MR-';
-  return generateSequentialId(tx, 'panelPatient', 'mrNumber', prefix, 6);
+  const padLength = 6;
+
+  try {
+    const [panelCount, selfPayCount] = await Promise.all([
+      db.panelPatient.count({ where: { mrNumber: { startsWith: prefix } } }),
+      db.selfPayEncounter.count({ where: { mrNumber: { startsWith: prefix } } }),
+    ]);
+    const baseCount = panelCount + selfPayCount;
+
+    for (let offset = 1; offset <= 15; offset++) {
+      const candidate = `${prefix}${String(baseCount + offset).padStart(padLength, '0')}`;
+      const [existsPanel, existsSelfPay] = await Promise.all([
+        db.panelPatient.findUnique({ where: { mrNumber: candidate }, select: { id: true } }),
+        db.selfPayEncounter.findUnique({ where: { mrNumber: candidate }, select: { id: true } }),
+      ]);
+      if (!existsPanel && !existsSelfPay) return candidate;
+    }
+  } catch {
+    // Fall through to compact random fallback
+  }
+
+  return `${prefix}${compactRandom(padLength)}`;
 }
 
 /**

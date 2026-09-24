@@ -53,6 +53,12 @@ import { HospitalInvoicesView } from '../frontDesk/billing/HospitalInvoicesView'
 import { SuperAdminPanelBillingView } from './corporatePanels/SuperAdminPanelBillingView';
 import { AppointmentsView } from '../frontDesk/appointments/AppointmentsView';
 import { ActiveAdmissionsView } from '../admission/ActiveAdmissionsView';
+import { FinanceControlBalanceSheetsView } from './financeControl/FinanceControlBalanceSheetsView';
+import { FinanceControlAccountSettlementsView } from './financeControl/FinanceControlAccountSettlementsView';
+import { SuperAdminFrontDeskReportsHub } from './reports/SuperAdminFrontDeskReportsHub';
+import { SuperAdminAdmissionReportsHub } from './reports/SuperAdminAdmissionReportsHub';
+import { ReportModuleNotBuilt } from './reports/ReportModuleNotBuilt';
+import { CollectionReportViewPage, PanelPayerReportView } from '../frontDesk/reports/FrontDeskExtraReports';
 import {
   MOCK_DEPARTMENTS,
   DepartmentRecord,
@@ -372,25 +378,67 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
     return <SuperAdminPanelBillingView />;
   }
 
+  // 1n2. Finance Control — Balance Sheet & Account Settlement Guide §6.
+  // Real oversight over `AccountSettlement`/`UserCashBalance`, replacing the
+  // generic mock-table fallback these two module IDs used to fall through to.
+  if (activeModuleId === 'balance_sheets' || activeModuleId === 'my_balance_sheet' || activeModuleId === 'balance_sheet') {
+    return <FinanceControlBalanceSheetsView />;
+  }
+
+  if (activeModuleId === 'account_settlements' || activeModuleId === 'my_account_settlement' || activeModuleId === 'accounts_settlement') {
+    return <FinanceControlAccountSettlementsView />;
+  }
+
+  // 1n3. Reporting Guide v7.5 — Front Desk/Billing and Admission each already
+  // have their own full real, live report catalogs (built this session, see
+  // `reporting.md`). Super Admin/Admin's nav items with the same names now
+  // open a hub giving oversight access to that ENTIRE catalog (every report
+  // that portal's own nav lists) instead of `SuperAdminReportsView`'s
+  // hardcoded rows or a single thin summary view.
+  if (activeModuleId === 'billing_reports') {
+    return <SuperAdminFrontDeskReportsHub />;
+  }
+
+  if (activeModuleId === 'admission_reports') {
+    return <SuperAdminAdmissionReportsHub />;
+  }
+
+  // Collection Reports / Patient-Panel Reports overlap reports Front Desk
+  // already built for itself this session — reuse those real components
+  // directly rather than fabricating a Super-Admin-only variant.
+  if (activeModuleId === 'collection_reports') {
+    return <CollectionReportViewPage />;
+  }
+
+  if (activeModuleId === 'patient_panel_reports') {
+    return <PanelPayerReportView />;
+  }
+
   // 2. Check if this is a Report Page (Global Reporting Standard)
-  if (
-    activeModuleId === 'management_reports' ||
-    activeModuleId === 'patient_panel_reports' ||
-    activeModuleId === 'billing_reports' ||
-    activeModuleId === 'collection_reports' ||
-    activeModuleId === 'admission_reports' ||
-    activeModuleId === 'inventory_reports' ||
-    activeModuleId === 'staff_reports' ||
-    activeModuleId === 'attendance_reports' ||
-    activeModuleId === 'salary_reports' ||
-    activeModuleId === 'commission_reports'
-  ) {
+  // `management_reports` (KPI benchmarks) is out of scope for the v7.5
+  // reporting guide — separate analytics workstream, left untouched.
+  if (activeModuleId === 'management_reports') {
     return (
       <SuperAdminReportsView
         reportType={activeModuleId}
         reportTitle={moduleName}
       />
     );
+  }
+
+  // `inventory_reports`/`staff_reports`/`attendance_reports`/
+  // `salary_reports`/`commission_reports` are HR/Payroll/Inventory
+  // domains — explicitly out of scope for the v7.5 guide, and none has a
+  // real backend yet. Show an honest "not built" state rather than
+  // `SuperAdminReportsView`'s fabricated rows (reporting.md Step 1).
+  if (
+    activeModuleId === 'inventory_reports' ||
+    activeModuleId === 'staff_reports' ||
+    activeModuleId === 'attendance_reports' ||
+    activeModuleId === 'salary_reports' ||
+    activeModuleId === 'commission_reports'
+  ) {
+    return <ReportModuleNotBuilt moduleName={moduleName} />;
   }
 
   // Handlers for Adding Records

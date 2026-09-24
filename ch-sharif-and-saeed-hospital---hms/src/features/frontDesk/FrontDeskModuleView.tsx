@@ -4,6 +4,19 @@ import { NewAdmissionView } from './newAdmission/NewAdmissionView';
 import { AppointmentsView } from './appointments/AppointmentsView';
 import { AdmissionPaymentRequestsView } from './paymentRequests/AdmissionPaymentRequestsView';
 import { FrontDeskBillingReportsView } from './reports/FrontDeskBillingReportsView';
+import {
+  EncounterRegisterView,
+  InvoiceRegisterView,
+  CollectionReportViewPage,
+  OutstandingInvoicesView,
+  DiscountReportViewPage,
+  RefundVoidReportViewPage,
+  DepartmentRevenueReportView,
+  AdmissionPaymentCollectionsView,
+  PanelPayerReportView,
+  ReceiptExceptionLogView,
+  CashierPerformanceReportView,
+} from './reports/FrontDeskExtraReports';
 import { MyAccountSettlementView } from './settlement/MyAccountSettlementView';
 import { HospitalInvoicesView } from './billing/HospitalInvoicesView';
 import { AdmissionPatientRecordsView } from './admissionRecords/AdmissionPatientRecordsView';
@@ -110,11 +123,35 @@ export const FrontDeskModuleView: React.FC<FrontDeskModuleViewProps> = ({ module
         />
       );
     case 'my_balance_sheet':
+    case 'balance_sheets':
+    case 'balance_sheet':
       return <MyBalanceSheetView />;
     case 'admission_payment_requests':
       return <AdmissionPaymentRequestsView />;
     case 'front_desk_billing_reports':
       return <FrontDeskBillingReportsView />;
+    case 'fd_encounter_register':
+      return <EncounterRegisterView />;
+    case 'fd_invoice_register':
+      return <InvoiceRegisterView />;
+    case 'fd_collection_report':
+      return <CollectionReportViewPage />;
+    case 'fd_outstanding_invoices':
+      return <OutstandingInvoicesView />;
+    case 'fd_discount_report':
+      return <DiscountReportViewPage />;
+    case 'fd_refund_void_report':
+      return <RefundVoidReportViewPage />;
+    case 'fd_department_revenue':
+      return <DepartmentRevenueReportView />;
+    case 'fd_admission_payment_collections':
+      return <AdmissionPaymentCollectionsView />;
+    case 'fd_panel_payer':
+      return <PanelPayerReportView />;
+    case 'fd_receipt_exceptions':
+      return <ReceiptExceptionLogView />;
+    case 'fd_cashier_performance':
+      return <CashierPerformanceReportView />;
     case 'my_account_settlement':
       return <MyAccountSettlementView />;
     case 'panel_billing':

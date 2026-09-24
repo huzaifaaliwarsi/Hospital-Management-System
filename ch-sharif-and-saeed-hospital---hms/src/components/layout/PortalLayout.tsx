@@ -115,31 +115,6 @@ export const PortalLayout: React.FC<PortalLayoutProps> = ({ children }) => {
           onOpenQuickSearch={() => {}}
         />
 
-        {/* Sub-Header / Breadcrumbs Bar */}
-        <div className="bg-white border-b border-[#e2eae5] px-4 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-2 shrink-0">
-          <div className="flex items-center gap-2 text-xs">
-            <span className="text-[#8b9e95] font-medium">{portalConfig.shortName}</span>
-            <span className="text-[#d2ded8]">/</span>
-            <span className="text-[#52665e] font-medium">{currentGroupTitle}</span>
-            <span className="text-[#d2ded8]">/</span>
-            <span className="text-[#111827] font-semibold">{currentModuleName}</span>
-          </div>
-
-          <div className="flex items-center gap-3 text-xs text-[#52665e]">
-            {activePortal === 'super-admin' ? (
-              <span className="inline-flex items-center gap-1.5 text-[11px] text-[#52665e] bg-[#f6f8f7] border border-[#e2eae5] px-2 py-0.5 rounded-md font-medium">
-                <span className="h-1.5 w-1.5 rounded-full bg-[#10b981]" />
-                <span>Session Active</span>
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 text-[11px] text-[#0e7d5a] bg-[#e7f6f1] border border-[#c2e7db] px-2 py-0.5 rounded-md font-medium">
-                <span className="h-1.5 w-1.5 rounded-full bg-[#10b981] animate-pulse" />
-                <span>Shift Active (Morning)</span>
-              </span>
-            )}
-          </div>
-        </div>
-
         {/* Main View Port */}
         <main className="flex-1 p-4 sm:p-6 overflow-y-auto">
           {children}

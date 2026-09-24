@@ -92,35 +92,35 @@ export const BillingPendingDischargesView: React.FC = () => {
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)] min-h-[300px]">
           <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600 uppercase tracking-wider">
-                <th className="py-2.5 px-4">Admission #</th>
-                <th className="py-2.5 px-4">Patient</th>
-                <th className="py-2.5 px-4">Department</th>
-                <th className="py-2.5 px-4">Doctor</th>
-                <th className="py-2.5 px-4">Discharged At</th>
-                <th className="py-2.5 px-4 text-right">Action</th>
+            <thead className="sticky top-0 z-10 bg-slate-50/95 shadow-2xs">
+              <tr className="border-b border-slate-200 text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                <th className="py-2.5 px-4 whitespace-nowrap">Admission #</th>
+                <th className="py-2.5 px-4 whitespace-nowrap">Patient</th>
+                <th className="py-2.5 px-4 whitespace-nowrap">Department</th>
+                <th className="py-2.5 px-4 whitespace-nowrap">Doctor</th>
+                <th className="py-2.5 px-4 whitespace-nowrap">Discharged At</th>
+                <th className="py-2.5 px-4 text-right whitespace-nowrap">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
               {admissions.map((a) => (
                 <tr key={a.id} className="hover:bg-slate-50/80">
-                  <td className="py-2.5 px-4 font-mono font-bold text-slate-900">{a.admissionNumber}</td>
-                  <td className="py-2.5 px-4">
-                    <span className="font-semibold text-slate-900">{a.patientName}</span>
-                    <span className="text-[10px] text-slate-400 block">{a.payerType}</span>
+                  <td className="py-2.5 px-4 font-mono font-bold text-slate-900 whitespace-nowrap">{a.admissionNumber}</td>
+                  <td className="py-2.5 px-4 whitespace-nowrap">
+                    <span className="font-semibold text-slate-900 block whitespace-nowrap">{a.patientName}</span>
+                    <span className="text-[10px] text-slate-400 block whitespace-nowrap">{a.payerType}</span>
                   </td>
-                  <td className="py-2.5 px-4">{a.departmentName}</td>
-                  <td className="py-2.5 px-4">{a.doctorName}</td>
-                  <td className="py-2.5 px-4 text-slate-500">{a.dischargedAt || '—'}</td>
-                  <td className="py-2.5 px-4 text-right">
-                    <div className="flex items-center justify-end gap-2">
+                  <td className="py-2.5 px-4 whitespace-nowrap">{a.departmentName}</td>
+                  <td className="py-2.5 px-4 whitespace-nowrap">{a.doctorName}</td>
+                  <td className="py-2.5 px-4 text-slate-500 whitespace-nowrap">{a.dischargedAt || '—'}</td>
+                  <td className="py-2.5 px-4 text-right whitespace-nowrap">
+                    <div className="flex items-center justify-end gap-2 whitespace-nowrap">
                       <button
                         type="button"
                         onClick={() => setStatementAdmissionId(a.id)}
-                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#08775A] hover:underline cursor-pointer"
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#08775A] hover:underline cursor-pointer whitespace-nowrap"
                       >
                         <Receipt className="h-3 w-3" /> View Statement / Collect
                       </button>
@@ -128,7 +128,7 @@ export const BillingPendingDischargesView: React.FC = () => {
                         type="button"
                         onClick={() => handleDirectDischarge(a.id, a.patientName)}
                         disabled={dischargingId === a.id}
-                        className="inline-flex items-center gap-1 text-[11px] font-bold text-white bg-[#08775A] hover:bg-[#065f46] px-2.5 py-1 rounded-lg shadow-xs cursor-pointer disabled:opacity-60"
+                        className="inline-flex items-center gap-1 text-[11px] font-bold text-white bg-[#08775A] hover:bg-[#065f46] px-2.5 py-1 rounded-lg shadow-xs cursor-pointer disabled:opacity-60 whitespace-nowrap"
                       >
                         {dischargingId === a.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
                         <span>Complete Discharge</span>

@@ -13,6 +13,9 @@ import {
   Plus,
   FileText,
   CheckCircle2,
+  Pencil,
+  Check,
+  X,
 } from 'lucide-react';
 import { Modal } from '../../components/common/Modal';
 import { PanelBadge } from '../../components/common/PanelBadge';
@@ -152,9 +155,39 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
   const [lineQty, setLineQty] = useState(1);
   const [linePerformedBy, setLinePerformedBy] = useState('');
   const [lineArrangementMode, setLineArrangementMode] = useState<'HOSPITAL_MANAGED' | 'SELF'>('HOSPITAL_MANAGED');
+
+  // Inline Fulfillment Mode editing state
+  const [isEditingMedMode, setIsEditingMedMode] = useState(false);
+  const [inlineMode, setInlineMode] = useState<MedicationMode>('HOSPITAL_MANAGED');
+  const [inlineReason, setInlineReason] = useState('Updated during active care');
+  const [isUpdatingMode, setIsUpdatingMode] = useState(false);
+
   useEffect(() => {
-    setLineArrangementMode(isCurrentSelectionOutsourced ? detail?.outsourcedFulfillmentMode ?? 'HOSPITAL_MANAGED' : 'HOSPITAL_MANAGED');
-  }, [isCurrentSelectionOutsourced, detail?.outsourcedFulfillmentMode]);
+    const defaultMode = isCurrentSelectionOutsourced
+      ? detail?.outsourcedFulfillmentMode ?? 'HOSPITAL_MANAGED'
+      : detail?.medicationMode === 'SELF'
+      ? 'SELF'
+      : 'HOSPITAL_MANAGED';
+    setLineArrangementMode(defaultMode);
+  }, [isCurrentSelectionOutsourced, detail?.outsourcedFulfillmentMode, detail?.medicationMode]);
+
+  const handleSaveInlineMode = async () => {
+    if (!detail) return;
+    setIsUpdatingMode(true);
+    try {
+      await changeAdmissionMedicationMode(admissionId, {
+        mode: inlineMode,
+        reason: inlineReason.trim() || 'Updated during active care',
+      });
+      setIsEditingMedMode(false);
+      setLineArrangementMode(inlineMode === 'HOSPITAL_MANAGED' ? 'HOSPITAL_MANAGED' : 'SELF');
+      await refresh('Admission fulfillment mode updated successfully.');
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to update fulfillment mode.');
+    } finally {
+      setIsUpdatingMode(false);
+    }
+  };
 
   const selectedServices = useMemo(() => {
     return allServices.filter((s) => selectedServiceIds.includes(s.id));
@@ -433,27 +466,118 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
 
           {tab === 'services' && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-xs">
-                <span className="text-slate-600 font-medium">
-                  Fulfillment Mode (set at admission):{' '}
-                  <span
-                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold ml-1 ${
-                      detail.medicationMode === 'HOSPITAL_MANAGED' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'
-                    }`}
-                  >
-                    {detail.medicationMode === 'HOSPITAL_MANAGED' ? 'Hospital Managed' : 'Self (Patient Arranged)'}
-                  </span>
-                </span>
-                {detail.status === 'ACTIVE' && (
-                  <button
-                    type="button"
-                    onClick={() => setTab('medication')}
-                    className="text-[11px] font-semibold text-[#08775A] hover:underline cursor-pointer"
-                  >
-                    Change
-                  </button>
-                )}
-              </div>
+              {/* Inline Fulfillment Mode Banner & Interactive Switcher */}
+              {!isEditingMedMode ? (
+                <div className="flex items-center justify-between p-3 bg-slate-50/80 rounded-xl border border-slate-200 text-xs flex-wrap gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-slate-600 font-medium">
+                      Fulfillment Mode (set at admission):
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10.5px] font-bold border ${
+                        detail.medicationMode === 'HOSPITAL_MANAGED'
+                          ? 'bg-blue-50 text-blue-700 border-blue-200'
+                          : 'bg-slate-100 text-slate-700 border-slate-300'
+                      }`}
+                    >
+                      {detail.medicationMode === 'HOSPITAL_MANAGED' ? 'Hospital Managed' : 'Self (Patient Arranged)'}
+                    </span>
+                    <span className="text-[11px] text-slate-400 hidden sm:inline">
+                      • Default for newly added services
+                    </span>
+                  </div>
+                  {detail.status === 'ACTIVE' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setInlineMode(detail.medicationMode);
+                        setInlineReason('Updated during active care');
+                        setIsEditingMedMode(true);
+                      }}
+                      className="inline-flex items-center gap-1 text-[11px] font-bold text-[#08775A] hover:text-[#065f46] hover:underline cursor-pointer px-2.5 py-1 rounded-md bg-white border border-slate-200 shadow-2xs"
+                    >
+                      <Pencil className="h-3 w-3" />
+                      <span>Change</span>
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="p-3.5 bg-white rounded-xl border-2 border-[#08775A]/40 shadow-xs text-xs space-y-3 animate-in fade-in duration-150">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                      <Pill className="h-4 w-4 text-[#08775A]" />
+                      Change Admission Fulfillment Mode
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingMedMode(false)}
+                      className="text-slate-400 hover:text-slate-600 p-0.5 rounded cursor-pointer"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setInlineMode('HOSPITAL_MANAGED')}
+                      className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
+                        inlineMode === 'HOSPITAL_MANAGED'
+                          ? 'border-[#08775A] bg-[#effaf5] text-[#08775A] font-bold ring-1 ring-[#08775A]'
+                          : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs">Hospital Managed</span>
+                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 font-semibold">Billable</span>
+                      </div>
+                      <p className="text-[10.5px] font-normal text-slate-500 mt-0.5">Hospital supplies medications &amp; services</p>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setInlineMode('SELF')}
+                      className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
+                        inlineMode === 'SELF'
+                          ? 'border-slate-800 bg-slate-100 text-slate-900 font-bold ring-1 ring-slate-800'
+                          : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs">Self Arranged (Patient)</span>
+                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-200 text-slate-700 font-semibold">PKR 0</span>
+                      </div>
+                      <p className="text-[10.5px] font-normal text-slate-500 mt-0.5">Patient / attendant arranges externally</p>
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={inlineReason}
+                      onChange={(e) => setInlineReason(e.target.value)}
+                      placeholder="Reason for change (e.g. Attendant preference, clinical order)..."
+                      className="flex-1 px-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-[#129b70]/20 focus:border-[#129b70]"
+                    />
+                    <button
+                      type="button"
+                      disabled={isUpdatingMode || !inlineReason.trim()}
+                      onClick={handleSaveInlineMode}
+                      className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      {isUpdatingMode ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                      <span>Save Mode</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingMedMode(false)}
+                      className="px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg border border-slate-200 transition-colors cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {ledgerSummary && (
                 <div className="p-2.5 bg-[#effaf5] rounded-lg border border-[#c2e7db] text-xs">
@@ -577,78 +701,41 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                     }
                   />
 
-                  {/* Arrangement / Fulfillment Mode Selection (Professional Medical UI, No Emojis) */}
-                  <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
-                    <div className="flex items-center justify-between mb-2.5">
-                      <label className="block text-xs font-semibold text-slate-800">
-                        Service Arrangement / Billing Mode <span className="text-rose-500">*</span>
-                      </label>
-                      <span className="text-[11px] text-slate-500 hidden sm:inline">Select arrangement responsibility</span>
+                  {/* Compact Service Arrangement Toggle */}
+                  <div className="flex items-center justify-between gap-3 p-2.5 bg-slate-50/90 rounded-xl border border-slate-200 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-slate-700">Service Arrangement:</span>
+                      <span className="text-[11px] text-slate-400 hidden sm:inline">
+                        (Inherited from admission default)
+                      </span>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {/* Option 1: Hospital Arranged */}
-                      <div
-                        onClick={() => setLineArrangementMode('HOSPITAL_MANAGED')}
-                        className={`relative flex items-start gap-3 p-3 rounded-lg border transition-all cursor-pointer select-none ${
-                          lineArrangementMode === 'HOSPITAL_MANAGED'
-                            ? 'border-[#08775A] bg-[#08775A]/[0.04] ring-1 ring-[#08775A]'
-                            : 'border-slate-200 hover:border-slate-300 bg-slate-50/50 hover:bg-slate-50'
-                        }`}
-                      >
-                        <div className="pt-0.5">
-                          <input
-                            type="radio"
-                            id="mode-hospital-managed"
-                            name="arrangementMode"
-                            checked={lineArrangementMode === 'HOSPITAL_MANAGED'}
-                            onChange={() => setLineArrangementMode('HOSPITAL_MANAGED')}
-                            className="h-4 w-4 text-[#08775A] focus:ring-[#08775A] border-slate-300 cursor-pointer"
-                          />
-                        </div>
-                        <label htmlFor="mode-hospital-managed" className="cursor-pointer flex-1">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-xs font-bold text-slate-900">Hospital Arranged</span>
-                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-50 text-[#08775A] border border-emerald-200/70">
-                              Billable
-                            </span>
-                          </div>
-                          <p className="text-[11px] text-slate-500 leading-snug mt-1">
-                            Conducted and supplied by hospital. Charged at standard rates and posted to patient invoice.
-                          </p>
-                        </label>
-                      </div>
 
-                      {/* Option 2: Self Arranged (Patient) */}
-                      <div
-                        onClick={() => setLineArrangementMode('SELF')}
-                        className={`relative flex items-start gap-3 p-3 rounded-lg border transition-all cursor-pointer select-none ${
-                          lineArrangementMode === 'SELF'
-                            ? 'border-slate-700 bg-slate-100/70 ring-1 ring-slate-700'
-                            : 'border-slate-200 hover:border-slate-300 bg-slate-50/50 hover:bg-slate-50'
+                    <div className="flex items-center gap-1.5 bg-white p-1 rounded-lg border border-slate-200 shadow-2xs">
+                      <button
+                        type="button"
+                        onClick={() => setLineArrangementMode('HOSPITAL_MANAGED')}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                          lineArrangementMode === 'HOSPITAL_MANAGED'
+                            ? 'bg-[#effaf5] text-[#08775A] border border-[#c2e7db] shadow-2xs'
+                            : 'text-slate-600 hover:text-slate-900 border border-transparent'
                         }`}
                       >
-                        <div className="pt-0.5">
-                          <input
-                            type="radio"
-                            id="mode-self-arranged"
-                            name="arrangementMode"
-                            checked={lineArrangementMode === 'SELF'}
-                            onChange={() => setLineArrangementMode('SELF')}
-                            className="h-4 w-4 text-slate-800 focus:ring-slate-700 border-slate-300 cursor-pointer"
-                          />
-                        </div>
-                        <label htmlFor="mode-self-arranged" className="cursor-pointer flex-1">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-xs font-bold text-slate-900">Self Arranged (Patient)</span>
-                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-200/80 text-slate-700 border border-slate-300">
-                              PKR 0 • Non-Billable
-                            </span>
-                          </div>
-                          <p className="text-[11px] text-slate-500 leading-snug mt-1">
-                            Arranged externally by patient/attendant. Documented on medical record without hospital charges.
-                          </p>
-                        </label>
-                      </div>
+                        <span className="w-2 h-2 rounded-full bg-[#08775A]" />
+                        <span>Hospital Managed (Billable)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setLineArrangementMode('SELF')}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                          lineArrangementMode === 'SELF'
+                            ? 'bg-slate-100 text-slate-900 border border-slate-300 shadow-2xs'
+                            : 'text-slate-600 hover:text-slate-900 border border-transparent'
+                        }`}
+                      >
+                        <span className="w-2 h-2 rounded-full bg-slate-500" />
+                        <span>Self Arranged (PKR 0)</span>
+                      </button>
                     </div>
                   </div>
 

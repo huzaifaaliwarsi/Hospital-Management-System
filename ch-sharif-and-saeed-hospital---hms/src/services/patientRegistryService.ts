@@ -133,15 +133,11 @@ function toPatientFromPanel(raw: Record<string, any>): Patient {
   };
 }
 
-/** Maps a backend `SelfPayEncounter` row — with a proper, standard hospital MR number. */
-function toPatientFromSelfPay(raw: Record<string, any>, seq?: number): Patient {
+/** Maps a backend `SelfPayEncounter` row — with its real, permanent MR number (assigned server-side, never recomputed). */
+function toPatientFromSelfPay(raw: Record<string, any>): Patient {
   const cnicOrPassport: string = raw.cnicOrPassport || '';
   const looksLikeCnic = isValidCnic(cnicOrPassport);
-  const mrNumber =
-    raw.mrNumber ||
-    (seq != null
-      ? `MR-${String(seq).padStart(6, '0')}`
-      : `MR-${String(raw.id || '').replace(/-/g, '').slice(0, 6).toUpperCase()}`);
+  const mrNumber = raw.mrNumber || '';
 
   const rawGuardian: string = raw.guardianName || '';
   const cnicMatch = rawGuardian.match(/\[CNIC:\s*([0-9-]{13,15})\]/i);
@@ -186,28 +182,7 @@ export async function fetchPatients(): Promise<Patient[]> {
   ]);
 
   const panelPatients = panelRes.data.data.map(toPatientFromPanel);
-
-  // Extract all existing numeric sequences used by panel patients to prevent collisions
-  const usedNumbers = new Set<number>();
-  for (const p of panelPatients) {
-    const match = p.mrNumber?.match(/MR-(?:\d{2,4}-)?(\d+)/);
-    if (match) usedNumbers.add(parseInt(match[1], 10));
-  }
-
-  // Sort self-pay encounters chronologically
-  const sortedSelfPay = [...selfPayRes.data.data].sort(
-    (a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime()
-  );
-
-  let nextSeq = 1;
-  const selfPayPatients = sortedSelfPay.map((raw) => {
-    while (usedNumbers.has(nextSeq)) {
-      nextSeq++;
-    }
-    const assignedSeq = nextSeq++;
-    usedNumbers.add(assignedSeq);
-    return toPatientFromSelfPay(raw, assignedSeq);
-  });
+  const selfPayPatients = selfPayRes.data.data.map((raw) => toPatientFromSelfPay(raw));
 
   cachedPatients = [...panelPatients, ...selfPayPatients];
   return cachedPatients;

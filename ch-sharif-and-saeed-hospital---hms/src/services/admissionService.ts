@@ -220,7 +220,13 @@ function toNumber(v: any): number {
 
 function bedLabel(bed: any): string | null {
   if (!bed) return null;
-  return `${bed.room?.ward?.name || ''} / ${bed.room?.name || ''} / ${bed.bedNumber}`;
+  const wardName = bed.ward?.name || bed.room?.ward?.name || '';
+  const roomName = bed.room?.name || '';
+  const bedNum = bed.bedNumber
+    ? (/^bed\b/i.test(bed.bedNumber.trim()) ? bed.bedNumber.trim() : `Bed ${bed.bedNumber.trim()}`)
+    : '';
+  const parts = [wardName, roomName, bedNum].filter(Boolean);
+  return parts.length > 0 ? parts.join(' / ') : bed.bedNumber || null;
 }
 
 function toAdmissionRecord(raw: Record<string, any>): AdmissionRecord {

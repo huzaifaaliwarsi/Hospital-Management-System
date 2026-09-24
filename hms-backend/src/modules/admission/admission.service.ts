@@ -2,6 +2,7 @@ import bcrypt from 'bcryptjs';
 import { Decimal } from '@prisma/client/runtime/library';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
+import { notificationsService } from '../notifications/notifications.service';
 import { AuthenticationError, ConflictError, NotFoundError, ValidationError } from '@/shared/errors/AppError';
 import { resolvePanelCoverage } from '@/shared/panelCoverage';
 import { assertMembershipEligible } from '@/shared/panelMembership';
@@ -27,6 +28,7 @@ import {
   generateAdmissionNumber,
   generateInvoiceNumber,
   generateMedicineRequestNumber,
+  generateMrNumber,
   generateReceiptNumber,
 } from '@/shared/idGenerator';
 
@@ -290,12 +292,13 @@ export const admissionService = {
    * only upon check-in / arrival, never during planned booking.
    */
   async createPlannedAdmission(body: CreatePlannedAdmissionBody, actorId: string) {
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       let selfPayEncounterId = body.selfPayEncounterId;
 
       if (!body.panelPatientId && !selfPayEncounterId && body.newSelfPayPatient) {
         const createdSelfPay = await tx.selfPayEncounter.create({
           data: {
+            mrNumber: await generateMrNumber(tx),
             fullName: body.newSelfPayPatient.fullName,
             guardianName: body.newSelfPayPatient.guardianName,
             gender: body.newSelfPayPatient.gender,
@@ -475,6 +478,25 @@ export const admissionService = {
       }
       return { admission, advanceReceipt, invoice };
     });
+
+    try {
+      const patientName = result.admission.panelPatient?.fullName || result.admission.selfPayEncounter?.fullName || 'Patient';
+      const bedInfo = result.admission.bed?.bedNumber ? ` (Bed: ${result.admission.bed.bedNumber})` : '';
+      await notificationsService.createNotification({
+        title: `New Admission Request: ${patientName}`,
+        message: `Admission #${result.admission.admissionNumber} created at Front Desk${bedInfo}. Pending admission review & clinical onboarding.`,
+        type: 'ADMISSION_REQUEST',
+        module: 'ADMISSION',
+        targetPortal: 'admission',
+        actionUrl: '/admission/planned_admissions',
+        referenceId: result.admission.id,
+        createdById: actorId,
+      });
+    } catch (notifErr) {
+      console.error('Failed to dispatch admission notification:', notifErr);
+    }
+
+    return result;
   },
 
   async listAdmissions(query: ListAdmissionsQuery) {
@@ -504,7 +526,8 @@ export const admissionService = {
             id: true,
             bedNumber: true,
             status: true,
-            room: { select: { name: true, ward: { select: { name: true } } } },
+            ward: { select: { id: true, name: true } },
+            room: { select: { id: true, name: true, ward: { select: { id: true, name: true } } } },
           },
         },
         dischargeClearances: true,
@@ -1380,10 +1403,10 @@ export const admissionService = {
    * clearance and final discharge are unaffected, still gated as before.
    */
   async clinicalDischarge(admissionId: string, body: ClinicalDischargeBody, actorId: string) {
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const admission = await tx.admissionRecord.findUnique({
         where: { id: admissionId },
-        include: { dischargeClearances: true },
+        include: { dischargeClearances: true, panelPatient: true, selfPayEncounter: true },
       });
       if (!admission) throw new NotFoundError('Admission record not found');
       if (admission.status !== 'ACTIVE') {
@@ -1443,10 +1466,29 @@ export const admissionService = {
         : await tx.admissionRecord.update({
             where: { id: admission.id },
             data: { status: 'DISCHARGE_PENDING' },
+            include: { panelPatient: true, selfPayEncounter: true },
           });
 
       return { admission: finalAdmission, dischargeSummary: summary };
     });
+
+    try {
+      const patName = result.admission?.panelPatient?.fullName || result.admission?.selfPayEncounter?.fullName || 'Patient';
+      await notificationsService.createNotification({
+        title: `Discharge Clearance Needed: ${patName}`,
+        message: `Doctor authorized clinical discharge for #${result.admission.admissionNumber}. Ready for final billing & payment clearance at Front Desk.`,
+        type: 'DISCHARGE_REQUEST',
+        module: 'BILLING',
+        targetPortal: 'front-desk',
+        actionUrl: `/front-desk?tab=billing_pending_discharges&admissionId=${result.admission.id}`,
+        referenceId: result.admission.id,
+        createdById: actorId,
+      });
+    } catch (notifErr) {
+      console.error('Failed to dispatch clinical discharge notification:', notifErr);
+    }
+
+    return result;
   },
 
   /**
@@ -1510,7 +1552,7 @@ export const admissionService = {
    * On success: marks admission DISCHARGED and automatically frees Bed to AVAILABLE.
    */
   async dischargePatient(admissionId: string, _actorId: string) {
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       // First attempt to reconcile: auto-clears billing if balance is 0, auto-discharges if ready
       const reconcile = await this.reconcileAdmissionDischarge(tx, admissionId, _actorId);
       if (reconcile.isDischarged) {
@@ -1522,7 +1564,7 @@ export const admissionService = {
 
       const admission = await tx.admissionRecord.findUnique({
         where: { id: admissionId },
-        include: { dischargeClearances: true },
+        include: { dischargeClearances: true, panelPatient: true, selfPayEncounter: true },
       });
 
       if (!admission) throw new NotFoundError('Admission record not found');
@@ -1546,6 +1588,7 @@ export const admissionService = {
           status: 'DISCHARGED',
           dischargedAt: new Date(),
         },
+        include: { panelPatient: true, selfPayEncounter: true },
       });
 
       // Automatically free assigned Bed to AVAILABLE
@@ -1561,6 +1604,24 @@ export const admissionService = {
         message: 'Patient discharged successfully. Bed freed to AVAILABLE.',
       };
     });
+
+    try {
+      const patName = result.admission?.panelPatient?.fullName || result.admission?.selfPayEncounter?.fullName || 'Patient';
+      await notificationsService.createNotification({
+        title: `Discharge Finalized: ${patName}`,
+        message: `Discharge and clearance completed for #${result.admission?.admissionNumber || admissionId}. Bed freed to AVAILABLE.`,
+        type: 'DISCHARGE_COMPLETED',
+        module: 'ADMISSION',
+        targetPortal: 'admission',
+        actionUrl: '/admission/discharged_patients',
+        referenceId: admissionId,
+        createdById: _actorId,
+      });
+    } catch (notifErr) {
+      console.error('Failed to dispatch final discharge notification:', notifErr);
+    }
+
+    return result;
   },
 
   /**
