@@ -150,6 +150,7 @@ export async function fetchDiscountReport(range: RangeParams): Promise<ReportRes
 export interface RefundVoidRow {
   reference: string;
   originalInvoice: string | null;
+  invoiceId?: string | null;
   type: 'REFUND' | 'VOID';
   amount: number;
   performedBy: string;

@@ -260,38 +260,47 @@ export const frontdeskReportsService = {
         ? []
         : await prisma.userCashBalance.findMany({
             where: { category: 'REFUND', occurredAt: { gte: start, lte: end }, ...(query.portalUserId ? { portalUserId: query.portalUserId } : {}) },
-            include: { portalUser: { select: userSummarySelect }, paymentReceipt: { select: { receiptNumber: true, hospitalInvoice: { select: { invoiceNumber: true } } } } },
+            include: { portalUser: { select: userSummarySelect }, paymentReceipt: { select: { receiptNumber: true, hospitalInvoice: { select: { id: true, invoiceNumber: true } } } } },
             orderBy: { occurredAt: 'desc' },
           });
+
+    const refundReceiptIds = new Set(
+      refunds.map((r) => r.paymentReceiptId).filter((id): id is string => Boolean(id))
+    );
 
     const voids =
       query.type === 'REFUND'
         ? []
         : await prisma.paymentReceipt.findMany({
             where: { isReversed: true, collectedAt: { gte: start, lte: end }, ...(query.portalUserId ? { collectedById: query.portalUserId } : {}) },
-            include: { collectedBy: { select: userSummarySelect }, hospitalInvoice: { select: { invoiceNumber: true } } },
+            include: { collectedBy: { select: userSummarySelect }, hospitalInvoice: { select: { id: true, invoiceNumber: true } } },
             orderBy: { collectedAt: 'desc' },
           });
+
+    // Exclude payment receipts that were created as reversal receipts for cash refunds (which are already in refunds)
+    const distinctVoids = voids.filter((v) => !refundReceiptIds.has(v.id));
 
     const totalRefund = refunds.reduce((s, r) => s.plus(r.amount), new Decimal(0));
 
     return {
       period: { label, start: start.toISOString(), end: end.toISOString() },
-      summary: { refundAmount: totalRefund, refundCount: refunds.length, voidCount: voids.length },
+      summary: { refundAmount: totalRefund, refundCount: refunds.length, voidCount: distinctVoids.length },
       rows: [
         ...refunds.map((r) => ({
           reference: r.paymentReceipt?.receiptNumber || r.id,
           originalInvoice: r.paymentReceipt?.hospitalInvoice?.invoiceNumber || null,
+          invoiceId: r.paymentReceipt?.hospitalInvoice?.id || null,
           type: 'REFUND' as const,
           amount: r.amount,
           performedBy: r.portalUser.displayName || r.portalUser.username,
           occurredAt: r.occurredAt,
         })),
-        ...voids.map((v) => ({
+        ...distinctVoids.map((v) => ({
           reference: v.receiptNumber,
           originalInvoice: v.hospitalInvoice?.invoiceNumber || null,
+          invoiceId: v.hospitalInvoice?.id || null,
           type: 'VOID' as const,
-          amount: v.amount,
+          amount: v.amount.abs(),
           performedBy: v.collectedBy.displayName || v.collectedBy.username,
           occurredAt: v.collectedAt,
         })),

@@ -1,11 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   UserCheck,
   Loader2,
   AlertCircle,
   CheckCircle2,
   Wallet,
-  ListChecks,
   Banknote,
   ArrowRight,
   RefreshCw,
@@ -19,6 +18,8 @@ import {
   Check,
   FileText,
   Eye,
+  TrendingDown,
+  TrendingUp,
 } from 'lucide-react';
 import { Modal } from '../../../components/common/Modal';
 import { formatPKR } from '../../../utils/formatters';
@@ -26,7 +27,13 @@ import { useToast } from '../../../context/ToastContext';
 import { useRouter } from '../../../context/RouterContext';
 import { useAuth } from '../../../context/AuthContext';
 import { frontdeskApiService } from '../../../services/frontdeskApiService';
-import { downloadTablePDF, downloadTableExcel, downloadTableCSV, printTable, ExportColumn } from '../../../services/tableExportService';
+import {
+  downloadTablePDF,
+  downloadTableExcel,
+  downloadTableCSV,
+  printTable,
+  ExportColumn,
+} from '../../../services/tableExportService';
 import { ExportButtonGroup } from '../../superAdmin/financeControl/ExportButtonGroup';
 import {
   fetchMySettlements,
@@ -38,10 +45,10 @@ import {
 const STATUS_BADGE: Record<SettlementStatus, string> = {
   PREPARED: 'bg-slate-100 text-slate-700 border-slate-200',
   SUBMITTED: 'bg-blue-50 text-blue-700 border-blue-200',
-  ACCEPTED: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  PARTIALLY_ACCEPTED: 'bg-amber-50 text-amber-700 border-amber-200',
-  RETURNED: 'bg-orange-50 text-orange-700 border-orange-200',
-  REJECTED: 'bg-rose-50 text-rose-700 border-rose-200',
+  ACCEPTED: 'bg-emerald-50 text-emerald-800 border-emerald-200 font-bold',
+  PARTIALLY_ACCEPTED: 'bg-amber-50 text-amber-800 border-amber-200 font-bold',
+  RETURNED: 'bg-orange-50 text-orange-800 border-orange-200 font-bold',
+  REJECTED: 'bg-rose-50 text-rose-800 border-rose-200 font-bold',
   REVERSED: 'bg-slate-100 text-slate-700 border-slate-300',
 };
 
@@ -75,9 +82,15 @@ const SETTLEMENT_EXPORT_COLUMNS: ExportColumn<SettlementRecord>[] = [
 ];
 
 /**
- * My Account Settlement — Front Desk shift reconciliation module.
- * Cashiers count physical cash, verify against live collections,
- * and submit shift closeout for finance approval.
+ * My Account Settlement — Re-architected with modern Hospital ERP aesthetics:
+ * - Full-width responsive dashboard layout matching Balance Sheet
+ * - Top header with live Refresh and quick navigation to Balance Sheet
+ * - Hospital green gradient banner (#0a4636 -> #08775A) with real-time cashier context
+ * - 4 primary financial KPI metric cards across the top
+ * - Dual-column interactive reconciliation workspace:
+ *   - Left: Drawer Physical Cash Count with quick denomination buttons & live status banner
+ *   - Right: Handover & Financial Settlement Summary with clean itemized audit breakdown
+ * - Settlement History with dark gradient banner, export toolbar, and bordered table
  */
 export const MyAccountSettlementView: React.FC = () => {
   const toast = useToast();
@@ -102,7 +115,7 @@ export const MyAccountSettlementView: React.FC = () => {
   const [selectedRecord, setSelectedRecord] = useState<SettlementRecord | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
 
-  const load = async (silent = false) => {
+  const load = useCallback(async (silent = false) => {
     if (silent) {
       setIsRefreshing(true);
     } else {
@@ -124,13 +137,16 @@ export const MyAccountSettlementView: React.FC = () => {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     load();
-  }, []);
+  }, [load]);
 
-  const variance = physicalCash === '' ? 0 : Number(physicalCash) - expectedCash;
+  const countedAmount = physicalCash === '' ? 0 : Number(physicalCash);
+  const variance = physicalCash === '' ? 0 : countedAmount - expectedCash;
+  const handoverVal = handoverAmount === '' ? 0 : Number(handoverAmount);
+  const retainedFloat = Math.max(0, countedAmount - handoverVal);
 
   const validate = (): string | null => {
     if (physicalCash === '' || Number(physicalCash) < 0) {
@@ -138,6 +154,9 @@ export const MyAccountSettlementView: React.FC = () => {
     }
     if (variance !== 0 && !varianceReason.trim()) {
       return `Physical cash does not match expected cash (${formatPKR(expectedCash)}). A variance explanation is mandatory.`;
+    }
+    if (handoverAmount !== '' && Number(handoverAmount) > countedAmount) {
+      return `Handover amount (${formatPKR(Number(handoverAmount))}) cannot exceed counted physical cash (${formatPKR(countedAmount)}).`;
     }
     return null;
   };
@@ -177,429 +196,579 @@ export const MyAccountSettlementView: React.FC = () => {
     }
   };
 
+  const handleQuickAddCash = (increment: number) => {
+    const current = physicalCash === '' ? 0 : Number(physicalCash);
+    setPhysicalCash(current + increment);
+    if (formError) setFormError(null);
+  };
+
   return (
-    <div className="max-w-4xl mx-auto space-y-6 pb-12 animate-in fade-in duration-150">
-      {/* Hero Header */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-start sm:items-center gap-3.5">
-          <div className="h-12 w-12 rounded-xl bg-[#effaf5] border border-[#c2e7db] text-[#08775A] flex items-center justify-center shrink-0 shadow-xs">
-            <UserCheck className="h-6 w-6" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-xl font-bold text-slate-900 tracking-tight">My Account Settlement</h1>
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-[#08775A] border border-emerald-200">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#08775A] animate-pulse" />
-                Shift Reconciliation
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 mt-1">
-              Verify your physical cash drawer against live system collections and submit shift closeout for finance verification.
-            </p>
-          </div>
+    <div className="space-y-4 animate-in fade-in duration-150">
+      {/* 1. Top Header with Title and Quick Actions */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900 tracking-tight">My Account Settlement</h1>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Cashier shift reconciliation, drawer count verification, and finance settlement submission.
+          </p>
         </div>
 
-        <div className="flex items-center gap-2 self-start md:self-auto shrink-0">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
             onClick={() => load(true)}
             disabled={isRefreshing || isLoading}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+            className="h-7.5 px-3 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-60 shadow-xs"
             title="Refresh live data"
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin text-[#08775A]' : 'text-slate-500'}`} />
-            <span>Refresh</span>
+            <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin text-[#08775A]' : ''}`} />
+            <span>{isRefreshing ? 'Refreshing…' : 'Refresh'}</span>
           </button>
+
           <button
             type="button"
             onClick={() => navigate('/front-desk/my_balance_sheet')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-[#08775A] bg-[#effaf5] hover:bg-[#e0f5ec] border border-[#c2e7db] rounded-lg shadow-xs transition-colors cursor-pointer"
+            className="h-7.5 px-3.5 rounded-md bg-[#08775A] hover:bg-[#065f46] text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
           >
             <Receipt className="h-3.5 w-3.5" />
             <span>View Balance Sheet</span>
-            <ArrowUpRight className="h-3 w-3" />
+            <ArrowUpRight className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>
 
       {loadError ? (
-        <div className="bg-white rounded-2xl border border-rose-200 p-8 flex flex-col items-center gap-3 text-center shadow-xs">
-          <div className="h-10 w-10 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center">
-            <AlertCircle className="h-5 w-5" />
-          </div>
-          <div>
-            <h3 className="text-sm font-bold text-slate-900">Failed to load settlement details</h3>
-            <p className="text-xs text-rose-600 mt-0.5">{loadError}</p>
-          </div>
+        <div className="bg-white rounded-xl border border-rose-200 p-8 flex flex-col items-center gap-2.5 text-center shadow-xs">
+          <AlertCircle className="h-7 w-7 text-rose-500" />
+          <p className="text-sm text-rose-700 font-semibold">{loadError}</p>
           <button
             type="button"
             onClick={() => load()}
-            className="mt-1 px-4 py-1.5 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg shadow-xs transition-colors cursor-pointer"
+            className="mt-1 px-4 py-2 bg-[#08775A] text-white text-xs font-semibold rounded-lg hover:bg-[#065f46] transition-colors cursor-pointer"
           >
             Retry Connection
           </button>
         </div>
       ) : isLoading ? (
-        <div className="bg-white rounded-2xl border border-slate-200 p-12 flex flex-col items-center justify-center gap-3 text-slate-500 shadow-xs">
+        <div className="bg-white rounded-xl border border-slate-200 p-16 flex flex-col items-center justify-center gap-3 text-slate-400 shadow-xs">
           <Loader2 className="h-6 w-6 animate-spin text-[#08775A]" />
           <span className="text-xs font-medium">Loading live cashier drawer position…</span>
         </div>
       ) : (
         <>
-          {/* Main Reconciliation Container */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-            {/* Step 1: Live System Position */}
-            <div className="p-5 sm:p-6 bg-slate-50/70 border-b border-slate-200/80">
-              <div className="flex items-center justify-between gap-2 mb-4">
-                <div className="flex items-center gap-2">
-                  <span className="h-6 w-6 rounded-md bg-[#08775A] text-white flex items-center justify-center text-xs font-bold shadow-xs">
-                    1
-                  </span>
-                  <div>
-                    <h2 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                      Live System Position
-                    </h2>
-                    <p className="text-[11px] text-slate-500">Unsettled collections currently recorded in your custody</p>
-                  </div>
-                </div>
-                <span className="text-[11px] font-semibold text-slate-500 bg-white border border-slate-200 px-2.5 py-1 rounded-md shadow-xs">
-                  Active Drawer Session
-                </span>
+          {/* 2. Hospital Dark Gradient Header Banner (Matching Balance Sheet) */}
+          <div className="bg-gradient-to-r from-[#0a4636] to-[#08775A] text-white px-4 py-2.5 rounded-lg flex items-center justify-between shadow-xs">
+            <div className="flex items-center gap-2.5 font-bold text-sm tracking-wide text-white">
+              <div className="h-6 w-6 rounded bg-white/15 text-white flex items-center justify-center">
+                <UserCheck className="h-3.5 w-3.5" />
               </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-                {/* Expected Cash */}
-                <div className="p-4 bg-white rounded-xl border border-slate-200/90 shadow-2xs hover:border-[#129b70]/40 transition-colors">
-                  <div className="flex items-center justify-between text-slate-500 mb-2">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Expected Physical Cash</span>
-                    <div className="h-7 w-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                      <Banknote className="h-4 w-4" />
-                    </div>
-                  </div>
-                  <div className="text-2xl font-bold font-mono text-slate-900 tracking-tight">
-                    {formatPKR(expectedCash)}
-                  </div>
-                  <p className="text-[11px] text-slate-500 mt-1">Cash collections awaiting drawer closing</p>
-                </div>
-
-                {/* Unsettled Transactions */}
-                <div className="p-4 bg-white rounded-xl border border-slate-200/90 shadow-2xs hover:border-[#129b70]/40 transition-colors">
-                  <div className="flex items-center justify-between text-slate-500 mb-2">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Unsettled Entries</span>
-                    <div className="h-7 w-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
-                      <Receipt className="h-4 w-4" />
-                    </div>
-                  </div>
-                  <div className="text-2xl font-bold font-mono text-slate-900 tracking-tight">
-                    {unsettledCount}{' '}
-                    <span className="text-xs font-semibold text-slate-500 font-sans">
-                      {unsettledCount === 1 ? 'record' : 'records'}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-500 mt-1">Invoices, walk-ins, &amp; receipts</p>
-                </div>
-
-                {/* Prior Deficit / Carried Forward */}
-                <div className={`p-4 bg-white rounded-xl border shadow-2xs transition-colors ${carriedForwardAmount > 0 ? 'border-amber-300 bg-amber-50/30' : 'border-slate-200/90'}`}>
-                  <div className="flex items-center justify-between text-slate-500 mb-2">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Prior Deficit (Carried Fwd)</span>
-                    <div className={`h-7 w-7 rounded-lg flex items-center justify-center ${carriedForwardAmount > 0 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
-                      <Coins className="h-4 w-4" />
-                    </div>
-                  </div>
-                  <div className={`text-2xl font-bold font-mono tracking-tight ${carriedForwardAmount > 0 ? 'text-amber-700' : 'text-slate-700'}`}>
-                    {formatPKR(carriedForwardAmount)}
-                  </div>
-                  <p className="text-[11px] text-slate-500 mt-1">
-                    {carriedForwardAmount > 0 ? 'Carried from previous shift shortage' : 'No prior shortfall on record'}
-                  </p>
-                </div>
-              </div>
-
-              {carriedForwardAmount > 0 && (
-                <div className="mt-3.5 p-3 bg-amber-50/90 border border-amber-200/90 rounded-xl flex items-start gap-2.5 text-xs text-amber-800">
-                  <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-bold">Prior Shift Shortfall:</span> The amount of{' '}
-                    <strong className="font-mono">{formatPKR(carriedForwardAmount)}</strong> was carried forward from your previous settlement and is folded into your current expected cash.
-                  </div>
-                </div>
-              )}
+              <span>Shift Settlement — Cash Reconciliation &amp; Custody Closeout</span>
             </div>
-
-            {/* Step 2: Count Drawer & Reconcile */}
-            <form onSubmit={handleReviewSubmit} className="p-5 sm:p-6 space-y-6">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="h-6 w-6 rounded-md bg-[#08775A] text-white flex items-center justify-center text-xs font-bold shadow-xs">
-                    2
-                  </span>
-                  <div>
-                    <h2 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                      Count Drawer &amp; Reconcile Cash
-                    </h2>
-                    <p className="text-[11px] text-slate-500">Enter the physical cash present in your register</p>
-                  </div>
-                </div>
-
-                {/* Quick Auto-Match button */}
-                {expectedCash > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPhysicalCash(expectedCash);
-                      setFormError(null);
-                    }}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-[#08775A] bg-[#effaf5] hover:bg-[#d8f3e5] border border-[#c2e7db] rounded-lg transition-colors cursor-pointer shadow-2xs"
-                  >
-                    <Sparkles className="h-3.5 w-3.5 text-[#08775A]" />
-                    <span>Auto-Match Expected ({formatPKR(expectedCash)})</span>
-                  </button>
-                )}
-              </div>
-
-              {formError && (
-                <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl flex items-center gap-2.5 text-xs text-rose-700 font-medium animate-in fade-in">
-                  <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
-                  <span>{formError}</span>
-                </div>
-              )}
-
-              {/* Physical Cash Input */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-slate-800 flex items-center gap-1">
-                    Physical Cash Counted <span className="text-rose-500">*</span>
-                  </label>
-                  {physicalCash !== '' && (
-                    <button
-                      type="button"
-                      onClick={() => setPhysicalCash('')}
-                      className="text-[11px] font-semibold text-slate-400 hover:text-slate-600 transition-colors"
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
-                <div className="relative flex items-center">
-                  <div className="absolute left-3.5 pointer-events-none flex items-center gap-1 font-bold text-slate-500 font-mono text-sm border-r border-slate-200 pr-2.5">
-                    <span>PKR</span>
-                  </div>
-                  <input
-                    type="number"
-                    min={0}
-                    step="any"
-                    value={physicalCash}
-                    onChange={(e) => {
-                      const val = e.target.value === '' ? '' : Number(e.target.value);
-                      setPhysicalCash(val);
-                      if (formError) setFormError(null);
-                    }}
-                    placeholder="0"
-                    className="w-full rounded-xl border border-slate-300 bg-white pl-20 pr-4 py-2.5 text-base sm:text-lg font-bold font-mono text-slate-900 placeholder:text-slate-300 transition-colors focus:outline-hidden focus:ring-2 focus:ring-[#129b70]/25 focus:border-[#129b70]"
-                  />
-                </div>
-                <p className="text-[11px] text-slate-500">
-                  Physically count all cash notes and coins in your drawer and enter the total amount.
-                </p>
-              </div>
-
-              {/* Real-Time Dynamic Reconciliation Alert Banner */}
-              {physicalCash === '' ? (
-                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center gap-2.5 text-xs text-slate-600">
-                  <Wallet className="h-4 w-4 text-slate-400 shrink-0" />
-                  <span>Enter the counted cash above to perform live reconciliation against expected collections.</span>
-                </div>
-              ) : variance === 0 ? (
-                <div className="p-4 bg-emerald-50/90 border border-emerald-200 rounded-xl flex items-start gap-3 animate-in fade-in">
-                  <div className="h-8 w-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
-                    <CheckCircle2 className="h-5 w-5" />
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <h4 className="text-xs font-bold text-emerald-900 uppercase tracking-wide">
-                        Drawer Balanced · Perfect Match
-                      </h4>
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold font-mono bg-emerald-100 text-emerald-800">
-                        Variance: PKR 0
-                      </span>
-                    </div>
-                    <p className="text-xs text-emerald-800 mt-0.5">
-                      Your physical cash count matches the expected system collections ({formatPKR(expectedCash)}) perfectly. No variance reason is required.
-                    </p>
-                  </div>
-                </div>
-              ) : variance < 0 ? (
-                <div className="p-4 bg-rose-50/90 border border-rose-200 rounded-xl flex items-start gap-3 animate-in fade-in">
-                  <div className="h-8 w-8 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center shrink-0 mt-0.5">
-                    <AlertTriangle className="h-5 w-5" />
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <h4 className="text-xs font-bold text-rose-900 uppercase tracking-wide">
-                        Cash Shortfall Detected
-                      </h4>
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold font-mono bg-rose-100 text-rose-800">
-                        Deficit: -{formatPKR(Math.abs(variance))}
-                      </span>
-                    </div>
-                    <p className="text-xs text-rose-800 mt-0.5">
-                      Physical cash is <strong>{formatPKR(Math.abs(variance))}</strong> less than expected. You must specify a variance reason for financial audit. This deficit will carry forward to your next shift.
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <div className="p-4 bg-amber-50/90 border border-amber-200 rounded-xl flex items-start gap-3 animate-in fade-in">
-                  <div className="h-8 w-8 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 mt-0.5">
-                    <AlertCircle className="h-5 w-5" />
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <h4 className="text-xs font-bold text-amber-900 uppercase tracking-wide">
-                        Cash Surplus Detected
-                      </h4>
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold font-mono bg-amber-100 text-amber-800">
-                        Surplus: +{formatPKR(variance)}
-                      </span>
-                    </div>
-                    <p className="text-xs text-amber-800 mt-0.5">
-                      Physical cash exceeds system collections by <strong>{formatPKR(variance)}</strong>. Please document the reason for the excess collection.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Variance Reason Section */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                    Variance Reason {variance !== 0 ? (
-                      <span className="text-rose-500 font-bold">* Required</span>
-                    ) : (
-                      <span className="text-slate-400 font-normal text-[11px]">(Optional when drawer is balanced)</span>
-                    )}
-                  </label>
-                </div>
-
-                {variance !== 0 && (
-                  <div className="flex items-center gap-1.5 flex-wrap pb-1">
-                    <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Quick Reasons:</span>
-                    {COMMON_VARIANCE_REASONS.map((reason) => (
-                      <button
-                        key={reason}
-                        type="button"
-                        onClick={() => setVarianceReason(reason)}
-                        className={`text-[11px] px-2 py-0.5 rounded-md border transition-colors cursor-pointer ${
-                          varianceReason === reason
-                            ? 'bg-[#effaf5] text-[#08775A] border-[#c2e7db] font-semibold'
-                            : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
-                        }`}
-                      >
-                        {reason}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                <textarea
-                  rows={2}
-                  value={varianceReason}
-                  onChange={(e) => {
-                    setVarianceReason(e.target.value);
-                    if (formError) setFormError(null);
-                  }}
-                  placeholder={
-                    variance !== 0
-                      ? 'Explain the cause of variance (e.g. coin shortage, patient rounding, or pending late entry)...'
-                      : 'No explanation required for balanced drawer'
-                  }
-                  className={`w-full rounded-xl border bg-white px-3.5 py-2.5 text-xs text-slate-900 placeholder:text-slate-400 transition-colors focus:outline-hidden focus:ring-2 focus:ring-[#129b70]/25 focus:border-[#129b70] ${
-                    variance !== 0 && !varianceReason.trim()
-                      ? 'border-amber-300'
-                      : 'border-slate-300'
-                  }`}
-                />
-              </div>
-
-              {/* Handover Amount & Remarks Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
-                {/* Handover Amount */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-semibold text-slate-700">
-                      Handover Amount (optional)
-                    </label>
-                    {typeof physicalCash === 'number' && physicalCash > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setHandoverAmount(physicalCash)}
-                        className="text-[11px] font-semibold text-[#08775A] hover:underline cursor-pointer"
-                      >
-                        Handover Full ({formatPKR(physicalCash)})
-                      </button>
-                    )}
-                  </div>
-                  <div className="relative flex items-center">
-                    <div className="absolute left-3 pointer-events-none flex items-center text-xs font-bold text-slate-400 font-mono border-r border-slate-200 pr-2">
-                      PKR
-                    </div>
-                    <input
-                      type="number"
-                      min={0}
-                      step="any"
-                      value={handoverAmount}
-                      onChange={(e) => setHandoverAmount(e.target.value === '' ? '' : Number(e.target.value))}
-                      placeholder="0"
-                      className="w-full rounded-xl border border-slate-300 bg-white pl-16 pr-3.5 py-2 text-xs font-mono font-medium text-slate-900 placeholder:text-slate-300 focus:outline-hidden focus:ring-2 focus:ring-[#129b70]/25 focus:border-[#129b70]"
-                    />
-                  </div>
-                  <p className="text-[11px] text-slate-500">
-                    Cash physically handed over to incoming cashier or supervisor.
-                  </p>
-                </div>
-
-                {/* Remarks */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-700">
-                    Remarks / Shift Notes (optional)
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={remarks}
-                    onChange={(e) => setRemarks(e.target.value)}
-                    placeholder="Optional notes regarding this shift closeout..."
-                    className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#129b70]/25 focus:border-[#129b70]"
-                  />
-                </div>
-              </div>
-
-              {/* Form Action Footer */}
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-slate-200">
-                <div className="flex items-center gap-2 text-xs text-slate-500">
-                  <ShieldCheck className="h-4 w-4 text-[#08775A]" />
-                  <span>Submissions are locked and audited by hospital finance</span>
-                </div>
-
-                <button
-                  type="submit"
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] active:bg-[#054e39] rounded-xl shadow-xs transition-all cursor-pointer"
-                >
-                  <span>Review &amp; Submit Closeout</span>
-                  <ArrowRight className="h-4 w-4" />
-                </button>
-              </div>
-            </form>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-emerald-100 font-medium bg-white/10 px-2.5 py-0.5 rounded-md">
+                Cashier: {currentUser?.name || 'Front Desk'}
+              </span>
+              <span className="hidden sm:inline-block text-[11px] text-emerald-200 font-mono">
+                Live Custody: {formatPKR(expectedCash)}
+              </span>
+            </div>
           </div>
 
-          {/* Settlement History Section */}
-          <div className="space-y-3">
+          {/* 3. Primary KPI Metric Cards (4 Cards across top) */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {/* Expected Physical Cash */}
+            <div className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-xs hover:border-emerald-300 transition-colors">
+              <div className="flex items-center justify-between text-emerald-700 mb-2">
+                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Expected Cash</span>
+                <div className="h-6 w-6 rounded-md bg-emerald-50 flex items-center justify-center">
+                  <Banknote className="h-3.5 w-3.5 text-emerald-700" />
+                </div>
+              </div>
+              <p className="text-lg font-bold font-mono text-slate-900 leading-tight">
+                {formatPKR(expectedCash)}
+              </p>
+              <p className="text-[10.5px] text-slate-500 mt-1.5 truncate">Shift collections awaiting closeout</p>
+            </div>
+
+            {/* Unsettled Transactions */}
+            <div className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-xs hover:border-blue-300 transition-colors">
+              <div className="flex items-center justify-between text-blue-700 mb-2">
+                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Unsettled Entries</span>
+                <div className="h-6 w-6 rounded-md bg-blue-50 flex items-center justify-center">
+                  <Receipt className="h-3.5 w-3.5 text-blue-700" />
+                </div>
+              </div>
+              <p className="text-lg font-bold font-mono text-slate-900 leading-tight">
+                {unsettledCount} <span className="text-xs font-sans text-slate-500 font-normal">records</span>
+              </p>
+              <p className="text-[10.5px] text-slate-500 mt-1.5 truncate">Invoices, walk-ins, &amp; receipts</p>
+            </div>
+
+            {/* Prior Deficit (Carried Fwd) */}
+            <div
+              className={`bg-white rounded-xl border p-3.5 shadow-xs transition-colors ${
+                carriedForwardAmount > 0 ? 'border-amber-300 bg-amber-50/20' : 'border-slate-200 hover:border-slate-300'
+              }`}
+            >
+              <div className="flex items-center justify-between text-slate-600 mb-2">
+                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Prior Deficit</span>
+                <div
+                  className={`h-6 w-6 rounded-md flex items-center justify-center ${
+                    carriedForwardAmount > 0 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  <Coins className="h-3.5 w-3.5" />
+                </div>
+              </div>
+              <p
+                className={`text-lg font-bold font-mono leading-tight ${
+                  carriedForwardAmount > 0 ? 'text-amber-700' : 'text-slate-900'
+                }`}
+              >
+                {formatPKR(carriedForwardAmount)}
+              </p>
+              <p className="text-[10.5px] text-slate-500 mt-1.5 truncate">
+                {carriedForwardAmount > 0 ? 'Carried from previous shift' : 'No prior shortfall on record'}
+              </p>
+            </div>
+
+            {/* Current Counted Drawer */}
+            <div
+              className={`bg-white rounded-xl border p-3.5 shadow-xs transition-colors ${
+                physicalCash === ''
+                  ? 'border-slate-200 hover:border-slate-300'
+                  : variance === 0
+                  ? 'border-emerald-300 bg-emerald-50/20'
+                  : variance < 0
+                  ? 'border-rose-300 bg-rose-50/20'
+                  : 'border-amber-300 bg-amber-50/20'
+              }`}
+            >
+              <div className="flex items-center justify-between text-slate-600 mb-2">
+                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Counted Drawer</span>
+                <div
+                  className={`h-6 w-6 rounded-md flex items-center justify-center ${
+                    physicalCash === ''
+                      ? 'bg-slate-100 text-slate-600'
+                      : variance === 0
+                      ? 'bg-emerald-100 text-emerald-700'
+                      : variance < 0
+                      ? 'bg-rose-100 text-rose-700'
+                      : 'bg-amber-100 text-amber-700'
+                  }`}
+                >
+                  <Wallet className="h-3.5 w-3.5" />
+                </div>
+              </div>
+              <p
+                className={`text-lg font-bold font-mono leading-tight ${
+                  physicalCash === ''
+                    ? 'text-slate-400'
+                    : variance === 0
+                    ? 'text-emerald-700'
+                    : variance < 0
+                    ? 'text-rose-700'
+                    : 'text-amber-700'
+                }`}
+              >
+                {physicalCash === '' ? 'PKR 0' : formatPKR(countedAmount)}
+              </p>
+              <p className="text-[10.5px] text-slate-500 mt-1.5 truncate">
+                {physicalCash === ''
+                  ? 'Awaiting cash count input'
+                  : variance === 0
+                  ? 'Drawer perfectly balanced'
+                  : variance < 0
+                  ? `Shortfall: -${formatPKR(Math.abs(variance))}`
+                  : `Surplus: +${formatPKR(variance)}`}
+              </p>
+            </div>
+          </div>
+
+          {/* Prior Shortfall Alert Notice */}
+          {carriedForwardAmount > 0 && (
+            <div className="p-3 bg-amber-50/90 border border-amber-200 rounded-lg flex items-start gap-2.5 text-xs text-amber-900 shadow-2xs font-medium">
+              <AlertTriangle className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
+              <div>
+                <strong>Prior Shift Shortfall:</strong> The amount of{' '}
+                <strong className="font-mono">{formatPKR(carriedForwardAmount)}</strong> was carried forward from your
+                previous settlement deficit and is folded into your current expected physical cash.
+              </div>
+            </div>
+          )}
+
+          {/* 4. Interactive Reconciliation Workspace (Dual-Column Grid on Desktop) */}
+          <form onSubmit={handleReviewSubmit} className="space-y-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* Left Column: Count Drawer & Physical Cash Input */}
+              <div className="bg-white rounded-lg border border-slate-300 shadow-xs overflow-hidden flex flex-col justify-between">
+                <div>
+                  <div className="bg-[#16a34a] text-white px-3.5 py-2 font-bold text-xs tracking-wide flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Banknote className="h-3.5 w-3.5" />
+                      1. Physical Cash Count &amp; Reconciliation
+                    </span>
+                    {expectedCash > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPhysicalCash(expectedCash);
+                          if (formError) setFormError(null);
+                        }}
+                        className="text-[11px] font-semibold bg-white/20 hover:bg-white/30 text-white px-2 py-0.5 rounded transition-colors cursor-pointer flex items-center gap-1"
+                      >
+                        <Sparkles className="h-3 w-3" />
+                        <span>Auto-Match Expected ({formatPKR(expectedCash)})</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="p-4 space-y-4">
+                    {formError && (
+                      <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg flex items-center gap-2 text-xs text-rose-700 font-medium">
+                        <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
+                        <span>{formError}</span>
+                      </div>
+                    )}
+
+                    {/* Main Currency Input */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-slate-800">
+                          Physical Cash Counted <span className="text-rose-500">*</span>
+                        </label>
+                        {physicalCash !== '' && (
+                          <button
+                            type="button"
+                            onClick={() => setPhysicalCash('')}
+                            className="text-[11px] font-semibold text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+                          >
+                            Clear Input
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="relative flex items-center">
+                        <div className="absolute left-3.5 pointer-events-none flex items-center gap-1 font-bold text-slate-600 font-mono text-sm border-r border-slate-200 pr-2.5">
+                          <span>PKR</span>
+                        </div>
+                        <input
+                          type="number"
+                          min={0}
+                          step="any"
+                          value={physicalCash}
+                          onChange={(e) => {
+                            const val = e.target.value === '' ? '' : Number(e.target.value);
+                            setPhysicalCash(val);
+                            if (formError) setFormError(null);
+                          }}
+                          placeholder="0"
+                          className="w-full rounded-lg border border-slate-300 bg-white pl-20 pr-4 py-2 text-base sm:text-lg font-bold font-mono text-slate-900 placeholder:text-slate-300 focus:outline-none focus:ring-1 focus:ring-[#08775A] focus:border-[#08775A]"
+                        />
+                      </div>
+
+                      {/* Quick Denomination / Fill Buttons */}
+                      <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                        <span className="text-[10.5px] font-semibold text-slate-400 uppercase tracking-wide">Quick:</span>
+                        {expectedCash > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPhysicalCash(expectedCash);
+                              if (formError) setFormError(null);
+                            }}
+                            className="text-[10.5px] px-2 py-0.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded font-semibold transition-colors cursor-pointer"
+                          >
+                            Full Match ({formatPKR(expectedCash)})
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleQuickAddCash(500)}
+                          className="text-[10.5px] px-2 py-0.5 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded font-medium transition-colors cursor-pointer"
+                        >
+                          +500
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleQuickAddCash(1000)}
+                          className="text-[10.5px] px-2 py-0.5 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded font-medium transition-colors cursor-pointer"
+                        >
+                          +1,000
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleQuickAddCash(5000)}
+                          className="text-[10.5px] px-2 py-0.5 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded font-medium transition-colors cursor-pointer"
+                        >
+                          +5,000
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Live Dynamic Reconciliation Alert Banner */}
+                    {physicalCash === '' ? (
+                      <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex items-center gap-2.5 text-xs text-slate-600">
+                        <Wallet className="h-4 w-4 text-slate-400 shrink-0" />
+                        <span>Enter the counted physical cash above to perform live reconciliation against expected collections.</span>
+                      </div>
+                    ) : variance === 0 ? (
+                      <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-lg flex items-start gap-2.5">
+                        <CheckCircle2 className="h-4.5 w-4.5 text-emerald-700 shrink-0 mt-0.5" />
+                        <div className="flex-1">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <h4 className="text-xs font-bold text-emerald-950 uppercase tracking-wide">
+                              Drawer Balanced · Perfect Match
+                            </h4>
+                            <span className="px-2 py-0.2 rounded text-[10.5px] font-bold font-mono bg-emerald-100 text-emerald-900 border border-emerald-300">
+                              Variance: PKR 0
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-emerald-800 mt-0.5">
+                            Physical cash matches expected collections ({formatPKR(expectedCash)}) exactly. No variance explanation is required.
+                          </p>
+                        </div>
+                      </div>
+                    ) : variance < 0 ? (
+                      <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-lg flex items-start gap-2.5">
+                        <AlertTriangle className="h-4.5 w-4.5 text-rose-600 shrink-0 mt-0.5" />
+                        <div className="flex-1">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <h4 className="text-xs font-bold text-rose-950 uppercase tracking-wide">
+                              Cash Shortfall Detected
+                            </h4>
+                            <span className="px-2 py-0.2 rounded text-[10.5px] font-bold font-mono bg-rose-100 text-rose-900 border border-rose-300">
+                              Deficit: -{formatPKR(Math.abs(variance))}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-rose-800 mt-0.5">
+                            Physical cash is <strong>{formatPKR(Math.abs(variance))}</strong> short. You must provide a variance reason below for financial audit. This deficit will carry forward to your next shift.
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2.5">
+                        <AlertCircle className="h-4.5 w-4.5 text-amber-600 shrink-0 mt-0.5" />
+                        <div className="flex-1">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <h4 className="text-xs font-bold text-amber-950 uppercase tracking-wide">
+                              Cash Surplus Detected
+                            </h4>
+                            <span className="px-2 py-0.2 rounded text-[10.5px] font-bold font-mono bg-amber-100 text-amber-900 border border-amber-300">
+                              Surplus: +{formatPKR(variance)}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-amber-800 mt-0.5">
+                            Physical cash exceeds expected collections by <strong>{formatPKR(variance)}</strong>. Please document the reason for the excess.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Variance Reason Input & Chips */}
+                    <div className="space-y-1.5 pt-1">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                          Variance Reason{' '}
+                          {variance !== 0 ? (
+                            <span className="text-rose-600 font-bold">* Mandatory Explanation</span>
+                          ) : (
+                            <span className="text-slate-400 font-normal text-[11px]">(Optional when drawer is balanced)</span>
+                          )}
+                        </label>
+                      </div>
+
+                      {variance !== 0 && (
+                        <div className="flex items-center gap-1.5 flex-wrap pb-1">
+                          <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Quick Reasons:</span>
+                          {COMMON_VARIANCE_REASONS.map((reason) => (
+                            <button
+                              key={reason}
+                              type="button"
+                              onClick={() => {
+                                setVarianceReason(reason);
+                                if (formError) setFormError(null);
+                              }}
+                              className={`text-[10.5px] px-2 py-0.5 rounded border transition-colors cursor-pointer ${
+                                varianceReason === reason
+                                  ? 'bg-[#effaf5] text-[#08775A] border-[#c2e7db] font-semibold'
+                                  : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                              }`}
+                            >
+                              {reason}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      <textarea
+                        rows={2}
+                        value={varianceReason}
+                        onChange={(e) => {
+                          setVarianceReason(e.target.value);
+                          if (formError) setFormError(null);
+                        }}
+                        placeholder={
+                          variance !== 0
+                            ? 'Explain the cause of variance (e.g. coin shortage, patient rounding, or pending late entry)...'
+                            : 'No explanation required for balanced drawer'
+                        }
+                        className={`w-full rounded-lg border bg-white px-3 py-2 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-[#08775A] ${
+                          variance !== 0 && !varianceReason.trim()
+                            ? 'border-amber-300'
+                            : 'border-slate-300'
+                        }`}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border-t border-slate-300 px-4 py-2.5 bg-slate-50 flex items-center justify-between text-xs font-bold text-slate-700">
+                  <span>Counted Position:</span>
+                  <span className="font-mono text-slate-900">
+                    {physicalCash === '' ? 'PKR 0' : formatPKR(countedAmount)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Right Column: Handover & Financial Settlement Summary */}
+              <div className="bg-white rounded-lg border border-slate-300 shadow-xs overflow-hidden flex flex-col justify-between">
+                <div>
+                  <div className="bg-[#2563eb] text-white px-3.5 py-2 font-bold text-xs tracking-wide flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <ShieldCheck className="h-3.5 w-3.5" />
+                      2. Handover &amp; Shift Closeout Summary
+                    </span>
+                    <span className="text-[11px] font-normal text-blue-100">
+                      Finance Audit Position
+                    </span>
+                  </div>
+
+                  <div className="divide-y divide-slate-200 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="py-2.5 px-4 text-slate-600 font-medium">Expected Physical Cash (System):</span>
+                      <span className="py-2.5 px-4 bg-slate-50 text-slate-900 font-bold font-mono min-w-40 text-right border-l border-slate-200">
+                        {formatPKR(expectedCash)}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <span className="py-2.5 px-4 text-slate-600 font-medium">Physical Cash Counted (Register):</span>
+                      <span className="py-2.5 px-4 bg-emerald-50 text-emerald-950 font-bold font-mono min-w-40 text-right border-l border-slate-200">
+                        {physicalCash === '' ? 'PKR 0' : formatPKR(countedAmount)}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between bg-slate-50/50">
+                      <span className="py-2.5 px-4 text-slate-900 font-bold">Net Reconciliation Variance:</span>
+                      <span
+                        className={`py-2.5 px-4 font-bold font-mono min-w-40 text-right border-l border-slate-200 ${
+                          variance === 0
+                            ? 'bg-[#dcfce7] text-emerald-900'
+                            : variance > 0
+                            ? 'bg-amber-100 text-amber-900'
+                            : 'bg-[#fee2e2] text-rose-900'
+                        }`}
+                      >
+                        {variance === 0 ? 'PKR 0 (Balanced)' : variance > 0 ? `+${formatPKR(variance)}` : formatPKR(variance)}
+                      </span>
+                    </div>
+
+                    {carriedForwardAmount > 0 && (
+                      <div className="flex items-center justify-between">
+                        <span className="py-2.5 px-4 text-slate-600 font-medium">Included Prior Deficit:</span>
+                        <span className="py-2.5 px-4 bg-amber-50 text-amber-900 font-bold font-mono min-w-40 text-right border-l border-slate-200">
+                          {formatPKR(carriedForwardAmount)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Handover & Remarks Form Inputs */}
+                  <div className="p-4 space-y-3.5 border-t border-slate-200">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-semibold text-slate-700">
+                          Physical Cash Handover to Supervisor / Incoming Shift
+                        </label>
+                        {countedAmount > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setHandoverAmount(countedAmount)}
+                            className="text-[10.5px] font-semibold text-[#08775A] hover:underline cursor-pointer"
+                          >
+                            Handover Full ({formatPKR(countedAmount)})
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="relative flex items-center">
+                        <div className="absolute left-3 pointer-events-none flex items-center text-xs font-bold text-slate-500 font-mono border-r border-slate-200 pr-2">
+                          PKR
+                        </div>
+                        <input
+                          type="number"
+                          min={0}
+                          step="any"
+                          value={handoverAmount}
+                          onChange={(e) => setHandoverAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                          placeholder="0"
+                          className="w-full rounded-lg border border-slate-300 bg-white pl-16 pr-3.5 py-1.5 text-xs font-mono font-medium text-slate-900 placeholder:text-slate-300 focus:outline-none focus:ring-1 focus:ring-[#08775A]"
+                        />
+                      </div>
+                      <div className="flex items-center justify-between text-[11px] text-slate-500">
+                        <span>Physical notes handed over to next shift custodian</span>
+                        {countedAmount > 0 && handoverVal > 0 && (
+                          <span className="font-semibold text-slate-700">
+                            Retained in Drawer: {formatPKR(retainedFloat)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-700">
+                        Remarks / Shift Closeout Notes (optional)
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={remarks}
+                        onChange={(e) => setRemarks(e.target.value)}
+                        placeholder="Optional notes regarding this shift closeout..."
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-[#08775A]"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Submit Action Bar */}
+                <div className="border-t border-slate-300 p-3.5 bg-slate-50 flex flex-col sm:flex-row items-center justify-between gap-2.5">
+                  <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
+                    <ShieldCheck className="h-4 w-4 text-[#08775A] shrink-0" />
+                    <span>Audited and locked upon submission</span>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] active:bg-[#054e39] rounded-lg shadow-xs transition-all cursor-pointer"
+                  >
+                    <span>Review &amp; Submit Closeout</span>
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </form>
+
+          {/* 5. Settlement History Section */}
+          <div className="space-y-3 pt-2">
             {/* Dark Theme Header Banner (matching reference UI) */}
             <div className="bg-gradient-to-r from-[#0a4636] to-[#08775A] text-white px-4 py-2.5 rounded-lg flex items-center justify-between shadow-xs">
               <div className="flex items-center gap-2.5 font-bold text-sm tracking-wide text-white">
                 <div className="h-6 w-6 rounded bg-white/15 text-white flex items-center justify-center">
                   <History className="h-3.5 w-3.5" />
                 </div>
-                <span>Accounts Settlement — History &amp; Shift Submissions</span>
+                <span>Account Settlement — Past Shift Submissions &amp; Audits</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-emerald-100 font-medium bg-white/10 px-2.5 py-0.5 rounded-md">
@@ -759,7 +928,7 @@ export const MyAccountSettlementView: React.FC = () => {
               type="button"
               onClick={() => setIsConfirmOpen(false)}
               disabled={isSaving}
-              className="px-4 py-2 text-xs font-semibold rounded-xl text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 transition-colors cursor-pointer"
+              className="px-4 py-2 text-xs font-semibold rounded-lg text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 transition-colors cursor-pointer"
             >
               Back to Edit
             </button>
@@ -767,7 +936,7 @@ export const MyAccountSettlementView: React.FC = () => {
               type="button"
               onClick={handleConfirmSubmit}
               disabled={isSaving}
-              className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] rounded-xl shadow-xs transition-colors disabled:opacity-60 cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg shadow-xs transition-colors disabled:opacity-60 cursor-pointer"
             >
               {isSaving ? (
                 <>
@@ -785,7 +954,7 @@ export const MyAccountSettlementView: React.FC = () => {
         }
       >
         <div className="space-y-3.5 py-1">
-          <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-200 divide-y divide-slate-200/80">
+          <div className="bg-slate-50 rounded-lg p-3.5 border border-slate-200 divide-y divide-slate-200/80">
             <div className="flex items-center justify-between pb-2 text-xs">
               <span className="text-slate-500 flex items-center gap-1.5">
                 <Banknote className="h-4 w-4 text-slate-400" /> System Expected Cash:
@@ -819,25 +988,26 @@ export const MyAccountSettlementView: React.FC = () => {
           </div>
 
           {handoverAmount !== '' && Number(handoverAmount) > 0 && (
-            <div className="flex items-center justify-between p-3 bg-emerald-50/60 rounded-xl border border-emerald-200 text-xs">
+            <div className="flex items-center justify-between p-3 bg-emerald-50/60 rounded-lg border border-emerald-200 text-xs">
               <span className="font-medium text-emerald-800">Handover to Incoming Shift:</span>
-              <span className="font-bold font-mono text-emerald-900">{formatPKR(handoverAmount)}</span>
+              <span className="font-bold font-mono text-emerald-900">{formatPKR(Number(handoverAmount))}</span>
             </div>
           )}
 
           {variance !== 0 && varianceReason.trim() && (
-            <div className="p-3 bg-amber-50/80 rounded-xl border border-amber-200 text-xs text-amber-900">
+            <div className="p-3 bg-amber-50/80 rounded-lg border border-amber-200 text-xs text-amber-900">
               <span className="font-bold block mb-0.5">Variance Explanation:</span>
               <p className="text-slate-700 italic">"{varianceReason.trim()}"</p>
             </div>
           )}
 
           {variance < 0 && (
-            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-2.5 text-xs text-rose-800">
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg flex items-start gap-2.5 text-xs text-rose-800">
               <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
               <div>
                 <strong>Notice of Shortfall Carry-Forward:</strong> The deficit of{' '}
-                <strong className="font-mono">{formatPKR(Math.abs(variance))}</strong> will be carried forward to your next shift settlement as an unsettled payable.
+                <strong className="font-mono">{formatPKR(Math.abs(variance))}</strong> will be carried forward to your
+                next shift settlement as an unsettled payable.
               </div>
             </div>
           )}
@@ -862,7 +1032,7 @@ export const MyAccountSettlementView: React.FC = () => {
                 setIsDetailOpen(false);
                 setSelectedRecord(null);
               }}
-              className="px-4 py-2 text-xs font-semibold rounded-xl text-white bg-[#08775A] hover:bg-[#065f46] transition-colors cursor-pointer"
+              className="px-4 py-2 text-xs font-semibold rounded-lg text-white bg-[#08775A] hover:bg-[#065f46] transition-colors cursor-pointer"
             >
               Close
             </button>
@@ -871,18 +1041,24 @@ export const MyAccountSettlementView: React.FC = () => {
       >
         {selectedRecord && (
           <div className="space-y-3.5 py-1 text-xs">
-            <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-200 divide-y divide-slate-200/80">
+            <div className="bg-slate-50 rounded-lg p-3.5 border border-slate-200 divide-y divide-slate-200/80">
               <div className="flex items-center justify-between pb-2">
                 <span className="text-slate-500">Submitted At:</span>
                 <span className="font-semibold text-slate-800">{selectedRecord.submittedAt}</span>
               </div>
               <div className="flex items-center justify-between py-2">
                 <span className="text-slate-500">Shift Period:</span>
-                <span className="font-mono text-slate-700">{selectedRecord.periodStart} → {selectedRecord.periodEnd}</span>
+                <span className="font-mono text-slate-700">
+                  {selectedRecord.periodStart} → {selectedRecord.periodEnd}
+                </span>
               </div>
               <div className="flex items-center justify-between py-2">
                 <span className="text-slate-500">Status:</span>
-                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${STATUS_BADGE[selectedRecord.status] || 'bg-slate-100 text-slate-600'}`}>
+                <span
+                  className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                    STATUS_BADGE[selectedRecord.status] || 'bg-slate-100 text-slate-600'
+                  }`}
+                >
                   {STATUS_LABEL[selectedRecord.status] || selectedRecord.status}
                 </span>
               </div>
@@ -896,33 +1072,47 @@ export const MyAccountSettlementView: React.FC = () => {
               </div>
               <div className="flex items-center justify-between py-2">
                 <span className="font-semibold text-slate-700">Variance:</span>
-                <span className={`font-bold font-mono ${selectedRecord.variance === 0 ? 'text-slate-600' : selectedRecord.variance > 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                  {selectedRecord.variance > 0 ? `+${formatPKR(selectedRecord.variance)}` : formatPKR(selectedRecord.variance)}
+                <span
+                  className={`font-bold font-mono ${
+                    selectedRecord.variance === 0
+                      ? 'text-slate-600'
+                      : selectedRecord.variance > 0
+                      ? 'text-emerald-700'
+                      : 'text-rose-700'
+                  }`}
+                >
+                  {selectedRecord.variance > 0
+                    ? `+${formatPKR(selectedRecord.variance)}`
+                    : formatPKR(selectedRecord.variance)}
                 </span>
               </div>
               {selectedRecord.carryForwardAmount > 0 && (
                 <div className="flex items-center justify-between py-2">
                   <span className="text-amber-800 font-medium">Carried Forward Shortfall:</span>
-                  <span className="font-bold font-mono text-amber-800">{formatPKR(selectedRecord.carryForwardAmount)}</span>
+                  <span className="font-bold font-mono text-amber-800">
+                    {formatPKR(selectedRecord.carryForwardAmount)}
+                  </span>
                 </div>
               )}
               {selectedRecord.handoverAmount != null && (
                 <div className="flex items-center justify-between pt-2">
                   <span className="text-emerald-800 font-medium">Handover to Incoming Shift:</span>
-                  <span className="font-bold font-mono text-emerald-900">{formatPKR(selectedRecord.handoverAmount)}</span>
+                  <span className="font-bold font-mono text-emerald-900">
+                    {formatPKR(selectedRecord.handoverAmount)}
+                  </span>
                 </div>
               )}
             </div>
 
             {selectedRecord.varianceReason && (
-              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200">
+              <div className="p-3 bg-amber-50 rounded-lg border border-amber-200">
                 <span className="font-bold block text-amber-900 mb-0.5">Variance Explanation:</span>
                 <p className="text-slate-700 italic">"{selectedRecord.varianceReason}"</p>
               </div>
             )}
 
             {selectedRecord.remarks && (
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
                 <span className="font-bold block text-slate-700 mb-0.5">Remarks / Shift Notes:</span>
                 <p className="text-slate-600">{selectedRecord.remarks}</p>
               </div>

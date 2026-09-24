@@ -168,13 +168,10 @@ export const MyBalanceSheetView: React.FC = () => {
 
   return (
     <div className="space-y-4 animate-in fade-in duration-150">
-      {/* Top Header & Export Toolbar */}
+      {/* Header & Export Toolbar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight">Balance Sheet</h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Cashier shift balance sheet, live collections, refunds, and physical handover audit.
-          </p>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
@@ -210,21 +207,6 @@ export const MyBalanceSheetView: React.FC = () => {
               <span>Settled</span>
             </span>
           )}
-        </div>
-      </div>
-
-      {/* Dark Theme Header Banner (matching reference UI) */}
-      <div className="bg-gradient-to-r from-[#0a4636] to-[#08775A] text-white px-4 py-2.5 rounded-lg flex items-center justify-between shadow-xs">
-        <div className="flex items-center gap-2.5 font-bold text-sm tracking-wide text-white">
-          <div className="h-6 w-6 rounded bg-white/15 text-white flex items-center justify-center">
-            <Coins className="h-3.5 w-3.5" />
-          </div>
-          <span>Balance Sheet — Cash Custody Position</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-emerald-100 font-medium bg-white/10 px-2.5 py-0.5 rounded-md">
-            Cashier: {currentUser?.name || 'Front Desk'}
-          </span>
         </div>
       </div>
 
@@ -363,65 +345,41 @@ export const MyBalanceSheetView: React.FC = () => {
         </div>
       </div>
 
-      {/* Settlement Status Banner */}
-      {hasUnsettled ? (
-        <div className="bg-[#fef3c7] border border-amber-300 text-amber-900 rounded-lg p-3 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-2xs font-medium">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 text-amber-700 shrink-0" />
-            <span>
-              Active shift custody: <strong>{formatPKR(summary.expectedPhysicalCash)}</strong> in physical cash to hand over ({summary.unsettledCount} pending transaction{summary.unsettledCount === 1 ? '' : 's'}).
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={() => navigate('/front-desk/my_account_settlement')}
-            className="px-3 py-1 bg-[#08775A] hover:bg-[#065f46] text-white text-xs font-bold rounded shadow-xs cursor-pointer shrink-0"
-          >
-            Submit Settlement Now
-          </button>
-        </div>
-      ) : (
-        <div className="bg-[#dcfce7] border border-emerald-300 text-emerald-800 rounded-lg p-3 text-xs flex items-center gap-2 shadow-2xs font-medium">
-          <CheckCircle2 className="h-4 w-4 text-emerald-700 shrink-0" />
-          <span>This balance sheet scope is already settled for the selected shift. No pending physical cash in custody.</span>
-        </div>
-      )}
-
-      {/* Balance Summary Section (Clean bordered grid matching reference UI) */}
+      {/* Balance Summary Section */}
       <div className="bg-white rounded-lg border border-slate-300 shadow-xs overflow-hidden">
-        <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 font-bold text-xs text-slate-800 uppercase tracking-wider">
+        <div className="px-4 py-2 bg-slate-50 border-b border-slate-200 font-bold text-xs text-slate-800 uppercase tracking-wider">
           Balance Summary
         </div>
         <div className="divide-y divide-slate-200 text-xs">
           <div className="flex items-center justify-between">
-            <span className="py-2.5 px-4 text-slate-600 font-medium">Total Collections / Payments:</span>
-            <span className="py-2.5 px-4 bg-[#dcfce7] text-emerald-900 font-bold font-mono min-w-44 text-right border-l border-slate-200">
+            <span className="py-2 px-4 text-slate-600 font-medium">Total Collections:</span>
+            <span className="py-2 px-4 bg-[#dcfce7] text-emerald-900 font-bold font-mono min-w-44 text-right border-l border-slate-200">
               {formatPKR(summary.totalCollections)}
             </span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="py-2.5 px-4 text-slate-600 font-medium">Total Refunds / Expenses:</span>
-            <span className="py-2.5 px-4 bg-[#fee2e2] text-rose-900 font-bold font-mono min-w-44 text-right border-l border-slate-200">
+            <span className="py-2 px-4 text-slate-600 font-medium">Total Refunds / Expenses:</span>
+            <span className="py-2 px-4 bg-[#fee2e2] text-rose-900 font-bold font-mono min-w-44 text-right border-l border-slate-200">
               {formatPKR(summary.totalRefunds)}
             </span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="py-2.5 px-4 text-slate-600 font-medium">Non-Cash (Card / Online / Bank):</span>
-            <span className="py-2.5 px-4 bg-blue-50 text-blue-900 font-bold font-mono min-w-44 text-right border-l border-slate-200">
+            <span className="py-2 px-4 text-slate-600 font-medium">Non-Cash (Card / Bank / Online):</span>
+            <span className="py-2 px-4 bg-blue-50 text-blue-900 font-bold font-mono min-w-44 text-right border-l border-slate-200">
               {formatPKR(summary.nonPhysicalTotal)}
             </span>
           </div>
           {summary.carriedForwardAmount > 0 && (
             <div className="flex items-center justify-between">
-              <span className="py-2.5 px-4 text-slate-600 font-medium">Previous Unsettled / Carried Forward Shortfall:</span>
-              <span className="py-2.5 px-4 bg-amber-50 text-amber-900 font-bold font-mono min-w-44 text-right border-l border-slate-200">
+              <span className="py-2 px-4 text-slate-600 font-medium">Previous Balance (Carried Forward):</span>
+              <span className="py-2 px-4 bg-amber-50 text-amber-900 font-bold font-mono min-w-44 text-right border-l border-slate-200">
                 {formatPKR(summary.carriedForwardAmount)}
               </span>
             </div>
           )}
           <div className="flex items-center justify-between bg-slate-50/50">
-            <span className="py-3 px-4 text-slate-900 font-bold">Cash In Hand (Expected Physical Cash Handover):</span>
-            <span className="py-3 px-4 bg-[#bbf7d0] text-emerald-950 font-black font-mono text-sm min-w-44 text-right border-l border-slate-200">
+            <span className="py-2.5 px-4 text-slate-900 font-bold">Cash in Hand (Physical):</span>
+            <span className="py-2.5 px-4 bg-[#bbf7d0] text-emerald-950 font-black font-mono text-sm min-w-44 text-right border-l border-slate-200">
               {formatPKR(summary.expectedPhysicalCash)}
             </span>
           </div>

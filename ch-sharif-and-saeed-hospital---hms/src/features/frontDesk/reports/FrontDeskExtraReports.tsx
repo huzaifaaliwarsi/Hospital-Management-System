@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { ClipboardList, FileSpreadsheet, Wallet, AlertCircle, Tag, RotateCcw, Building2, CreditCard, Eye, Loader2, Landmark, Printer, Users } from 'lucide-react';
+import { ClipboardList, FileSpreadsheet, Wallet, AlertCircle, Tag, RotateCcw, Building2, CreditCard, Eye, Loader2, Landmark, Printer, Users, FileText } from 'lucide-react';
 import { GenericReportView } from '../../../components/reports/GenericReportView';
 import { Modal } from '../../../components/common/Modal';
 import { formatPKR } from '../../../utils/formatters';
+import { InvoiceDetailModal } from '../billing/InvoiceDetailModal';
 import {
   fetchEncounterRegister,
   fetchInvoiceRegister,
@@ -55,9 +56,11 @@ export const EncounterRegisterView: React.FC = () => (
 
 /** Reporting Guide v7.5 §3.3 — primary billing register across all Hospital-side invoices. Each row drills into its §3.5 Patient/Invoice Ledger. */
 export const InvoiceRegisterView: React.FC = () => {
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
   const [ledgerTarget, setLedgerTarget] = useState<{ id: string; number: string } | null>(null);
   const [ledger, setLedger] = useState<{ invoiceNumber: string; patient: string; entries: LedgerEntry[] } | null>(null);
   const [isLedgerLoading, setIsLedgerLoading] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const openLedger = async (id: string, number: string) => {
     setLedgerTarget({ id, number });
@@ -74,6 +77,7 @@ export const InvoiceRegisterView: React.FC = () => {
   return (
     <>
       <GenericReportView<InvoiceRow>
+        key={refreshKey}
         title="Billing / Invoice Register"
         subtitle="Every Hospital-side invoice — visit billing and Admission Hospital bills."
         icon={FileSpreadsheet}
@@ -93,23 +97,72 @@ export const InvoiceRegisterView: React.FC = () => {
           { header: 'Balance', align: 'right', cell: (r) => formatPKR(r.balance), excelValue: (r) => r.balance },
           { header: 'Status', cell: (r) => r.status },
           { header: 'Created By', cell: (r) => r.createdBy || '—' },
-          { header: 'Ledger', cell: () => 'View' },
+          { header: 'Actions', cell: () => 'View' },
         ]}
-        renderCell={(col, row) =>
-          col.header === 'Ledger' ? (
-            <button
-              type="button"
-              onClick={() => openLedger(row.id, row.invoiceNumber)}
-              className="inline-flex items-center gap-1 px-3 py-1 bg-[#08775A] hover:bg-[#065f46] text-white rounded text-xs font-medium shadow-2xs transition-colors"
-              title="View invoice ledger"
-            >
-              <Eye className="h-3.5 w-3.5" />
-              <span>View</span>
-            </button>
-          ) : (
-            col.cell(row)
-          )
-        }
+        renderCell={(col, row) => {
+          if (col.header === 'Actions' || col.header === 'Ledger') {
+            return (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setSelectedInvoiceId(row.id)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 bg-[#08775A] hover:bg-[#065f46] text-white rounded text-xs font-semibold shadow-2xs transition-colors"
+                  title="Open and view invoice bill details, line items, and receipts"
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                  <span>View</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openLedger(row.id, row.invoiceNumber)}
+                  className="inline-flex items-center gap-1 px-2 py-1 border border-slate-300 hover:bg-slate-100 text-slate-700 rounded text-xs font-medium transition-colors"
+                  title="View debit/credit ledger log"
+                >
+                  <FileText className="h-3 w-3 text-slate-500" />
+                  <span>Ledger</span>
+                </button>
+              </div>
+            );
+          }
+          if (col.header === 'Invoice #') {
+            return (
+              <button
+                type="button"
+                onClick={() => setSelectedInvoiceId(row.id)}
+                className="font-bold text-[#08775A] hover:underline hover:text-[#065f46] transition-colors cursor-pointer text-left"
+                title="Click to open invoice bill"
+              >
+                {row.invoiceNumber}
+              </button>
+            );
+          }
+          if (col.header === 'Status') {
+            const st = (row.status || '').toUpperCase();
+            if (st === 'PAID') {
+              return (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                  PAID
+                </span>
+              );
+            }
+            if (st === 'PARTIALLY_PAID') {
+              return (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                  PARTIALLY PAID
+                </span>
+              );
+            }
+            if (st === 'UNPAID') {
+              return (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                  UNPAID
+                </span>
+              );
+            }
+            return <span className="text-xs font-medium text-slate-600">{row.status}</span>;
+          }
+          return col.cell(row);
+        }}
       />
 
       <Modal
@@ -169,6 +222,17 @@ export const InvoiceRegisterView: React.FC = () => {
           <div className="text-center py-6 text-xs text-rose-600">Failed to load ledger.</div>
         )}
       </Modal>
+
+      {/* Full Hospital Invoice Modal with services, rates, receipts, payments & print */}
+      {selectedInvoiceId && (
+        <InvoiceDetailModal
+          invoiceId={selectedInvoiceId}
+          onClose={() => setSelectedInvoiceId(null)}
+          onChanged={() => {
+            setRefreshKey((k) => k + 1);
+          }}
+        />
+      )}
     </>
   );
 };
@@ -238,24 +302,83 @@ export const DiscountReportViewPage: React.FC = () => (
 );
 
 /** Reporting Guide v7.5 §4.3 — controlled financial reversals; original transaction always preserved. */
-export const RefundVoidReportViewPage: React.FC = () => (
-  <GenericReportView<RefundVoidRow>
-    title="Refund / Void / Reversal Report"
-    subtitle="Exception report for controlled financial reversals."
-    icon={RotateCcw}
-    filenamePrefix="Refund_Void_Report"
-    fetchReport={fetchRefundVoidReport}
-    rowKey={(r, i) => `${r.reference}-${i}`}
-    columns={[
-      { header: 'Reference', cell: (r) => r.reference },
-      { header: 'Original Invoice', cell: (r) => r.originalInvoice || '—' },
-      { header: 'Type', cell: (r) => r.type },
-      { header: 'Amount', align: 'right', cell: (r) => formatPKR(r.amount), excelValue: (r) => r.amount },
-      { header: 'Performed By', cell: (r) => r.performedBy },
-      { header: 'Date/Time', cell: (r) => r.occurredAt },
-    ]}
-  />
-);
+export const RefundVoidReportViewPage: React.FC = () => {
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
+
+  return (
+    <>
+      <GenericReportView<RefundVoidRow>
+        title="Refund / Void / Reversal Report"
+        subtitle="Exception report for controlled financial reversals."
+        icon={RotateCcw}
+        filenamePrefix="Refund_Void_Report"
+        fetchReport={fetchRefundVoidReport}
+        rowKey={(r, i) => `${r.reference}-${r.type}-${i}`}
+        columns={[
+          { header: 'Reference', cell: (r) => r.reference },
+          { header: 'Original Invoice', cell: (r) => r.originalInvoice || '—' },
+          { header: 'Type', cell: (r) => r.type },
+          { header: 'Amount', align: 'right', cell: (r) => formatPKR(r.amount), excelValue: (r) => r.amount },
+          { header: 'Performed By', cell: (r) => r.performedBy },
+          { header: 'Date/Time', cell: (r) => r.occurredAt },
+          { header: 'Action', cell: () => 'View' },
+        ]}
+        renderCell={(col, row) => {
+          if (col.header === 'Type') {
+            return (
+              <span
+                className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                  row.type === 'REFUND'
+                    ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                    : 'bg-amber-100 text-amber-800 border border-amber-300'
+                }`}
+              >
+                {row.type}
+              </span>
+            );
+          }
+          if (col.header === 'Original Invoice' && row.originalInvoice && row.invoiceId) {
+            return (
+              <button
+                type="button"
+                onClick={() => setSelectedInvoiceId(row.invoiceId || null)}
+                className="font-bold text-[#08775A] hover:underline hover:text-[#065f46] transition-colors cursor-pointer text-left"
+                title="Click to view original invoice"
+              >
+                {row.originalInvoice}
+              </button>
+            );
+          }
+          if (col.header === 'Action') {
+            return row.invoiceId ? (
+              <button
+                type="button"
+                onClick={() => setSelectedInvoiceId(row.invoiceId || null)}
+                className="inline-flex items-center gap-1 px-2.5 py-1 bg-[#08775A] hover:bg-[#065f46] text-white rounded text-xs font-semibold shadow-2xs transition-colors"
+                title="View original invoice details"
+              >
+                <Eye className="h-3.5 w-3.5" />
+                <span>View</span>
+              </button>
+            ) : (
+              <span className="text-slate-400 text-xs">—</span>
+            );
+          }
+          return col.cell(row);
+        }}
+      />
+
+      {/* Invoice Detail Modal */}
+      {selectedInvoiceId && (
+        <InvoiceDetailModal
+          invoiceId={selectedInvoiceId}
+          onClose={() => setSelectedInvoiceId(null)}
+          onChanged={() => {}}
+        />
+      )}
+    </>
+  );
+};
 
 /** Reporting Guide v7.5 §4.4 — billing/collections by department and service. */
 export const DepartmentRevenueReportView: React.FC = () => (
