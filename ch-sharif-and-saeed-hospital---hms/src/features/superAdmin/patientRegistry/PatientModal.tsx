@@ -6,7 +6,6 @@ import {
   Phone,
   MapPin,
   Building,
-  HeartHandshake,
   AlertTriangle,
   AlertCircle,
   Search,
@@ -24,7 +23,6 @@ import {
   GuardianRelation,
   PATIENT_GENDERS,
   PAYER_TYPES,
-  BLOOD_GROUPS,
   GUARDIAN_RELATIONS,
   DuplicateCheckResult,
 } from '../../../types/patient';
@@ -38,6 +36,53 @@ import {
   getAllPatients,
 } from '../../../services/patientRegistryService';
 import { getActiveCorporatePanels, fetchCorporatePanels, type CorporatePanel } from '../../../services/panelService';
+
+export const PAKISTAN_CITIES = [
+  'Lahore',
+  'Karachi',
+  'Islamabad',
+  'Rawalpindi',
+  'Faisalabad',
+  'Gujrat',
+  'Gujranwala',
+  'Multan',
+  'Peshawar',
+  'Quetta',
+  'Sialkot',
+  'Hyderabad',
+  'Bahawalpur',
+  'Sargodha',
+  'Abbottabad',
+  'Other',
+];
+
+export const COUNTRIES = [
+  'Pakistan',
+  'United Arab Emirates',
+  'Saudi Arabia',
+  'United Kingdom',
+  'United States',
+  'Canada',
+  'Other',
+];
+
+const CITY_PROVINCE_MAP: Record<string, string> = {
+  Lahore: 'Punjab',
+  Faisalabad: 'Punjab',
+  Rawalpindi: 'Punjab',
+  Gujrat: 'Punjab',
+  Gujranwala: 'Punjab',
+  Multan: 'Punjab',
+  Sialkot: 'Punjab',
+  Bahawalpur: 'Punjab',
+  Sargodha: 'Punjab',
+  Karachi: 'Sindh',
+  Hyderabad: 'Sindh',
+  Islamabad: 'Islamabad Capital Territory',
+  Peshawar: 'Khyber Pakhtunkhwa',
+  Abbottabad: 'Khyber Pakhtunkhwa',
+  Quetta: 'Balochistan',
+};
 
 interface PatientModalProps {
   isOpen: boolean;
@@ -198,18 +243,26 @@ export const PatientModal: React.FC<PatientModalProps> = ({
 
   // Handle quick lookup search
   useEffect(() => {
-    if (!quickSearchTerm.trim()) {
+    const trimmed = quickSearchTerm.trim();
+    if (!trimmed) {
       setQuickSearchResults([]);
       return;
     }
-    const q = quickSearchTerm.trim().toLowerCase();
+    const q = trimmed.toLowerCase();
+    const qDigits = q.replace(/\D/g, '');
     const all = getAllPatients();
     const matches = all.filter((p) => {
       const mMr = p.mrNumber.toLowerCase().includes(q);
       const mName = p.fullName.toLowerCase().includes(q);
-      const mCnic = p.cnic ? p.cnic.replace(/\D/g, '').includes(q.replace(/\D/g, '')) || p.cnic.toLowerCase().includes(q) : false;
-      const mPhone = p.primaryPhone ? p.primaryPhone.replace(/\D/g, '').includes(q.replace(/\D/g, '')) : false;
-      return mMr || mName || mCnic || mPhone;
+      const mFather = (p.fatherGuardianName || '').toLowerCase().includes(q);
+      const mPanelMember = p.panelMemberId ? p.panelMemberId.toLowerCase().includes(q) : false;
+      const mCnic = p.cnic
+        ? (qDigits.length >= 3 && p.cnic.replace(/\D/g, '').includes(qDigits)) || p.cnic.toLowerCase().includes(q)
+        : false;
+      const mPhone = p.primaryPhone
+        ? (qDigits.length >= 3 && p.primaryPhone.replace(/\D/g, '').includes(qDigits)) || p.primaryPhone.toLowerCase().includes(q)
+        : false;
+      return mMr || mName || mFather || mPanelMember || mCnic || mPhone;
     });
     setQuickSearchResults(matches.slice(0, 5));
   }, [quickSearchTerm]);
@@ -333,6 +386,22 @@ export const PatientModal: React.FC<PatientModalProps> = ({
     }
   };
 
+  // City and Country change handlers for panel patient address
+  const handleCityChange = (cityName: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      city: cityName,
+      province: CITY_PROVINCE_MAP[cityName] || prev.province || 'Punjab',
+    }));
+  };
+
+  const handleCountryChange = (countryName: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      country: countryName,
+    }));
+  };
+
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {};
 
@@ -359,12 +428,6 @@ export const PatientModal: React.FC<PatientModalProps> = ({
 
     if (!formData.dateOfBirth && (formData.age === '' || Number(formData.age) < 0 || Number(formData.age) > 125)) {
       newErrors.age = 'Provide a valid age (0–125) or select Date of Birth.';
-    }
-
-    if (formData.email.trim()) {
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email.trim())) {
-        newErrors.email = 'Please provide a valid email address.';
-      }
     }
 
     if (formData.payerType === 'Corporate / Panel') {
@@ -471,47 +534,53 @@ export const PatientModal: React.FC<PatientModalProps> = ({
               </div>
 
               {/* Quick Results Preview */}
-              {quickSearchResults.length > 0 && (
-                <div className="mt-2.5 bg-white border border-emerald-200 rounded-lg divide-y divide-slate-100 overflow-hidden shadow-xs">
-                  <div className="px-3 py-1.5 bg-emerald-50 text-[11px] font-semibold text-emerald-800">
-                    Existing Patients Found ({quickSearchResults.length}):
-                  </div>
-                  {quickSearchResults.map((p) => (
-                    <div
-                      key={p.id}
-                      className="px-3 py-2 flex items-center justify-between hover:bg-slate-50 text-xs"
-                    >
-                      <div>
-                        <span className="font-mono font-bold text-[#08775A] mr-2">
-                          {p.mrNumber}
-                        </span>
-                        <span className="font-semibold text-slate-800">{p.fullName}</span>
-                        {p.fatherGuardianName && (
-                          <span className="text-slate-400 ml-1">
-                            ({p.guardianRelation}: {p.fatherGuardianName})
-                          </span>
-                        )}
-                        <span className="text-slate-500 ml-2 font-mono">{p.primaryPhone}</span>
-                        {p.cnic && (
-                          <span className="text-slate-400 ml-2 font-mono">[{p.cnic}]</span>
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (onOpenExistingPatient) {
-                            onOpenExistingPatient(p);
-                            onClose();
-                          }
-                        }}
-                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#08775A] hover:underline"
-                      >
-                        <ExternalLink className="w-3 h-3" />
-                        Open Patient
-                      </button>
+              {quickSearchTerm.trim().length > 0 && (
+                quickSearchResults.length > 0 ? (
+                  <div className="mt-2.5 bg-white border border-emerald-200 rounded-lg divide-y divide-slate-100 overflow-hidden shadow-xs">
+                    <div className="px-3 py-1.5 bg-emerald-50 text-[11px] font-semibold text-emerald-800">
+                      Existing Patients Found ({quickSearchResults.length}):
                     </div>
-                  ))}
-                </div>
+                    {quickSearchResults.map((p) => (
+                      <div
+                        key={p.id}
+                        className="px-3 py-2 flex items-center justify-between hover:bg-slate-50 text-xs"
+                      >
+                        <div>
+                          <span className="font-mono font-bold text-[#08775A] mr-2">
+                            {p.mrNumber}
+                          </span>
+                          <span className="font-semibold text-slate-800">{p.fullName}</span>
+                          {p.fatherGuardianName && (
+                            <span className="text-slate-400 ml-1">
+                              ({p.guardianRelation}: {p.fatherGuardianName})
+                            </span>
+                          )}
+                          <span className="text-slate-500 ml-2 font-mono">{p.primaryPhone}</span>
+                          {p.cnic && (
+                            <span className="text-slate-400 ml-2 font-mono">[{p.cnic}]</span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (onOpenExistingPatient) {
+                              onOpenExistingPatient(p);
+                              onClose();
+                            }
+                          }}
+                          className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#08775A] hover:underline cursor-pointer"
+                        >
+                          <ExternalLink className="w-3 h-3" />
+                          Open Patient
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mt-2.5 px-3 py-2 bg-slate-100/80 border border-slate-200 rounded-lg text-xs text-slate-500 flex items-center justify-between">
+                    <span>No existing patient matches "{quickSearchTerm.trim()}". Safe to proceed with new registration.</span>
+                  </div>
+                )
               )}
             </div>
           )}
@@ -632,19 +701,71 @@ export const PatientModal: React.FC<PatientModalProps> = ({
             </div>
           )}
 
-          <form id="patient-form" onSubmit={handleSubmit} className="space-y-6">
-            {/* SECTION 1: PATIENT IDENTITY */}
+          <form id="patient-form" onSubmit={handleSubmit} className="space-y-5">
+            {/* PAYER CATEGORY */}
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5">
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
+                Payer Category <span className="text-red-500">*</span>
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label
+                  className={`flex items-center gap-2.5 p-3 rounded-xl border cursor-pointer transition-all ${
+                    formData.payerType === 'Self Pay'
+                      ? 'border-[#08775A] bg-[#effaf5] text-[#08775A] font-semibold shadow-xs'
+                      : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-700'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="payerType"
+                    checked={formData.payerType === 'Self Pay'}
+                    onChange={() => handlePayerTypeChange('Self Pay')}
+                    className="text-[#08775A] focus:ring-[#08775A]"
+                  />
+                  <div>
+                    <div className="text-sm">Self Pay</div>
+                    <div className="text-xs text-slate-500 font-normal">
+                      Patient pays directly at hospital billing counter
+                    </div>
+                  </div>
+                </label>
+
+                <label
+                  className={`flex items-center gap-2.5 p-3 rounded-xl border cursor-pointer transition-all ${
+                    formData.payerType === 'Corporate / Panel'
+                      ? 'border-[#08775A] bg-[#effaf5] text-[#08775A] font-semibold shadow-xs'
+                      : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-700'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="payerType"
+                    checked={formData.payerType === 'Corporate / Panel'}
+                    onChange={() => handlePayerTypeChange('Corporate / Panel')}
+                    className="text-[#08775A] focus:ring-[#08775A]"
+                  />
+                  <div>
+                    <div className="text-sm">Corporate / Panel</div>
+                    <div className="text-xs text-slate-500 font-normal">
+                      Company, insurance, or corporate panel coverage
+                    </div>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            {/* PATIENT DEMOGRAPHICS (OPD / Admission fast-entry style) */}
             <div className="border border-slate-200 rounded-xl p-4 bg-white">
               <div className="flex items-center gap-2 pb-3 mb-4 border-b border-slate-100">
                 <User className="w-4 h-4 text-[#08775A]" />
                 <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
-                  Patient Identity
+                  Patient Demographics
                 </h3>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {/* Full Name */}
-                <div className="lg:col-span-2">
+                <div className="sm:col-span-2">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Full Name <span className="text-red-500">*</span>
                   </label>
@@ -684,7 +805,7 @@ export const PatientModal: React.FC<PatientModalProps> = ({
                   </select>
                 </div>
 
-                {/* Father / Guardian Name */}
+                {/* Father / Guardian / Spouse Name */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Father / Guardian / Spouse Name
@@ -723,24 +844,25 @@ export const PatientModal: React.FC<PatientModalProps> = ({
                   </select>
                 </div>
 
-                {/* Blood Group */}
+                {/* Phone */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Blood Group
+                    Phone Number <span className="text-red-500">*</span>
                   </label>
-                  <select
-                    value={formData.bloodGroup}
-                    onChange={(e) =>
-                      setFormData({ ...formData, bloodGroup: e.target.value as BloodGroup })
-                    }
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-hidden focus:bg-white focus:border-[#08775A]"
-                  >
-                    {BLOOD_GROUPS.map((bg) => (
-                      <option key={bg} value={bg}>
-                        {bg}
-                      </option>
-                    ))}
-                  </select>
+                  <input
+                    type="text"
+                    value={formData.primaryPhone}
+                    onChange={(e) => setFormData({ ...formData, primaryPhone: e.target.value })}
+                    placeholder="0300-1234567"
+                    className={`w-full px-3 py-2 font-mono bg-slate-50 border rounded-lg text-sm text-slate-800 focus:outline-hidden focus:bg-white ${
+                      errors.primaryPhone
+                        ? 'border-red-400 focus:border-red-500'
+                        : 'border-slate-300 focus:border-[#08775A]'
+                    }`}
+                  />
+                  {errors.primaryPhone && (
+                    <p className="text-xs text-red-500 mt-1">{errors.primaryPhone}</p>
+                  )}
                 </div>
 
                 {/* Date of Birth */}
@@ -749,14 +871,15 @@ export const PatientModal: React.FC<PatientModalProps> = ({
                     Date of Birth
                   </label>
                   <input
-                    lang="en-GB" type="date"
+                    lang="en-GB"
+                    type="date"
                     value={formData.dateOfBirth}
                     onChange={handleDobChange}
                     max="2026-09-09"
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-hidden focus:bg-white focus:border-[#08775A]"
                   />
                   <p className="text-[11px] text-slate-400 mt-0.5">
-                    {formData.dateOfBirth ? 'Age auto-computed' : 'Leave empty if unknown'}
+                    {formData.dateOfBirth ? 'Age auto-computed' : 'Optional if age entered'}
                   </p>
                 </div>
 
@@ -800,225 +923,23 @@ export const PatientModal: React.FC<PatientModalProps> = ({
                   />
                   {errors.cnic && <p className="text-xs text-red-500 mt-1">{errors.cnic}</p>}
                 </div>
-
-                {/* Passport Number */}
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Passport Number (Foreign / Oversees)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.passportNumber}
-                    onChange={(e) =>
-                      setFormData({ ...formData, passportNumber: e.target.value.toUpperCase() })
-                    }
-                    placeholder="e.g. PA123456"
-                    className="w-full px-3 py-2 font-mono uppercase bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-hidden focus:bg-white focus:border-[#08775A]"
-                  />
-                </div>
               </div>
             </div>
 
-            {/* SECTION 2: CONTACT INFORMATION */}
-            <div className="border border-slate-200 rounded-xl p-4 bg-white">
-              <div className="flex items-center gap-2 pb-3 mb-4 border-b border-slate-100">
-                <Phone className="w-4 h-4 text-[#08775A]" />
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
-                  Contact Details
-                </h3>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {/* Primary Phone */}
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Primary Phone <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.primaryPhone}
-                    onChange={(e) => setFormData({ ...formData, primaryPhone: e.target.value })}
-                    placeholder="0300-1234567"
-                    className={`w-full px-3 py-2 font-mono bg-slate-50 border rounded-lg text-sm text-slate-800 focus:outline-hidden focus:bg-white ${
-                      errors.primaryPhone
-                        ? 'border-red-400 focus:border-red-500'
-                        : 'border-slate-300 focus:border-[#08775A]'
-                    }`}
-                  />
-                  {errors.primaryPhone && (
-                    <p className="text-xs text-red-500 mt-1">{errors.primaryPhone}</p>
-                  )}
+            {/* SECTION: CORPORATE PANEL & RESIDENTIAL ADDRESS (Rendered only for Corporate / Panel) */}
+            {formData.payerType === 'Corporate / Panel' && (
+              <div className="border border-emerald-200 rounded-xl p-4 bg-emerald-50/20">
+                <div className="flex items-center gap-2 pb-3 mb-4 border-b border-emerald-100">
+                  <Building className="w-4 h-4 text-[#08775A]" />
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                    Corporate Panel & Address Details
+                  </h3>
                 </div>
 
-                {/* Alternate Phone */}
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Alternate Phone
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.alternatePhone}
-                    onChange={(e) => setFormData({ ...formData, alternatePhone: e.target.value })}
-                    placeholder="0321-7654321 / 042-35..."
-                    className="w-full px-3 py-2 font-mono bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-hidden focus:bg-white focus:border-[#08775A]"
-                  />
-                </div>
+                {panelLoadError && <p role="alert" className="text-xs text-red-600 mb-3">{panelLoadError}</p>}
 
-                {/* Email */}
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Email Address
-                  </label>
-                  <input
-                    type="email"
-                    value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    placeholder="patient@example.com"
-                    className={`w-full px-3 py-2 bg-slate-50 border rounded-lg text-sm text-slate-800 focus:outline-hidden focus:bg-white ${
-                      errors.email ? 'border-red-400' : 'border-slate-300 focus:border-[#08775A]'
-                    }`}
-                  />
-                  {errors.email && <p className="text-xs text-red-500 mt-1">{errors.email}</p>}
-                </div>
-              </div>
-            </div>
-
-            {/* SECTION 3: ADDRESS */}
-            <div className="border border-slate-200 rounded-xl p-4 bg-white">
-              <div className="flex items-center gap-2 pb-3 mb-4 border-b border-slate-100">
-                <MapPin className="w-4 h-4 text-[#08775A]" />
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
-                  Residential Address
-                </h3>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                <div className="sm:col-span-2">
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Address Line 1
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.addressLine1}
-                    onChange={(e) => setFormData({ ...formData, addressLine1: e.target.value })}
-                    placeholder="House / Flat No, Street, Sector, Colony"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-hidden focus:bg-white focus:border-[#08775A]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Address Line 2 (Area / Landmark)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.addressLine2}
-                    onChange={(e) => setFormData({ ...formData, addressLine2: e.target.value })}
-                    placeholder="Nearby landmark or phase"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-hidden focus:bg-white focus:border-[#08775A]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">City</label>
-                  <input
-                    type="text"
-                    value={formData.city}
-                    onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-                    placeholder="e.g. Lahore"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-hidden focus:bg-white focus:border-[#08775A]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Province</label>
-                  <input
-                    type="text"
-                    value={formData.province}
-                    onChange={(e) => setFormData({ ...formData, province: e.target.value })}
-                    placeholder="e.g. Punjab"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-hidden focus:bg-white focus:border-[#08775A]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Country</label>
-                  <input
-                    type="text"
-                    value={formData.country}
-                    onChange={(e) => setFormData({ ...formData, country: e.target.value })}
-                    placeholder="e.g. Pakistan"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-hidden focus:bg-white focus:border-[#08775A]"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* SECTION 4: PAYER INFORMATION */}
-            <div className="border border-slate-200 rounded-xl p-4 bg-white">
-              <div className="flex items-center gap-2 pb-3 mb-4 border-b border-slate-100">
-                <Building className="w-4 h-4 text-[#08775A]" />
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
-                  Payer Information
-                </h3>
-              </div>
-
-              {/* Payer Type Selection */}
-              <div className="mb-4">
-                <label className="block text-xs font-semibold text-slate-700 mb-2">
-                  Payer Type <span className="text-red-500">*</span>
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <label
-                    className={`flex items-center gap-2.5 p-3 rounded-xl border cursor-pointer transition-all ${
-                      formData.payerType === 'Self Pay'
-                        ? 'border-[#08775A] bg-[#effaf5] text-[#08775A] font-semibold'
-                        : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="payerType"
-                      checked={formData.payerType === 'Self Pay'}
-                      onChange={() => handlePayerTypeChange('Self Pay')}
-                      className="text-[#08775A] focus:ring-[#08775A]"
-                    />
-                    <div>
-                      <div className="text-sm">Self Pay</div>
-                      <div className="text-xs text-slate-500 font-normal">
-                        Patient pays directly at billing counter
-                      </div>
-                    </div>
-                  </label>
-
-                  <label
-                    className={`flex items-center gap-2.5 p-3 rounded-xl border cursor-pointer transition-all ${
-                      formData.payerType === 'Corporate / Panel'
-                        ? 'border-[#08775A] bg-[#effaf5] text-[#08775A] font-semibold'
-                        : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="payerType"
-                      checked={formData.payerType === 'Corporate / Panel'}
-                      onChange={() => handlePayerTypeChange('Corporate / Panel')}
-                      className="text-[#08775A] focus:ring-[#08775A]"
-                    />
-                    <div>
-                      <div className="text-sm">Corporate / Panel</div>
-                      <div className="text-xs text-slate-500 font-normal">
-                        Covered by insurance, govt sehat card or enterprise
-                      </div>
-                    </div>
-                  </label>
-                </div>
-              </div>
-
-              {panelLoadError && <p role="alert" className="text-xs text-red-600">{panelLoadError}</p>}
-              {/* Corporate Panel Fields */}
-              {formData.payerType === 'Corporate / Panel' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 border-t border-slate-100">
+                {/* Corporate Panel Entity & Member ID */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
                   <div>
                     <div className="flex items-center justify-between mb-1">
                       <label className="block text-xs font-semibold text-slate-700">
@@ -1036,7 +957,7 @@ export const PatientModal: React.FC<PatientModalProps> = ({
                     </div>
                     {isEditMode && allowCompanyTransfer && (
                       <p className="text-[10.5px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5 mb-1.5">
-                        Past invoices stay billed to the original company and are unaffected — only new charges after saving will use the new company.
+                        Past invoices stay billed to the original company — only new charges after saving will use the new company.
                       </p>
                     )}
                     <select
@@ -1051,7 +972,7 @@ export const PatientModal: React.FC<PatientModalProps> = ({
                           panelName: p ? p.name : '',
                         });
                       }}
-                      className={`w-full px-3 py-2 bg-slate-50 border rounded-lg text-sm text-slate-800 focus:outline-hidden focus:bg-white disabled:opacity-60 ${
+                      className={`w-full px-3 py-2 bg-white border rounded-lg text-sm text-slate-800 focus:outline-hidden focus:bg-white disabled:opacity-60 ${
                         errors.panelId ? 'border-red-400' : 'border-slate-300 focus:border-[#08775A]'
                       }`}
                     >
@@ -1069,7 +990,7 @@ export const PatientModal: React.FC<PatientModalProps> = ({
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      {activePanels.find(p => p.id === formData.panelId)?.memberIdLabel || 'Panel Member ID / Card Number'}
+                      {activePanels.find((p) => p.id === formData.panelId)?.memberIdLabel || 'Panel Member ID / Card Number'}
                     </label>
                     <input
                       type="text"
@@ -1078,7 +999,7 @@ export const PatientModal: React.FC<PatientModalProps> = ({
                         setFormData({ ...formData, panelMemberId: e.target.value })
                       }
                       placeholder="e.g. SLI-99214-PK / Card #"
-                      className={`w-full px-3 py-2 font-mono bg-slate-50 border rounded-lg text-sm text-slate-800 focus:outline-hidden focus:bg-white ${
+                      className={`w-full px-3 py-2 font-mono bg-white border rounded-lg text-sm text-slate-800 focus:outline-hidden focus:bg-white ${
                         errors.panelMemberId
                           ? 'border-red-400'
                           : 'border-slate-300 focus:border-[#08775A]'
@@ -1089,73 +1010,89 @@ export const PatientModal: React.FC<PatientModalProps> = ({
                     )}
                   </div>
                 </div>
-              )}
 
-              {formData.payerType === 'Corporate / Panel' && <PanelMembershipFields key={patientToEdit?.id || 'new'} value={formData} onChange={patch => setFormData(prev => ({ ...prev, ...patch }))} patientId={patientToEdit?.id} datesRequired={activePanels.find(p => p.id === formData.panelId)?.membershipValidityRequired} />}
+                {/* Panel Status & Validity */}
+                <PanelMembershipFields
+                  key={patientToEdit?.id || 'new'}
+                  value={formData}
+                  onChange={(patch) => setFormData((prev) => ({ ...prev, ...patch }))}
+                  patientId={patientToEdit?.id}
+                  datesRequired={activePanels.find((p) => p.id === formData.panelId)?.membershipValidityRequired}
+                />
 
-              {/* Informational note for Panel Changes */}
-              {isEditMode && (
-                <div className="mt-3.5 flex items-start gap-2 p-2.5 bg-blue-50 border border-blue-100 rounded-lg text-xs text-blue-800">
-                  <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-                  <span>
-                    Membership changes are recorded in history. The permanent MR number and company remain unchanged.
-                  </span>
+                {/* Residential Address with City & Country Dropdowns */}
+                <div className="mt-4 pt-4 border-t border-slate-200">
+                  <div className="flex items-center gap-1.5 mb-3 text-xs font-bold text-slate-700">
+                    <MapPin className="w-3.5 h-3.5 text-[#08775A]" />
+                    <span>Residential Address</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Street Address / Flat / Area
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.addressLine1}
+                        onChange={(e) => setFormData({ ...formData, addressLine1: e.target.value })}
+                        placeholder="House / Flat No, Street, Sector, Area"
+                        className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-hidden focus:border-[#08775A]"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        City
+                      </label>
+                      <select
+                        value={formData.city || 'Lahore'}
+                        onChange={(e) => handleCityChange(e.target.value)}
+                        className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-hidden focus:border-[#08775A]"
+                      >
+                        {formData.city && !PAKISTAN_CITIES.includes(formData.city) && (
+                          <option value={formData.city}>{formData.city}</option>
+                        )}
+                        {PAKISTAN_CITIES.map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Country
+                      </label>
+                      <select
+                        value={formData.country || 'Pakistan'}
+                        onChange={(e) => handleCountryChange(e.target.value)}
+                        className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-hidden focus:border-[#08775A]"
+                      >
+                        {formData.country && !COUNTRIES.includes(formData.country) && (
+                          <option value={formData.country}>{formData.country}</option>
+                        )}
+                        {COUNTRIES.map((cntry) => (
+                          <option key={cntry} value={cntry}>
+                            {cntry}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
                 </div>
-              )}
-            </div>
 
-            {/* SECTION 5: EMERGENCY CONTACT */}
-            <div className="border border-slate-200 rounded-xl p-4 bg-white">
-              <div className="flex items-center gap-2 pb-3 mb-4 border-b border-slate-100">
-                <HeartHandshake className="w-4 h-4 text-[#08775A]" />
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
-                  Emergency Contact
-                </h3>
+                {isEditMode && (
+                  <div className="mt-3 flex items-start gap-2 p-2.5 bg-blue-50 border border-blue-100 rounded-lg text-xs text-blue-800">
+                    <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                    <span>
+                      Membership changes are recorded in history. The permanent MR number and company remain unchanged.
+                    </span>
+                  </div>
+                )}
               </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Contact Name
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.emergencyContactName}
-                    onChange={(e) =>
-                      setFormData({ ...formData, emergencyContactName: e.target.value })
-                    }
-                    placeholder="e.g. Begum Nasreen"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-hidden focus:bg-white focus:border-[#08775A]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Relation</label>
-                  <input
-                    type="text"
-                    value={formData.emergencyContactRelation}
-                    onChange={(e) =>
-                      setFormData({ ...formData, emergencyContactRelation: e.target.value })
-                    }
-                    placeholder="e.g. Spouse / Son / Brother"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-hidden focus:bg-white focus:border-[#08775A]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Phone</label>
-                  <input
-                    type="text"
-                    value={formData.emergencyContactPhone}
-                    onChange={(e) =>
-                      setFormData({ ...formData, emergencyContactPhone: e.target.value })
-                    }
-                    placeholder="0300-1122334"
-                    className="w-full px-3 py-2 font-mono bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-hidden focus:bg-white focus:border-[#08775A]"
-                  />
-                </div>
-              </div>
-            </div>
+            )}
           </form>
         </div>
 

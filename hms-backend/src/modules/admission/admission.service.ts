@@ -100,7 +100,7 @@ async function getOrCreateRoomChargeServiceRate(tx: Prisma.TransactionClient, fa
         name: 'Room / Bed Accommodation Charges',
         category: 'Accommodation',
         departmentId: fallbackDepartmentId,
-        standardRate: new Decimal(0),
+        standardRate: new Decimal(2000),
         billingUnit: 'PER_DAY',
         discountAllowed: false,
         isActive: true,

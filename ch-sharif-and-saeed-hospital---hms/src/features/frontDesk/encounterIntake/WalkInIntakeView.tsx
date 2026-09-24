@@ -1,4 +1,3 @@
-import PanelMembershipQuickFields from '../../superAdmin/patientRegistry/PanelMembershipQuickFields';
 import type { PanelMembershipDetails } from '../../../types/patient';
 import { doctorsForEncounter } from '../../../utils/doctorAvailability';
 import { InvoiceDetailModal } from '../billing/InvoiceDetailModal';
@@ -24,7 +23,6 @@ import {
 import { formatDisplayDate } from '../../../utils/dateConstants';
 import { PatientGender, PayerType, GuardianRelation, GUARDIAN_RELATIONS } from '../../../types/patient';
 import {
-  createPatient,
   normalizePhone,
   isValidPhone,
   calculateAgeFromDob,
@@ -494,6 +492,10 @@ export const WalkInIntakeView: React.FC = () => {
 
     // 2. Panel Details Validation
     if (payerType === 'Corporate / Panel') {
+      if (!selectedExistingPatient) {
+        setFormError('Front Desk cannot register new panel patients. Please search and select an existing verified panel patient from the registry above, or contact Super Admin / Admin to register them.');
+        return;
+      }
       if (!panelId) {
         setFormError('Please select a Corporate Panel.');
         return;
@@ -585,60 +587,22 @@ export const WalkInIntakeView: React.FC = () => {
         });
         targetInvoiceId = invoice.id;
       } else {
-        // Corporate / Panel: Reuse selected existing panel patient or register new
-        let panelPatientIdToUse = selectedExistingPatient?.id;
-
-        if (!panelPatientIdToUse) {
-          const regRes = await createPatient(
-            {
-              fullName: fullName.trim(),
-              fatherGuardianName: fatherGuardianName.trim(),
-              guardianRelation,
-              dateOfBirth: dob,
-              age: ageNum,
-              ageIsEstimated: true,
-              gender,
-              cnic: cnic.trim(),
-              passportNumber: '',
-              primaryPhone: normalizePhone(primaryPhone),
-              alternatePhone: '',
-              email: '',
-              addressLine1: address.trim(),
-              addressLine2: '',
-              city: 'Lahore',
-              province: 'Punjab',
-              country: 'Pakistan',
-              bloodGroup: 'Unknown',
-              payerType: 'Corporate / Panel',
-              panelId,
-              panelName: corporatePanels.find((p) => p.id === panelId)?.name || '',
-              panelMemberId: panelMemberId.trim(),
-              ...membershipDetails,
-              emergencyContactName: '',
-              emergencyContactRelation: '',
-              emergencyContactPhone: '',
-              status: 'ACTIVE',
-            },
-            null
-          );
-
-          if (!regRes.success || !regRes.patient) {
-            setFormError(regRes.error || 'Failed to register panel patient.');
-            setIsSaving(false);
-            return;
-          }
-          panelPatientIdToUse = regRes.patient.id;
+        // Corporate / Panel: Must use selected existing panel patient (registration restricted to Super Admin / Admin)
+        if (!selectedExistingPatient?.id) {
+          setFormError('Front Desk cannot register new panel patients. Please search and select an existing verified panel patient.');
+          setIsSaving(false);
+          return;
         }
 
         const invoice = await createEncounter({
           encounterType,
-          panelPatientId: panelPatientIdToUse,
+          panelPatientId: selectedExistingPatient.id,
           departmentId: effectiveDeptId || undefined,
           doctorStaffId: doctorId || undefined,
           notes: combinedNotes,
           authorizationNumber: authorizationNumber.trim() || undefined,
           authorizationLimit: authorizationLimit === '' ? undefined : Number(authorizationLimit),
-          authorizationValidUntil: authorizationValidUntil || undefined,
+          authorizationValidUntil: authorizationValidUntil.trim() || undefined,
         });
         targetInvoiceId = invoice.id;
       }
@@ -1052,19 +1016,38 @@ export const WalkInIntakeView: React.FC = () => {
               <span className={`text-[10.5px] font-medium px-2 py-0.5 rounded ${
                 selectedExistingPatient
                   ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                  : payerType === 'Corporate / Panel'
+                  ? 'bg-amber-100 text-amber-900 border border-amber-300'
                   : 'bg-slate-100 text-slate-500'
               }`}>
-                {selectedExistingPatient ? `From Panel Registry (${selectedExistingPatient.mrNumber})` : 'Instant Walk-In Entry'}
+                {selectedExistingPatient
+                  ? `From Panel Registry (${selectedExistingPatient.mrNumber})`
+                  : payerType === 'Corporate / Panel'
+                  ? 'Search Required (Panel)'
+                  : 'Instant Walk-In Entry'}
               </span>
             </div>
 
             {/* Corporate / Panel Search Section (When Panel is active) */}
             {payerType === 'Corporate / Panel' && (
-              <PanelPatientSearchSection
-                selectedPatient={selectedExistingPatient}
-                onSelectPatient={handleUseExistingPatient}
-                onClearPatient={handleClearExistingPatient}
-              />
+              <>
+                <PanelPatientSearchSection
+                  selectedPatient={selectedExistingPatient}
+                  onSelectPatient={handleUseExistingPatient}
+                  onClearPatient={handleClearExistingPatient}
+                />
+                {!selectedExistingPatient && (
+                  <div className="p-3 bg-amber-50/90 border border-amber-200 rounded-lg text-xs text-amber-950 flex items-start gap-2.5 animate-in fade-in">
+                    <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-semibold text-amber-950">Panel Patient Search Required</p>
+                      <p className="text-amber-800 text-[11px] mt-0.5">
+                        Front Desk can only search and select pre-registered panel patients. New panel patient registration is restricted to <strong>Super Admin</strong> and <strong>Admin</strong>.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
 
             {/* Full Name & Father / Guardian */}
@@ -1072,8 +1055,8 @@ export const WalkInIntakeView: React.FC = () => {
               <TextInput
                 label="Patient Full Name"
                 required
-                disabled={!!selectedExistingPatient}
-                placeholder="Patient's legal name"
+                disabled={payerType === 'Corporate / Panel'}
+                placeholder={payerType === 'Corporate / Panel' ? (selectedExistingPatient ? selectedExistingPatient.fullName : 'Search and select panel patient above') : "Patient's legal name"}
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value.toUpperCase())}
                 onKeyDown={handleEnterNext}
@@ -1081,8 +1064,8 @@ export const WalkInIntakeView: React.FC = () => {
               <TextInput
                 label="Father / Guardian Name"
                 required
-                disabled={!!selectedExistingPatient}
-                placeholder="Father / Husband / Guardian"
+                disabled={payerType === 'Corporate / Panel'}
+                placeholder={payerType === 'Corporate / Panel' ? (selectedExistingPatient ? (selectedExistingPatient.guardianName || 'N/A') : 'Search and select panel patient above') : 'Father / Husband / Guardian'}
                 value={fatherGuardianName}
                 onChange={(e) => setFatherGuardianName(e.target.value.toUpperCase())}
                 onKeyDown={handleEnterNext}
@@ -1094,8 +1077,8 @@ export const WalkInIntakeView: React.FC = () => {
               <TextInput
                 label="Contact Phone"
                 required
-                disabled={!!selectedExistingPatient}
-                placeholder="0300-1234567"
+                disabled={payerType === 'Corporate / Panel'}
+                placeholder={payerType === 'Corporate / Panel' ? (selectedExistingPatient ? selectedExistingPatient.phone : 'Auto-filled from registry') : '0300-1234567'}
                 value={primaryPhone}
                 onChange={(e) => setPrimaryPhone(e.target.value)}
                 onKeyDown={handleEnterNext}
@@ -1103,11 +1086,11 @@ export const WalkInIntakeView: React.FC = () => {
               <TextInput
                 label="Age (Years)"
                 required
-                disabled={!!selectedExistingPatient}
+                disabled={payerType === 'Corporate / Panel'}
                 type="number"
                 min="0"
                 max="130"
-                placeholder="e.g. 28"
+                placeholder={payerType === 'Corporate / Panel' ? 'Auto-filled' : 'e.g. 28'}
                 value={age}
                 onChange={(e) => setAge(e.target.value)}
                 onKeyDown={handleEnterNext}
@@ -1135,10 +1118,10 @@ export const WalkInIntakeView: React.FC = () => {
                   <button
                     key={g}
                     type="button"
-                    disabled={!!selectedExistingPatient}
+                    disabled={payerType === 'Corporate / Panel'}
                     onClick={() => setGender(g)}
                     className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
-                      selectedExistingPatient ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'
+                      payerType === 'Corporate / Panel' ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'
                     } ${gender === g
                       ? 'bg-[#08775A] text-white border-[#08775A] shadow-xs'
                       : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
@@ -1161,7 +1144,7 @@ export const WalkInIntakeView: React.FC = () => {
                   <Select
                     label="Corporate Panel"
                     required
-                    disabled={!!selectedExistingPatient}
+                    disabled={true}
                     options={[
                       { label: '-- Select Corporate Panel --', value: '' },
                       ...corporatePanels.map((p) => ({ label: `${p.name} (${p.code})`, value: p.id })),
@@ -1169,17 +1152,17 @@ export const WalkInIntakeView: React.FC = () => {
                     value={panelId}
                     onChange={(e) => setPanelId(e.target.value)}
                     onKeyDown={handleEnterNext}
+                    hint={selectedExistingPatient ? "Populated from the selected panel patient's registry record." : "Select patient above."}
                   />
                   <TextInput
                     label={corporatePanels.find(p => p.id === panelId)?.memberIdLabel || 'Panel Member ID / Card #'}
                     required={corporatePanels.find(p => p.id === panelId)?.memberIdRequired}
-                    disabled={!!selectedExistingPatient}
-                    placeholder="e.g. EMP-99214 / CRD-4412"
+                    disabled={true}
+                    placeholder="Auto-filled from registry"
                     value={panelMemberId}
                     onChange={(e) => setPanelMemberId(e.target.value.toUpperCase())}
                     onKeyDown={handleEnterNext}
                   />
-                  {!selectedExistingPatient && <div className="sm:col-span-2"><PanelMembershipQuickFields value={membershipDetails} onChange={patch => setMembershipDetails(prev => ({ ...prev, ...patch }))} datesRequired={corporatePanels.find(p => p.id === panelId)?.membershipValidityRequired} /></div>}
                   {corporatePanels.find(p => p.id === panelId)?.authorizationRequired && (
                     <>
                       <TextInput

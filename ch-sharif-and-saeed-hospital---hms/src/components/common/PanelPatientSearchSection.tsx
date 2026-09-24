@@ -107,7 +107,7 @@ export const PanelPatientSearchSection: React.FC<PanelPatientSearchSectionProps>
           <span>Search Panel Patient Registry</span>
         </div>
         <span className="text-[10px] text-amber-800 font-medium">
-          Search existing patient or type name below to register new
+          Search existing verified patient (Registration restricted to Super Admin / Admin)
         </span>
       </div>
 
@@ -163,8 +163,8 @@ export const PanelPatientSearchSection: React.FC<PanelPatientSearchSectionProps>
       {hasSearched && (
         <div className="mt-2 space-y-1.5 border border-amber-200 bg-white rounded-lg p-2 max-h-56 overflow-y-auto">
           {results.length === 0 ? (
-            <div className="p-4 text-center text-xs text-slate-500">
-              No matching panel patients found. You can proceed below to register a new panel patient.
+            <div className="p-4 text-center text-xs text-slate-600 bg-amber-50/50 rounded-md border border-amber-200">
+              No matching panel patients found. Front Desk cannot create panel patients — new panel patient registration must be completed by Super Admin or Admin.
             </div>
           ) : (
             <div className="divide-y divide-slate-100">

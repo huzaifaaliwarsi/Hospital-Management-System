@@ -1,4 +1,3 @@
-import PanelMembershipQuickFields from '../../superAdmin/patientRegistry/PanelMembershipQuickFields';
 import type { PanelMembershipDetails } from '../../../types/patient';
 import { doctorsForEncounter } from '../../../utils/doctorAvailability';
 import { formatDateISO, getHospitalCurrentDate, formatDisplayDate } from '../../../utils/dateConstants';
@@ -388,6 +387,10 @@ export const NewAdmissionView: React.FC = () => {
       return;
     }
     if (payerType === 'Corporate / Panel') {
+      if (!selectedExistingPatient) {
+        setFormError('Front Desk cannot register new panel patients. Please search and select an existing verified panel patient from the registry above, or contact Super Admin / Admin.');
+        return;
+      }
       if (!panelId) {
         setFormError('Please select a Corporate Panel.');
         return;
@@ -401,7 +404,7 @@ export const NewAdmissionView: React.FC = () => {
         return;
       }
       // §2.1 point 2 — "validate active membership" before admitting against this registry record.
-      if (selectedExistingPatient && selectedExistingPatient.status !== 'ACTIVE') {
+      if (selectedExistingPatient.status !== 'ACTIVE') {
         setFormError(`This panel patient's membership is ${selectedExistingPatient.status} — cannot admit against an inactive registry record.`);
         return;
       }
@@ -417,11 +420,15 @@ export const NewAdmissionView: React.FC = () => {
     setIsSaving(true);
     try {
       // 3. Register Patient — reuse the selected Panel Patient Registry
-      // record as-is (admission.md §2.1 point 2) instead of always
-      // inline-registering a brand-new PanelPatient for the same person.
+      // record as-is (admission.md §2.1 point 2). Only Self Pay creates a new patient.
       let activePatient: { id: string; payerType: PayerType };
 
-      if (payerType === 'Corporate / Panel' && selectedExistingPatient) {
+      if (payerType === 'Corporate / Panel') {
+        if (!selectedExistingPatient) {
+          setFormError('Front Desk cannot register new panel patients. Please search and select an existing verified panel patient.');
+          setIsSaving(false);
+          return;
+        }
         activePatient = { id: selectedExistingPatient.id, payerType: 'Corporate / Panel' };
       } else {
         const birthYear = new Date().getFullYear() - Math.max(0, Math.floor(ageNum));
@@ -448,11 +455,10 @@ export const NewAdmissionView: React.FC = () => {
             province: 'Sindh',
             country: 'Pakistan',
             bloodGroup: 'Unknown',
-            payerType,
-            panelId: payerType === 'Corporate / Panel' ? panelId : '',
-            panelName: payerType === 'Corporate / Panel' ? corporatePanels.find((p) => p.id === panelId)?.name || '' : '',
-            panelMemberId: payerType === 'Corporate / Panel' ? panelMemberId.trim() : '',
-              ...membershipDetails,
+            payerType: 'Self Pay',
+            panelId: '',
+            panelName: '',
+            panelMemberId: '',
             emergencyContactName: fatherGuardianName.trim(),
             emergencyContactRelation: guardianRelation,
             emergencyContactPhone: guardianCnic.trim() ? normalizeCnic(guardianCnic) : normalizePhone(primaryPhone),
@@ -748,10 +754,42 @@ export const NewAdmissionView: React.FC = () => {
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
                 2. Patient Information
               </label>
-              <span className="text-[11px] text-[#08775A] font-semibold bg-[#effaf5] border border-emerald-200 px-2 py-0.5 rounded">
-                {selectedExistingPatient ? 'From Panel Registry' : 'Admission Slip Details'}
+              <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${
+                selectedExistingPatient
+                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                  : payerType === 'Corporate / Panel'
+                  ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                  : 'bg-[#effaf5] text-[#08775A] border border-emerald-200'
+              }`}>
+                {selectedExistingPatient
+                  ? `From Panel Registry (${selectedExistingPatient.mrNumber})`
+                  : payerType === 'Corporate / Panel'
+                  ? 'Search Required (Panel)'
+                  : 'Admission Slip Details'}
               </span>
             </div>
+
+            {/* Corporate / Panel Search Section */}
+            {payerType === 'Corporate / Panel' && (
+              <>
+                <PanelPatientSearchSection
+                  selectedPatient={selectedExistingPatient}
+                  onSelectPatient={handleUseExistingPatient}
+                  onClearPatient={handleClearExistingPatient}
+                />
+                {!selectedExistingPatient && (
+                  <div className="p-3 bg-amber-50/90 border border-amber-200 rounded-lg text-xs text-amber-950 flex items-start gap-2.5 animate-in fade-in">
+                    <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-semibold text-amber-950">Panel Patient Search Required</p>
+                      <p className="text-amber-800 text-[11px] mt-0.5">
+                        Front Desk can only search and select pre-registered panel patients. New panel patient registration is restricted to <strong>Super Admin</strong> and <strong>Admin</strong>.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
 
             {/* Name & Guardian */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -760,8 +798,8 @@ export const NewAdmissionView: React.FC = () => {
                 autoFocus
                 label="Patient Full Name"
                 required
-                disabled={!!selectedExistingPatient}
-                placeholder="Patient's legal name"
+                disabled={payerType === 'Corporate / Panel'}
+                placeholder={payerType === 'Corporate / Panel' ? (selectedExistingPatient ? selectedExistingPatient.fullName : 'Search and select panel patient above') : "Patient's legal name"}
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value.toUpperCase())}
                 onKeyDown={handleEnterNext}
@@ -771,8 +809,8 @@ export const NewAdmissionView: React.FC = () => {
                   <TextInput
                     label="Guardian Name"
                     required
-                    disabled={!!selectedExistingPatient}
-                    placeholder="Father / Guardian name"
+                    disabled={payerType === 'Corporate / Panel'}
+                    placeholder={payerType === 'Corporate / Panel' ? (selectedExistingPatient ? (selectedExistingPatient.guardianName || 'N/A') : 'Search and select panel patient above') : 'Father / Guardian name'}
                     value={fatherGuardianName}
                     onChange={(e) => setFatherGuardianName(e.target.value.toUpperCase())}
                     onKeyDown={handleEnterNext}
@@ -782,7 +820,7 @@ export const NewAdmissionView: React.FC = () => {
                   <Select
                     label="Relation"
                     required
-                    disabled={!!selectedExistingPatient}
+                    disabled={payerType === 'Corporate / Panel'}
                     options={[
                       { label: 'Select Relation', value: '' },
                       ...GUARDIAN_RELATIONS.map((r) => ({ label: r, value: r })),
@@ -801,6 +839,7 @@ export const NewAdmissionView: React.FC = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <CNICInput
                 label="Father / Guardian CNIC"
+                disabled={payerType === 'Corporate / Panel'}
                 placeholder="XXXXX-XXXXXXX-X"
                 value={guardianCnic}
                 onChange={(e) => setGuardianCnic(e.target.value)}
@@ -809,8 +848,8 @@ export const NewAdmissionView: React.FC = () => {
               <TextInput
                 label="Contact Phone"
                 required
-                disabled={!!selectedExistingPatient}
-                placeholder="0300-1234567"
+                disabled={payerType === 'Corporate / Panel'}
+                placeholder={payerType === 'Corporate / Panel' ? (selectedExistingPatient ? selectedExistingPatient.phone : 'Auto-filled from registry') : '0300-1234567'}
                 value={primaryPhone}
                 onChange={(e) => setPrimaryPhone(e.target.value)}
                 onKeyDown={handleEnterNext}
@@ -823,11 +862,11 @@ export const NewAdmissionView: React.FC = () => {
                 <TextInput
                   label="Age (Years)"
                   required
-                  disabled={!!selectedExistingPatient}
+                  disabled={payerType === 'Corporate / Panel'}
                   type="number"
                   min="0"
                   max="130"
-                  placeholder="e.g. 35"
+                  placeholder={payerType === 'Corporate / Panel' ? 'Auto-filled' : 'e.g. 35'}
                   value={age}
                   onChange={(e) => setAge(e.target.value)}
                   onKeyDown={handleEnterNext}
@@ -842,10 +881,10 @@ export const NewAdmissionView: React.FC = () => {
                     <button
                       key={g}
                       type="button"
-                      disabled={!!selectedExistingPatient}
+                      disabled={payerType === 'Corporate / Panel'}
                       onClick={() => setGender(g)}
                       className={`flex-1 py-2 text-xs font-semibold rounded-lg border transition-all text-center ${
-                        selectedExistingPatient ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+                        payerType === 'Corporate / Panel' ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'
                       } ${
                         gender === g
                           ? 'bg-[#08775A] text-white border-[#08775A] shadow-xs'
@@ -880,8 +919,8 @@ export const NewAdmissionView: React.FC = () => {
             {/* Residential Address */}
             <TextInput
               label="Residential Address"
-              disabled={!!selectedExistingPatient}
-              placeholder="e.g. Landhi Hospital Karachi"
+              disabled={payerType === 'Corporate / Panel'}
+              placeholder={payerType === 'Corporate / Panel' ? (selectedExistingPatient ? (selectedExistingPatient.addressLine1 || 'N/A') : 'Auto-filled from registry') : 'e.g. Landhi Hospital Karachi'}
               value={address}
               onChange={(e) => setAddress(e.target.value.toUpperCase())}
               onKeyDown={handleEnterNext}
@@ -895,17 +934,11 @@ export const NewAdmissionView: React.FC = () => {
                   <span>Panel Contract &amp; Card Information</span>
                 </div>
 
-                <PanelPatientSearchSection
-                  selectedPatient={selectedExistingPatient}
-                  onSelectPatient={handleUseExistingPatient}
-                  onClearPatient={handleClearExistingPatient}
-                />
-
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Select
                     label="Corporate Panel"
                     required
-                    disabled={!!selectedExistingPatient}
+                    disabled={true}
                     options={[
                       { label: '-- Select Corporate Panel --', value: '' },
                       ...corporatePanels.map((p) => ({ label: `${p.name} (${p.code})`, value: p.id })),
@@ -913,18 +946,17 @@ export const NewAdmissionView: React.FC = () => {
                     value={panelId}
                     onChange={(e) => setPanelId(e.target.value)}
                     onKeyDown={handleSelectKeyDown}
-                    hint={selectedExistingPatient ? "From the patient's registry record." : undefined}
+                    hint={selectedExistingPatient ? "From the patient's registry record." : "Select patient above."}
                   />
                   <TextInput
                     label={corporatePanels.find(p => p.id === panelId)?.memberIdLabel || 'Panel Member ID / Card #'}
                     required={corporatePanels.find(p => p.id === panelId)?.memberIdRequired}
-                    disabled={!!selectedExistingPatient}
-                    placeholder="e.g. EMP-99214 / CRD-4412"
+                    disabled={true}
+                    placeholder="Auto-filled from registry"
                     value={panelMemberId}
                     onChange={(e) => setPanelMemberId(e.target.value.toUpperCase())}
                     onKeyDown={handleEnterNext}
                   />
-                  {!selectedExistingPatient && <div className="sm:col-span-2"><PanelMembershipQuickFields value={membershipDetails} onChange={patch => setMembershipDetails(prev => ({ ...prev, ...patch }))} datesRequired={corporatePanels.find(p => p.id === panelId)?.membershipValidityRequired} /></div>}
                   {corporatePanels.find(p => p.id === panelId)?.authorizationRequired && (
                     <>
                       <TextInput

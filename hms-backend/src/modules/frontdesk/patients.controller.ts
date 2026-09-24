@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import { patientsService } from './patients.service';
-import { AuthenticationError } from '@/shared/errors/AppError';
+import { AuthenticationError, AuthorizationError } from '@/shared/errors/AppError';
 import type {
   CheckDuplicateQuery,
   CreatePanelPatientBody,
@@ -29,9 +29,15 @@ export const patientsController = {
     res.json({ data: rows, meta: { pagination: meta } });
   },
   createPanelPatient: async (req: Request, res: Response) => {
+    if (req.user?.role !== 'SUPER_ADMIN' && req.user?.role !== 'ADMIN') {
+      throw new AuthorizationError('Only Super Admin and Admin can register panel patients');
+    }
     res.status(201).json({ data: await patientsService.createPanelPatient(req.body as CreatePanelPatientBody, actorId(req)) });
   },
   updatePanelPatient: async (req: Request, res: Response) => {
+    if (req.user?.role !== 'SUPER_ADMIN' && req.user?.role !== 'ADMIN') {
+      throw new AuthorizationError('Only Super Admin and Admin can edit panel patients');
+    }
     res.json({ data: await patientsService.updatePanelPatient(req.params.id as string, req.body as UpdatePanelPatientBody, actorId(req)) });
   },
 

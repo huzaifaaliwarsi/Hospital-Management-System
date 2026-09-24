@@ -526,12 +526,18 @@ export function filterPatients(patients: Patient[], filters: PatientFilterState)
   return patients.filter((patient) => {
     if (filters.searchTerm.trim()) {
       const q = filters.searchTerm.trim().toLowerCase();
+      const qDigits = q.replace(/\D/g, '');
       const matchMr = patient.mrNumber.toLowerCase().includes(q);
       const matchName = patient.fullName.toLowerCase().includes(q);
-      const matchCnic = patient.cnic ? patient.cnic.replace(/\D/g, '').includes(q.replace(/\D/g, '')) || patient.cnic.toLowerCase().includes(q) : false;
-      const matchPhone = patient.primaryPhone ? patient.primaryPhone.replace(/\D/g, '').includes(q.replace(/\D/g, '')) || patient.primaryPhone.toLowerCase().includes(q) : false;
+      const matchFather = (patient.fatherGuardianName || '').toLowerCase().includes(q);
+      const matchCnic = patient.cnic
+        ? (qDigits.length >= 3 && patient.cnic.replace(/\D/g, '').includes(qDigits)) || patient.cnic.toLowerCase().includes(q)
+        : false;
+      const matchPhone = patient.primaryPhone
+        ? (qDigits.length >= 3 && patient.primaryPhone.replace(/\D/g, '').includes(qDigits)) || patient.primaryPhone.toLowerCase().includes(q)
+        : false;
       const matchPanelMember = patient.panelMemberId ? patient.panelMemberId.toLowerCase().includes(q) : false;
-      if (!matchMr && !matchName && !matchCnic && !matchPhone && !matchPanelMember) return false;
+      if (!matchMr && !matchName && !matchFather && !matchCnic && !matchPhone && !matchPanelMember) return false;
     }
     if (filters.gender !== 'ALL' && patient.gender !== filters.gender) return false;
     if (filters.payerType !== 'ALL' && patient.payerType !== filters.payerType) return false;

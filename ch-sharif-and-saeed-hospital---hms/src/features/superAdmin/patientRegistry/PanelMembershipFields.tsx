@@ -65,7 +65,6 @@ export default function PanelMembershipFields({ value, onChange, patientId, date
         min={value.membershipValidFrom || undefined}
         onChange={e => onChange({ membershipValidTo: e.target.value })}
       />
-      {detailFields.map(([key, label]) => <label key={key} className="text-xs">{label}<input className={inputClass} maxLength={key === 'memberRelationship' ? 100 : 150} value={value[key] || ''} onChange={e => onChange({ [key]: e.target.value })} /></label>)}
     </div>
     {patientId && <details className="rounded-lg border p-3">
       <summary className="cursor-pointer text-sm font-semibold">Saved membership history</summary>
