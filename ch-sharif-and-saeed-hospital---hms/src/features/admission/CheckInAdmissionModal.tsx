@@ -71,8 +71,8 @@ export const CheckInAdmissionModal: React.FC<CheckInAdmissionModalProps> = ({ ad
       } else if (parts.length === 2) {
         return {
           ward: parts[0],
-          room: parts[1],
-          bed: '',
+          room: '',
+          bed: parts[1],
         };
       }
     }

@@ -13,7 +13,7 @@ import type {
   CheckInAppointmentBody,
 } from './appointments.schemas';
 
-import { generateInvoiceNumber, generateReceiptNumber } from '@/shared/idGenerator';
+import { generateInvoiceNumber, generateReceiptNumber, generateMrNumber } from '@/shared/idGenerator';
 
 export const appointmentsService = {
   async bookAppointment(body: BookAppointmentBody, actorId: string) {
@@ -24,6 +24,7 @@ export const appointmentsService = {
       if (!body.panelPatientId && !selfPayEncounterId && body.newSelfPayPatient) {
         const createdSelfPay = await tx.selfPayEncounter.create({
           data: {
+            mrNumber: await generateMrNumber(tx),
             fullName: body.newSelfPayPatient.fullName,
             guardianName: body.newSelfPayPatient.guardianName,
             gender: body.newSelfPayPatient.gender,

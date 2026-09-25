@@ -97,9 +97,9 @@ export const AdmissionPaymentRequestsView: React.FC = () => {
         ) : requests.length === 0 ? (
           <div className="p-10 text-center text-xs text-slate-500">No payment requests found for the selected filter.</div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)] min-h-[300px]">
             <table className="w-full text-xs">
-              <thead className="bg-slate-50 border-b border-slate-200">
+              <thead className="sticky top-0 z-10 bg-slate-50/95 shadow-2xs">
                 <tr>
                   {['Admission', 'Patient', 'Payer', 'Department / Doctor', 'Type', 'Requested', 'Collected', 'Remaining', 'Status', 'Requested By', 'Actions'].map((h) => (
                     <th key={h} className="text-left px-3 py-2.5 font-semibold text-slate-600 whitespace-nowrap">

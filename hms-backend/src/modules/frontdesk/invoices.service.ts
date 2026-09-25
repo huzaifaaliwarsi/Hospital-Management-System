@@ -17,7 +17,7 @@ import type {
   SetInvoiceAuthorizationBody,
 } from './invoices.schemas';
 
-import { generateInvoiceNumber, generateReceiptNumber } from '@/shared/idGenerator';
+import { generateInvoiceNumber, generateReceiptNumber, generateMrNumber } from '@/shared/idGenerator';
 
 const DISCOUNT_APPROVAL_PERCENT_THRESHOLD = 15; // > 15% requires Admin approval
 const DISCOUNT_APPROVAL_AMOUNT_THRESHOLD = 1500; // > PKR 1,500 requires Admin approval
@@ -74,6 +74,7 @@ export const invoicesService = {
       if (!body.panelPatientId && !selfPayEncounterId && body.newSelfPayPatient) {
         const createdSelfPay = await tx.selfPayEncounter.create({
           data: {
+            mrNumber: await generateMrNumber(tx),
             fullName: body.newSelfPayPatient.fullName,
             guardianName: body.newSelfPayPatient.guardianName,
             gender: body.newSelfPayPatient.gender,
@@ -712,9 +713,7 @@ export const invoicesService = {
         : {
             type: 'SELF_PAY',
             name: invoice.selfPayEncounter?.fullName ?? 'Walk-In Patient',
-            mrNumber: invoice.selfPayEncounterId
-              ? `MR-26-${invoice.selfPayEncounterId.replace(/\D/g, '').slice(0, 5) || invoice.selfPayEncounterId.replace(/-/g, '').slice(0, 4).toUpperCase()}`
-              : '',
+            mrNumber: invoice.selfPayEncounter?.mrNumber ?? '',
             phone: invoice.selfPayEncounter?.phone,
             cnic: invoice.selfPayEncounter?.cnicOrPassport,
           },
@@ -800,7 +799,7 @@ export const invoicesService = {
         // a different company; panelPatient.corporatePanel above stays
         // useful for the CURRENT membership context only.
         corporatePanel: { select: { id: true, code: true, organizationName: true } },
-        selfPayEncounter: { select: { id: true, fullName: true } },
+        selfPayEncounter: { select: { id: true, fullName: true, mrNumber: true } },
         department: { select: { id: true, name: true, code: true } },
         lines: { select: { id: true, lineNet: true, quantity: true } },
         paymentReceipts: { select: { id: true, receiptNumber: true, amount: true, method: true, isReversed: true } },

@@ -276,9 +276,9 @@ export const AppointmentsView: React.FC = () => {
         ) : appointments.length === 0 ? (
           <div className="p-10 text-center text-xs text-slate-500">No appointments found for the selected filters.</div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)] min-h-[300px]">
             <table className="w-full text-xs">
-              <thead className="bg-slate-50 border-b border-slate-200">
+              <thead className="sticky top-0 z-10 bg-slate-50/95 shadow-2xs">
                 <tr>
                   {['Slot', 'Patient', 'Payer', 'Doctor', 'Department', 'Service', 'Patient Payable', 'Advance Paid', 'Remaining', 'Status', 'Actions'].map(
                     (h) => (

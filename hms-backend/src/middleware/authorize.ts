@@ -56,6 +56,9 @@ const policy: Policy = {
     identity: new Set<Action>(['view']),
     // Read-only medicine list for the Pharmacy Requests picker.
     pharmacy: new Set<Action>(['view']),
+    // Admission's own reports (Reporting Guide v7.5 §5) — read-only, same
+    // grant Front Desk/Billing already has for its own report set below.
+    reports: new Set<Action>(['view']),
   },
   // Front Desk/Billing: full patient-registry CRUD (§3.3), read-only Setup
   // (services/wards/panels are read in the billing flow, §8.4/§8.7).

@@ -29,6 +29,7 @@ import pharmacyRoutes from '@/modules/pharmacy/pharmacy.routes';
 import pharmacyBridgeRoutes from '@/modules/pharmacy-bridge/pharmacy-bridge.routes';
 import cashRoutes from '@/modules/cash/cash.routes';
 import reportsRoutes from '@/modules/reports/reports.routes';
+import notificationsRoutes from '@/modules/notifications/notifications.routes';
 
 /**
  * Express app assembly — no `listen()` here (§7.16), so it can be imported
@@ -76,6 +77,7 @@ export function createApp() {
   app.use('/api/v1/pharmacy-bridge', pharmacyBridgeRoutes);
   app.use('/api/v1/cash', cashRoutes);
   app.use('/api/v1/reports', reportsRoutes);
+  app.use('/api/v1/notifications', notificationsRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

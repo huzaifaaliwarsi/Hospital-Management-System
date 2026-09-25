@@ -70,11 +70,20 @@ export function parsePath(path: string): ParsedRoute {
     };
   }
 
-  const rawPortal = segments[0] as PortalKey;
-  const isPortalValid = VALID_PORTALS.includes(rawPortal);
-  const portal: PortalKey = isPortalValid ? rawPortal : 'super-admin';
+  let rawPortal = segments[0] as string;
+  let secondSegment = segments[1] || 'dashboard';
 
-  const secondSegment = segments[1] || 'dashboard';
+  // Normalize aliases so /admissions maps to admission portal instead of defaulting to super-admin
+  if (rawPortal === 'admissions') {
+    rawPortal = 'admission';
+    if (!segments[1]) {
+      secondSegment = 'planned_admissions';
+    }
+  }
+
+  const isPortalValid = VALID_PORTALS.includes(rawPortal as PortalKey);
+  const portal: PortalKey = isPortalValid ? (rawPortal as PortalKey) : 'super-admin';
+
   const isLogin = secondSegment === 'login';
   const module = isLogin ? 'login' : secondSegment;
 

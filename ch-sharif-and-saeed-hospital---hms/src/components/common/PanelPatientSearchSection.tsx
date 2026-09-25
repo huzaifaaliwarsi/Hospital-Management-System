@@ -100,14 +100,14 @@ export const PanelPatientSearchSection: React.FC<PanelPatientSearchSectionProps>
   }
 
   return (
-    <div className="bg-amber-50/50 border border-amber-200 rounded-xl p-3.5 space-y-3 animate-in fade-in">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 text-xs font-bold text-amber-950">
-          <Building2 className="h-4 w-4 text-amber-700" />
+    <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-3.5 space-y-3 animate-in fade-in">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900">
+          <Building2 className="h-4 w-4 text-[#08775A]" />
           <span>Search Panel Patient Registry</span>
         </div>
-        <span className="text-[10px] text-amber-800 font-medium">
-          Search existing verified patient (Registration restricted to Super Admin / Admin)
+        <span className="text-[11px] text-slate-500 font-medium bg-white px-2 py-0.5 rounded border border-slate-200">
+          Verified Panel Registry • Front Desk Selection
         </span>
       </div>
 
@@ -126,7 +126,7 @@ export const PanelPatientSearchSection: React.FC<PanelPatientSearchSectionProps>
                 handleSearch();
               }
             }}
-            className="w-full pl-9 pr-3 py-2 text-xs border border-amber-300 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500"
+            className="w-full pl-9 pr-3 py-2 text-xs border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-[#08775A] focus:border-[#08775A]"
           />
         </div>
 
@@ -134,10 +134,10 @@ export const PanelPatientSearchSection: React.FC<PanelPatientSearchSectionProps>
           type="button"
           onClick={() => handleSearch()}
           disabled={isSearching}
-          className="px-3.5 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 disabled:opacity-50 rounded-lg inline-flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 shadow-2xs"
+          className="px-4 py-2 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] disabled:opacity-50 rounded-lg inline-flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 shadow-2xs"
         >
           {isSearching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
-          Search
+          <span>Search</span>
         </button>
 
         <button
@@ -147,24 +147,25 @@ export const PanelPatientSearchSection: React.FC<PanelPatientSearchSectionProps>
             handleSearch('');
           }}
           disabled={isSearching}
-          className="px-2.5 py-2 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-amber-300 rounded-lg transition-colors cursor-pointer shrink-0"
+          className="px-3 py-2 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-lg transition-colors cursor-pointer shrink-0 shadow-2xs"
         >
           Browse All
         </button>
       </div>
 
       {error && (
-        <div className="p-2 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg">
-          {error}
+        <div className="p-2.5 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg flex items-center gap-2">
+          <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+          <span>{error}</span>
         </div>
       )}
 
       {/* Results Dropdown / Table */}
       {hasSearched && (
-        <div className="mt-2 space-y-1.5 border border-amber-200 bg-white rounded-lg p-2 max-h-56 overflow-y-auto">
+        <div className="mt-2 space-y-1.5 border border-slate-200 bg-white rounded-lg p-2 max-h-56 overflow-y-auto shadow-xs">
           {results.length === 0 ? (
-            <div className="p-4 text-center text-xs text-slate-600 bg-amber-50/50 rounded-md border border-amber-200">
-              No matching panel patients found. Front Desk cannot create panel patients — new panel patient registration must be completed by Super Admin or Admin.
+            <div className="p-4 text-center text-xs text-slate-500 bg-slate-50 rounded-md border border-slate-200">
+              No matching panel patients found. Front Desk can only select pre-registered panel patients. (New panel registration is handled by Super Admin / Admin).
             </div>
           ) : (
             <div className="divide-y divide-slate-100">

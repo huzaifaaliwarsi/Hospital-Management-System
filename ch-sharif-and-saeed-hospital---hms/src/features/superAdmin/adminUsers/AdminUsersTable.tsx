@@ -62,9 +62,11 @@ export const AdminUsersTable: React.FC<AdminUsersTableProps> = ({
   };
 
   const handleProtectedActionAttempt = (target: AdminUser, actionName: string) => {
-    if (target.role === 'SUPER_ADMIN' && !isActorSuperAdmin) {
+    if ((target.role === 'SUPER_ADMIN' || target.role === 'ADMIN') && !isActorSuperAdmin) {
       setGuardAlertMessage(
-        'This Super Admin account is protected and cannot be modified by an Admin user.'
+        target.role === 'SUPER_ADMIN'
+          ? 'This Super Admin account is protected and cannot be modified by an Admin user.'
+          : 'Only a Super Admin can manage Admin accounts.'
       );
       return;
     }

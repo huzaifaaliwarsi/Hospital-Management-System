@@ -272,7 +272,15 @@ export const patientsService = {
     });
   },
 
-  createSelfPayEncounter(body: CreateSelfPayEncounterBody, createdById: string) {
-    return prisma.selfPayEncounter.create({ data: { ...body, createdById } });
+  async createSelfPayEncounter(body: CreateSelfPayEncounterBody, createdById: string) {
+    const mrNumber = await generateMrNumber();
+    try {
+      return await prisma.selfPayEncounter.create({ data: { ...body, mrNumber, createdById } });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictError('A patient with this MR number already exists — please retry.');
+      }
+      throw error;
+    }
   },
 };

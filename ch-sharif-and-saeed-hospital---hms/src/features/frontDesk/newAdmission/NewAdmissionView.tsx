@@ -640,7 +640,7 @@ export const NewAdmissionView: React.FC = () => {
   }
 
   return (
-    <div ref={formContainerRef} className="w-full max-w-7xl mx-auto space-y-4 animate-in fade-in duration-150 pb-12">
+    <div ref={formContainerRef} className="w-full space-y-4 animate-in fade-in duration-150 pb-12">
       {/* Breadcrumb Header Bar */}
       <div className="bg-white rounded-xl border border-slate-200 px-4 py-2.5 shadow-xs flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
@@ -724,13 +724,13 @@ export const NewAdmissionView: React.FC = () => {
                 onClick={() => setPayerType('Corporate / Panel')}
                 className={`p-3 rounded-xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${
                   payerType === 'Corporate / Panel'
-                    ? 'border-amber-600 bg-amber-50/70 shadow-xs ring-1 ring-amber-600/20'
+                    ? 'border-blue-600 bg-blue-50/50 shadow-xs ring-1 ring-blue-600/20'
                     : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
                 }`}
               >
                 <div
                   className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
-                    payerType === 'Corporate / Panel' ? 'bg-amber-600 text-white shadow-xs' : 'bg-slate-100 text-slate-500'
+                    payerType === 'Corporate / Panel' ? 'bg-blue-600 text-white shadow-xs' : 'bg-slate-100 text-slate-500'
                   }`}
                 >
                   <Building2 className="h-4 w-4" />
@@ -738,7 +738,7 @@ export const NewAdmissionView: React.FC = () => {
                 <div>
                   <div className="flex items-center gap-1.5">
                     <span className="font-bold text-xs">Corporate / Panel</span>
-                    {payerType === 'Corporate / Panel' && <CheckCircle2 className="h-3.5 w-3.5 text-amber-600" />}
+                    {payerType === 'Corporate / Panel' && <CheckCircle2 className="h-3.5 w-3.5 text-blue-600" />}
                   </div>
                   <span className="text-[11px] text-slate-500 block mt-0.5">
                     Company/Insurance credit guarantee admission.
@@ -754,12 +754,12 @@ export const NewAdmissionView: React.FC = () => {
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
                 2. Patient Information
               </label>
-              <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${
+              <span className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${
                 selectedExistingPatient
-                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
                   : payerType === 'Corporate / Panel'
-                  ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                  : 'bg-[#effaf5] text-[#08775A] border border-emerald-200'
+                  ? 'bg-blue-50 text-blue-800 border-blue-200'
+                  : 'bg-slate-100 text-slate-700 border-slate-200'
               }`}>
                 {selectedExistingPatient
                   ? `From Panel Registry (${selectedExistingPatient.mrNumber})`
@@ -771,24 +771,11 @@ export const NewAdmissionView: React.FC = () => {
 
             {/* Corporate / Panel Search Section */}
             {payerType === 'Corporate / Panel' && (
-              <>
-                <PanelPatientSearchSection
-                  selectedPatient={selectedExistingPatient}
-                  onSelectPatient={handleUseExistingPatient}
-                  onClearPatient={handleClearExistingPatient}
-                />
-                {!selectedExistingPatient && (
-                  <div className="p-3 bg-amber-50/90 border border-amber-200 rounded-lg text-xs text-amber-950 flex items-start gap-2.5 animate-in fade-in">
-                    <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-                    <div>
-                      <p className="font-semibold text-amber-950">Panel Patient Search Required</p>
-                      <p className="text-amber-800 text-[11px] mt-0.5">
-                        Front Desk can only search and select pre-registered panel patients. New panel patient registration is restricted to <strong>Super Admin</strong> and <strong>Admin</strong>.
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </>
+              <PanelPatientSearchSection
+                selectedPatient={selectedExistingPatient}
+                onSelectPatient={handleUseExistingPatient}
+                onClearPatient={handleClearExistingPatient}
+              />
             )}
 
             {/* Name & Guardian */}
@@ -804,8 +791,8 @@ export const NewAdmissionView: React.FC = () => {
                 onChange={(e) => setFullName(e.target.value.toUpperCase())}
                 onKeyDown={handleEnterNext}
               />
-              <div className="grid grid-cols-3 gap-2">
-                <div className="col-span-2">
+              <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
+                <div className="sm:col-span-3">
                   <TextInput
                     label="Guardian Name"
                     required
@@ -816,13 +803,13 @@ export const NewAdmissionView: React.FC = () => {
                     onKeyDown={handleEnterNext}
                   />
                 </div>
-                <div>
+                <div className="sm:col-span-2">
                   <Select
                     label="Relation"
                     required
                     disabled={payerType === 'Corporate / Panel'}
                     options={[
-                      { label: 'Select Relation', value: '' },
+                      { label: 'Relation', value: '' },
                       ...GUARDIAN_RELATIONS.map((r) => ({ label: r, value: r })),
                     ]}
                     value={guardianRelation}
@@ -928,9 +915,9 @@ export const NewAdmissionView: React.FC = () => {
 
             {/* Corporate / Panel Specific Fields (Only if Panel selected) */}
             {payerType === 'Corporate / Panel' && (
-              <div className="pt-3 border-t border-amber-200 space-y-3 bg-amber-50/40 p-3.5 rounded-xl border border-amber-200/80 animate-in fade-in">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-amber-900">
-                  <Building2 className="h-3.5 w-3.5 text-amber-600" />
+              <div className="pt-3 border-t border-slate-200 space-y-3 bg-slate-50/70 p-3.5 rounded-xl border border-slate-200 animate-in fade-in">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900">
+                  <Building2 className="h-4 w-4 text-[#08775A]" />
                   <span>Panel Contract &amp; Card Information</span>
                 </div>
 

@@ -53,6 +53,42 @@ import { HospitalInvoicesView } from '../frontDesk/billing/HospitalInvoicesView'
 import { SuperAdminPanelBillingView } from './corporatePanels/SuperAdminPanelBillingView';
 import { AppointmentsView } from '../frontDesk/appointments/AppointmentsView';
 import { ActiveAdmissionsView } from '../admission/ActiveAdmissionsView';
+import { FinanceControlBalanceSheetsView } from './financeControl/FinanceControlBalanceSheetsView';
+import { FinanceControlAccountSettlementsView } from './financeControl/FinanceControlAccountSettlementsView';
+import { ReportModuleNotBuilt } from './reports/ReportModuleNotBuilt';
+import { FrontDeskBillingReportsView } from '../frontDesk/reports/FrontDeskBillingReportsView';
+import {
+  EncounterRegisterView,
+  InvoiceRegisterView,
+  CollectionReportViewPage,
+  OutstandingInvoicesView,
+  DiscountReportViewPage,
+  RefundVoidReportViewPage,
+  DepartmentRevenueReportView,
+  AdmissionPaymentCollectionsView,
+  PanelPayerReportView,
+  ReceiptExceptionLogView,
+  CashierPerformanceReportView,
+} from '../frontDesk/reports/FrontDeskExtraReports';
+import { AdmissionReportsView } from '../admission/AdmissionReportsView';
+import {
+  AdmissionDailySummaryView,
+  AdmissionRegisterReportView,
+  InpatientCensusReportView,
+  BedOccupancyReportView,
+  BedTransferHistoryReportView,
+  LengthOfStayReportView,
+  ServiceConsumptionReportView,
+  InpatientOutstandingReportView,
+  DischargeClearanceReportView,
+} from '../admission/AdmissionExtraReports';
+import {
+  PharmacyMedicineRequestsView,
+  MedicineFulfillmentReportView,
+  HighValueApprovalReportView,
+  PharmacyClearanceStatusView,
+  AdmissionPaymentRequestStatusView,
+} from '../admission/AdmissionPharmacyReports';
 import {
   MOCK_DEPARTMENTS,
   DepartmentRecord,
@@ -372,25 +408,80 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
     return <SuperAdminPanelBillingView />;
   }
 
+  // 1n2. Finance Control — Balance Sheet & Account Settlement Guide §6.
+  // Real oversight over `AccountSettlement`/`UserCashBalance`, replacing the
+  // generic mock-table fallback these two module IDs used to fall through to.
+  if (activeModuleId === 'balance_sheets' || activeModuleId === 'my_balance_sheet' || activeModuleId === 'balance_sheet') {
+    return <FinanceControlBalanceSheetsView />;
+  }
+
+  if (activeModuleId === 'account_settlements' || activeModuleId === 'my_account_settlement' || activeModuleId === 'accounts_settlement') {
+    return <FinanceControlAccountSettlementsView />;
+  }
+
+  // 1n3. Reporting Guide v7.5 — Front Desk/Billing and Admission each own a
+  // full real, live report catalog (built this session, see `reporting.md`).
+  // Super Admin/Admin's REPORTING nav now lists every one of those reports
+  // as its own page — same moduleIds, same components, same left-nav
+  // pattern those portals use for themselves — instead of bundling them
+  // behind a single tab-switcher page (which read as a second portal's UI
+  // pasted inside Super Admin) or `SuperAdminReportsView`'s hardcoded rows.
+  if (activeModuleId === 'billing_reports' || activeModuleId === 'front_desk_billing_reports') {
+    return <FrontDeskBillingReportsView />;
+  }
+  if (activeModuleId === 'fd_encounter_register') return <EncounterRegisterView />;
+  if (activeModuleId === 'fd_invoice_register') return <InvoiceRegisterView />;
+  if (activeModuleId === 'fd_collection_report' || activeModuleId === 'collection_reports') return <CollectionReportViewPage />;
+  if (activeModuleId === 'fd_outstanding_invoices') return <OutstandingInvoicesView />;
+  if (activeModuleId === 'fd_discount_report') return <DiscountReportViewPage />;
+  if (activeModuleId === 'fd_refund_void_report') return <RefundVoidReportViewPage />;
+  if (activeModuleId === 'fd_department_revenue') return <DepartmentRevenueReportView />;
+  if (activeModuleId === 'fd_admission_payment_collections') return <AdmissionPaymentCollectionsView />;
+  if (activeModuleId === 'fd_panel_payer' || activeModuleId === 'patient_panel_reports') return <PanelPayerReportView />;
+  if (activeModuleId === 'fd_receipt_exceptions') return <ReceiptExceptionLogView />;
+  if (activeModuleId === 'fd_cashier_performance') return <CashierPerformanceReportView />;
+
+  if (activeModuleId === 'admission_reports') return <AdmissionReportsView />;
+  if (activeModuleId === 'adm_daily_summary') return <AdmissionDailySummaryView />;
+  if (activeModuleId === 'adm_register_report') return <AdmissionRegisterReportView />;
+  if (activeModuleId === 'adm_census') return <InpatientCensusReportView />;
+  if (activeModuleId === 'adm_bed_occupancy') return <BedOccupancyReportView />;
+  if (activeModuleId === 'adm_bed_transfers') return <BedTransferHistoryReportView />;
+  if (activeModuleId === 'adm_length_of_stay') return <LengthOfStayReportView />;
+  if (activeModuleId === 'adm_service_consumption') return <ServiceConsumptionReportView />;
+  if (activeModuleId === 'adm_outstanding_balance') return <InpatientOutstandingReportView />;
+  if (activeModuleId === 'adm_discharge_clearance_report') return <DischargeClearanceReportView />;
+  if (activeModuleId === 'adm_payment_request_status') return <AdmissionPaymentRequestStatusView />;
+  if (activeModuleId === 'adm_pharmacy_requests') return <PharmacyMedicineRequestsView />;
+  if (activeModuleId === 'adm_medicine_fulfillment') return <MedicineFulfillmentReportView />;
+  if (activeModuleId === 'adm_high_value_approvals') return <HighValueApprovalReportView />;
+  if (activeModuleId === 'adm_pharmacy_clearance_status') return <PharmacyClearanceStatusView />;
+
   // 2. Check if this is a Report Page (Global Reporting Standard)
-  if (
-    activeModuleId === 'management_reports' ||
-    activeModuleId === 'patient_panel_reports' ||
-    activeModuleId === 'billing_reports' ||
-    activeModuleId === 'collection_reports' ||
-    activeModuleId === 'admission_reports' ||
-    activeModuleId === 'inventory_reports' ||
-    activeModuleId === 'staff_reports' ||
-    activeModuleId === 'attendance_reports' ||
-    activeModuleId === 'salary_reports' ||
-    activeModuleId === 'commission_reports'
-  ) {
+  // `management_reports` (KPI benchmarks) is out of scope for the v7.5
+  // reporting guide — separate analytics workstream, left untouched.
+  if (activeModuleId === 'management_reports') {
     return (
       <SuperAdminReportsView
         reportType={activeModuleId}
         reportTitle={moduleName}
       />
     );
+  }
+
+  // `inventory_reports`/`staff_reports`/`attendance_reports`/
+  // `salary_reports`/`commission_reports` are HR/Payroll/Inventory
+  // domains — explicitly out of scope for the v7.5 guide, and none has a
+  // real backend yet. Show an honest "not built" state rather than
+  // `SuperAdminReportsView`'s fabricated rows (reporting.md Step 1).
+  if (
+    activeModuleId === 'inventory_reports' ||
+    activeModuleId === 'staff_reports' ||
+    activeModuleId === 'attendance_reports' ||
+    activeModuleId === 'salary_reports' ||
+    activeModuleId === 'commission_reports'
+  ) {
+    return <ReportModuleNotBuilt moduleName={moduleName} />;
   }
 
   // Handlers for Adding Records

@@ -16,6 +16,7 @@ import {
   Layers,
   Sparkles,
   UserCheck,
+  RotateCw,
 } from 'lucide-react';
 import { PanelBadge } from '../../components/common/PanelBadge';
 import { useRouter } from '../../context/RouterContext';
@@ -174,40 +175,63 @@ export const AdmissionDashboard: React.FC = () => {
   return (
     <div className="space-y-6 animate-in fade-in duration-150">
       {/* Top Header Card */}
-      <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex items-center justify-between flex-wrap gap-4">
+      <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5 shadow-xs flex items-center justify-between flex-wrap gap-4">
         <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-xl bg-[#effaf5] text-[#08775A] flex items-center justify-center font-bold">
+          <div className="h-10 w-10 rounded-xl bg-[#effaf5] border border-[#c2e7db] text-[#08775A] flex items-center justify-center font-bold shrink-0 shadow-2xs">
             <Building2 className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-slate-900">Admission Dashboard</h1>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Live inpatient stay overview — ward occupancy, incoming planned arrivals, and active stays.
-            </p>
+            <div className="flex items-center gap-2.5">
+              <h1 className="text-lg font-bold text-slate-900 tracking-tight">Admission & Inpatient Dashboard</h1>
+              <span className="hidden sm:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#effaf5] text-[#08775A] border border-[#c2e7db]">
+                <span className="h-1.5 w-1.5 rounded-full bg-[#10b981] animate-pulse" />
+                Live Ward Stay Management
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 mt-1">
+              <span>Census: <strong className="text-slate-800">{activeAdmissions.length} Admitted</strong></span>
+              <span className="text-slate-300">•</span>
+              <span>Available Beds: <strong className="text-emerald-700">{availableBedsCount}</strong> / {beds.length}</span>
+              <span className="text-slate-300">•</span>
+              <span>Planned Arrivals: <strong className="text-blue-700">{plannedAdmissions.length}</strong></span>
+            </div>
           </div>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
-            onClick={() => navigate('/admission/discharged_patients')}
-            className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-xs font-semibold shadow-2xs transition-colors"
+            onClick={load}
+            disabled={isLoading}
+            className="h-8.5 px-3 rounded-lg border border-[#c2e7db] bg-[#effaf5] hover:bg-[#d8f1e7] text-[#08775A] text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-60 shadow-2xs"
+            title="Refresh live admission data"
           >
-            <UserCheck className="h-3.5 w-3.5 text-[#08775A]" /> Discharged Patients
+            <RotateCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+            <span>{isLoading ? 'Syncing...' : 'Live Sync'}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/admission/discharged_patients')}
+            className="h-8.5 px-3 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-xs font-semibold shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
+          >
+            <UserCheck className="h-3.5 w-3.5 text-[#08775A]" />
+            <span>Discharged Patients</span>
           </button>
           <button
             type="button"
             onClick={() => navigate('/admission/admission_check_in')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 rounded-lg text-xs font-semibold shadow-2xs transition-colors"
+            className="h-8.5 px-3.5 bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 rounded-lg text-xs font-semibold shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
           >
-            <LogIn className="h-3.5 w-3.5" /> Check-In Queue ({plannedAdmissions.length})
+            <LogIn className="h-3.5 w-3.5" />
+            <span>Check-In Queue ({plannedAdmissions.length})</span>
           </button>
           <button
             type="button"
             onClick={() => navigate('/admission/bed_board_transfers')}
-            className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#08775A] hover:bg-[#065f46] text-white rounded-lg text-xs font-semibold shadow-xs transition-colors"
+            className="h-8.5 px-4 bg-[#08775A] hover:bg-[#065f46] text-white rounded-lg text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
           >
-            <ArrowLeftRight className="h-3.5 w-3.5" /> Bed Board & Transfers
+            <ArrowLeftRight className="h-3.5 w-3.5" />
+            <span>Bed Board & Transfers</span>
           </button>
         </div>
       </div>

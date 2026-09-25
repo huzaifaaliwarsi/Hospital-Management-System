@@ -13,6 +13,10 @@ import {
   Loader2,
   BedDouble,
   FlaskConical,
+  RotateCw,
+  Monitor,
+  CalendarPlus,
+  ArrowRight,
 } from 'lucide-react';
 import { formatPKR } from '../../utils/formatters';
 import { useRouter } from '../../context/RouterContext';
@@ -151,40 +155,51 @@ export const FrontDeskDashboard: React.FC = () => {
   }, []);
 
   const kpis = [
-    { title: "Today's Appointments", value: `${data.todayAppointmentsCount}`, sub: 'Real-time from /appointments', icon: Users, color: 'text-[#0e7d5a] bg-[#effaf5]' },
+    { title: "Today's Appointments", value: `${data.todayAppointmentsCount}`, sub: 'Scheduled consultant visits', icon: Users, color: 'text-[#0e7d5a] bg-[#effaf5]' },
     { title: 'OPD Invoices Today', value: `${data.opdCount}`, sub: 'Walk-in OPD encounters', icon: Stethoscope, color: 'text-[#129b70] bg-[#effaf5]' },
-    { title: 'Observation Cases Today', value: `${data.observationCount}`, sub: 'Day-care / short-stay', icon: Eye, color: 'text-[#0e7d5a] bg-[#effaf5]' },
-    { title: 'Emergency Cases Today', value: `${data.emergencyCount}`, sub: 'Triage intake', icon: AlertTriangle, color: 'text-rose-700 bg-rose-50' },
-    { title: "Today's Invoices", value: `${data.todayInvoicesCount}`, sub: `${data.todayAdmissionsCount} admissions today`, icon: Receipt, color: 'text-[#0e7d5a] bg-[#effaf5]' },
-    { title: 'Cash Collected (My Shift)', value: formatPKR(data.cashCollected), sub: `${data.unsettledCount} unsettled txns`, icon: Coins, color: 'text-[#129b70] bg-[#effaf5]' },
-    { title: 'Online / Non-Cash (My Shift)', value: formatPKR(data.onlineCollected), sub: 'Card / Bank / Online', icon: CreditCard, color: 'text-[#0e7d5a] bg-[#effaf5]' },
-    { title: 'Outstanding Balance', value: formatPKR(data.outstandingBalance), sub: 'All open invoices', icon: AlertCircle, color: 'text-amber-700 bg-amber-50' },
+    { title: 'Observation Cases', value: `${data.observationCount}`, sub: 'Day-care & short-stay', icon: Eye, color: 'text-[#0e7d5a] bg-[#effaf5]' },
+    { title: 'Emergency Intake', value: `${data.emergencyCount}`, sub: 'Urgent & trauma triage', icon: AlertTriangle, color: 'text-rose-700 bg-rose-50' },
+    { title: "Today's Total Invoices", value: `${data.todayInvoicesCount}`, sub: `${data.todayAdmissionsCount} admissions today`, icon: Receipt, color: 'text-[#0e7d5a] bg-[#effaf5]' },
+    { title: 'Shift Cash Collected', value: formatPKR(data.cashCollected), sub: `${data.unsettledCount} unsettled txns`, icon: Coins, color: 'text-[#129b70] bg-[#effaf5]' },
+    { title: 'Online & Card Payments', value: formatPKR(data.onlineCollected), sub: 'Card / Bank / Online', icon: CreditCard, color: 'text-[#0e7d5a] bg-[#effaf5]' },
+    { title: 'Outstanding Balance', value: formatPKR(data.outstandingBalance), sub: 'All open pending balances', icon: AlertCircle, color: 'text-amber-700 bg-amber-50' },
   ];
 
   return (
     <div className="space-y-5 animate-in fade-in duration-200">
-      {/* Front Desk Header & Quick Action Buttons */}
-      <div className="bg-white p-3.5 rounded-lg border border-slate-200 shadow-xs flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className={`h-2 w-2 rounded-full ${isLoading ? 'bg-amber-500 animate-pulse' : 'bg-emerald-600'}`} />
-            <h1 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-              Front Desk & Billing Cashiering Terminal
-            </h1>
-            <span className="text-[10px] bg-[#effaf5] text-[#0e7d5a] border border-[#c2e7db] font-semibold px-2 py-0.5 rounded">
-              {isLoading ? 'Syncing…' : 'Live Database Connected'}
-            </span>
+      {/* Front Desk Cashiering Command Header */}
+      <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-slate-200 shadow-xs flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-xl bg-[#effaf5] border border-[#c2e7db] text-[#08775A] flex items-center justify-center shrink-0 shadow-2xs">
+            <Monitor className="h-5 w-5" />
           </div>
-          <p className="text-[11px] text-slate-500 mt-0.5">
-            Operator: <span className="font-semibold text-slate-800">{currentUser?.name}</span> ({currentUser?.role})
-          </p>
+          <div>
+            <h1 className="text-base font-bold text-slate-900 tracking-tight">
+              Front Desk Portal
+            </h1>
+            <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-2">
+              <span>Staff: <strong className="text-slate-800">{currentUser?.name || 'frontdesk'}</strong></span>
+              <span className="text-slate-300">•</span>
+              <span>Shift: <strong className="text-[#08775A]">Morning (08:00 - 16:00)</strong></span>
+            </p>
+          </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => load()}
+            disabled={isLoading}
+            className="h-8.5 px-3 rounded-lg border border-[#c2e7db] bg-[#effaf5] hover:bg-[#d8f1e7] text-[#08775A] text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-60 shadow-2xs"
+            title="Refresh live data from server"
+          >
+            <RotateCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+            <span>{isLoading ? 'Syncing...' : 'Live Sync'}</span>
+          </button>
           <button
             type="button"
             onClick={() => navigate('/front-desk/new_admission')}
-            className="py-1.5 px-3 rounded bg-[#0e7d5a] hover:bg-[#0b6448] text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors"
+            className="h-8.5 px-3.5 rounded-lg bg-[#08775A] hover:bg-[#065f46] text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
           >
             <BedDouble className="h-3.5 w-3.5" />
             <span>New Admission</span>
@@ -192,9 +207,9 @@ export const FrontDeskDashboard: React.FC = () => {
           <button
             type="button"
             onClick={() => navigate('/front-desk/appointments')}
-            className="py-1.5 px-3 rounded bg-[#129b70] hover:bg-[#0e7d5a] text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors"
+            className="h-8.5 px-3.5 rounded-lg bg-[#129b70] hover:bg-[#0e7d5a] text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
           >
-            <Plus className="h-3.5 w-3.5" />
+            <CalendarPlus className="h-3.5 w-3.5" />
             <span>Appointments</span>
           </button>
         </div>
@@ -333,7 +348,7 @@ export const FrontDeskDashboard: React.FC = () => {
               <span className="text-xl font-extrabold text-slate-900 tracking-tight">Custom</span>
               <span className="text-[11px] font-semibold text-amber-700">Ad-hoc Billing</span>
             </div>
-            <p className="text-xs text-slate-600 mt-0.5 line-clamp-1">Lab / Radiology / Any Service, No Doctor Needed</p>
+            <p className="text-xs text-slate-600 mt-0.5 line-clamp-1">Lab, Radiology & Diagnostic Services</p>
           </div>
           <div className="mt-3 pt-2 border-t border-amber-100 flex items-center justify-between text-[11px] font-bold text-amber-700">
             <span>Fast Walk-In &rarr;</span>
@@ -357,21 +372,21 @@ export const FrontDeskDashboard: React.FC = () => {
         </div>
       ) : (
         <>
-          {/* 8 Front Desk KPIs — all real */}
-          <div className={`grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5 transition-opacity ${isLoading ? 'opacity-60' : ''}`}>
+          {/* 8 Front Desk KPIs — Clean 4x2 Enterprise Grid */}
+          <div className={`grid grid-cols-2 sm:grid-cols-4 gap-3.5 transition-opacity ${isLoading ? 'opacity-60' : ''}`}>
             {kpis.map((k, i) => {
               const Icon = k.icon;
               return (
-                <div key={i} className="bg-white p-3 rounded-lg border border-slate-200 shadow-xs flex flex-col justify-between">
+                <div key={i} className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between hover:border-slate-300 transition-colors">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tight truncate">{k.title}</span>
-                    <div className={`p-1 rounded ${k.color}`}>
-                      <Icon className="h-3 w-3" />
+                    <span className="text-xs font-bold text-slate-600 tracking-tight">{k.title}</span>
+                    <div className={`p-1.5 rounded-lg ${k.color}`}>
+                      <Icon className="h-4 w-4" />
                     </div>
                   </div>
-                  <div className="mt-1.5">
-                    <div className="text-sm font-bold text-slate-900 tracking-tight truncate">{k.value}</div>
-                    <div className="text-[9px] text-slate-500 mt-0.5 truncate">{k.sub}</div>
+                  <div className="mt-2.5">
+                    <div className="text-lg font-extrabold text-slate-900 tracking-tight">{k.value}</div>
+                    <div className="text-[11px] text-slate-500 mt-0.5">{k.sub}</div>
                   </div>
                 </div>
               );

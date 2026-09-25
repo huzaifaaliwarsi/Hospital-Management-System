@@ -8,23 +8,34 @@ export const cashService = {
    * and net expected physical cash for the logged-in cashier.
    */
   async getCashierBalanceSheet(portalUserId: string) {
-    // Query unsettled cash balance entries for this cashier
-    const transactions = await prisma.userCashBalance.findMany({
-      where: {
-        portalUserId,
-        isSettled: false,
-      },
-      include: {
-        paymentReceipt: {
-          include: {
-            hospitalInvoice: {
-              select: { invoiceNumber: true, status: true },
+    // Query unsettled cash balance entries for this cashier, plus their
+    // current carry-forward liability (Balance Sheet & Account Settlement
+    // Guide §5.1) — the most recent non-reversed settlement's
+    // `carryForwardAmount`, same lookup `settlementService.submitSettlement`
+    // uses to compute the next settlement's expected cash.
+    const [transactions, previousSettlement] = await Promise.all([
+      prisma.userCashBalance.findMany({
+        where: {
+          portalUserId,
+          isSettled: false,
+        },
+        include: {
+          paymentReceipt: {
+            include: {
+              hospitalInvoice: {
+                select: { invoiceNumber: true, status: true },
+              },
             },
           },
         },
-      },
-      orderBy: { occurredAt: 'desc' },
-    });
+        orderBy: { occurredAt: 'desc' },
+      }),
+      prisma.accountSettlement.findFirst({
+        where: { portalUserId, moduleScope: 'BILLING', status: { not: 'REVERSED' } },
+        orderBy: { createdAt: 'desc' },
+        select: { carryForwardAmount: true },
+      }),
+    ]);
 
     let physicalCashIn = new Decimal(0);
     let physicalCashOut = new Decimal(0);
@@ -49,12 +60,14 @@ export const cashService = {
       }
     }
 
-    const expectedPhysicalCash = physicalCashIn.minus(physicalCashOut);
+    const carriedForwardAmount = previousSettlement?.carryForwardAmount ?? new Decimal(0);
+    const expectedPhysicalCash = physicalCashIn.minus(physicalCashOut).plus(carriedForwardAmount);
 
     return {
       portalUserId,
       summary: {
         expectedPhysicalCash,
+        carriedForwardAmount,
         physicalCashIn,
         physicalCashOut,
         nonPhysicalTotal,

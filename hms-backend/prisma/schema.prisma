@@ -269,6 +269,7 @@ enum SettlementStatus {
   PARTIALLY_ACCEPTED
   RETURNED
   REJECTED
+  REVERSED
 }
 
 enum AttendanceStatus {
@@ -531,6 +532,7 @@ model PortalUser {
   cashBalanceEntries          UserCashBalance[]         @relation("UserCashBalanceOwner")
   submittedSettlements        AccountSettlement[]       @relation("AccountSettlementSubmittedBy")
   reviewedSettlements         AccountSettlement[]       @relation("AccountSettlementReviewedBy")
+  reversedSettlements         AccountSettlement[]       @relation("AccountSettlementReversedBy")
   createdAdmissions           AdmissionRecord[]         @relation("AdmissionCreatedBy")
   transferredBeds             BedTransferHistory[]      @relation("BedTransferBy")
   changedMedicationModes      MedicationModeHistory[]   @relation("MedicationModeChangedBy")
@@ -1190,6 +1192,12 @@ model PanelMembershipHistory {
 /// Temporary per-visit self-pay identity; historical billing remains linked.
 model SelfPayEncounter {
   id             String    @id @default(uuid())
+  // Permanent MPI identifier (panel.md §4.4) — self-pay visitors get a
+  // per-visit *record* but still hold ONE lifetime MR number, drawn from
+  // the same collision-free sequence as PanelPatient (see
+  // `shared/idGenerator.ts#generateMrNumber`) so a number is never reused
+  // or reassigned once given out.
+  mrNumber       String    @unique @map("mr_number")
   fullName       String    @map("full_name")
   guardianName   String?   @map("guardian_name")
   gender         String?
@@ -1432,6 +1440,15 @@ model AccountSettlement {
   reviewedByUser     PortalUser?      @relation("AccountSettlementReviewedBy", fields: [reviewedById], references: [id])
   reviewedAt         DateTime?        @map("reviewed_at")
   remarks            String?
+
+  /// Reversal/adjustment trail (Balance Sheet & Account Settlement Guide
+  /// §4.2, §12 rule 3) — a posted (ACCEPTED/PARTIALLY_ACCEPTED) settlement
+  /// is never edited or deleted; reversing it sets these fields on the
+  /// ORIGINAL row and flips its status to REVERSED. History stays intact.
+  reversalReason String?   @map("reversal_reason")
+  reversedById   String?   @map("reversed_by")
+  reversedByUser PortalUser? @relation("AccountSettlementReversedBy", fields: [reversedById], references: [id])
+  reversedAt     DateTime? @map("reversed_at")
 
   settlementTransactions SettlementTransaction[]
 
@@ -2213,3 +2230,26 @@ model AuditLog {
   @@index([entityType, entityId])
   @@map("audit_logs")
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Cross-cutting: Real Hospital Notifications
+// ═══════════════════════════════════════════════════════════════════════
+
+model HospitalNotification {
+  id           String   @id @default(uuid())
+  title        String
+  message      String
+  type         String   @default("info") // "info" | "urgent" | "warning" | "success"
+  module       String   @default("General") // "Admissions" | "FrontDesk" | "Billing" | "Pharmacy"
+  targetPortal String?  @map("target_portal") // "admission" | "front-desk" | "all"
+  actionUrl    String?  @map("action_url")   // e.g. "/admission/planned_admissions", "/front-desk/billing_pending_discharges"
+  referenceId  String?  @map("reference_id") // e.g. admissionId, invoiceId
+  isRead       Boolean  @default(false) @map("is_read")
+  createdAt    DateTime @default(now()) @map("created_at")
+  createdById  String?  @map("created_by_id")
+
+  @@index([targetPortal, isRead])
+  @@index([createdAt])
+  @@map("hospital_notifications")
+}
+

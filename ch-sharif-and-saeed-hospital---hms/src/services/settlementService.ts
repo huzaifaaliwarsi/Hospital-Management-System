@@ -9,7 +9,7 @@ import { formatDateTimeDDMMYYYY } from '../utils/formatters';
  * settlement record.
  */
 
-export type SettlementStatus = 'PREPARED' | 'SUBMITTED' | 'ACCEPTED' | 'PARTIALLY_ACCEPTED' | 'RETURNED' | 'REJECTED';
+export type SettlementStatus = 'PREPARED' | 'SUBMITTED' | 'ACCEPTED' | 'PARTIALLY_ACCEPTED' | 'RETURNED' | 'REJECTED' | 'REVERSED';
 
 export interface SettlementRecord {
   id: string;
@@ -20,6 +20,8 @@ export interface SettlementRecord {
   variance: number;
   varianceReason: string;
   handoverAmount: number | null;
+  /** Guide §5.1 — a shortfall from THIS settlement still owed; folds into the next settlement's expected cash. */
+  carryForwardAmount: number;
   status: SettlementStatus;
   submittedAt: string;
   remarks: string;
@@ -41,6 +43,7 @@ function toSettlementRecord(raw: Record<string, any>): SettlementRecord {
     variance: Number(raw.variance ?? 0),
     varianceReason: raw.varianceReason || '',
     handoverAmount: raw.handoverAmount != null ? Number(raw.handoverAmount) : null,
+    carryForwardAmount: Number(raw.carryForwardAmount ?? 0),
     status: raw.status,
     submittedAt: formatTs(raw.submittedAt),
     remarks: raw.remarks || '',

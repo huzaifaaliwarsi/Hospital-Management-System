@@ -94,11 +94,19 @@ export class AdminUserService {
     return roleStr === 'SUPER ADMIN' || roleStr === 'SUPER_ADMIN';
   }
 
-  /** Best-effort UX guard — the backend's `isProtected` flag is the real enforcement (§3.2). */
+  /**
+   * Best-effort UX guard — the backend's `isProtected` flag and the
+   * `assertActorMayManageRole` service-layer check (`portalUser.service.ts`)
+   * are the real enforcement (§3.2, §7.9). An Admin actor may never modify
+   * an Admin or Super Admin tier account — only a Super Admin can.
+   */
   static canActorModifyTarget(currentUser: User | null | undefined, target: AdminUser): { allowed: boolean; reason?: string } {
     if (!currentUser) return { allowed: false, reason: 'Authentication required to modify administrative users.' };
     if (target.isProtectedSuperAdmin) {
       return { allowed: false, reason: 'This account is protected and cannot be modified.' };
+    }
+    if (!this.isActorSuperAdmin(currentUser) && (target.role === 'ADMIN' || target.role === 'SUPER_ADMIN')) {
+      return { allowed: false, reason: 'Only a Super Admin can manage Admin or Super Admin accounts.' };
     }
     return { allowed: true };
   }

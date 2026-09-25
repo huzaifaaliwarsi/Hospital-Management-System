@@ -10,6 +10,24 @@ import { DischargeClearancesView } from './DischargeClearancesView';
 import { AdmissionPaymentRequestsView } from './AdmissionPaymentRequestsView';
 import { FinalDischargeView } from './FinalDischargeView';
 import { AdmissionReportsView } from './AdmissionReportsView';
+import {
+  AdmissionDailySummaryView,
+  AdmissionRegisterReportView,
+  InpatientCensusReportView,
+  BedOccupancyReportView,
+  BedTransferHistoryReportView,
+  LengthOfStayReportView,
+  ServiceConsumptionReportView,
+  InpatientOutstandingReportView,
+  DischargeClearanceReportView,
+} from './AdmissionExtraReports';
+import {
+  PharmacyMedicineRequestsView,
+  MedicineFulfillmentReportView,
+  HighValueApprovalReportView,
+  PharmacyClearanceStatusView,
+  AdmissionPaymentRequestStatusView,
+} from './AdmissionPharmacyReports';
 import { ModulePlaceholderView } from '../shared/ModulePlaceholderView';
 
 interface AdmissionModuleViewProps {
@@ -72,6 +90,34 @@ export const AdmissionModuleView: React.FC<AdmissionModuleViewProps> = ({ module
       return <FinalDischargeView />;
     case 'admission_reports':
       return <AdmissionReportsView />;
+    case 'adm_daily_summary':
+      return <AdmissionDailySummaryView />;
+    case 'adm_register_report':
+      return <AdmissionRegisterReportView />;
+    case 'adm_census':
+      return <InpatientCensusReportView />;
+    case 'adm_bed_occupancy':
+      return <BedOccupancyReportView />;
+    case 'adm_bed_transfers':
+      return <BedTransferHistoryReportView />;
+    case 'adm_length_of_stay':
+      return <LengthOfStayReportView />;
+    case 'adm_service_consumption':
+      return <ServiceConsumptionReportView />;
+    case 'adm_outstanding_balance':
+      return <InpatientOutstandingReportView />;
+    case 'adm_discharge_clearance_report':
+      return <DischargeClearanceReportView />;
+    case 'adm_payment_request_status':
+      return <AdmissionPaymentRequestStatusView />;
+    case 'adm_pharmacy_requests':
+      return <PharmacyMedicineRequestsView />;
+    case 'adm_medicine_fulfillment':
+      return <MedicineFulfillmentReportView />;
+    case 'adm_high_value_approvals':
+      return <HighValueApprovalReportView />;
+    case 'adm_pharmacy_clearance_status':
+      return <PharmacyClearanceStatusView />;
     default:
       return <ModulePlaceholderView moduleId={moduleId} moduleName={moduleName} groupTitle={groupTitle} />;
   }
