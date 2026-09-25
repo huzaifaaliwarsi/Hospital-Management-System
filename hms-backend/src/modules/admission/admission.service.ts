@@ -106,6 +106,7 @@ async function getOrCreateRoomChargeServiceRate(tx: Prisma.TransactionClient, fa
         billingUnit: 'PER_DAY',
         discountAllowed: false,
         isActive: true,
+        isSystemGenerated: true,
         createdById: actorId,
       },
     });
@@ -202,6 +203,7 @@ async function postWardFixedChargeIfApplicable(
         billingUnit: 'PER_ADMISSION',
         discountAllowed: false,
         isActive: true,
+        isSystemGenerated: true,
         createdById: actorId,
       },
     });
@@ -482,10 +484,11 @@ export const admissionService = {
     try {
       const patientName = result.admission.panelPatient?.fullName || result.admission.selfPayEncounter?.fullName || 'Patient';
       const bedInfo = result.admission.bed?.bedNumber ? ` (Bed: ${result.admission.bed.bedNumber})` : '';
+      const isPlanned = result.admission.status === 'PLANNED';
       await notificationsService.createNotification({
-        title: `New Admission Request: ${patientName}`,
-        message: `Admission #${result.admission.admissionNumber} created at Front Desk${bedInfo}. Pending admission review & clinical onboarding.`,
-        type: 'ADMISSION_REQUEST',
+        title: isPlanned ? `New Planned Admission: ${patientName}` : `New Patient Admitted: ${patientName}`,
+        message: `Patient ${patientName} (${result.admission.admissionNumber}) ${isPlanned ? 'scheduled as Planned Admission' : 'admitted'}${bedInfo}.`,
+        type: 'success',
         module: 'ADMISSION',
         targetPortal: 'admission',
         actionUrl: '/admission/planned_admissions',
@@ -629,7 +632,7 @@ export const admissionService = {
     const admission = await prisma.admissionRecord.findUnique({ where: { id: admissionId } });
     if (!admission) throw new NotFoundError('Admission record not found');
 
-    return prisma.admissionPaymentRequest.create({
+    const createdRequest = await prisma.admissionPaymentRequest.create({
       data: {
         admissionRecordId: admission.id,
         requestType: body.requestType,
@@ -642,6 +645,38 @@ export const admissionService = {
         admissionRecord: { select: { id: true, admissionNumber: true } },
       },
     });
+
+    try {
+      const [actor, fullAdmission] = await Promise.all([
+        prisma.portalUser.findUnique({
+          where: { id: actorId },
+          select: { id: true, username: true, staff: { select: { fullName: true } } },
+        }),
+        prisma.admissionRecord.findUnique({
+          where: { id: admissionId },
+          include: { panelPatient: true, selfPayEncounter: true },
+        }),
+      ]);
+      const actorDisplayName = actor?.staff?.fullName || actor?.username || 'Staff';
+      const patientName = fullAdmission?.panelPatient?.fullName || fullAdmission?.selfPayEncounter?.fullName || 'Patient';
+      const mrNumber = fullAdmission?.panelPatient?.mrNumber ? ` [MR: ${fullAdmission.panelPatient.mrNumber}]` : '';
+      const amountStr = Number(body.requestedAmount).toLocaleString('en-PK', { maximumFractionDigits: 0 });
+
+      await notificationsService.createNotification({
+        title: `Payment Requested: ${patientName}`,
+        message: `Payment request of Rs. ${amountStr} raised for ${patientName}${mrNumber} (${admission.admissionNumber}) by ${actorDisplayName} (User ID: ${actor?.username || actorId}).`,
+        type: 'urgent',
+        module: 'BILLING',
+        targetPortal: 'front-desk',
+        actionUrl: '/billing/inpatient',
+        referenceId: admission.id,
+        createdById: actorId,
+      });
+    } catch (notifErr) {
+      console.error('Failed to notify payment request:', notifErr);
+    }
+
+    return createdRequest;
   },
 
   /**
@@ -851,6 +886,7 @@ export const admissionService = {
         include: {
           hospitalInvoices: { where: { sourceType: 'ADMISSION' }, include: { lines: true } },
           panelPatient: { include: { corporatePanel: { include: { discountRules: true } } } },
+          selfPayEncounter: true,
         },
       });
 
@@ -948,6 +984,32 @@ export const admissionService = {
       // Recalculate this department invoice's totals (never another
       // department's — each stays independently owned per §2.2).
       await recalcInvoiceTotals(tx, invoice, [...invoice.lines, createdLine]);
+
+      // Notify Front Desk that bill has increased
+      try {
+        const actor = await tx.portalUser.findUnique({
+          where: { id: actorId },
+          select: { id: true, username: true, staff: { select: { fullName: true } } },
+        });
+        const actorDisplayName = actor?.staff?.fullName || actor?.username || 'Staff';
+        const patientName = admission.panelPatient?.fullName || admission.selfPayEncounter?.fullName || 'Patient';
+        const mrNumber = admission.panelPatient?.mrNumber ? ` [MR: ${admission.panelPatient.mrNumber}]` : '';
+        const amountStr = Number(lineNet).toLocaleString('en-PK', { maximumFractionDigits: 0 });
+        const serviceName = serviceRate.name || 'Clinical Service';
+
+        await notificationsService.createNotification({
+          title: `Admission Bill Updated: ${patientName}`,
+          message: `Bill updated: Rs. ${amountStr} added for ${serviceName} on ${patientName}${mrNumber} (${admission.admissionNumber}) by ${actorDisplayName} (User ID: ${actor?.username || actorId}).`,
+          type: 'info',
+          module: 'BILLING',
+          targetPortal: 'front-desk',
+          actionUrl: '/billing/inpatient',
+          referenceId: admission.id,
+          createdById: actorId,
+        });
+      } catch (notifErr) {
+        console.error('Failed to notify bill update:', notifErr);
+      }
 
       return createdLine;
     });
@@ -1442,7 +1504,7 @@ export const admissionService = {
           additionalNotes: body.dischargeSummary.additionalNotes,
           doctorStaffId: doctor.id,
           doctorNameSnapshot: doctor.fullName,
-          doctorDepartmentSnapshot: doctor.department.name,
+          doctorDepartmentSnapshot: doctor.department?.name ?? 'Unassigned',
           initiatedById: actorId,
         },
       });

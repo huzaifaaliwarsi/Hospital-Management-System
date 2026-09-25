@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Wallet, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
-import { StaffUser } from '../../../types/staffUser';
+import { StaffUser, SalaryBasis, SALARY_BASIS_OPTIONS } from '../../../types/staffUser';
 import { StaffUserService } from '../../../services/staffUserService';
 import { getHospitalCurrentDate, formatDateISO } from '../../../utils/dateConstants';
 import { formatPKR } from '../../../utils/formatters';
@@ -24,7 +24,7 @@ export const SalaryProfileModal: React.FC<SalaryProfileModalProps> = ({ isOpen, 
   const [isLoadingCurrent, setIsLoadingCurrent] = useState(false);
   const [currentProfile, setCurrentProfile] = useState<Record<string, any> | null>(null);
 
-  const [salaryBasis, setSalaryBasis] = useState<'MONTHLY' | 'PER_DAY'>('MONTHLY');
+  const [salaryBasis, setSalaryBasis] = useState<SalaryBasis>('MONTHLY');
   const [baseAmount, setBaseAmount] = useState<number | ''>('');
   const [salaryTaxMethod, setSalaryTaxMethod] = useState<SalaryTaxMethod>('');
   const [salaryTaxValue, setSalaryTaxValue] = useState<number | ''>('');
@@ -43,7 +43,7 @@ export const SalaryProfileModal: React.FC<SalaryProfileModalProps> = ({ isOpen, 
         const current = profile?.salary?.current || null;
         setCurrentProfile(current);
         if (current) {
-          setSalaryBasis(current.salaryBasis === 'PER_DAY' ? 'PER_DAY' : 'MONTHLY');
+          setSalaryBasis((current.salaryBasis as SalaryBasis) || 'MONTHLY');
           setBaseAmount(Number(current.baseAmount) || '');
           setSalaryTaxMethod((current.salaryTaxMethod as SalaryTaxMethod) || '');
           setSalaryTaxValue(current.salaryTaxValue != null ? Number(current.salaryTaxValue) : '');
@@ -121,7 +121,8 @@ export const SalaryProfileModal: React.FC<SalaryProfileModalProps> = ({ isOpen, 
                 <div className="bg-[#f6f8f7] border border-[#e2eae5] rounded-xl p-3 text-[11px] text-[#52665e] flex items-center gap-2">
                   <CheckCircle2 className="h-3.5 w-3.5 text-[#08775A] shrink-0" />
                   <span>
-                    Current: {formatPKR(Number(currentProfile.baseAmount))} / {currentProfile.salaryBasis === 'PER_DAY' ? 'day' : 'month'}
+                    Current: {formatPKR(Number(currentProfile.baseAmount))} / {String(currentProfile.salaryBasis).startsWith('PER_DAY') ? 'day' : 'month'}
+                    {' '}({SALARY_BASIS_OPTIONS.find((o) => o.value === currentProfile.salaryBasis)?.label || currentProfile.salaryBasis})
                     {currentProfile.salaryTaxMethod && (
                       <>
                         {' '}· Tax: {Number(currentProfile.salaryTaxValue)}
@@ -146,20 +147,22 @@ export const SalaryProfileModal: React.FC<SalaryProfileModalProps> = ({ isOpen, 
               <form onSubmit={handleSubmit} className="space-y-3.5">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-semibold text-[#52665e] mb-1">Salary Basis</label>
+                    <label className="block text-xs font-semibold text-[#52665e] mb-1">Salary Type</label>
                     <select
                       value={salaryBasis}
-                      onChange={(e) => setSalaryBasis(e.target.value as 'MONTHLY' | 'PER_DAY')}
+                      onChange={(e) => setSalaryBasis(e.target.value as SalaryBasis)}
                       className="w-full px-3 py-2 bg-[#f6f8f7] border border-[#e2eae5] rounded-lg text-xs text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#129b70]/20 focus:border-[#129b70]"
                     >
-                      <option value="MONTHLY">Monthly</option>
-                      <option value="PER_DAY">Per Day</option>
+                      {SALARY_BASIS_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
                     </select>
                   </div>
                   <div>
                     <label className="block text-xs font-semibold text-[#52665e] mb-1">Base Amount (PKR)</label>
                     <input
                       type="number"
+                      onWheel={(e) => e.currentTarget.blur()}
                       min={0}
                       step={500}
                       value={baseAmount}
@@ -188,6 +191,7 @@ export const SalaryProfileModal: React.FC<SalaryProfileModalProps> = ({ isOpen, 
                     </label>
                     <input
                       type="number"
+                      onWheel={(e) => e.currentTarget.blur()}
                       min={0}
                       step={salaryTaxMethod === 'PERCENTAGE' ? 0.5 : 100}
                       disabled={!salaryTaxMethod}

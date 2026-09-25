@@ -42,6 +42,21 @@ async function generateNumericEmployeeId(attempt: number = 0): Promise<string> {
 
 const MAX_EMPLOYEE_ID_RETRIES = 3;
 
+/** staff.md §2/§4 — "Doctor service assignments must reference active real services." */
+async function assertServicesActive(serviceIds: string[]): Promise<void> {
+  const rows = await prisma.serviceRate.findMany({
+    where: { id: { in: serviceIds } },
+    select: { id: true, isActive: true, isDeleted: true },
+  });
+  const found = new Map(rows.map((r) => [r.id, r]));
+  for (const id of serviceIds) {
+    const svc = found.get(id);
+    if (!svc || svc.isDeleted || !svc.isActive) {
+      throw new ConflictError(`Service "${id}" is not an active service and cannot be assigned to a doctor.`);
+    }
+  }
+}
+
 export const staffService = {
   async list(query: ListStaffQuery) {
     const { rows, totalItems } = await staffRepository.findMany(query);
@@ -55,45 +70,61 @@ export const staffService = {
   },
 
   async create(body: CreateStaffBody, createdById: string) {
+    if (body.cnic) {
+      const existing = await prisma.staff.findUnique({ where: { cnic: body.cnic } });
+      if (existing) throw new ConflictError(`CNIC "${body.cnic}" is already registered to another staff member.`);
+    }
+    if (body.category === 'Doctor' && body.serviceIds && body.serviceIds.length > 0) {
+      await assertServicesActive(body.serviceIds);
+    }
+
     const actorLabel = await resolveActorLabel(createdById);
     let lastError: unknown;
     for (let attempt = 0; attempt < MAX_EMPLOYEE_ID_RETRIES; attempt += 1) {
       const employeeId = await generateNumericEmployeeId(attempt);
       try {
-        // Determine the full list of departments for this staff member.
-        // For Doctors, `body.departmentIds` may include additional depts;
-        // for everyone else it defaults to just the primary departmentId.
-        const allDeptIds: string[] = body.departmentIds && body.departmentIds.length > 0
-          ? Array.from(new Set([body.departmentId, ...body.departmentIds]))
-          : [body.departmentId];
+        const deptIds = body.departmentIds ?? [];
+        const primaryDeptId = deptIds[0];
 
         const data: Prisma.StaffCreateInput = {
           employeeId,
           fullName: body.fullName,
           fatherGuardianName: body.fatherGuardianName,
           cnic: body.cnic,
+          dateOfBirth: body.dateOfBirth,
           category: body.category,
-          department: { connect: { id: body.departmentId } },
+          ...(primaryDeptId ? { department: { connect: { id: primaryDeptId } } } : {}),
           designation: body.designation,
           phone: body.phone,
           alternatePhone: body.alternatePhone,
           email: body.email,
-          joiningDate: body.joiningDate,
+          joiningDate: body.joiningDate ?? new Date(),
           notes: body.notes,
+          ...(body.assignedShiftId ? { assignedShift: { connect: { id: body.assignedShiftId } } } : {}),
           doctorSponsoredDiscountTrackingEnabled: body.doctorSponsoredDiscountTrackingEnabled ?? false,
           availableForOpd: body.availableForOpd ?? false,
           availableForObservation: body.availableForObservation ?? false,
           availableForEmergency: body.availableForEmergency ?? false,
           createdBy: actorLabel,
           updatedBy: actorLabel,
-          // Populate junction table inline
-          staffDepartments: {
-            create: allDeptIds.map((deptId) => ({
-              departmentId: deptId,
-              isPrimary: deptId === body.departmentId,
-              assignedBy: actorLabel,
-            })),
-          },
+          ...(deptIds.length > 0
+            ? {
+                staffDepartments: {
+                  create: deptIds.map((deptId) => ({
+                    departmentId: deptId,
+                    isPrimary: deptId === primaryDeptId,
+                    assignedBy: actorLabel,
+                  })),
+                },
+              }
+            : {}),
+          ...(body.serviceIds && body.serviceIds.length > 0
+            ? {
+                staffServices: {
+                  create: body.serviceIds.map((serviceRateId) => ({ serviceRateId, assignedBy: actorLabel })),
+                },
+              }
+            : {}),
         };
         return await staffRepository.create(data);
       } catch (error: unknown) {
@@ -108,42 +139,90 @@ export const staffService = {
   },
 
   async update(id: string, body: UpdateStaffBody, updatedById: string) {
-    await this.getById(id);
+    const existing = await this.getById(id);
+
+    if (body.cnic && body.cnic !== existing.cnic) {
+      const dup = await prisma.staff.findUnique({ where: { cnic: body.cnic } });
+      if (dup && dup.id !== id) throw new ConflictError(`CNIC "${body.cnic}" is already registered to another staff member.`);
+    }
+
+    const nextCategory = body.category ?? existing.category;
+    if (nextCategory === 'Doctor' && body.serviceIds && body.serviceIds.length > 0) {
+      await assertServicesActive(body.serviceIds);
+    }
+    const leavingDoctorCategory = existing.category === 'Doctor' && body.category !== undefined && body.category !== 'Doctor';
+
     const actorLabel = await resolveActorLabel(updatedById);
     const data: Prisma.StaffUpdateInput = { ...body, updatedBy: actorLabel };
-    if (body.departmentId) {
-      data.department = { connect: { id: body.departmentId } };
-      delete (data as Record<string, unknown>).departmentId;
-    }
-    // Remove departmentIds from the raw data object (not a Staff column)
     delete (data as Record<string, unknown>).departmentIds;
+    delete (data as Record<string, unknown>).serviceIds;
+    delete (data as Record<string, unknown>).assignedShiftId;
+    if (body.departmentIds && body.departmentIds.length > 0) {
+      data.department = { connect: { id: body.departmentIds[0] } };
+    }
+    if (body.assignedShiftId !== undefined) {
+      data.assignedShift = body.assignedShiftId ? { connect: { id: body.assignedShiftId } } : { disconnect: true };
+    }
 
-    // If departmentIds is supplied, sync the junction table inside a transaction
-    if (body.departmentIds !== undefined || body.departmentId) {
-      const primaryId = body.departmentId;
-      const allDeptIds: string[] = body.departmentIds && body.departmentIds.length > 0
-        ? Array.from(new Set(primaryId ? [primaryId, ...body.departmentIds] : body.departmentIds))
-        : primaryId ? [primaryId] : [];
+    // Plain field update, no department/service junction work needed — skip the transaction.
+    const needsJunctionSync = body.departmentIds !== undefined || body.serviceIds !== undefined || leavingDoctorCategory;
+    if (!needsJunctionSync) {
+      return staffRepository.update(id, data);
+    }
 
-      return prisma.$transaction(async (tx) => {
-        const updated = await tx.staff.update({ where: { id }, data, include: { department: true, staffDepartments: { select: { id: true, departmentId: true, isPrimary: true, department: { select: { id: true, name: true, code: true } } } }, portalUser: { select: { id: true, username: true, email: true, role: true, status: true, mustResetPassword: true, lastLoginAt: true, passwordResetAt: true, passwordResetBy: true } } } });
-        if (allDeptIds.length > 0) {
-          // Replace all junction rows for this staff member
-          await tx.staffDepartment.deleteMany({ where: { staffId: id } });
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.staff.update({
+        where: { id },
+        data,
+        include: {
+          department: true,
+          staffDepartments: { select: { id: true, departmentId: true, isPrimary: true, department: { select: { id: true, name: true, code: true } } } },
+          staffServices: { where: { isActive: true }, select: { id: true, serviceRateId: true, serviceRate: { select: { id: true, name: true, code: true } } } },
+          portalUser: { select: { id: true, username: true, email: true, role: true, status: true, mustResetPassword: true, lastLoginAt: true, passwordResetBy: true, passwordResetAt: true } },
+        },
+      });
+
+      // Replace department junction rows only when the caller explicitly sent a new list.
+      if (body.departmentIds !== undefined) {
+        await tx.staffDepartment.deleteMany({ where: { staffId: id } });
+        if (body.departmentIds.length > 0) {
           await tx.staffDepartment.createMany({
-            data: allDeptIds.map((deptId) => ({
+            data: body.departmentIds.map((deptId) => ({
               staffId: id,
               departmentId: deptId,
-              isPrimary: deptId === (primaryId ?? allDeptIds[0]),
+              isPrimary: deptId === body.departmentIds![0],
               assignedBy: actorLabel,
             })),
           });
         }
-        return updated;
-      });
-    }
+      }
 
-    return staffRepository.update(id, data);
+      // Doctor ↔ Service assignments: soft-deactivate rather than delete, so
+      // commission history on `DoctorCommissionRule` for the same service stays intact.
+      if (leavingDoctorCategory) {
+        await tx.staffService.updateMany({ where: { staffId: id, isActive: true }, data: { isActive: false } });
+      } else if (body.serviceIds !== undefined) {
+        const targetIds = new Set(body.serviceIds);
+        const current = await tx.staffService.findMany({ where: { staffId: id } });
+        const currentById = new Map(current.map((c) => [c.serviceRateId, c]));
+
+        for (const row of current) {
+          if (row.isActive && !targetIds.has(row.serviceRateId)) {
+            await tx.staffService.update({ where: { id: row.id }, data: { isActive: false } });
+          }
+        }
+        for (const serviceRateId of targetIds) {
+          const row = currentById.get(serviceRateId);
+          if (!row) {
+            await tx.staffService.create({ data: { staffId: id, serviceRateId, assignedBy: actorLabel } });
+          } else if (!row.isActive) {
+            await tx.staffService.update({ where: { id: row.id }, data: { isActive: true, assignedBy: actorLabel } });
+          }
+        }
+      }
+
+      return updated;
+    });
   },
 
   async deactivate(id: string, updatedById: string) {
@@ -209,6 +288,7 @@ export const staffService = {
         category: profile.category,
         designation: profile.designation,
         department: profile.department,
+        assignedShift: profile.assignedShift,
         phone: profile.phone,
         email: profile.email,
         joiningDate: profile.joiningDate,
@@ -225,6 +305,8 @@ export const staffService = {
         updatedAt: profile.clinicalAuthUpdatedAt,
       },
       portalAccess: profile.portalUser ?? null, // null = "No Portal Access", a valid state (D16 p.4)
+      departments: profile.staffDepartments,
+      assignedServices: profile.staffServices,
       employmentHistory: profile.employmentHistory,
       recentAttendance: profile.attendanceRecords,
       salary: {

@@ -1,10 +1,12 @@
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '@/db/client';
 import type { Prisma } from '@prisma/client';
+import { NotFoundError, ConflictError, ValidationError } from '@/shared/errors/AppError';
 import type {
   CreateCommissionRuleBody,
   ListCommissionRulesQuery,
   ListAccrualsQuery,
+  PayAccrualBody,
 } from './commission.schemas';
 
 export const commissionService = {
@@ -195,6 +197,50 @@ export const commissionService = {
       },
       orderBy: { createdAt: 'desc' },
       take: 100,
+    });
+  },
+
+  /** Commission Run's "Approve" step (staff.md §20) — locks an accrual before it can be paid out. */
+  async approveAccrual(id: string, actorId: string) {
+    const accrual = await prisma.doctorCommissionAccrual.findUnique({ where: { id } });
+    if (!accrual) throw new NotFoundError('Commission accrual not found');
+    if (accrual.status !== 'ACCRUED') {
+      throw new ConflictError('Only a freshly accrued commission line can be approved.');
+    }
+    return prisma.doctorCommissionAccrual.update({
+      where: { id },
+      data: { status: 'APPROVED', approvedById: actorId, approvedAt: new Date() },
+      include: { doctor: { select: { id: true, fullName: true, employeeId: true } }, payouts: true },
+    });
+  },
+
+  /** Only an APPROVED (or already PARTIALLY_PAID) accrual can be paid — mirrors Payroll's slip-payment gate. */
+  async payAccrual(id: string, body: PayAccrualBody, actorId: string) {
+    const accrual = await prisma.doctorCommissionAccrual.findUnique({ where: { id }, include: { payouts: true, reversals: true } });
+    if (!accrual) throw new NotFoundError('Commission accrual not found');
+    if (accrual.status !== 'APPROVED' && accrual.status !== 'PARTIALLY_PAID') {
+      throw new ConflictError('Only an approved commission accrual can be paid.');
+    }
+    const alreadyPaid = accrual.payouts.reduce((sum, p) => sum.plus(p.amount), new Decimal(0));
+    const reversed = accrual.reversals.reduce((sum, r) => sum.plus(r.reversalAmount), new Decimal(0));
+    const payable = accrual.commissionAmount.minus(reversed);
+    const remaining = payable.minus(alreadyPaid);
+    if (remaining.lte(0)) throw new ConflictError('This commission accrual is already fully paid (or fully reversed).');
+    if (new Decimal(body.amount).gt(remaining)) {
+      throw new ValidationError(`Payment amount exceeds the remaining balance of ${remaining.toFixed(2)}.`);
+    }
+
+    return prisma.$transaction(async (tx) => {
+      await tx.commissionPayout.create({
+        data: { doctorCommissionAccrualId: id, amount: body.amount, method: body.method, reference: body.reference, paidById: actorId },
+      });
+      const newPaidTotal = alreadyPaid.plus(body.amount);
+      const newStatus = newPaidTotal.gte(payable) ? 'PAID' : 'PARTIALLY_PAID';
+      return tx.doctorCommissionAccrual.update({
+        where: { id },
+        data: { status: newStatus },
+        include: { doctor: { select: { id: true, fullName: true, employeeId: true } }, payouts: true, reversals: true },
+      });
     });
   },
 };

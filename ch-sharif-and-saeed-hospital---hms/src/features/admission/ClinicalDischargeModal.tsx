@@ -30,7 +30,11 @@ export const ClinicalDischargeModal: React.FC<ClinicalDischargeModalProps> = ({ 
   const [followUpAdvice, setFollowUpAdvice] = useState('');
   const [followUpDate, setFollowUpDate] = useState('');
   const [additionalNotes, setAdditionalNotes] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setErrorState] = useState<string | null>(null);
+  const setError = (msg: string | null) => {
+    setErrorState(msg);
+    if (msg) toast.error(msg, 'Validation / Auth Error');
+  };
   const [isSaving, setIsSaving] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -44,7 +48,7 @@ export const ClinicalDischargeModal: React.FC<ClinicalDischargeModalProps> = ({ 
       return;
     }
     setIsSaving(true);
-    setError(null);
+    setErrorState(null);
     try {
       await clinicalDischarge(admission.id, {
         doctorUsername: doctorUsername.trim(),

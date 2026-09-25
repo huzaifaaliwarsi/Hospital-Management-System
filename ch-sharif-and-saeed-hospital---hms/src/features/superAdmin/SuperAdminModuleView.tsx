@@ -42,6 +42,8 @@ import { SuperAdminWardsRoomsBedsView } from './wardsRoomsBeds/SuperAdminWardsRo
 import { SuperAdminAdminUsersView } from './adminUsers/SuperAdminAdminUsersView';
 import { SuperAdminStaffUsersView } from './staffUsers/SuperAdminStaffUsersView';
 import { ShiftManagementView } from './shifts/ShiftManagementView';
+import { SuperAdminAttendanceView } from './attendance/SuperAdminAttendanceView';
+import { SuperAdminPayrollView } from './payroll/SuperAdminPayrollView';
 import { SuperAdminReportsView } from './SuperAdminReportsView';
 import { PatientRegistryView } from './patientRegistry/PatientRegistryView';
 import { SuperAdminCorporatePanelsView } from './corporatePanels/SuperAdminCorporatePanelsView';
@@ -262,6 +264,16 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
   // 1f2. Check if this is Shift Management Page
   if (activeModuleId === 'shift_management') {
     return <ShiftManagementView />;
+  }
+
+  // 1f3. Check if this is the Attendance Page
+  if (activeModuleId === 'attendance') {
+    return <SuperAdminAttendanceView />;
+  }
+
+  // 1f4. Check if this is the Salary Payroll Page
+  if (activeModuleId === 'salary_payroll') {
+    return <SuperAdminPayrollView />;
   }
 
   // 1g. Check if this is Patient Registry Page

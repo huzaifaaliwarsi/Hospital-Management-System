@@ -454,6 +454,7 @@ export const MyAccountSettlementView: React.FC = () => {
                         </div>
                         <input
                           type="number"
+                          onWheel={(e) => e.currentTarget.blur()}
                           min={0}
                           step="any"
                           value={physicalCash}
@@ -708,6 +709,7 @@ export const MyAccountSettlementView: React.FC = () => {
                         </div>
                         <input
                           type="number"
+                          onWheel={(e) => e.currentTarget.blur()}
                           min={0}
                           step="any"
                           value={handoverAmount}
