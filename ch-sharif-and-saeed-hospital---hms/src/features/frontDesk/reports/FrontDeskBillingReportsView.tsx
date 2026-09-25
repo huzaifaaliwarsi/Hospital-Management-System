@@ -11,15 +11,7 @@ import {
   Banknote,
   CreditCard,
   Receipt,
-  ArrowRight,
-  TrendingUp,
-  CheckCircle2,
-  AlertTriangle,
-  ClipboardList,
-  Building2,
-  Landmark,
   Coins,
-  ShieldCheck,
 } from 'lucide-react';
 import { formatPKR } from '../../../utils/formatters';
 import {
@@ -27,9 +19,9 @@ import {
   FrontDeskBillingReport,
   DatePreset,
 } from '../../../services/frontdeskBillingReportService';
+import { fetchFrontDeskFilterOptions, FilterOption } from '../../../services/frontdeskReportsService';
 import { formatDateISO, getHospitalCurrentDate } from '../../../utils/dateConstants';
 import { useAuth } from '../../../context/AuthContext';
-import { useRouter } from '../../../context/RouterContext';
 import {
   downloadTablePDF,
   downloadTableExcel,
@@ -81,7 +73,6 @@ const STATUS_BADGE: Record<string, { label: string; bg: string; text: string; bo
  */
 export const FrontDeskBillingReportsView: React.FC = () => {
   const { currentUser } = useAuth();
-  const { navigate } = useRouter();
   const todayISO = formatDateISO(getHospitalCurrentDate());
 
   const [preset, setPreset] = useState<DatePreset>('today');
@@ -91,6 +82,21 @@ export const FrontDeskBillingReportsView: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [cashierId, setCashierId] = useState('');
+  const [departmentId, setDepartmentId] = useState('');
+  const [cashierOptions, setCashierOptions] = useState<FilterOption[]>([]);
+  const [departmentOptions, setDepartmentOptions] = useState<FilterOption[]>([]);
+
+  useEffect(() => {
+    fetchFrontDeskFilterOptions()
+      .then((o) => {
+        setCashierOptions(o.cashiers);
+        setDepartmentOptions(o.departments);
+      })
+      .catch(() => {
+        // Dropdowns stay at "All" — the summary still loads.
+      });
+  }, []);
 
   const load = useCallback(async (silent = false) => {
     if (silent) setIsRefreshing(true);
@@ -101,6 +107,8 @@ export const FrontDeskBillingReportsView: React.FC = () => {
         preset,
         fromDate: preset === 'custom' ? fromDate : undefined,
         toDate: preset === 'custom' ? toDate : undefined,
+        cashierId: cashierId || undefined,
+        departmentId: departmentId || undefined,
       });
       setReport(data);
     } catch (err: any) {
@@ -109,7 +117,7 @@ export const FrontDeskBillingReportsView: React.FC = () => {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [preset, fromDate, toDate]);
+  }, [preset, fromDate, toDate, cashierId, departmentId]);
 
   useEffect(() => {
     load();
@@ -160,7 +168,7 @@ export const FrontDeskBillingReportsView: React.FC = () => {
   }, [report, totalGross, totalDiscounts, totalNet, totalCollections, totalRefunds, netIntake, totalOutstanding, discountRate]);
 
   const exportContext = {
-    documentTitle: 'Front Desk / Billing Reports',
+    documentTitle: 'Daily Billing Summary',
     documentSubtitle: `Hospital Billing & Collections Overview — ${report?.period.label || 'Selected Period'}`,
     filenamePrefix: 'Billing_Summary_Report',
     columns: EXPORT_COLUMNS,
@@ -169,6 +177,8 @@ export const FrontDeskBillingReportsView: React.FC = () => {
     periodLabel: report?.period.label,
     filters: [
       `Period: ${report?.period.label || preset}`,
+      `Cashier: ${cashierOptions.find((o) => o.value === cashierId)?.label || 'All'}`,
+      `Department: ${departmentOptions.find((o) => o.value === departmentId)?.label || 'All'}`,
       `Total Collections: ${formatPKR(totalCollections)}`,
       `Net Billed: ${formatPKR(totalNet)}`,
       `Outstanding: ${formatPKR(totalOutstanding)}`,
@@ -180,7 +190,7 @@ export const FrontDeskBillingReportsView: React.FC = () => {
       {/* 1. Top Header with Title and Export Toolbar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold text-slate-900 tracking-tight">Front Desk / Billing Reports</h1>
+          <h1 className="text-xl font-bold text-slate-900 tracking-tight">Daily Billing Summary</h1>
           <p className="text-xs text-slate-500 mt-0.5">
             Hospital billing turnover, live collections, discounts, refunds, and invoice status distribution.
           </p>
@@ -226,6 +236,32 @@ export const FrontDeskBillingReportsView: React.FC = () => {
               {opt.label}
             </button>
           ))}
+          <select
+            value={cashierId}
+            onChange={(e) => setCashierId(e.target.value)}
+            aria-label="Cashier"
+            className="h-8 ml-2 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-800 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#08775A]"
+          >
+            <option value="">All Cashiers</option>
+            {cashierOptions.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <select
+            value={departmentId}
+            onChange={(e) => setDepartmentId(e.target.value)}
+            aria-label="Department"
+            className="h-8 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-800 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#08775A]"
+          >
+            <option value="">All Departments</option>
+            {departmentOptions.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
         </div>
 
         {preset === 'custom' && (
@@ -554,152 +590,6 @@ export const FrontDeskBillingReportsView: React.FC = () => {
             </div>
           </div>
 
-          {/* 6. Comprehensive Financial Turnover & Billing Reconciliation Summary */}
-          <div className="bg-white rounded-lg border border-slate-300 shadow-xs overflow-hidden">
-            <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 font-bold text-xs text-slate-800 uppercase tracking-wider flex items-center justify-between">
-              <span className="flex items-center gap-1.5">
-                <TrendingUp className="h-3.5 w-3.5 text-[#08775A]" />
-                Financial Turnover &amp; Billing Reconciliation Summary
-              </span>
-              <span className="text-[11px] font-normal text-slate-500 font-mono">
-                {report.period.label}
-              </span>
-            </div>
-
-            <div className="divide-y divide-slate-200 text-xs">
-              <div className="flex items-center justify-between">
-                <span className="py-2.5 px-4 text-slate-600 font-medium">Gross Hospital Billed (List Price):</span>
-                <span className="py-2.5 px-4 bg-slate-50 text-slate-900 font-bold font-mono min-w-44 text-right border-l border-slate-200">
-                  {formatPKR(totalGross)}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <span className="py-2.5 px-4 text-slate-600 font-medium">(-) Total Approved Discounts &amp; Waivers:</span>
-                <span className="py-2.5 px-4 bg-amber-50 text-amber-900 font-bold font-mono min-w-44 text-right border-l border-slate-200">
-                  -{formatPKR(totalDiscounts)}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between bg-slate-50/40">
-                <span className="py-2.5 px-4 text-slate-900 font-bold">(=) Net Hospital Billed Revenue:</span>
-                <span className="py-2.5 px-4 bg-emerald-50/60 text-emerald-900 font-bold font-mono min-w-44 text-right border-l border-slate-200">
-                  {formatPKR(totalNet)}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <span className="py-2.5 px-4 text-slate-600 font-medium">Realized Cash Collections (Counter):</span>
-                <span className="py-2.5 px-4 bg-[#dcfce7]/70 text-emerald-900 font-bold font-mono min-w-44 text-right border-l border-slate-200">
-                  {formatPKR(cashCollections)}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <span className="py-2.5 px-4 text-slate-600 font-medium">Realized Non-Cash Collections (Card / Bank / Online):</span>
-                <span className="py-2.5 px-4 bg-blue-50 text-blue-900 font-bold font-mono min-w-44 text-right border-l border-slate-200">
-                  {formatPKR(nonCashCollections)}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between bg-slate-50/40">
-                <span className="py-2.5 px-4 text-slate-900 font-bold">Total Realized Collections:</span>
-                <span className="py-2.5 px-4 bg-[#dcfce7] text-emerald-950 font-bold font-mono min-w-44 text-right border-l border-slate-200">
-                  {formatPKR(totalCollections)}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <span className="py-2.5 px-4 text-slate-600 font-medium">(-) Total Refunds &amp; Reversal Payouts:</span>
-                <span className="py-2.5 px-4 bg-[#fee2e2] text-rose-900 font-bold font-mono min-w-44 text-right border-l border-slate-200">
-                  -{formatPKR(totalRefunds)}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between bg-slate-50/50">
-                <span className="py-3 px-4 text-slate-900 font-bold">(=) Net Hospital Intake (Collections - Refunds):</span>
-                <span className="py-3 px-4 bg-[#bbf7d0] text-emerald-950 font-black font-mono text-sm min-w-44 text-right border-l border-slate-200">
-                  {formatPKR(netIntake)}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <span className="py-2.5 px-4 text-slate-600 font-medium">Remaining Uncollected / Outstanding Receivables:</span>
-                <span className="py-2.5 px-4 bg-rose-50 text-rose-900 font-bold font-mono min-w-44 text-right border-l border-slate-200">
-                  {formatPKR(totalOutstanding)}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* 7. Quick Navigation to Specialized Front Desk Registers */}
-          <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                <ClipboardList className="h-4 w-4 text-[#08775A]" />
-                Detailed Front Desk / Billing Registers
-              </span>
-              <span className="text-[11px] text-slate-400">Click to drill down into itemized registers</span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-              <button
-                type="button"
-                onClick={() => navigate('/front-desk/fd_collection_report')}
-                className="p-3 rounded-lg border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/30 text-left transition-all group cursor-pointer"
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-bold text-slate-900 group-hover:text-[#08775A]">
-                    Collection &amp; Receipts
-                  </span>
-                  <ArrowRight className="h-3.5 w-3.5 text-slate-400 group-hover:text-[#08775A] group-hover:translate-x-0.5 transition-all" />
-                </div>
-                <p className="text-[11px] text-slate-500">Itemized cashier receipts, receipts log, and tender methods</p>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => navigate('/front-desk/fd_invoice_register')}
-                className="p-3 rounded-lg border border-slate-200 hover:border-blue-300 hover:bg-blue-50/30 text-left transition-all group cursor-pointer"
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-bold text-slate-900 group-hover:text-blue-700">
-                    Invoice Register
-                  </span>
-                  <ArrowRight className="h-3.5 w-3.5 text-slate-400 group-hover:text-blue-700 group-hover:translate-x-0.5 transition-all" />
-                </div>
-                <p className="text-[11px] text-slate-500">Every Hospital-side invoice with patient ledger drilldown</p>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => navigate('/front-desk/fd_outstanding_invoices')}
-                className="p-3 rounded-lg border border-slate-200 hover:border-rose-300 hover:bg-rose-50/30 text-left transition-all group cursor-pointer"
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-bold text-slate-900 group-hover:text-rose-700">
-                    Outstanding Invoices
-                  </span>
-                  <ArrowRight className="h-3.5 w-3.5 text-slate-400 group-hover:text-rose-700 group-hover:translate-x-0.5 transition-all" />
-                </div>
-                <p className="text-[11px] text-slate-500">Unpaid &amp; partially settled balances requiring recovery</p>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => navigate('/front-desk/fd_discount_report')}
-                className="p-3 rounded-lg border border-slate-200 hover:border-amber-300 hover:bg-amber-50/30 text-left transition-all group cursor-pointer"
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-bold text-slate-900 group-hover:text-amber-700">
-                    Discount &amp; Waiver Audit
-                  </span>
-                  <ArrowRight className="h-3.5 w-3.5 text-slate-400 group-hover:text-amber-700 group-hover:translate-x-0.5 transition-all" />
-                </div>
-                <p className="text-[11px] text-slate-500">Concession reasons, authorized managers, and waiver totals</p>
-              </button>
-            </div>
-          </div>
         </>
       ) : null}
     </div>

@@ -64,8 +64,7 @@ import {
   InvoiceRegisterView,
   CollectionReportViewPage,
   OutstandingInvoicesView,
-  DiscountReportViewPage,
-  RefundVoidReportViewPage,
+  FinancialExceptionsReportView,
   DepartmentRevenueReportView,
   AdmissionPaymentCollectionsView,
   PanelPayerReportView,
@@ -445,8 +444,8 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
   if (activeModuleId === 'fd_invoice_register') return <InvoiceRegisterView />;
   if (activeModuleId === 'fd_collection_report' || activeModuleId === 'collection_reports') return <CollectionReportViewPage />;
   if (activeModuleId === 'fd_outstanding_invoices') return <OutstandingInvoicesView />;
-  if (activeModuleId === 'fd_discount_report') return <DiscountReportViewPage />;
-  if (activeModuleId === 'fd_refund_void_report') return <RefundVoidReportViewPage />;
+  if (activeModuleId === 'fd_discount_report') return <FinancialExceptionsReportView />;
+  if (activeModuleId === 'fd_refund_void_report') return <FinancialExceptionsReportView />;
   if (activeModuleId === 'fd_department_revenue') return <DepartmentRevenueReportView />;
   if (activeModuleId === 'fd_admission_payment_collections') return <AdmissionPaymentCollectionsView />;
   if (activeModuleId === 'fd_panel_payer' || activeModuleId === 'patient_panel_reports') return <PanelPayerReportView />;

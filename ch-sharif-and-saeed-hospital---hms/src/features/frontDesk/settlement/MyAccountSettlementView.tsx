@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   UserCheck,
   Loader2,
@@ -20,9 +20,12 @@ import {
   Eye,
   TrendingDown,
   TrendingUp,
+  Filter,
+  RotateCcw,
 } from 'lucide-react';
 import { Modal } from '../../../components/common/Modal';
 import { formatPKR } from '../../../utils/formatters';
+import { formatDateISO, getHospitalCurrentDate } from '../../../utils/dateConstants';
 import { useToast } from '../../../context/ToastContext';
 import { useRouter } from '../../../context/RouterContext';
 import { useAuth } from '../../../context/AuthContext';
@@ -61,6 +64,16 @@ const STATUS_LABEL: Record<SettlementStatus, string> = {
   REJECTED: 'Rejected',
   REVERSED: 'Reversed',
 };
+
+type HistoryPreset = 'all' | 'today' | 'yesterday' | 'this_week' | 'this_month' | 'custom';
+const HISTORY_PRESETS: { value: HistoryPreset; label: string }[] = [
+  { value: 'all', label: 'All Time' },
+  { value: 'today', label: 'Today' },
+  { value: 'yesterday', label: 'Yesterday' },
+  { value: 'this_week', label: 'This Week' },
+  { value: 'this_month', label: 'This Month' },
+  { value: 'custom', label: 'Custom Range' },
+];
 
 const COMMON_VARIANCE_REASONS = [
   'Change / coin shortage',
@@ -115,6 +128,47 @@ export const MyAccountSettlementView: React.FC = () => {
   const [selectedRecord, setSelectedRecord] = useState<SettlementRecord | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
 
+  // History filters (reporting.md §2 #9): From/To + Settlement Status.
+  const todayISO = formatDateISO(getHospitalCurrentDate());
+  const [historyPreset, setHistoryPreset] = useState<HistoryPreset>('all');
+  const [historyFrom, setHistoryFrom] = useState(todayISO);
+  const [historyTo, setHistoryTo] = useState(todayISO);
+  const [historyStatus, setHistoryStatus] = useState('');
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+  const historyFilters = () => ({
+    preset: historyPreset,
+    ...(historyPreset === 'custom' ? { fromDate: historyFrom, toDate: historyTo } : {}),
+    ...(historyStatus ? { status: historyStatus } : {}),
+  });
+  const isHistoryFiltered = historyPreset !== 'all' || historyStatus !== '';
+  // `load` (also called after a submit) reads the latest filters via this ref, so a refresh keeps them.
+  const historyFiltersRef = useRef(historyFilters);
+  historyFiltersRef.current = historyFilters;
+
+  const applyHistoryFilter = async () => {
+    setIsHistoryLoading(true);
+    try {
+      setHistory(await fetchMySettlements(historyFilters()));
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to load settlement history.');
+    } finally {
+      setIsHistoryLoading(false);
+    }
+  };
+
+  const resetHistoryFilter = async () => {
+    setHistoryPreset('all');
+    setHistoryStatus('');
+    setIsHistoryLoading(true);
+    try {
+      setHistory(await fetchMySettlements());
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to load settlement history.');
+    } finally {
+      setIsHistoryLoading(false);
+    }
+  };
+
   const load = useCallback(async (silent = false) => {
     if (silent) {
       setIsRefreshing(true);
@@ -125,7 +179,7 @@ export const MyAccountSettlementView: React.FC = () => {
     try {
       const [balance, settlements] = await Promise.all([
         frontdeskApiService.getCashBalance(),
-        fetchMySettlements(),
+        fetchMySettlements(historyFiltersRef.current()),
       ]);
       setExpectedCash(Number(balance.summary?.expectedPhysicalCash ?? 0));
       setCarriedForwardAmount(Number(balance.summary?.carriedForwardAmount ?? 0));
@@ -779,6 +833,67 @@ export const MyAccountSettlementView: React.FC = () => {
               </div>
             </div>
 
+            {/* History filter row — From/To + Settlement Status */}
+            <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex items-end gap-3 flex-wrap">
+              <label className="flex flex-col gap-1 w-40">
+                <span className="text-xs font-semibold text-slate-700">Period</span>
+                <select
+                  value={historyPreset}
+                  onChange={(e) => setHistoryPreset(e.target.value as HistoryPreset)}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900"
+                >
+                  {HISTORY_PRESETS.map((p) => (
+                    <option key={p.value} value={p.value}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {historyPreset === 'custom' && (
+                <>
+                  <label className="flex flex-col gap-1 w-36">
+                    <span className="text-xs font-semibold text-slate-700">From</span>
+                    <input type="date" lang="en-GB" value={historyFrom} onChange={(e) => setHistoryFrom(e.target.value)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900" />
+                  </label>
+                  <label className="flex flex-col gap-1 w-36">
+                    <span className="text-xs font-semibold text-slate-700">To</span>
+                    <input type="date" lang="en-GB" value={historyTo} onChange={(e) => setHistoryTo(e.target.value)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900" />
+                  </label>
+                </>
+              )}
+              <label className="flex flex-col gap-1 w-44">
+                <span className="text-xs font-semibold text-slate-700">Settlement Status</span>
+                <select value={historyStatus} onChange={(e) => setHistoryStatus(e.target.value)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900">
+                  <option value="">All</option>
+                  {(Object.keys(STATUS_LABEL) as SettlementStatus[]).map((s) => (
+                    <option key={s} value={s}>
+                      {STATUS_LABEL[s]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="flex items-center gap-2 ml-auto">
+                <button
+                  type="button"
+                  onClick={applyHistoryFilter}
+                  disabled={isHistoryLoading}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#08775A] hover:bg-[#065f46] text-white rounded-lg text-xs font-semibold shadow-xs transition-colors disabled:opacity-60"
+                >
+                  {isHistoryLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Filter className="h-3.5 w-3.5" />}
+                  Filter
+                </button>
+                <button
+                  type="button"
+                  onClick={resetHistoryFilter}
+                  disabled={isHistoryLoading}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-300 hover:bg-slate-100 text-slate-600 rounded-lg text-xs font-medium transition-colors disabled:opacity-60"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Reset
+                </button>
+              </div>
+            </div>
+
             {/* Export Toolbar */}
             {history.length > 0 && (
               <div className="flex items-center justify-end -mt-1">
@@ -829,7 +944,7 @@ export const MyAccountSettlementView: React.FC = () => {
               {history.length === 0 ? (
                 <div className="p-10 text-center flex flex-col items-center justify-center gap-2 text-slate-400">
                   <FileText className="h-8 w-8 text-slate-300" />
-                  <p className="text-xs font-medium text-slate-500">No shift settlements submitted yet.</p>
+                  <p className="text-xs font-medium text-slate-500">{isHistoryFiltered ? 'No settlements match these filters.' : 'No shift settlements submitted yet.'}</p>
                   <p className="text-[11px] text-slate-400">Completed shift reconciliations will appear here.</p>
                 </div>
               ) : (
