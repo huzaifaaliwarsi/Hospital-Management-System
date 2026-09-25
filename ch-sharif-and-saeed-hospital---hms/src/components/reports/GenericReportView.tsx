@@ -7,7 +7,8 @@ import { formatDateISO, getHospitalCurrentDate } from '../../utils/dateConstants
 import { downloadTablePDF, downloadTableExcel, downloadTableCSV, printTable, ExportColumn } from '../../services/tableExportService';
 import { ExportButtonGroup } from '../../features/superAdmin/financeControl/ExportButtonGroup';
 
-export type ReportDatePreset = 'today' | 'yesterday' | 'this_week' | 'this_month' | 'custom';
+/** `all` is only offered by reports that opt in via `allTimeOption` (their backend must accept it). */
+export type ReportDatePreset = 'all' | 'today' | 'yesterday' | 'this_week' | 'this_month' | 'custom';
 
 const PRESET_OPTIONS: { label: string; value: ReportDatePreset }[] = [
   { label: 'Today', value: 'today' },
@@ -49,6 +50,8 @@ export interface GenericReportViewProps<T> {
   onResetExtraFilters?: () => void;
   /** Right-aligned numeric columns that must NOT be summed in the totals row (headers). */
   noTotalColumns?: string[];
+  /** Adds an "All Time" period (and makes it the default) — for history lists like settlements. */
+  allTimeOption?: boolean;
 }
 
 /** Totals for these columns are counts, not money. */
@@ -99,10 +102,12 @@ export function GenericReportView<T>({
   showKpis = false,
   onResetExtraFilters,
   noTotalColumns,
+  allTimeOption,
 }: GenericReportViewProps<T>) {
   const { currentUser } = useAuth();
   const todayISO = formatDateISO(getHospitalCurrentDate());
-  const [preset, setPreset] = useState<ReportDatePreset>('today');
+  const defaultPreset: ReportDatePreset = allTimeOption ? 'all' : 'today';
+  const [preset, setPreset] = useState<ReportDatePreset>(defaultPreset);
   const [fromDate, setFromDate] = useState(todayISO);
   const [toDate, setToDate] = useState(todayISO);
   const [result, setResult] = useState<ReportResult<T> | null>(null);
@@ -131,7 +136,7 @@ export function GenericReportView<T>({
   const [reloadTick, setReloadTick] = useState(0);
 
   const handleReset = () => {
-    setPreset('today');
+    setPreset(defaultPreset);
     setFromDate(todayISO);
     setToDate(todayISO);
     onResetExtraFilters?.();
@@ -212,7 +217,7 @@ export function GenericReportView<T>({
         <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex items-end gap-3 flex-wrap">
           {!noDateFilter && (
             <div className="w-44">
-              <Select label="Period" options={PRESET_OPTIONS} value={preset} onChange={(e) => setPreset(e.target.value as ReportDatePreset)} />
+              <Select label="Period" options={allTimeOption ? [{ label: 'All Time', value: 'all' }, ...PRESET_OPTIONS] : PRESET_OPTIONS} value={preset} onChange={(e) => setPreset(e.target.value as ReportDatePreset)} />
             </div>
           )}
           {!noDateFilter && preset === 'custom' && (
