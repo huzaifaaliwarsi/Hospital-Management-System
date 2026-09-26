@@ -7,6 +7,8 @@ import {
   History,
   PlayCircle,
   Banknote,
+  AlertTriangle,
+  ChevronRight,
 } from 'lucide-react';
 import {
   previewPayrollRun,
@@ -23,6 +25,7 @@ import { STAFF_CATEGORIES, SALARY_BASIS_OPTIONS } from '../../../types/staffUser
 import { useToast } from '../../../context/ToastContext';
 import { formatPKR } from '../../../utils/formatters';
 import { formatDisplayDate } from '../../../utils/dateConstants';
+import { Select, TextInput } from '../../../components/forms/FormControls';
 
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
@@ -40,6 +43,105 @@ const STATUS_STYLES: Record<string, string> = {
   PAID: 'bg-[#e7f6f1] text-[#0e7d5a] border-[#c2e7db]',
 };
 
+const PERIOD_TYPE_OPTIONS = [
+  { value: 'DAILY', label: 'Daily' },
+  { value: 'MONTHLY', label: 'Monthly' },
+  { value: 'CUSTOM', label: 'Custom' },
+];
+
+const basisLabel = (v: string) => SALARY_BASIS_OPTIONS.find((o) => o.value === v)?.label || v;
+const periodLabel = (start: string, end: string) => `${formatDisplayDate(new Date(start))} – ${formatDisplayDate(new Date(end))}`;
+
+// Same bordered-grid look as the reporting tables (GenericReportView).
+const TH = 'py-3 px-4 border-r border-slate-300 last:border-r-0 whitespace-nowrap';
+const TD = 'py-3 px-4 border-r border-slate-200 last:border-r-0 whitespace-nowrap text-slate-800';
+const TD_NUM = 'py-3 px-3 text-center border-r border-slate-200 text-slate-500 text-xs bg-slate-50/60 w-14';
+const AMT = 'text-right tabular-nums font-semibold';
+const ROW = 'hover:bg-slate-50/90 transition-colors border-b border-slate-200 last:border-b-0';
+
+const StatusBadge: React.FC<{ status: string }> = ({ status }) => (
+  <span className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-semibold border ${STATUS_STYLES[status] ?? STATUS_STYLES.DRAFT}`}>
+    {status.replace('_', ' ')}
+  </span>
+);
+
+/** Green title banner + bordered table, the same pattern as the Front Desk reports. */
+const TableSection: React.FC<{
+  icon: React.ElementType;
+  title: string;
+  note?: React.ReactNode;
+  actions?: React.ReactNode;
+  head: React.ReactNode;
+  foot?: React.ReactNode;
+  children: React.ReactNode;
+}> = ({ icon: Icon, title, note, actions, head, foot, children }) => (
+  <div className="space-y-3">
+    <div className="bg-gradient-to-r from-[#0a4636] to-[#08775A] text-white px-4 py-2.5 rounded-lg flex items-center justify-between gap-3 shadow-xs">
+      <div className="flex items-center gap-2.5 font-bold text-sm tracking-wide">
+        <div className="h-6 w-6 rounded bg-white/15 flex items-center justify-center">
+          <Icon className="h-3.5 w-3.5" />
+        </div>
+        <span>{title}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        {note && <span className="text-xs text-emerald-100 font-medium bg-white/10 px-2.5 py-0.5 rounded-md">{note}</span>}
+        {actions}
+      </div>
+    </div>
+    <div className="bg-white rounded-lg border border-slate-300 shadow-xs overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm border-collapse">
+          <thead>
+            <tr className="bg-[#f1f5f9] border-b border-slate-300 text-slate-800 text-xs font-bold uppercase tracking-wider">
+              <th className={`${TH} w-14 text-center`}>#</th>
+              {head}
+            </tr>
+          </thead>
+          <tbody className="text-slate-700">{children}</tbody>
+          {foot && (
+            <tfoot>
+              <tr className="bg-[#f1f5f9] border-t-2 border-slate-300 font-bold text-slate-900">{foot}</tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </div>
+  </div>
+);
+
+const EmptyRow: React.FC<{ colSpan: number; children: React.ReactNode }> = ({ colSpan, children }) => (
+  <tr>
+    <td colSpan={colSpan} className="py-12 text-center text-slate-400">
+      {children}
+    </td>
+  </tr>
+);
+
+const TotalLabel = () => (
+  <td className="py-3 px-3 text-center border-r border-slate-300 text-[11px] uppercase tracking-wider text-slate-600">Total</td>
+);
+
+const SkippedList: React.FC<{ skipped: { staffId: string; fullName: string; employeeId?: string; reason: string }[] }> = ({ skipped }) =>
+  skipped.length === 0 ? null : (
+    <div className="bg-amber-50 border border-amber-200 rounded-lg overflow-hidden">
+      <div className="px-4 py-2.5 border-b border-amber-200 flex items-center gap-2 text-sm font-bold text-amber-800">
+        <AlertTriangle className="h-4 w-4" /> Skipped Staff ({skipped.length})
+      </div>
+      <table className="w-full text-left text-sm">
+        <tbody>
+          {skipped.map((s) => (
+            <tr key={s.staffId} className="border-b border-amber-100 last:border-b-0">
+              <td className="py-2 px-4 font-semibold text-amber-900 whitespace-nowrap">
+                {s.fullName} {s.employeeId && <span className="font-normal text-amber-700">({s.employeeId})</span>}
+              </td>
+              <td className="py-2 px-4 text-amber-800 w-full">{s.reason}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
 export const SuperAdminPayrollView: React.FC = () => {
   const toast = useToast();
   const [tab, setTab] = useState<'generate' | 'runs'>('generate');
@@ -50,30 +152,29 @@ export const SuperAdminPayrollView: React.FC = () => {
     fetchDepartments().then(setDepartments).catch(() => {});
   }, []);
 
+  const tabClass = (active: boolean) =>
+    `inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+      active ? 'bg-[#08775A] text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+    }`;
+
   return (
-    <div className="space-y-5">
-      <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="space-y-4 animate-in fade-in duration-150 font-montserrat">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
-          <div className="h-10 w-10 rounded-xl bg-[#e7f6f1] text-[#129b70] flex items-center justify-center">
+          <div className="h-9 w-9 rounded-lg bg-[#e7f6f1] text-[#08775A] flex items-center justify-center">
             <Wallet className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-slate-900">Salary Payroll</h1>
-            <p className="text-xs text-slate-500">Attendance-driven, Daily/Monthly/Custom — every figure traces to a real Salary Profile and approved Attendance record.</p>
+            <h1 className="text-xl font-bold text-slate-900 tracking-tight">Salary Payroll</h1>
+            <p className="text-xs text-slate-500 mt-0.5">Attendance-driven payroll from each staff member's Salary Profile and approved attendance.</p>
           </div>
         </div>
-        <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
-          <button
-            onClick={() => { setTab('generate'); setSelectedRunId(null); }}
-            className={`px-3.5 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${tab === 'generate' ? 'bg-white text-[#08775A] shadow-xs' : 'text-slate-500 hover:text-slate-700'}`}
-          >
-            <PlayCircle className="h-3.5 w-3.5 inline mr-1.5 -mt-0.5" /> Generate Run
+        <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1 shadow-xs">
+          <button onClick={() => { setTab('generate'); setSelectedRunId(null); }} className={tabClass(tab === 'generate')}>
+            <PlayCircle className="h-3.5 w-3.5" /> Generate Run
           </button>
-          <button
-            onClick={() => setTab('runs')}
-            className={`px-3.5 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${tab === 'runs' ? 'bg-white text-[#08775A] shadow-xs' : 'text-slate-500 hover:text-slate-700'}`}
-          >
-            <History className="h-3.5 w-3.5 inline mr-1.5 -mt-0.5" /> Runs &amp; Payments
+          <button onClick={() => setTab('runs')} className={tabClass(tab === 'runs')}>
+            <History className="h-3.5 w-3.5" /> Runs &amp; Payments
           </button>
         </div>
       </div>
@@ -81,7 +182,7 @@ export const SuperAdminPayrollView: React.FC = () => {
       {tab === 'generate' ? (
         <GenerateTab departments={departments} toast={toast} onGenerated={(id) => { setSelectedRunId(id); setTab('runs'); }} />
       ) : (
-        <RunsTab departments={departments} toast={toast} selectedRunId={selectedRunId} setSelectedRunId={setSelectedRunId} />
+        <RunsTab toast={toast} selectedRunId={selectedRunId} setSelectedRunId={setSelectedRunId} />
       )}
     </div>
   );
@@ -109,8 +210,7 @@ const GenerateTab: React.FC<{ departments: Department[]; toast: ReturnType<typeo
     setIsPreviewing(true);
     setPreview(null);
     try {
-      const result = await previewPayrollRun(filters);
-      setPreview(result);
+      setPreview(await previewPayrollRun(filters));
     } catch (err: any) {
       toast.error(err?.response?.data?.error?.message || err?.message || 'Failed to preview payroll.', 'Preview Error');
     } finally {
@@ -135,132 +235,138 @@ const GenerateTab: React.FC<{ departments: Department[]; toast: ReturnType<typeo
     }
   };
 
+  const sum = (key: 'periodBaseAmount' | 'attendanceDeductions' | 'allowances' | 'grossAmount' | 'tax' | 'otherDeductions' | 'netAmount') =>
+    (preview?.eligible ?? []).reduce((s, r) => s + Number(r[key]), 0);
+
   return (
     <div className="space-y-4">
-      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-wrap items-end gap-3">
-        <div>
-          <label className="block text-[11px] font-semibold text-slate-600 mb-1">Period Type</label>
-          <select value={periodType} onChange={(e) => setPeriodType(e.target.value as PayrollPeriodType)} className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs bg-white">
-            <option value="DAILY">Daily</option>
-            <option value="MONTHLY">Monthly</option>
-            <option value="CUSTOM">Custom</option>
-          </select>
+      {/* Filter bar — one landscape row on wide screens (5 equal filters + buttons), wraps on smaller ones */}
+      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs grid grid-cols-2 md:grid-cols-3 xl:grid-cols-[repeat(5,minmax(0,1fr))_auto] items-end gap-3">
+        <div className="min-w-0">
+          <Select label="Period Type" options={PERIOD_TYPE_OPTIONS} value={periodType} onChange={(e) => setPeriodType(e.target.value as PayrollPeriodType)} />
         </div>
-        <div>
-          <label className="block text-[11px] font-semibold text-slate-600 mb-1">From</label>
-          <input lang="en-GB" type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs bg-white" />
+        <div className="min-w-0">
+          <TextInput label="From" lang="en-GB" type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} />
         </div>
-        <div>
-          <label className="block text-[11px] font-semibold text-slate-600 mb-1">To</label>
-          <input lang="en-GB" type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs bg-white" />
+        <div className="min-w-0">
+          <TextInput label="To" lang="en-GB" type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} />
         </div>
-        <div>
-          <label className="block text-[11px] font-semibold text-slate-600 mb-1">Department</label>
-          <select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)} className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs bg-white">
-            <option value="">All Departments</option>
-            {departments.filter((d) => d.status === 'Active').map((d) => (
-              <option key={d.id} value={d.id}>{d.name}</option>
-            ))}
-          </select>
+        <div className="min-w-0">
+          <Select
+            label="Department"
+            options={[{ value: '', label: 'All Departments' }, ...departments.filter((d) => d.status === 'Active').map((d) => ({ value: d.id, label: d.name }))]}
+            value={departmentId}
+            onChange={(e) => setDepartmentId(e.target.value)}
+          />
         </div>
-        <div>
-          <label className="block text-[11px] font-semibold text-slate-600 mb-1">Category</label>
-          <select value={category} onChange={(e) => setCategory(e.target.value)} className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs bg-white">
-            <option value="">All Categories</option>
-            {STAFF_CATEGORIES.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
+        <div className="min-w-0">
+          <Select
+            label="Category"
+            options={[{ value: '', label: 'All Categories' }, ...STAFF_CATEGORIES.map((c) => ({ value: c, label: c }))]}
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+          />
         </div>
-        <div className="flex-1" />
-        <button
-          type="button"
-          onClick={handlePreview}
-          disabled={isPreviewing}
-          className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-[#08775A] bg-[#e7f6f1] hover:bg-[#d0efe5] border border-[#c2e7db] rounded-lg cursor-pointer disabled:opacity-50"
-        >
-          {isPreviewing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ClipboardList className="h-3.5 w-3.5" />}
-          Preview
-        </button>
-        <button
-          type="button"
-          onClick={handleGenerate}
-          disabled={!preview || preview.eligible.length === 0 || isGenerating}
-          className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-[#149E75] hover:bg-[#08775A] rounded-lg shadow-xs cursor-pointer disabled:opacity-50"
-        >
-          {isGenerating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PlayCircle className="h-3.5 w-3.5" />}
-          Generate Payroll Run
-        </button>
+        <div className="col-span-2 md:col-span-3 xl:col-span-1 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={handlePreview}
+            disabled={isPreviewing}
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-[#08775A] bg-[#e7f6f1] hover:bg-[#d0efe5] border border-[#c2e7db] rounded-lg cursor-pointer disabled:opacity-50"
+          >
+            {isPreviewing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ClipboardList className="h-3.5 w-3.5" />}
+            Preview
+          </button>
+          <button
+            type="button"
+            onClick={handleGenerate}
+            disabled={!preview || preview.eligible.length === 0 || isGenerating}
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg shadow-xs cursor-pointer disabled:opacity-50"
+          >
+            {isGenerating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PlayCircle className="h-3.5 w-3.5" />}
+            Generate Payroll Run
+          </button>
+        </div>
       </div>
 
-      {preview && (
-        <div className="space-y-3">
-          <div className="flex flex-wrap gap-2">
-            <span className="px-2.5 py-1 rounded-md text-[11px] font-semibold border bg-[#e7f6f1] text-[#0e7d5a] border-[#c2e7db]">
-              Eligible: {preview.staffCount}
-            </span>
-            <span className="px-2.5 py-1 rounded-md text-[11px] font-semibold border bg-slate-100 text-slate-700 border-slate-200">
-              Skipped: {preview.skipped.length}
-            </span>
-            <span className="px-2.5 py-1 rounded-md text-[11px] font-semibold border bg-blue-50 text-blue-700 border-blue-200">
-              Total Net: {formatPKR(Number(preview.totalAmount))}
-            </span>
-          </div>
-
-          <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600 uppercase tracking-wider">
-                    <th className="py-2.5 px-4">Staff</th>
-                    <th className="py-2.5 px-4">Basis</th>
-                    <th className="py-2.5 px-4">Scheduled Days</th>
-                    <th className="py-2.5 px-4">Equivalent Days</th>
-                    <th className="py-2.5 px-4">Base</th>
-                    <th className="py-2.5 px-4">Deduction</th>
-                    <th className="py-2.5 px-4">Tax</th>
-                    <th className="py-2.5 px-4">Net</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-slate-700">
-                  {preview.eligible.map((r) => (
-                    <tr key={r.staffId} className="hover:bg-slate-50/80">
-                      <td className="py-2.5 px-4 font-semibold text-slate-900">{r.fullName} <span className="text-slate-400 font-normal">({r.employeeId})</span></td>
-                      <td className="py-2.5 px-4">{SALARY_BASIS_OPTIONS.find((o) => o.value === r.salaryBasis)?.label || r.salaryBasis}</td>
-                      <td className="py-2.5 px-4">{r.scheduledPayableDays}</td>
-                      <td className="py-2.5 px-4">{r.attendanceEquivalentDays}</td>
-                      <td className="py-2.5 px-4">{formatPKR(Number(r.periodBaseAmount))}</td>
-                      <td className="py-2.5 px-4 text-red-600">-{formatPKR(Number(r.attendanceDeductions))}</td>
-                      <td className="py-2.5 px-4 text-amber-700">-{formatPKR(Number(r.tax))}</td>
-                      <td className="py-2.5 px-4 font-bold text-[#08775A]">{formatPKR(Number(r.netAmount))}</td>
-                    </tr>
-                  ))}
-                  {preview.eligible.length === 0 && (
-                    <tr><td colSpan={8} className="py-10 text-center text-slate-500">No eligible staff for this period.</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {preview.skipped.length > 0 && (
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-800">
-              <p className="font-bold mb-1.5">Skipped ({preview.skipped.length}) — never silently dropped:</p>
-              <ul className="space-y-1">
-                {preview.skipped.map((s) => (
-                  <li key={s.staffId}>• {s.fullName} ({s.employeeId}) — {s.reason}</li>
-                ))}
-              </ul>
-            </div>
-          )}
+      {isPreviewing ? (
+        <div className="bg-white rounded-xl border border-slate-200 p-10 flex items-center justify-center gap-2 text-slate-400 shadow-xs">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span className="text-xs">Calculating payroll…</span>
         </div>
+      ) : !preview ? (
+        <div className="bg-white rounded-xl border border-dashed border-slate-300 p-10 text-center text-sm text-slate-400">
+          Choose a period and press <span className="font-semibold text-slate-600">Preview</span> to see each staff member's salary before generating.
+        </div>
+      ) : (
+        <>
+          <TableSection
+            icon={ClipboardList}
+            title="Payroll Preview"
+            note={`${preview.staffCount} eligible · ${preview.skipped.length} skipped`}
+            head={
+              <>
+                <th className={TH}>Staff</th>
+                <th className={TH}>Emp ID</th>
+                <th className={TH}>Salary Type</th>
+                <th className={`${TH} text-center`}>Sched. Days</th>
+                <th className={`${TH} text-center`}>Present Days</th>
+                <th className={`${TH} text-right`}>Base Salary</th>
+                <th className={`${TH} text-right`}>Attendance Ded.</th>
+                <th className={`${TH} text-right`}>Allowance</th>
+                <th className={`${TH} text-right`}>Gross</th>
+                <th className={`${TH} text-right`}>Tax</th>
+                <th className={`${TH} text-right`}>Other Ded.</th>
+                <th className={`${TH} text-right`}>Net Payable</th>
+              </>
+            }
+            foot={
+              preview.eligible.length > 0 ? (
+                <>
+                  <TotalLabel />
+                  <td className={TD} colSpan={5} />
+                  <td className={`${TD} ${AMT}`}>{formatPKR(sum('periodBaseAmount'))}</td>
+                  <td className={`${TD} ${AMT} text-rose-700`}>({formatPKR(sum('attendanceDeductions'))})</td>
+                  <td className={`${TD} ${AMT}`}>{formatPKR(sum('allowances'))}</td>
+                  <td className={`${TD} ${AMT}`}>{formatPKR(sum('grossAmount'))}</td>
+                  <td className={`${TD} ${AMT} text-amber-700`}>({formatPKR(sum('tax'))})</td>
+                  <td className={`${TD} ${AMT} text-rose-700`}>({formatPKR(sum('otherDeductions'))})</td>
+                  <td className={`${TD} ${AMT} text-[15px] text-[#08775A]`}>{formatPKR(Number(preview.totalAmount))}</td>
+                </>
+              ) : undefined
+            }
+          >
+            {preview.eligible.length === 0 ? (
+              <EmptyRow colSpan={13}>No eligible staff for this period.</EmptyRow>
+            ) : (
+              preview.eligible.map((r, i) => (
+                <tr key={r.staffId} className={ROW}>
+                  <td className={TD_NUM}>{i + 1}</td>
+                  <td className={`${TD} font-semibold text-slate-900`}>{r.fullName}</td>
+                  <td className={`${TD} font-semibold text-[#08775A]`}>{r.employeeId}</td>
+                  <td className={TD}>{basisLabel(r.salaryBasis)}</td>
+                  <td className={`${TD} text-center tabular-nums`}>{r.scheduledPayableDays}</td>
+                  <td className={`${TD} text-center tabular-nums`}>{r.attendanceEquivalentDays}</td>
+                  <td className={`${TD} ${AMT}`}>{formatPKR(Number(r.periodBaseAmount))}</td>
+                  <td className={`${TD} ${AMT} text-rose-700`}>({formatPKR(Number(r.attendanceDeductions))})</td>
+                  <td className={`${TD} ${AMT}`}>{formatPKR(Number(r.allowances))}</td>
+                  <td className={`${TD} ${AMT}`}>{formatPKR(Number(r.grossAmount))}</td>
+                  <td className={`${TD} ${AMT} text-amber-700`}>({formatPKR(Number(r.tax))})</td>
+                  <td className={`${TD} ${AMT} text-rose-700`}>({formatPKR(Number(r.otherDeductions))})</td>
+                  <td className={`${TD} ${AMT} font-bold text-[15px] text-[#08775A]`}>{formatPKR(Number(r.netAmount))}</td>
+                </tr>
+              ))
+            )}
+          </TableSection>
+
+          <SkippedList skipped={preview.skipped} />
+        </>
       )}
     </div>
   );
 };
 
 const RunsTab: React.FC<{
-  departments: Department[];
   toast: ReturnType<typeof useToast>;
   selectedRunId: string | null;
   setSelectedRunId: (id: string | null) => void;
@@ -304,18 +410,18 @@ const RunsTab: React.FC<{
     try {
       await approvePayrollRun(detail.id);
       toast.success('Payroll run approved — slips are now payable.');
-      const refreshed = await getPayrollRun(detail.id);
-      setDetail(refreshed);
+      setDetail(await getPayrollRun(detail.id));
       await loadRuns();
     } catch (err: any) {
       toast.error(err?.response?.data?.error?.message || err?.message || 'Failed to approve run.', 'Approve Error');
     }
   };
 
+  const paidOf = (slip: SalarySlip) => slip.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+
   const openPay = (slip: SalarySlip) => {
-    const paid = slip.payments.reduce((sum, p) => sum + Number(p.amount), 0);
     setPayingSlip(slip);
-    setPayAmount(Number(slip.generatedAmount) - paid);
+    setPayAmount(Number(slip.generatedAmount) - paidOf(slip));
     setPayMethod('BANK');
     setPayReference('');
   };
@@ -336,129 +442,242 @@ const RunsTab: React.FC<{
     }
   };
 
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-      <div className="lg:col-span-1 bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-200 bg-slate-50">
-          <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Payroll Runs</h3>
-        </div>
-        {isLoading ? (
-          <div className="flex items-center justify-center py-10 text-slate-500 gap-2 text-sm"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
-        ) : loadError ? (
-          <div className="p-4 text-xs text-rose-700">{loadError}</div>
-        ) : runs.length === 0 ? (
-          <div className="p-8 text-center text-slate-500 text-xs">No payroll runs generated yet.</div>
-        ) : (
-          <div className="divide-y divide-slate-100 max-h-[560px] overflow-y-auto">
-            {runs.map((r) => (
-              <button
-                key={r.id}
-                onClick={() => setSelectedRunId(r.id)}
-                className={`w-full text-left px-4 py-3 text-xs hover:bg-slate-50 cursor-pointer ${selectedRunId === r.id ? 'bg-[#effaf5]' : ''}`}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-slate-900">{formatDisplayDate(new Date(r.periodStart))} – {formatDisplayDate(new Date(r.periodEnd))}</span>
-                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${STATUS_STYLES[r.status]}`}>{r.status}</span>
-                </div>
-                <div className="text-slate-500 mt-0.5">{r.staffCount} staff · {formatPKR(Number(r.totalAmount))}</div>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+  const runsTotal = runs.reduce((s, r) => s + Number(r.totalAmount), 0);
+  const slipTotals = (detail?.lines ?? []).reduce(
+    (t, s) => {
+      const paid = paidOf(s);
+      return {
+        base: t.base + Number(s.baseAmount),
+        ded: t.ded + Number(s.attendanceDeductions),
+        allow: t.allow + Number(s.allowances),
+        tax: t.tax + Number(s.componentBreakdown?.tax ?? 0),
+        other: t.other + Number(s.otherDeductions),
+        net: t.net + Number(s.generatedAmount),
+        paid: t.paid + paid,
+      };
+    },
+    { base: 0, ded: 0, allow: 0, tax: 0, other: 0, net: 0, paid: 0 },
+  );
 
-      <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-        {!detail ? (
-          <div className="flex items-center justify-center py-20 text-slate-400 text-sm">Select a run to view its salary slips.</div>
-        ) : (
-          <div>
-            <div className="px-4 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900">{formatDisplayDate(new Date(detail.periodStart))} – {formatDisplayDate(new Date(detail.periodEnd))}</h3>
-                <p className="text-[11px] text-slate-500">{detail.periodType} · Generated by {detail.generatedByUser?.username || 'System'}</p>
-              </div>
-              {detail.status === 'GENERATED' ? (
-                <button type="button" onClick={handleApprove} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-[#149E75] hover:bg-[#08775A] rounded-lg cursor-pointer">
+  return (
+    <div className="space-y-4">
+      {/* Runs list */}
+      {loadError ? (
+        <div className="bg-white rounded-xl border border-rose-200 p-6 text-center text-xs text-rose-700 shadow-xs">
+          {loadError}{' '}
+          <button type="button" onClick={loadRuns} className="font-semibold text-[#08775A] hover:underline">Retry</button>
+        </div>
+      ) : isLoading ? (
+        <div className="bg-white rounded-xl border border-slate-200 p-10 flex items-center justify-center gap-2 text-slate-400 shadow-xs">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span className="text-xs">Loading payroll runs…</span>
+        </div>
+      ) : (
+        <TableSection
+          icon={History}
+          title="Payroll Runs"
+          note={`${runs.length} run${runs.length === 1 ? '' : 's'}`}
+          head={
+            <>
+              <th className={TH}>Period</th>
+              <th className={TH}>Type</th>
+              <th className={TH}>Department / Category</th>
+              <th className={`${TH} text-center`}>Staff</th>
+              <th className={TH}>Generated By</th>
+              <th className={TH}>Status</th>
+              <th className={`${TH} text-right`}>Total Net</th>
+              <th className={`${TH} text-center`}>Action</th>
+            </>
+          }
+          foot={
+            runs.length > 0 ? (
+              <>
+                <TotalLabel />
+                <td className={TD} colSpan={6} />
+                <td className={`${TD} ${AMT} text-[15px]`}>{formatPKR(runsTotal)}</td>
+                <td className={TD} />
+              </>
+            ) : undefined
+          }
+        >
+          {runs.length === 0 ? (
+            <EmptyRow colSpan={9}>No payroll runs generated yet.</EmptyRow>
+          ) : (
+            runs.map((r, i) => {
+              const active = selectedRunId === r.id;
+              return (
+                <tr key={r.id} className={`${ROW} cursor-pointer ${active ? 'bg-[#effaf5]' : ''}`} onClick={() => setSelectedRunId(r.id)}>
+                  <td className={TD_NUM}>{i + 1}</td>
+                  <td className={`${TD} font-semibold text-slate-900`}>{periodLabel(r.periodStart, r.periodEnd)}</td>
+                  <td className={TD}>{r.periodType}</td>
+                  <td className={`${TD} text-slate-500`}>{[r.department?.name, r.category].filter(Boolean).join(' · ') || 'All'}</td>
+                  <td className={`${TD} text-center tabular-nums`}>{r.staffCount}</td>
+                  <td className={`${TD} text-slate-500`}>{r.generatedByUser?.username || 'System'}</td>
+                  <td className={TD}><StatusBadge status={r.status} /></td>
+                  <td className={`${TD} ${AMT} font-bold`}>{formatPKR(Number(r.totalAmount))}</td>
+                  <td className={`${TD} text-center`}>
+                    <span className={`inline-flex items-center gap-0.5 text-xs font-semibold ${active ? 'text-[#08775A]' : 'text-slate-500'}`}>
+                      {active ? 'Viewing' : 'View'} <ChevronRight className="h-3.5 w-3.5" />
+                    </span>
+                  </td>
+                </tr>
+              );
+            })
+          )}
+        </TableSection>
+      )}
+
+      {/* Selected run's salary slips */}
+      {detail && (
+        <>
+          <TableSection
+            icon={Banknote}
+            title={`Salary Slips — ${periodLabel(detail.periodStart, detail.periodEnd)}`}
+            note={`${detail.periodType} · by ${detail.generatedByUser?.username || 'System'}`}
+            actions={
+              detail.status === 'GENERATED' ? (
+                <button
+                  type="button"
+                  onClick={handleApprove}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold text-[#08775A] bg-white hover:bg-emerald-50 rounded-md cursor-pointer"
+                >
                   <CheckCircle2 className="h-3.5 w-3.5" /> Approve Run
                 </button>
               ) : (
-                <span className="inline-flex items-center gap-1 text-xs font-semibold text-[#08775A]"><CheckCircle2 className="h-4 w-4" /> Approved</span>
-              )}
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600 uppercase tracking-wider">
-                    <th className="py-2.5 px-4">Staff</th>
-                    <th className="py-2.5 px-4">Net Amount</th>
-                    <th className="py-2.5 px-4">Status</th>
-                    <th className="py-2.5 px-4 text-right">Action</th>
+                <span className="inline-flex items-center gap-1 text-xs font-semibold text-white">
+                  <CheckCircle2 className="h-4 w-4" /> Approved
+                </span>
+              )
+            }
+            head={
+              <>
+                <th className={TH}>Staff</th>
+                <th className={TH}>Emp ID</th>
+                <th className={`${TH} text-right`}>Base Salary</th>
+                <th className={`${TH} text-right`}>Attendance Ded.</th>
+                <th className={`${TH} text-right`}>Allowance</th>
+                <th className={`${TH} text-right`}>Tax</th>
+                <th className={`${TH} text-right`}>Other Ded.</th>
+                <th className={`${TH} text-right`}>Net Payable</th>
+                <th className={`${TH} text-right`}>Paid</th>
+                <th className={`${TH} text-right`}>Balance</th>
+                <th className={TH}>Status</th>
+                <th className={`${TH} text-center`}>Action</th>
+              </>
+            }
+            foot={
+              detail.lines.length > 0 ? (
+                <>
+                  <TotalLabel />
+                  <td className={TD} colSpan={2} />
+                  <td className={`${TD} ${AMT}`}>{formatPKR(slipTotals.base)}</td>
+                  <td className={`${TD} ${AMT} text-rose-700`}>({formatPKR(slipTotals.ded)})</td>
+                  <td className={`${TD} ${AMT}`}>{formatPKR(slipTotals.allow)}</td>
+                  <td className={`${TD} ${AMT} text-amber-700`}>({formatPKR(slipTotals.tax)})</td>
+                  <td className={`${TD} ${AMT} text-rose-700`}>({formatPKR(slipTotals.other)})</td>
+                  <td className={`${TD} ${AMT} text-[15px] text-[#08775A]`}>{formatPKR(slipTotals.net)}</td>
+                  <td className={`${TD} ${AMT}`}>{formatPKR(slipTotals.paid)}</td>
+                  <td className={`${TD} ${AMT} text-rose-700`}>{formatPKR(slipTotals.net - slipTotals.paid)}</td>
+                  <td className={TD} colSpan={2} />
+                </>
+              ) : undefined
+            }
+          >
+            {detail.lines.length === 0 ? (
+              <EmptyRow colSpan={13}>No salary slips in this run.</EmptyRow>
+            ) : (
+              detail.lines.map((slip, i) => {
+                const paid = paidOf(slip);
+                const balance = Number(slip.generatedAmount) - paid;
+                const canPay = slip.status === 'APPROVED' || slip.status === 'PARTIALLY_PAID';
+                return (
+                  <tr key={slip.id} className={ROW}>
+                    <td className={TD_NUM}>{i + 1}</td>
+                    <td className={`${TD} font-semibold text-slate-900`}>{slip.staff.fullName}</td>
+                    <td className={`${TD} font-semibold text-[#08775A]`}>{slip.staff.employeeId}</td>
+                    <td className={`${TD} ${AMT}`}>{formatPKR(Number(slip.baseAmount))}</td>
+                    <td className={`${TD} ${AMT} text-rose-700`}>({formatPKR(Number(slip.attendanceDeductions))})</td>
+                    <td className={`${TD} ${AMT}`}>{formatPKR(Number(slip.allowances))}</td>
+                    <td className={`${TD} ${AMT} text-amber-700`}>({formatPKR(Number(slip.componentBreakdown?.tax ?? 0))})</td>
+                    <td className={`${TD} ${AMT} text-rose-700`}>({formatPKR(Number(slip.otherDeductions))})</td>
+                    <td className={`${TD} ${AMT} font-bold text-[15px] text-[#08775A]`}>{formatPKR(Number(slip.generatedAmount))}</td>
+                    <td className={`${TD} ${AMT}`}>{formatPKR(paid)}</td>
+                    <td className={`${TD} ${AMT} ${balance > 0 ? 'text-rose-700' : 'text-slate-400'}`}>{formatPKR(balance)}</td>
+                    <td className={TD}><StatusBadge status={slip.status} /></td>
+                    <td className={`${TD} text-center`}>
+                      {canPay ? (
+                        <button
+                          type="button"
+                          onClick={() => openPay(slip)}
+                          className="inline-flex items-center gap-1 px-3 py-1 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded-md cursor-pointer"
+                        >
+                          <Banknote className="h-3.5 w-3.5" /> Pay
+                        </button>
+                      ) : (
+                        <span className="text-xs text-slate-400">{slip.status === 'PAID' ? 'Paid' : 'Approve first'}</span>
+                      )}
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-slate-700">
-                  {detail.lines.map((slip) => {
-                    const paid = slip.payments.reduce((sum, p) => sum + Number(p.amount), 0);
-                    const canPay = slip.status === 'APPROVED' || slip.status === 'PARTIALLY_PAID';
-                    return (
-                      <tr key={slip.id} className="hover:bg-slate-50/80">
-                        <td className="py-2.5 px-4 font-semibold text-slate-900">{slip.staff.fullName} <span className="text-slate-400 font-normal">({slip.staff.employeeId})</span></td>
-                        <td className="py-2.5 px-4 font-bold">{formatPKR(Number(slip.generatedAmount))}{paid > 0 && <div className="text-[10px] font-normal text-slate-400">Paid: {formatPKR(paid)}</div>}</td>
-                        <td className="py-2.5 px-4">
-                          <span className={`px-2 py-0.5 rounded-md text-[11px] font-semibold border ${STATUS_STYLES[slip.status]}`}>{slip.status.replace('_', ' ')}</span>
-                        </td>
-                        <td className="py-2.5 px-4 text-right">
-                          {canPay && (
-                            <button type="button" onClick={() => openPay(slip)} className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-white bg-[#149E75] hover:bg-[#08775A] rounded-md cursor-pointer">
-                              <Banknote className="h-3 w-3" /> Pay
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            {detail.skippedStaff.length > 0 && (
-              <div className="p-4 border-t border-slate-200 bg-amber-50 text-[11px] text-amber-800">
-                <p className="font-bold mb-1">Skipped at generation:</p>
-                {detail.skippedStaff.map((s) => (
-                  <div key={s.staffId}>• {s.fullName} — {s.reason}</div>
-                ))}
-              </div>
+                );
+              })
             )}
-          </div>
-        )}
-      </div>
+          </TableSection>
+
+          <SkippedList skipped={detail.skippedStaff} />
+        </>
+      )}
 
       {payingSlip && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl max-w-sm w-full shadow-2xl border border-slate-200 overflow-hidden">
-            <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200">
-              <h3 className="font-bold text-slate-900 text-sm">Record Salary Payment</h3>
-              <p className="text-[11px] text-slate-500">{payingSlip.staff.fullName} ({payingSlip.staff.employeeId})</p>
+          <div className="bg-white rounded-xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden font-montserrat">
+            <div className="bg-gradient-to-r from-[#0a4636] to-[#08775A] text-white px-5 py-3">
+              <h3 className="font-bold text-sm">Record Salary Payment</h3>
+              <p className="text-xs text-emerald-100">{payingSlip.staff.fullName} ({payingSlip.staff.employeeId})</p>
             </div>
+            <table className="w-full text-sm border-b border-slate-200">
+              <tbody>
+                <tr className="border-b border-slate-100">
+                  <td className="py-2 px-5 text-slate-500">Net Payable</td>
+                  <td className="py-2 px-5 text-right font-semibold tabular-nums">{formatPKR(Number(payingSlip.generatedAmount))}</td>
+                </tr>
+                <tr className="border-b border-slate-100">
+                  <td className="py-2 px-5 text-slate-500">Already Paid</td>
+                  <td className="py-2 px-5 text-right font-semibold tabular-nums">{formatPKR(paidOf(payingSlip))}</td>
+                </tr>
+                <tr className="bg-slate-50">
+                  <td className="py-2 px-5 font-bold text-slate-800">Balance</td>
+                  <td className="py-2 px-5 text-right font-bold tabular-nums text-rose-700">
+                    {formatPKR(Number(payingSlip.generatedAmount) - paidOf(payingSlip))}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
             <div className="p-5 space-y-3.5">
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Amount (PKR)</label>
-                <input type="number" onWheel={(e) => e.currentTarget.blur()} min={0} value={payAmount} onChange={(e) => setPayAmount(e.target.value === '' ? '' : Number(e.target.value))} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono bg-white" />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Method</label>
-                <select value={payMethod} onChange={(e) => setPayMethod(e.target.value)} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white">
-                  <option value="CASH">Cash</option>
-                  <option value="CARD">Card</option>
-                  <option value="BANK">Bank Transfer</option>
-                  <option value="ONLINE">Online</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Reference (optional)</label>
-                <input type="text" value={payReference} onChange={(e) => setPayReference(e.target.value)} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white" />
-              </div>
-              <div className="flex justify-end gap-2 pt-2 border-t border-slate-200">
-                <button type="button" onClick={() => setPayingSlip(null)} className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer">Cancel</button>
-                <button type="button" disabled={isSubmitting} onClick={submitPay} className="px-3.5 py-1.5 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg cursor-pointer disabled:opacity-50">
+              <TextInput
+                label="Amount (PKR)"
+                type="number"
+                min={0}
+                onWheel={(e) => e.currentTarget.blur()}
+                value={payAmount}
+                onChange={(e) => setPayAmount(e.target.value === '' ? '' : Number(e.target.value))}
+              />
+              <Select
+                label="Method"
+                options={[
+                  { value: 'CASH', label: 'Cash' },
+                  { value: 'CARD', label: 'Card' },
+                  { value: 'BANK', label: 'Bank Transfer' },
+                  { value: 'ONLINE', label: 'Online' },
+                ]}
+                value={payMethod}
+                onChange={(e) => setPayMethod(e.target.value)}
+              />
+              <TextInput label="Reference (optional)" type="text" value={payReference} onChange={(e) => setPayReference(e.target.value)} />
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
+                <button type="button" onClick={() => setPayingSlip(null)} className="px-3.5 py-2 text-xs font-medium text-slate-600 border border-slate-300 hover:bg-slate-100 rounded-lg cursor-pointer">
+                  Cancel
+                </button>
+                <button type="button" disabled={isSubmitting} onClick={submitPay} className="px-4 py-2 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg cursor-pointer disabled:opacity-50">
                   {isSubmitting ? 'Saving…' : 'Record Payment'}
                 </button>
               </div>

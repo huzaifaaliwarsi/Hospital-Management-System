@@ -28,6 +28,8 @@ export const SalaryProfileModal: React.FC<SalaryProfileModalProps> = ({ isOpen, 
   const [baseAmount, setBaseAmount] = useState<number | ''>('');
   const [salaryTaxMethod, setSalaryTaxMethod] = useState<SalaryTaxMethod>('');
   const [salaryTaxValue, setSalaryTaxValue] = useState<number | ''>('');
+  const [fixedAllowance, setFixedAllowance] = useState<number | ''>('');
+  const [fixedDeduction, setFixedDeduction] = useState<number | ''>('');
   const [effectiveFrom, setEffectiveFrom] = useState(() => formatDateISO(getHospitalCurrentDate()));
 
   const [error, setError] = useState<string | null>(null);
@@ -47,11 +49,15 @@ export const SalaryProfileModal: React.FC<SalaryProfileModalProps> = ({ isOpen, 
           setBaseAmount(Number(current.baseAmount) || '');
           setSalaryTaxMethod((current.salaryTaxMethod as SalaryTaxMethod) || '');
           setSalaryTaxValue(current.salaryTaxValue != null ? Number(current.salaryTaxValue) : '');
+          setFixedAllowance(Number(current.fixedAllowance) || '');
+          setFixedDeduction(Number(current.fixedDeduction) || '');
         } else {
           setSalaryBasis('MONTHLY');
           setBaseAmount('');
           setSalaryTaxMethod('');
           setSalaryTaxValue('');
+          setFixedAllowance('');
+          setFixedDeduction('');
         }
       })
       .catch(() => setCurrentProfile(null))
@@ -64,7 +70,7 @@ export const SalaryProfileModal: React.FC<SalaryProfileModalProps> = ({ isOpen, 
     e.preventDefault();
     setError(null);
 
-    if (baseAmount === '' || Number(baseAmount) < 0) {
+    if (baseAmount === '' || Number(baseAmount) <= 0) {
       setError('Base salary amount is required.');
       return;
     }
@@ -79,6 +85,8 @@ export const SalaryProfileModal: React.FC<SalaryProfileModalProps> = ({ isOpen, 
       baseAmount: Number(baseAmount),
       salaryTaxMethod,
       salaryTaxValue,
+      fixedAllowance: fixedAllowance === '' ? 0 : Number(fixedAllowance),
+      fixedDeduction: fixedDeduction === '' ? 0 : Number(fixedDeduction),
       effectiveFrom,
     });
     setIsSaving(false);
@@ -198,6 +206,31 @@ export const SalaryProfileModal: React.FC<SalaryProfileModalProps> = ({ isOpen, 
                       value={salaryTaxValue}
                       onChange={(e) => setSalaryTaxValue(e.target.value === '' ? '' : Number(e.target.value))}
                       className="w-full px-3 py-2 bg-[#f6f8f7] border border-[#e2eae5] rounded-lg text-xs font-mono text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#129b70]/20 focus:border-[#129b70] disabled:opacity-50"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-[#52665e] mb-1">Fixed Allowance (PKR)</label>
+                    <input
+                      type="number"
+                      onWheel={(e) => e.currentTarget.blur()}
+                      min={0}
+                      value={fixedAllowance}
+                      onChange={(e) => setFixedAllowance(e.target.value === '' ? '' : Number(e.target.value))}
+                      className="w-full px-3 py-2 bg-[#f6f8f7] border border-[#e2eae5] rounded-lg text-xs font-mono text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#129b70]/20 focus:border-[#129b70]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-[#52665e] mb-1">Fixed Deduction (PKR)</label>
+                    <input
+                      type="number"
+                      onWheel={(e) => e.currentTarget.blur()}
+                      min={0}
+                      value={fixedDeduction}
+                      onChange={(e) => setFixedDeduction(e.target.value === '' ? '' : Number(e.target.value))}
+                      className="w-full px-3 py-2 bg-[#f6f8f7] border border-[#e2eae5] rounded-lg text-xs font-mono text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#129b70]/20 focus:border-[#129b70]"
                     />
                   </div>
                 </div>

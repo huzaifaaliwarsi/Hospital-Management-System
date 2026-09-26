@@ -13,6 +13,19 @@ vi.mock('../../ch-sharif-and-saeed-hospital---hms/src/services/apiClient', () =>
 vi.mock('../../ch-sharif-and-saeed-hospital---hms/src/services/departmentService', () => ({ DepartmentService: {} }));
 vi.mock('@/db/client', () => ({
   prisma: {
+    // staffService.create writes the Staff row (plus any wizard sections)
+    // inside a transaction, then re-reads it through the repository.
+    $transaction: vi.fn(async (cb: (tx: unknown) => unknown) =>
+      cb({
+        staff: {
+          create: vi.fn(async ({ data }: { data: unknown }) => {
+            const saved = await mocks.create(data);
+            mocks.findById.mockResolvedValueOnce(saved);
+            return { id: 'new-staff-id' };
+          }),
+        },
+      }),
+    ),
     staff: {
       // No existing staff shares a CNIC in these fixtures.
       findUnique: vi.fn(async () => null),

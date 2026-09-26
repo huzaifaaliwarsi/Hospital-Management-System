@@ -6,6 +6,7 @@ import { notificationsService } from '../notifications/notifications.service';
 import { AuthenticationError, ConflictError, NotFoundError, ValidationError } from '@/shared/errors/AppError';
 import { resolvePanelCoverage } from '@/shared/panelCoverage';
 import { assertMembershipEligible } from '@/shared/panelMembership';
+import { patientPaymentStatus, patientResponsibility } from '@/shared/invoicePaymentStatus';
 import { assertCaseAuthorization, caseAuthorizationIneligibilityReasons } from '@/shared/panelAuthorization';
 import type {
   CreatePlannedAdmissionBody,
@@ -61,11 +62,10 @@ async function recalcInvoiceTotals(
 
   const newStatus = newTotal.equals(0)
     ? 'PAID'
-    : invoice.paidTotal.greaterThanOrEqualTo(newTotal) && newTotal.greaterThan(0)
-      ? 'PAID'
-      : invoice.paidTotal.greaterThan(0)
-        ? 'PARTIALLY_PAID'
-        : 'UNPAID';
+    : patientPaymentStatus(
+        { panelPatientId: invoice.panelPatientId, total: newTotal, patientShare: newPatientShare, panelReceivable: newPanelReceivable },
+        invoice.paidTotal,
+      );
 
   await tx.hospitalInvoice.update({
     where: { id: invoice.id },
@@ -287,7 +287,44 @@ async function postInitialRoomChargeIfApplicable(tx: Prisma.TransactionClient, a
   await recalcInvoiceTotals(tx, invoice, [...invoice.lines, line]);
 }
 
+/**
+ * v7.2 §2.4 — resolves the doctor from their own discharge credential.
+ * `db/client.ts`'s global `omit` hides `clinicalAuthPasswordHash` from every
+ * Staff query by design; this is the one legitimate server-side read that
+ * needs it, so it is un-omitted for this query only. Same generic error for
+ * unknown user / wrong password / inactive credential.
+ */
+async function findDoctorByDischargeCredential(db: Prisma.TransactionClient | typeof prisma, username: string, password: string) {
+  const doctor = await db.staff.findUnique({
+    where: { clinicalAuthUsername: username.trim() },
+    include: { department: true },
+    omit: { clinicalAuthPasswordHash: false },
+  });
+  if (!doctor || !doctor.isActive || !doctor.clinicalAuthActive || !doctor.clinicalAuthPasswordHash) {
+    throw new AuthenticationError('Invalid doctor credentials');
+  }
+  const passwordOk = await bcrypt.compare(password, doctor.clinicalAuthPasswordHash);
+  if (!passwordOk) throw new AuthenticationError('Invalid doctor credentials');
+  return doctor;
+}
+
 export const admissionService = {
+  /**
+   * Discharge popup step 1 — confirms the credential and returns only who the
+   * doctor is, so the Admission user sees the authorizing doctor's name before
+   * the Discharge Summary is written. Nothing is changed.
+   */
+  async verifyDischargeDoctor(username: string, password: string) {
+    const doctor = await findDoctorByDischargeCredential(prisma, username, password);
+    return {
+      staffId: doctor.id,
+      employeeId: doctor.employeeId,
+      fullName: doctor.fullName,
+      designation: doctor.designation,
+      department: doctor.department?.name ?? null,
+    };
+  },
+
   /**
    * Create Planned Inpatient Admission (§4.7 Sub-flow A, D16 p.10)
    * Note: Tentative bed preference is recorded, but bed becomes OCCUPIED
@@ -1368,7 +1405,11 @@ export const admissionService = {
     }
 
     // 1. Evaluate billing balance across this admission
-    const totalCharges = admission.hospitalInvoices.reduce((sum: Decimal, inv: any) => sum.plus(inv.total), new Decimal(0));
+    // Only the PATIENT's responsibility gates billing clearance — an open panel
+    // receivable is the company's debt, realized later through remittances,
+    // and never blocks the patient's exit (panel.md §5.3: patient exit is not
+    // company settlement).
+    const totalCharges = admission.hospitalInvoices.reduce((sum: Decimal, inv: any) => sum.plus(patientResponsibility(inv)), new Decimal(0));
     const invoiceIds = admission.hospitalInvoices.map((inv: any) => inv.id);
     const receipts = await tx.paymentReceipt.aggregate({
       where: {
@@ -1475,21 +1516,7 @@ export const admissionService = {
         throw new ValidationError('Clinical discharge is only permitted for an ACTIVE admission');
       }
 
-      // `db/client.ts`'s global `omit` structurally hides
-      // `clinicalAuthPasswordHash` from every Staff query (by design, so it
-      // can never leak through a `doctor: true`/`performedBy: true`
-      // include) — this is the one legitimate server-side read that
-      // actually needs it, so it's explicitly un-omitted for this query only.
-      const doctor = await tx.staff.findUnique({
-        where: { clinicalAuthUsername: body.doctorUsername },
-        include: { department: true },
-        omit: { clinicalAuthPasswordHash: false },
-      });
-      if (!doctor || !doctor.clinicalAuthActive || !doctor.clinicalAuthPasswordHash) {
-        throw new AuthenticationError('Invalid doctor credentials');
-      }
-      const passwordOk = await bcrypt.compare(body.doctorPassword, doctor.clinicalAuthPasswordHash);
-      if (!passwordOk) throw new AuthenticationError('Invalid doctor credentials');
+      const doctor = await findDoctorByDischargeCredential(tx, body.doctorUsername, body.doctorPassword);
 
       const summary = await tx.dischargeSummary.create({
         data: {

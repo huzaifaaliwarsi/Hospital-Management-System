@@ -403,6 +403,9 @@ model Staff {
   // doctor performs this service" fact, deliberately separate from
   // `DoctorCommissionRule` (the rate/eligibility for that service).
   staffServices    StaffService[]
+  // Staff Add Wizard steps 6 and 9 (Staff Portal Access Salary Commission.pdf §2, §4, §8).
+  weeklySchedule   StaffWeeklySchedule[]
+  bankAccounts     StaffBankAccount[]
 
   createdAt DateTime @default(now()) @map("created_at")
   createdBy String?  @map("created_by")
@@ -520,6 +523,11 @@ model StaffSalaryProfile {
   salaryTaxMethod        String?         @map("salary_tax_method") // PERCENTAGE | FIXED
   salaryTaxValue         Decimal?        @map("salary_tax_value") @db.Decimal(14, 2)
   salaryTaxEffectiveFrom DateTime?       @map("salary_tax_effective_from") @db.Date
+  // PDF §10/§11 — recurring amounts. For Monthly types they are per month
+  // (prorated for partial periods); for Daily types they apply per payroll run.
+  fixedAllowance         Decimal         @default(0) @map("fixed_allowance") @db.Decimal(14, 2)
+  fixedDeduction         Decimal         @default(0) @map("fixed_deduction") @db.Decimal(14, 2)
+  paymentMethod          String?         @map("payment_method") // CASH | BANK | ONLINE
   effectiveFrom          DateTime        @map("effective_from") @db.Date
   effectiveTo            DateTime?       @map("effective_to") @db.Date // NULL = current
 
@@ -2357,3 +2365,49 @@ model HospitalNotification {
   @@map("hospital_notifications")
 }
 
+
+/// Staff Add Wizard step 6 — day-wise timing (Staff Portal Access Salary Commission.pdf §8).
+/// One row per weekday; `useShiftDefault` rows take their times from the assigned Shift.
+/// `isWorking = false` is a weekly OFF day and is excluded from scheduled payable days.
+model StaffWeeklySchedule {
+  id              String   @id @default(uuid())
+  staffId         String   @map("staff_id")
+  staff           Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  dayOfWeek       String   @map("day_of_week") // Monday..Sunday
+  isWorking       Boolean  @default(true) @map("is_working")
+  useShiftDefault Boolean  @default(true) @map("use_shift_default")
+  startTime       String?  @map("start_time") // HH:mm, only when overriding the shift
+  endTime         String?  @map("end_time")
+  breakMinutes    Int      @default(0) @map("break_minutes")
+  effectiveFrom   DateTime @map("effective_from") @db.Date
+  createdAt       DateTime @default(now()) @map("created_at")
+  createdBy       String?  @map("created_by")
+
+  @@unique([staffId, dayOfWeek])
+  @@map("staff_weekly_schedules")
+}
+
+/// Staff Add Wizard step 9 — payment account (PDF §4). Effective-dated: saving a
+/// new account closes the previous current one instead of overwriting it.
+model StaffBankAccount {
+  id                     String    @id @default(uuid())
+  staffId                String    @map("staff_id")
+  staff                  Staff     @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  paymentMethod          String    @map("payment_method") // CASH | BANK | ONLINE
+  bankName               String?   @map("bank_name")
+  branchName             String?   @map("branch_name")
+  accountTitle           String?   @map("account_title")
+  accountNumber          String?   @map("account_number")
+  iban                   String?
+  walletAccount          String?   @map("wallet_account")
+  preferredForSalary     Boolean   @default(true) @map("preferred_for_salary")
+  preferredForCommission Boolean   @default(true) @map("preferred_for_commission")
+  isActive               Boolean   @default(true) @map("is_active")
+  effectiveFrom          DateTime  @map("effective_from") @db.Date
+  effectiveTo            DateTime? @map("effective_to") @db.Date
+  createdAt              DateTime  @default(now()) @map("created_at")
+  createdBy              String?   @map("created_by")
+
+  @@index([staffId, effectiveFrom])
+  @@map("staff_bank_accounts")
+}

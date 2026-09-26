@@ -8,6 +8,7 @@ import type {
   ListAccrualsQuery,
   PayAccrualBody,
 } from './commission.schemas';
+import { isCommissionBasis } from '@/modules/identity/staff.schemas';
 
 export const commissionService = {
   /**
@@ -34,6 +35,16 @@ export const commissionService = {
     if (existing) return existing;
 
     const now = new Date();
+
+    // PDF §9 — only "+ Commission" salary types earn commission. A staff member
+    // whose current Salary Profile is plain Monthly/Daily earns none, even if
+    // an old rule is still open. (No salary profile yet = legacy commission-only doctor.)
+    const salaryProfile = await tx.staffSalaryProfile.findFirst({
+      where: { staffId: doctorStaffId, effectiveFrom: { lte: now }, OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }] },
+      orderBy: { effectiveFrom: 'desc' },
+      select: { salaryBasis: true },
+    });
+    if (salaryProfile && !isCommissionBasis(salaryProfile.salaryBasis)) return null;
 
     // 2. Query doctor-specific rule for this specific service rate
     let rule = await tx.doctorCommissionRule.findFirst({
@@ -139,6 +150,14 @@ export const commissionService = {
   },
 
   async createCommissionRule(body: CreateCommissionRuleBody, actorId: string) {
+    const salaryProfile = await prisma.staffSalaryProfile.findFirst({
+      where: { staffId: body.staffId, effectiveTo: null },
+      orderBy: { effectiveFrom: 'desc' },
+      select: { salaryBasis: true },
+    });
+    if (salaryProfile && !isCommissionBasis(salaryProfile.salaryBasis)) {
+      throw new ValidationError('This staff member is on a salary type without commission. Change the Salary Type to Monthly + Commission or Daily + Commission first.');
+    }
     return prisma.doctorCommissionRule.create({
       data: {
         staffId: body.staffId,

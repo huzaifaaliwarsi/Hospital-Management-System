@@ -16,7 +16,10 @@ interface EligibleRow {
   periodBaseAmount: Decimal;
   earnedBase: Decimal;
   attendanceDeductions: Decimal;
+  allowances: Decimal;
+  grossAmount: Decimal;
   tax: Decimal;
+  otherDeductions: Decimal;
   netAmount: Decimal;
   taxMethod: string | null;
   taxValue: Decimal | null;
@@ -31,30 +34,70 @@ interface SkippedRow {
 }
 
 const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const DAY_MS = 86_400_000;
+
+const utcDay = (d: Date) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+const monthKey = (t: number) => {
+  const d = new Date(t);
+  return `${d.getUTCFullYear()}-${d.getUTCMonth()}`;
+};
 
 /**
- * Real "Scheduled Payable Days" for the period (staff.md §11) — every
- * calendar day in [periodStart, periodEnd] except the staff member's
- * assigned Shift's weekly-off days. Falls back to every calendar day when no
- * Shift is assigned. This is deliberately NOT "however many days happen to
- * have an attendance record" — that collapsed to paying a full month's
- * salary for a single marked day, which is wrong (staff.md's own worked
- * example divides by the days actually in the period).
+ * A staff member's working weekdays (PDF §8): their own Weekly Timing when set
+ * (OFF days excluded), otherwise their Shift's weekly-off days, otherwise every day.
  */
-function countScheduledDays(periodStart: Date, periodEnd: Date, weeklyOffDays: string[]): number {
-  const offSet = new Set(weeklyOffDays);
-  let count = 0;
-  const cursor = new Date(Date.UTC(periodStart.getUTCFullYear(), periodStart.getUTCMonth(), periodStart.getUTCDate()));
-  const end = new Date(Date.UTC(periodEnd.getUTCFullYear(), periodEnd.getUTCMonth(), periodEnd.getUTCDate()));
-  while (cursor.getTime() <= end.getTime()) {
-    const dayName = WEEKDAY_NAMES[cursor.getUTCDay()] as string;
-    if (!offSet.has(dayName)) count += 1;
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-  }
-  return Math.max(count, 1); // never divide by zero for a same-day period
+function workingDaySet(schedule: { dayOfWeek: string; isWorking: boolean }[], shiftOffDays: string[]): Set<string> {
+  if (schedule.length > 0) return new Set(schedule.filter((d) => d.isWorking).map((d) => d.dayOfWeek));
+  const off = new Set(shiftOffDays);
+  return new Set(WEEKDAY_NAMES.filter((d) => !off.has(d)));
 }
 
-/** staff.md §11/§12 — attendance-based salary, per staff, for the given period. Read-only; never persists. */
+/** Scheduled working days in [from, to] (UTC day timestamps, inclusive). */
+function countWorkingDays(from: number, to: number, working: Set<string>): number {
+  let n = 0;
+  for (let t = from; t <= to; t += DAY_MS) {
+    if (working.has(WEEKDAY_NAMES[new Date(t).getUTCDay()] as string)) n += 1;
+  }
+  return n;
+}
+
+/**
+ * For each calendar month the period touches: scheduled days of the whole
+ * month vs. scheduled days that fall inside the period. Monthly salaries are
+ * earned per month (PDF §11 "Monthly Base / Scheduled Payable Days"), so a
+ * 10-day custom run pays 10 days' worth — not a full month — and a run that
+ * crosses a month boundary uses each month's own per-day rate.
+ */
+function monthSlices(periodStart: Date, periodEnd: Date, working: Set<string>) {
+  const start = utcDay(periodStart);
+  const end = utcDay(periodEnd);
+  const slices = new Map<string, { monthDays: number; periodDays: number }>();
+  for (let t = start; t <= end; ) {
+    const d = new Date(t);
+    const monthStart = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
+    const monthEnd = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0);
+    const sliceEnd = Math.min(monthEnd, end);
+    slices.set(monthKey(t), {
+      monthDays: countWorkingDays(monthStart, monthEnd, working),
+      periodDays: countWorkingDays(t, sliceEnd, working),
+    });
+    t = monthEnd + DAY_MS;
+  }
+  return slices;
+}
+
+/**
+ * PDF §11 — attendance-based salary per staff for the period. Read-only; never persists.
+ *
+ *   Attendance Equivalent = Present + Half×0.5 + Paid Leave
+ *   Monthly: per-day = Monthly Base / scheduled days of that month; Daily: per-day = Daily Rate
+ *   Earned Base = per-day × attendance equivalent days
+ *   Gross = Earned Base + Allowance;  Tax% = Gross × %;  Net = Gross − Tax − Deduction
+ *
+ * Fixed allowance / deduction / fixed tax are monthly amounts for Monthly types
+ * (prorated to the period's share of each month) and per-run amounts for Daily
+ * types, matching the PDF's §12 monthly and §13 daily examples.
+ */
 async function computeEligibility(filters: PayrollRunFilters): Promise<{ eligible: EligibleRow[]; skipped: SkippedRow[] }> {
   const staffWhere: Prisma.StaffWhereInput = { isActive: true };
   if (filters.category) staffWhere.category = filters.category;
@@ -67,6 +110,7 @@ async function computeEligibility(filters: PayrollRunFilters): Promise<{ eligibl
       fullName: true,
       employeeId: true,
       assignedShift: { select: { defaultWeeklyOffDays: true } },
+      weeklySchedule: { select: { dayOfWeek: true, isWorking: true } },
     },
   });
   if (staff.length === 0) return { eligible: [], skipped: [] };
@@ -93,9 +137,9 @@ async function computeEligibility(filters: PayrollRunFilters): Promise<{ eligibl
       attendanceDate: { gte: filters.periodStart, lte: filters.periodEnd },
       isApproved: true,
     },
-    select: { staffId: true, status: true },
+    select: { staffId: true, status: true, attendanceDate: true },
   });
-  const attendanceByStaff = new Map<string, { status: string }[]>();
+  const attendanceByStaff = new Map<string, { status: string; attendanceDate: Date }[]>();
   for (const a of attendance) {
     const list = attendanceByStaff.get(a.staffId) ?? [];
     list.push(a);
@@ -104,6 +148,7 @@ async function computeEligibility(filters: PayrollRunFilters): Promise<{ eligibl
 
   const eligible: EligibleRow[] = [];
   const skipped: SkippedRow[] = [];
+  const zero = new Decimal(0);
 
   for (const s of staff) {
     const profile = profileByStaff.get(s.id);
@@ -116,25 +161,58 @@ async function computeEligibility(filters: PayrollRunFilters): Promise<{ eligibl
       skipped.push({ staffId: s.id, fullName: s.fullName, employeeId: s.employeeId, reason: 'No approved attendance in this period' });
       continue;
     }
-    const scheduledPayableDays = countScheduledDays(filters.periodStart, filters.periodEnd, s.assignedShift?.defaultWeeklyOffDays ?? []);
-    const attendanceEquivalentDays = records.reduce((sum, r) => sum + (PAYABLE_EQUIVALENT[r.status] ?? 0), 0);
 
-    // staff.md §9 — 4 salary types (MONTHLY / MONTHLY_COMMISSION / PER_DAY /
-    // PER_DAY_COMMISSION); only the Monthly-vs-Daily half affects this math,
-    // the "+Commission" half is a label only.
-    const isMonthly = profile.salaryBasis.startsWith('MONTHLY');
-    const perDayRate = isMonthly ? profile.baseAmount.div(scheduledPayableDays) : profile.baseAmount;
-    const periodBaseAmount = isMonthly ? profile.baseAmount : profile.baseAmount.mul(scheduledPayableDays);
-    const earnedBase = perDayRate.mul(attendanceEquivalentDays);
-    const attendanceDeductions = periodBaseAmount.minus(earnedBase);
-
-    let tax = new Decimal(0);
-    if (profile.salaryTaxMethod === 'PERCENTAGE' && profile.salaryTaxValue) {
-      tax = earnedBase.mul(profile.salaryTaxValue).div(100);
-    } else if (profile.salaryTaxMethod === 'FIXED' && profile.salaryTaxValue) {
-      tax = profile.salaryTaxValue;
+    const working = workingDaySet(s.weeklySchedule, s.assignedShift?.defaultWeeklyOffDays ?? []);
+    const slices = monthSlices(filters.periodStart, filters.periodEnd, working);
+    const scheduledPayableDays = [...slices.values()].reduce((n, m) => n + m.periodDays, 0);
+    if (scheduledPayableDays === 0) {
+      skipped.push({ staffId: s.id, fullName: s.fullName, employeeId: s.employeeId, reason: 'No scheduled working days in this period (all weekly OFF)' });
+      continue;
     }
-    const netAmount = earnedBase.minus(tax);
+
+    const isMonthly = profile.salaryBasis.startsWith('MONTHLY');
+    const base = profile.baseAmount;
+
+    // Attendance equivalent days, grouped by month so each month uses its own per-day rate.
+    const equivByMonth = new Map<string, number>();
+    let attendanceEquivalentDays = 0;
+    for (const r of records) {
+      const eq = PAYABLE_EQUIVALENT[r.status] ?? 0;
+      attendanceEquivalentDays += eq;
+      const key = monthKey(utcDay(r.attendanceDate));
+      equivByMonth.set(key, (equivByMonth.get(key) ?? 0) + eq);
+    }
+
+    let periodBaseAmount = zero;
+    let earnedBase = zero;
+    // Share of a monthly amount that belongs to this period (1 for a full month).
+    let monthFraction = zero;
+    if (isMonthly) {
+      for (const [key, m] of slices) {
+        if (m.monthDays === 0) continue;
+        const perDay = base.div(m.monthDays);
+        periodBaseAmount = periodBaseAmount.plus(perDay.mul(m.periodDays));
+        earnedBase = earnedBase.plus(perDay.mul(equivByMonth.get(key) ?? 0));
+        monthFraction = monthFraction.plus(new Decimal(m.periodDays).div(m.monthDays));
+      }
+    } else {
+      periodBaseAmount = base.mul(scheduledPayableDays);
+      earnedBase = base.mul(attendanceEquivalentDays);
+    }
+    const attendanceDeductions = Decimal.max(periodBaseAmount.minus(earnedBase), zero);
+
+    const scale = (amount: Decimal) => (isMonthly ? amount.mul(monthFraction) : amount);
+    const allowances = scale(profile.fixedAllowance);
+    const otherDeductions = scale(profile.fixedDeduction);
+    const grossAmount = earnedBase.plus(allowances);
+
+    let tax = zero;
+    if (profile.salaryTaxMethod === 'PERCENTAGE' && profile.salaryTaxValue) {
+      tax = grossAmount.mul(profile.salaryTaxValue).div(100);
+    } else if (profile.salaryTaxMethod === 'FIXED' && profile.salaryTaxValue) {
+      tax = scale(profile.salaryTaxValue);
+    }
+    const netAmount = Decimal.max(grossAmount.minus(tax).minus(otherDeductions), zero);
 
     eligible.push({
       staffId: s.id,
@@ -146,7 +224,10 @@ async function computeEligibility(filters: PayrollRunFilters): Promise<{ eligibl
       periodBaseAmount,
       earnedBase,
       attendanceDeductions,
+      allowances,
+      grossAmount,
       tax,
+      otherDeductions,
       netAmount,
       taxMethod: profile.salaryTaxMethod,
       taxValue: profile.salaryTaxValue,
@@ -197,16 +278,19 @@ export const payrollService = {
             periodStart: filters.periodStart,
             periodEnd: filters.periodEnd,
             baseAmount: row.periodBaseAmount,
-            allowances: 0,
+            allowances: row.allowances,
             attendanceDeductions: row.attendanceDeductions,
-            otherDeductions: 0,
+            otherDeductions: row.otherDeductions,
             adjustments: 0,
             generatedAmount: row.netAmount,
             componentBreakdown: {
               periodBaseAmount: row.periodBaseAmount.toNumber(),
               earnedBase: row.earnedBase.toNumber(),
               attendanceDeductions: row.attendanceDeductions.toNumber(),
+              allowances: row.allowances.toNumber(),
+              grossAmount: row.grossAmount.toNumber(),
               tax: row.tax.toNumber(),
+              otherDeductions: row.otherDeductions.toNumber(),
               netAmount: row.netAmount.toNumber(),
             },
             calculationSnapshot: {

@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
 import { staffRepository } from './staff.repository';
-import { NotFoundError, ConflictError } from '@/shared/errors/AppError';
+import { NotFoundError, ConflictError, ValidationError } from '@/shared/errors/AppError';
 import { buildPaginationMeta } from '@/shared/pagination';
 import { resolveActorLabel } from '@/shared/actorLabel';
 import type {
@@ -12,7 +12,13 @@ import type {
   SetClinicalAuthBody,
   ResetClinicalAuthPasswordBody,
   CreateSalaryProfileBody,
+  ReplaceWeeklyScheduleBody,
+  CreateBankAccountBody,
+  WeeklyScheduleInput,
+  BankAccountInput,
+  CommissionSetup,
 } from './staff.schemas';
+import { WEEK_DAYS, isCommissionBasis } from './staff.schemas';
 
 const BCRYPT_ROUNDS = 12;
 
@@ -57,6 +63,103 @@ async function assertServicesActive(serviceIds: string[]): Promise<void> {
   }
 }
 
+type Tx = Prisma.TransactionClient;
+
+/** Replaces the 7 weekday rows (one current schedule per staff member). */
+async function writeWeeklySchedule(tx: Tx, staffId: string, days: WeeklyScheduleInput, effectiveFrom: Date, actorLabel: string) {
+  await tx.staffWeeklySchedule.deleteMany({ where: { staffId } });
+  await tx.staffWeeklySchedule.createMany({
+    data: days.map((d) => ({
+      staffId,
+      dayOfWeek: d.dayOfWeek,
+      isWorking: d.isWorking,
+      useShiftDefault: d.isWorking ? d.useShiftDefault : true,
+      startTime: d.isWorking && !d.useShiftDefault ? d.startTime ?? null : null,
+      endTime: d.isWorking && !d.useShiftDefault ? d.endTime ?? null : null,
+      breakMinutes: d.isWorking ? d.breakMinutes : 0,
+      effectiveFrom,
+      createdBy: actorLabel,
+    })),
+  });
+}
+
+/** Effective-dated: closes the currently open profile at the new effectiveFrom. */
+async function writeSalaryProfile(tx: Tx, staffId: string, body: CreateSalaryProfileBody, actorId: string) {
+  await tx.staffSalaryProfile.updateMany({
+    where: { staffId, effectiveTo: null },
+    data: { effectiveTo: body.effectiveFrom },
+  });
+  return tx.staffSalaryProfile.create({
+    data: {
+      staffId,
+      salaryTemplateId: body.salaryTemplateId ?? undefined,
+      salaryBasis: body.salaryBasis,
+      baseAmount: body.baseAmount,
+      payrollDivisor: body.payrollDivisor ?? 30,
+      salaryTaxMethod: body.salaryTaxMethod ?? null,
+      salaryTaxValue: body.salaryTaxMethod ? body.salaryTaxValue ?? 0 : null,
+      salaryTaxEffectiveFrom: body.salaryTaxMethod ? body.effectiveFrom : null,
+      fixedAllowance: body.fixedAllowance ?? 0,
+      fixedDeduction: body.fixedDeduction ?? 0,
+      paymentMethod: body.paymentMethod ?? null,
+      effectiveFrom: body.effectiveFrom,
+      createdById: actorId,
+    },
+    include: { salaryTemplate: true },
+  });
+}
+
+/**
+ * PDF §7/§14 — replaces the staff member's commission setup: every open rule is
+ * closed at the new effectiveFrom (history kept) and the new service-wise rules start.
+ */
+async function writeCommissionRules(tx: Tx, staffId: string, setup: CommissionSetup, actorId: string) {
+  await tx.doctorCommissionRule.updateMany({
+    where: { staffId, effectiveTo: null },
+    data: { effectiveTo: setup.effectiveFrom },
+  });
+  for (const rule of setup.rules) {
+    await tx.doctorCommissionRule.create({
+      data: {
+        staffId,
+        serviceRateId: rule.serviceRateId,
+        ruleType: rule.ruleType,
+        rate: rule.rate,
+        basis: rule.basis,
+        effectiveFrom: setup.effectiveFrom,
+        commissionTaxMethod: setup.commissionTaxMethod ?? null,
+        commissionTaxValue: setup.commissionTaxMethod ? setup.commissionTaxValue ?? 0 : null,
+        createdById: actorId,
+      },
+    });
+  }
+}
+
+/** Effective-dated: a new account closes the previous current one (PDF §4 "Effective From"). */
+async function writeBankAccount(tx: Tx, staffId: string, body: BankAccountInput, actorLabel: string) {
+  await tx.staffBankAccount.updateMany({
+    where: { staffId, effectiveTo: null },
+    data: { effectiveTo: body.effectiveFrom, isActive: false },
+  });
+  const isBank = body.paymentMethod === 'BANK';
+  return tx.staffBankAccount.create({
+    data: {
+      staffId,
+      paymentMethod: body.paymentMethod,
+      bankName: isBank ? body.bankName ?? null : null,
+      branchName: isBank ? body.branchName ?? null : null,
+      accountTitle: isBank ? body.accountTitle ?? null : null,
+      accountNumber: isBank ? body.accountNumber ?? null : null,
+      iban: isBank ? body.iban ?? null : null,
+      walletAccount: body.paymentMethod === 'ONLINE' ? body.walletAccount ?? null : null,
+      preferredForSalary: body.preferredForSalary,
+      preferredForCommission: body.preferredForCommission,
+      effectiveFrom: body.effectiveFrom,
+      createdBy: actorLabel,
+    },
+  });
+}
+
 export const staffService = {
   async list(query: ListStaffQuery) {
     const { rows, totalItems } = await staffRepository.findMany(query);
@@ -76,6 +179,19 @@ export const staffService = {
     }
     if (body.category === 'Doctor' && body.serviceIds && body.serviceIds.length > 0) {
       await assertServicesActive(body.serviceIds);
+    }
+    // Checked up front so a clash reports clearly instead of looking like an employeeId retry.
+    let clinicalAuthData: Pick<Prisma.StaffCreateInput, 'clinicalAuthUsername' | 'clinicalAuthPasswordHash' | 'clinicalAuthActive' | 'clinicalAuthUpdatedAt' | 'clinicalAuthUpdatedByUser'> = {};
+    if (body.clinicalAuth) {
+      const taken = await prisma.staff.findUnique({ where: { clinicalAuthUsername: body.clinicalAuth.username }, select: { id: true } });
+      if (taken) throw new ConflictError(`Discharge username "${body.clinicalAuth.username}" is already used by another doctor.`);
+      clinicalAuthData = {
+        clinicalAuthUsername: body.clinicalAuth.username,
+        clinicalAuthPasswordHash: await bcrypt.hash(body.clinicalAuth.password, BCRYPT_ROUNDS),
+        clinicalAuthActive: true,
+        clinicalAuthUpdatedAt: new Date(),
+        clinicalAuthUpdatedByUser: { connect: { id: createdById } },
+      };
     }
 
     const actorLabel = await resolveActorLabel(createdById);
@@ -105,6 +221,7 @@ export const staffService = {
           availableForOpd: body.availableForOpd ?? false,
           availableForObservation: body.availableForObservation ?? false,
           availableForEmergency: body.availableForEmergency ?? false,
+          ...clinicalAuthData,
           createdBy: actorLabel,
           updatedBy: actorLabel,
           ...(deptIds.length > 0
@@ -126,7 +243,18 @@ export const staffService = {
               }
             : {}),
         };
-        return await staffRepository.create(data);
+        // Staff row + wizard steps 6–9 in one transaction: if any step fails
+        // (e.g. a bad commission service), no half-created staff member remains.
+        const created = await prisma.$transaction(async (tx) => {
+          const staff = await tx.staff.create({ data, select: { id: true } });
+          const effectiveFrom = body.joiningDate ?? new Date();
+          if (body.weeklySchedule) await writeWeeklySchedule(tx, staff.id, body.weeklySchedule, effectiveFrom, actorLabel);
+          if (body.salaryProfile) await writeSalaryProfile(tx, staff.id, body.salaryProfile, createdById);
+          if (body.commission) await writeCommissionRules(tx, staff.id, body.commission, createdById);
+          if (body.bankAccount) await writeBankAccount(tx, staff.id, body.bankAccount, actorLabel);
+          return staff;
+        });
+        return (await staffRepository.findById(created.id))!;
       } catch (error: unknown) {
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
           lastError = error;
@@ -314,6 +442,13 @@ export const staffService = {
         history: profile.salaryProfiles,
       },
       commissionRules: profile.commissionRules,
+      weeklySchedule: [...profile.weeklySchedule].sort(
+        (a, b) => WEEK_DAYS.indexOf(a.dayOfWeek as (typeof WEEK_DAYS)[number]) - WEEK_DAYS.indexOf(b.dayOfWeek as (typeof WEEK_DAYS)[number]),
+      ),
+      bankAccount: {
+        current: profile.bankAccounts.find((b) => b.effectiveTo === null && b.isActive) ?? null,
+        history: profile.bankAccounts,
+      },
     };
   },
 
@@ -384,26 +519,38 @@ export const staffService = {
   // getFullProfile above) always resolves to exactly one current row.
   async createSalaryProfile(staffId: string, body: CreateSalaryProfileBody, actorId: string) {
     await this.getById(staffId);
-    return prisma.$transaction(async (tx) => {
-      await tx.staffSalaryProfile.updateMany({
-        where: { staffId, effectiveTo: null },
-        data: { effectiveTo: body.effectiveFrom },
-      });
-      return tx.staffSalaryProfile.create({
-        data: {
-          staffId,
-          salaryTemplateId: body.salaryTemplateId ?? undefined,
-          salaryBasis: body.salaryBasis,
-          baseAmount: body.baseAmount,
-          payrollDivisor: body.payrollDivisor ?? 30,
-          salaryTaxMethod: body.salaryTaxMethod ?? null,
-          salaryTaxValue: body.salaryTaxValue ?? null,
-          salaryTaxEffectiveFrom: body.salaryTaxMethod ? body.effectiveFrom : null,
-          effectiveFrom: body.effectiveFrom,
-          createdById: actorId,
-        },
-        include: { salaryTemplate: true },
-      });
-    });
+    return prisma.$transaction((tx) => writeSalaryProfile(tx, staffId, body, actorId));
+  },
+
+  /** Edit-mode counterpart of wizard step 6. */
+  async replaceWeeklySchedule(staffId: string, body: ReplaceWeeklyScheduleBody, actorId: string) {
+    await this.getById(staffId);
+    const actorLabel = await resolveActorLabel(actorId);
+    await prisma.$transaction((tx) => writeWeeklySchedule(tx, staffId, body.days, body.effectiveFrom, actorLabel));
+    return prisma.staffWeeklySchedule.findMany({ where: { staffId } });
+  },
+
+  /** Edit-mode counterpart of wizard step 8 — only for "+ Commission" salary types, only on assigned services. */
+  async replaceCommissionSetup(staffId: string, body: CommissionSetup, actorId: string) {
+    await this.getById(staffId);
+    const [profile, services] = await Promise.all([
+      prisma.staffSalaryProfile.findFirst({ where: { staffId, effectiveTo: null }, orderBy: { effectiveFrom: 'desc' }, select: { salaryBasis: true } }),
+      prisma.staffService.findMany({ where: { staffId, isActive: true }, select: { serviceRateId: true } }),
+    ]);
+    if (!profile || !isCommissionBasis(profile.salaryBasis)) {
+      throw new ValidationError('Commission can only be set for Monthly + Commission or Daily + Commission salary types.');
+    }
+    const assigned = new Set(services.map((s) => s.serviceRateId));
+    const foreign = body.rules.find((r) => r.serviceRateId && !assigned.has(r.serviceRateId));
+    if (foreign) throw new ValidationError('Commission can only be set on a service assigned to this staff member.');
+    await prisma.$transaction((tx) => writeCommissionRules(tx, staffId, body, actorId));
+    return prisma.doctorCommissionRule.findMany({ where: { staffId, effectiveTo: null }, include: { serviceRate: { select: { id: true, name: true, code: true } } } });
+  },
+
+  /** Edit-mode counterpart of wizard step 9. */
+  async createBankAccount(staffId: string, body: CreateBankAccountBody, actorId: string) {
+    await this.getById(staffId);
+    const actorLabel = await resolveActorLabel(actorId);
+    return prisma.$transaction((tx) => writeBankAccount(tx, staffId, body, actorLabel));
   },
 };

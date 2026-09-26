@@ -17,7 +17,7 @@ import {
   StaffUserFormValues,
   StaffStatus,
 } from '../../../types/staffUser';
-import { StaffUserService, fetchStaffUsers } from '../../../services/staffUserService';
+import { StaffUserService, fetchStaffUsers, StaffWizardChanges } from '../../../services/staffUserService';
 import { DepartmentService, fetchDepartments } from '../../../services/departmentService';
 import { ServiceRatesService, fetchServices } from '../../../services/serviceRatesService';
 import { fetchShifts } from '../../../services/shiftService';
@@ -117,10 +117,10 @@ export const SuperAdminStaffUsersView: React.FC = () => {
   }, [staffList, filters]);
 
   // Handlers for Add/Edit
-  const handleSaveStaff = async (values: StaffUserFormValues) => {
+  const handleSaveStaff = async (values: StaffUserFormValues, changes: StaffWizardChanges) => {
     if (editingStaff) {
-      // Edit
-      const res = await StaffUserService.updateStaffUser(editingStaff.id, values, currentUser);
+      // Edit — only the wizard sections the user changed are re-saved.
+      const res = await StaffUserService.updateStaffUser(editingStaff.id, values, currentUser, changes);
       if (res.success) {
         showToast(`Staff member "${res.user?.fullName || values.fullName}" updated successfully.`);
         setEditingStaff(null);

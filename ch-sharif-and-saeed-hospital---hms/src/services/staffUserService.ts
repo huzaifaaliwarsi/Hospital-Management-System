@@ -17,10 +17,84 @@ import {
   STAFF_CATEGORIES,
   PORTAL_ELIGIBLE_CATEGORIES,
   SalaryBasis,
+  isCommissionBasis,
+  defaultWizardExtras,
 } from '../types/staffUser';
 import { DepartmentService } from './departmentService';
 import { ServiceRatesService } from './serviceRatesService';
 import { formatDisplayDate } from '../utils/dateConstants';
+
+// ── Add Staff wizard → backend payload mappers ─────────────────────────────
+
+/** Which wizard sections the user edited — only those are re-saved on Edit. */
+export interface StaffWizardChanges {
+  schedule: boolean;
+  salary: boolean;
+  commission: boolean;
+  bank: boolean;
+}
+
+const todayISO = () => new Date().toISOString().slice(0, 10);
+const num = (v: number | '') => (v === '' ? 0 : Number(v));
+const apiError = (err: any, fallback: string): string => {
+  const e = err?.response?.data?.error;
+  // errorHandler maps Zod issues to { field, issue }.
+  const detail = Array.isArray(e?.details) && e.details.length > 0 ? `: ${e.details.map((d: any) => d.issue ?? d.message).filter(Boolean).join('; ')}` : '';
+  return e?.message ? `${e.message}${detail}` : err?.message || fallback;
+};
+
+const hasSalary = (v: StaffUserFormValues) => v.salaryEnabled && v.baseSalary !== '' && Number(v.baseSalary) > 0;
+
+function toSchedulePayload(v: StaffUserFormValues) {
+  return v.weeklySchedule.map((d) => ({
+    dayOfWeek: d.dayOfWeek,
+    isWorking: d.isWorking,
+    useShiftDefault: d.useShiftDefault,
+    startTime: d.isWorking && !d.useShiftDefault ? d.startTime : null,
+    endTime: d.isWorking && !d.useShiftDefault ? d.endTime : null,
+    breakMinutes: num(d.breakMinutes),
+  }));
+}
+
+function toSalaryPayload(v: StaffUserFormValues) {
+  return {
+    salaryBasis: v.salaryBasis,
+    baseAmount: Number(v.baseSalary),
+    salaryTaxMethod: v.salaryTaxMethod || null,
+    salaryTaxValue: v.salaryTaxMethod ? num(v.salaryTaxValue) : null,
+    fixedAllowance: num(v.salaryAllowance),
+    fixedDeduction: num(v.salaryDeduction),
+    paymentMethod: v.bankEnabled ? v.bank.paymentMethod : null,
+    effectiveFrom: v.salaryEffectiveFrom || todayISO(),
+  };
+}
+
+function toCommissionPayload(v: StaffUserFormValues) {
+  return {
+    rules: v.commissionRules
+      .filter((r) => r.enabled)
+      .map((r) => ({ serviceRateId: r.serviceRateId, ruleType: r.ruleType, rate: num(r.rate), basis: r.basis })),
+    commissionTaxMethod: v.commissionTaxMethod || null,
+    commissionTaxValue: v.commissionTaxMethod ? num(v.commissionTaxValue) : null,
+    effectiveFrom: v.commissionEffectiveFrom || todayISO(),
+  };
+}
+
+function toBankPayload(v: StaffUserFormValues, effectiveFrom: string) {
+  const b = v.bank;
+  return {
+    paymentMethod: b.paymentMethod,
+    bankName: b.bankName.trim() || null,
+    branchName: b.branchName.trim() || null,
+    accountTitle: b.accountTitle.trim() || null,
+    accountNumber: b.accountNumber.trim() || null,
+    iban: b.iban.trim() || null,
+    walletAccount: b.walletAccount.trim() || null,
+    preferredForSalary: b.preferredForSalary,
+    preferredForCommission: b.preferredForCommission,
+    effectiveFrom: effectiveFrom || todayISO(),
+  };
+}
 
 /**
  * Live Staff Users service — combines two real backend resources into one
@@ -251,43 +325,27 @@ export class StaffUserService {
   }
 
   /**
-   * `POST /staff` — short form plus the optional Shift/Salary wizard steps
-   * (staff.md §2 steps 5/7). Portal access and Doctor Commission stay
-   * separate workflows started once the Staff record exists.
+   * `POST /staff` — the full Add Staff wizard (Staff Portal Access Salary
+   * Commission.pdf §2) in ONE request: Staff Master, Weekly Timing, Salary
+   * Profile, Commission Setup and Bank Account are saved in a single backend
+   * transaction, so a failure never leaves a half-created staff member.
+   * Portal access stays a separate workflow.
    */
   static async createStaffUser(values: StaffUserFormValues, currentUser: User | null): Promise<{ success: boolean; user?: StaffUser; error?: string }> {
-    if (!values.fullName.trim()) return { success: false, error: 'Full Name is required.' };
-    if (!values.fatherGuardianName.trim()) return { success: false, error: 'Father / Guardian Name is required.' };
-    if (!values.phone.trim()) return { success: false, error: 'Primary phone number is required.' };
-    if (!values.cnic.trim() || !this.isValidCNIC(values.cnic)) {
-      return { success: false, error: 'A valid CNIC (xxxxx-xxxxxxx-x) is required.' };
-    }
-    if (!this.isValidDateOfBirth(values.dateOfBirth)) {
-      return { success: false, error: 'A valid Date of Birth is required.' };
-    }
-    if (values.staffCategory === 'Doctor') {
-      if (!values.departmentIds || values.departmentIds.length === 0) {
-        return { success: false, error: 'Doctor requires at least one Clinical Department.' };
-      }
-      if (!values.serviceIds || values.serviceIds.length === 0) {
-        return { success: false, error: 'Doctor requires at least one Assigned Service.' };
-      }
-    }
+    const invalid = this.validateCoreValues(values);
+    if (invalid) return { success: false, error: invalid };
 
     try {
       const staffRes = await apiClient.post<{ data: Record<string, any> }>('/staff', {
-        fullName: values.fullName.trim(),
-        fatherGuardianName: values.fatherGuardianName.trim(),
-        cnic: values.cnic.trim(),
-        dateOfBirth: values.dateOfBirth,
-        category: values.staffCategory,
-        phone: values.phone.trim(),
-        alternatePhone: values.alternatePhone?.trim() || undefined,
-        email: values.email?.trim() || undefined,
-        designation: values.designation?.trim() || undefined,
+        ...this.toStaffMasterPayload(values),
         assignedShiftId: values.assignedShiftId || undefined,
-        ...(values.staffCategory === 'Doctor'
-          ? { departmentIds: values.departmentIds, serviceIds: values.serviceIds }
+        joiningDate: values.joiningDate || undefined,
+        ...(values.scheduleEnabled ? { weeklySchedule: toSchedulePayload(values) } : {}),
+        ...(hasSalary(values) ? { salaryProfile: toSalaryPayload(values) } : {}),
+        ...(hasSalary(values) && isCommissionBasis(values.salaryBasis) ? { commission: toCommissionPayload(values) } : {}),
+        ...(values.bankEnabled ? { bankAccount: toBankPayload(values, values.joiningDate) } : {}),
+        ...(values.staffCategory === 'Doctor' && values.clinicalUsername.trim() && values.clinicalPassword
+          ? { clinicalAuth: { username: values.clinicalUsername.trim(), password: values.clinicalPassword } }
           : {}),
       });
       const staffId = staffRes.data.data.id;
@@ -296,69 +354,37 @@ export class StaffUserService {
         await apiClient.post(`/staff/${staffId}/deactivate`);
       }
 
-      if (values.salaryEnabled && values.baseSalary !== '' && Number(values.baseSalary) > 0) {
-        const salaryRes = await this.saveSalaryProfile(staffId, {
-          salaryBasis: values.salaryBasis,
-          baseAmount: Number(values.baseSalary),
-          salaryTaxMethod: values.salaryTaxMethod,
-          salaryTaxValue: values.salaryTaxValue,
-          effectiveFrom: values.salaryEffectiveFrom || new Date().toISOString().slice(0, 10),
-        });
-        if (!salaryRes.success) {
-          await fetchStaffUsers();
-          return { success: false, error: `Staff record created, but salary setup failed — ${salaryRes.error}` };
-        }
-      }
-
       await fetchStaffUsers();
       const created = this.getStaffUserById(staffId);
       return { success: true, user: created };
     } catch (err: any) {
-      return { success: false, error: err?.response?.data?.error?.message || err?.message || 'Failed to create staff user.' };
+      return { success: false, error: apiError(err, 'Failed to create staff user.') };
     }
   }
 
-  /** `PATCH /staff/:id` — short form only; Portal Access is a separate modal/workflow. */
-  static async updateStaffUser(id: string, values: StaffUserFormValues, currentUser: User | null): Promise<{ success: boolean; user?: StaffUser; error?: string }> {
+  /**
+   * `PATCH /staff/:id` for the Staff Master, then only the wizard sections the
+   * user actually changed — each is effective-dated server-side (history kept).
+   * Salary is saved before commission because commission is only allowed on a
+   * "+ Commission" salary type.
+   */
+  static async updateStaffUser(
+    id: string,
+    values: StaffUserFormValues,
+    currentUser: User | null,
+    changed: StaffWizardChanges = { schedule: false, salary: false, commission: false, bank: false },
+  ): Promise<{ success: boolean; user?: StaffUser; error?: string }> {
     const existing = this.getStaffUserById(id);
     if (!existing) return { success: false, error: 'Staff user not found.' };
-
-    if (!values.fullName.trim()) return { success: false, error: 'Full Name is required.' };
-    if (!values.fatherGuardianName.trim()) return { success: false, error: 'Father / Guardian Name is required.' };
-    if (!values.phone.trim()) return { success: false, error: 'Primary phone number is required.' };
-    if (!values.cnic.trim() || !this.isValidCNIC(values.cnic)) {
-      return { success: false, error: 'A valid CNIC (xxxxx-xxxxxxx-x) is required.' };
-    }
-    if (!this.isValidDateOfBirth(values.dateOfBirth)) {
-      return { success: false, error: 'A valid Date of Birth is required.' };
-    }
-    if (values.staffCategory === 'Doctor') {
-      if (!values.departmentIds || values.departmentIds.length === 0) {
-        return { success: false, error: 'Doctor requires at least one Clinical Department.' };
-      }
-      if (!values.serviceIds || values.serviceIds.length === 0) {
-        return { success: false, error: 'Doctor requires at least one Assigned Service.' };
-      }
-    }
+    const invalid = this.validateCoreValues(values);
+    if (invalid) return { success: false, error: invalid };
 
     try {
       await apiClient.patch(`/staff/${id}`, {
-        fullName: values.fullName.trim(),
-        fatherGuardianName: values.fatherGuardianName.trim(),
-        cnic: values.cnic.trim(),
-        dateOfBirth: values.dateOfBirth,
-        category: values.staffCategory,
-        phone: values.phone.trim(),
-        alternatePhone: values.alternatePhone?.trim() || undefined,
-        email: values.email?.trim() || undefined,
-        designation: values.designation?.trim() || undefined,
+        ...this.toStaffMasterPayload(values),
         isActive: values.status !== 'INACTIVE',
         assignedShiftId: values.assignedShiftId || null,
-        // Only sync department/service assignments when this is a Doctor —
-        // never wipe an existing (Staff 360-set) department for other categories.
-        ...(values.staffCategory === 'Doctor'
-          ? { departmentIds: values.departmentIds, serviceIds: values.serviceIds }
-          : {}),
+        joiningDate: values.joiningDate || undefined,
       });
 
       const wantsSuspended = values.status === 'SUSPENDED';
@@ -367,17 +393,24 @@ export class StaffUserService {
         await apiClient.post(`/portal-users/${portalUserId}/status`, { status: wantsSuspended ? 'SUSPENDED' : 'ACTIVE' });
       }
 
-      if (values.salaryEnabled && values.baseSalary !== '' && Number(values.baseSalary) > 0) {
-        const salaryRes = await this.saveSalaryProfile(id, {
-          salaryBasis: values.salaryBasis,
-          baseAmount: Number(values.baseSalary),
-          salaryTaxMethod: values.salaryTaxMethod,
-          salaryTaxValue: values.salaryTaxValue,
-          effectiveFrom: values.salaryEffectiveFrom || new Date().toISOString().slice(0, 10),
-        });
-        if (!salaryRes.success) {
+      const steps: [boolean, string, () => Promise<unknown>][] = [
+        [changed.schedule && values.scheduleEnabled, 'weekly timing', () =>
+          apiClient.put(`/staff/${id}/weekly-schedule`, { effectiveFrom: todayISO(), days: toSchedulePayload(values) })],
+        [changed.salary && hasSalary(values), 'salary profile', () => apiClient.post(`/staff/${id}/salary-profile`, toSalaryPayload(values))],
+        [(changed.salary || changed.commission) && hasSalary(values) && isCommissionBasis(values.salaryBasis), 'commission setup', () =>
+          apiClient.put(`/staff/${id}/commission`, toCommissionPayload(values))],
+        [changed.bank && values.bankEnabled, 'bank account', () => apiClient.post(`/staff/${id}/bank-account`, toBankPayload(values, todayISO()))],
+        // A new password (re)sets the discharge credential; blank keeps the current one.
+        [values.staffCategory === 'Doctor' && !!values.clinicalUsername.trim() && !!values.clinicalPassword, 'discharge credentials', () =>
+          apiClient.post(`/staff/${id}/clinical-auth`, { username: values.clinicalUsername.trim(), password: values.clinicalPassword })],
+      ];
+      for (const [run, label, call] of steps) {
+        if (!run) continue;
+        try {
+          await call();
+        } catch (err: any) {
           await fetchStaffUsers();
-          return { success: false, error: `Staff record updated, but salary setup failed — ${salaryRes.error}` };
+          return { success: false, error: `Staff record updated, but ${label} failed — ${apiError(err, 'unknown error')}` };
         }
       }
 
@@ -385,8 +418,38 @@ export class StaffUserService {
       const updated = this.getStaffUserById(id);
       return { success: true, user: updated };
     } catch (err: any) {
-      return { success: false, error: err?.response?.data?.error?.message || err?.message || 'Failed to update staff user.' };
+      return { success: false, error: apiError(err, 'Failed to update staff user.') };
     }
+  }
+
+  private static validateCoreValues(values: StaffUserFormValues): string | null {
+    if (!values.fullName.trim()) return 'Full Name is required.';
+    if (!values.fatherGuardianName.trim()) return 'Father / Guardian Name is required.';
+    if (!values.phone.trim()) return 'Primary phone number is required.';
+    if (!values.cnic.trim() || !this.isValidCNIC(values.cnic)) return 'A valid CNIC (xxxxx-xxxxxxx-x) is required.';
+    if (!this.isValidDateOfBirth(values.dateOfBirth)) return 'A valid Date of Birth is required.';
+    if (values.staffCategory === 'Doctor') {
+      if (!values.departmentIds || values.departmentIds.length === 0) return 'Doctor requires at least one Clinical Department.';
+      if (!values.serviceIds || values.serviceIds.length === 0) return 'Doctor requires at least one Assigned Service.';
+    }
+    return null;
+  }
+
+  private static toStaffMasterPayload(values: StaffUserFormValues) {
+    return {
+      fullName: values.fullName.trim(),
+      fatherGuardianName: values.fatherGuardianName.trim(),
+      cnic: values.cnic.trim(),
+      dateOfBirth: values.dateOfBirth,
+      category: values.staffCategory,
+      phone: values.phone.trim(),
+      alternatePhone: values.alternatePhone?.trim() || undefined,
+      email: values.email?.trim() || undefined,
+      designation: values.designation?.trim() || undefined,
+      // Only sync department/service assignments when this is a Doctor —
+      // never wipe an existing (Staff 360-set) department for other categories.
+      ...(values.staffCategory === 'Doctor' ? { departmentIds: values.departmentIds, serviceIds: values.serviceIds } : {}),
+    };
   }
 
   /**
@@ -523,6 +586,8 @@ export class StaffUserService {
       payrollDivisor?: number;
       salaryTaxMethod?: 'PERCENTAGE' | 'FIXED' | '';
       salaryTaxValue?: number | '';
+      fixedAllowance?: number;
+      fixedDeduction?: number;
       effectiveFrom: string;
     },
   ): Promise<{ success: boolean; error?: string }> {
@@ -533,6 +598,8 @@ export class StaffUserService {
         payrollDivisor: values.payrollDivisor,
         salaryTaxMethod: values.salaryTaxMethod || undefined,
         salaryTaxValue: values.salaryTaxValue === '' ? undefined : values.salaryTaxValue,
+        fixedAllowance: values.fixedAllowance,
+        fixedDeduction: values.fixedDeduction,
         effectiveFrom: values.effectiveFrom,
       });
       return { success: true };
@@ -951,6 +1018,7 @@ export class StaffUserService {
             salaryTaxMethod: '',
             salaryTaxValue: '',
             salaryEffectiveFrom: new Date().toISOString().slice(0, 10),
+            ...defaultWizardExtras(),
           },
           currentUser
         );

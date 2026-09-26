@@ -150,6 +150,8 @@ export const staffRepository = {
           orderBy: { effectiveFrom: 'desc' },
           include: { serviceRate: { select: { id: true, code: true, name: true } } },
         },
+        weeklySchedule: true,
+        bankAccounts: { orderBy: { effectiveFrom: 'desc' }, take: 5 },
       },
     });
   },

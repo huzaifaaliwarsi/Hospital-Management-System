@@ -172,15 +172,125 @@ export interface StaffUserFormValues {
   // Optional — real Shift Master assignment, any category.
   assignedShiftId: string;
 
-  // Optional — Salary Setup (staff.md §9/§10), any category. Persisted via
-  // the existing Salary Profile endpoint right after Staff Master saves.
+  // Salary Setup (PDF §9/§10). The Add Staff wizard always sends it; bulk
+  // import leaves it off (salaryEnabled = false).
   salaryEnabled: boolean;
   salaryBasis: SalaryBasis;
   baseSalary: number | '';
   salaryTaxMethod: 'PERCENTAGE' | 'FIXED' | '';
   salaryTaxValue: number | '';
   salaryEffectiveFrom: string;
+  salaryAllowance: number | '';
+  salaryDeduction: number | '';
+
+  // Wizard steps added from Staff Portal Access Salary Commission.pdf §2.
+  joiningDate: string;
+  scheduleEnabled: boolean;
+  weeklySchedule: WeeklyDayForm[];
+  commissionRules: CommissionRuleForm[];
+  commissionTaxMethod: 'PERCENTAGE' | 'FIXED' | '';
+  commissionTaxValue: number | '';
+  commissionEffectiveFrom: string;
+  bankEnabled: boolean;
+  bank: BankAccountForm;
+
+  // Doctors only — discharge credential used in the Admission portal's
+  // Doctor Discharge Authorization. Password is never read back from the server.
+  clinicalUsername: string;
+  clinicalPassword: string;
+  clinicalPasswordConfirm: string;
+  /** Edit mode: username already configured on the server (blank = none yet). */
+  clinicalExistingUsername: string;
 }
+
+export type PaymentMethod = 'CASH' | 'BANK' | 'ONLINE';
+export const PAYMENT_METHOD_OPTIONS: { value: PaymentMethod; label: string }[] = [
+  { value: 'CASH', label: 'Cash' },
+  { value: 'BANK', label: 'Bank Transfer' },
+  { value: 'ONLINE', label: 'Online / Wallet' },
+];
+
+export const isCommissionBasis = (basis: SalaryBasis) => basis.endsWith('_COMMISSION');
+export const isDailyBasis = (basis: SalaryBasis) => basis.startsWith('PER_DAY');
+
+/** PDF §8 — one row per weekday. */
+export interface WeeklyDayForm {
+  dayOfWeek: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday';
+  isWorking: boolean;
+  useShiftDefault: boolean;
+  startTime: string;
+  endTime: string;
+  breakMinutes: number | '';
+}
+
+/** PDF §7/§14 — one service-wise commission line. `serviceRateId: null` = default for other services. */
+export interface CommissionRuleForm {
+  serviceRateId: string | null;
+  enabled: boolean;
+  ruleType: 'PERCENTAGE' | 'FIXED_PER_SERVICE';
+  rate: number | '';
+  basis: 'NET' | 'GROSS';
+}
+
+/** PDF §4 — payment account. */
+export interface BankAccountForm {
+  paymentMethod: PaymentMethod;
+  bankName: string;
+  branchName: string;
+  accountTitle: string;
+  accountNumber: string;
+  iban: string;
+  walletAccount: string;
+  preferredForSalary: boolean;
+  preferredForCommission: boolean;
+}
+
+const WEEK: WeeklyDayForm['dayOfWeek'][] = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+/** Mon–Sat working on the shift's timing, Sunday OFF. */
+export const defaultWeeklySchedule = (): WeeklyDayForm[] =>
+  WEEK.map((dayOfWeek) => ({
+    dayOfWeek,
+    isWorking: dayOfWeek !== 'Sunday',
+    useShiftDefault: true,
+    startTime: '',
+    endTime: '',
+    breakMinutes: 0,
+  }));
+
+export const emptyBankAccount = (): BankAccountForm => ({
+  paymentMethod: 'CASH',
+  bankName: '',
+  branchName: '',
+  accountTitle: '',
+  accountNumber: '',
+  iban: '',
+  walletAccount: '',
+  preferredForSalary: true,
+  preferredForCommission: true,
+});
+
+/** Defaults for the wizard-only fields — used by the form and by bulk import (which skips them). */
+export const defaultWizardExtras = () => {
+  const today = new Date().toISOString().slice(0, 10);
+  return {
+    salaryAllowance: '' as const,
+    salaryDeduction: '' as const,
+    joiningDate: today,
+    scheduleEnabled: false,
+    weeklySchedule: defaultWeeklySchedule(),
+    commissionRules: [] as CommissionRuleForm[],
+    commissionTaxMethod: '' as const,
+    commissionTaxValue: '' as const,
+    commissionEffectiveFrom: today,
+    bankEnabled: false,
+    bank: emptyBankAccount(),
+    clinicalUsername: '',
+    clinicalPassword: '',
+    clinicalPasswordConfirm: '',
+    clinicalExistingUsername: '',
+  };
+};
 
 export interface StaffUserFilterState {
   searchTerm: string;

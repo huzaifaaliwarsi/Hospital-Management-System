@@ -19,7 +19,10 @@ export interface EligibleRow {
   periodBaseAmount: string;
   earnedBase: string;
   attendanceDeductions: string;
+  allowances: string;
+  grossAmount: string;
   tax: string;
+  otherDeductions: string;
   netAmount: string;
 }
 
@@ -54,7 +57,10 @@ export interface SalarySlip {
   periodEnd: string;
   baseAmount: string;
   attendanceDeductions: string;
+  allowances: string;
+  otherDeductions: string;
   generatedAmount: string;
+  componentBreakdown?: { tax?: number; grossAmount?: number; earnedBase?: number } | null;
   status: SalaryStatus;
   staff: { id: string; fullName: string; employeeId: string };
   payments: SalaryPayment[];
