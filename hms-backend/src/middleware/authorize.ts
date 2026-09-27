@@ -35,6 +35,8 @@ const policy: Policy = {
     pharmacy: new Set(fullAccess),
     'pharmacy-bridge': new Set(fullAccess),
     reports: new Set(fullAccess),
+    'management-reports': new Set<Action>(['view']),
+    expenses: new Set(fullAccess),
   },
   ADMIN: {
     identity: new Set(fullAccess),
@@ -49,6 +51,8 @@ const policy: Policy = {
     pharmacy: new Set(fullAccess),
     'pharmacy-bridge': new Set(fullAccess),
     reports: new Set(fullAccess),
+    'management-reports': new Set<Action>(['view']),
+    expenses: new Set(fullAccess),
   },
   // Read-only oversight of Hospital Setup (§3.3 matrix: Admission = "V (read-only)").
   ADMISSION: {

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { LineChart, Bed, ArrowLeftRight, Receipt, Pill, Eye } from 'lucide-react';
 import { GenericReportView } from '../../components/reports/GenericReportView';
 import { TextInput } from '../../components/forms/FormControls';
-import { formatPKR } from '../../utils/formatters';
+import { formatPKR, formatAmount } from '../../utils/formatters';
 import { useReportFilters, FilterSelect, opts } from '../../components/reports/reportFilters';
 import { useAdmissionOptions, ADMISSION_STATUS_OPTS, RunningBillModal } from './AdmissionExtraReports';
 import {
@@ -43,7 +43,12 @@ const ViewButton: React.FC<{ onClick: () => void; title: string }> = ({ onClick,
   </button>
 );
 
-/** #1 Admission Summary — the portal's only KPI-strip report; table breaks the period down by department. */
+/**
+ * #1 Admission Summary — one row per department (admissions, discharges,
+ * active, pending discharge, occupied / available beds, Hospital due). No KPI
+ * cards: every figure is in the table, totals in the footer row. Also used by
+ * Super Admin / Admin as "Admission & Bed Summary". Compact so all columns fit.
+ */
 export const AdmissionSummaryView: React.FC<{ title?: string; subtitle?: string }> = ({
   title = 'Admission Summary',
   subtitle = 'Admissions, discharges, active patients, beds, pending discharge and Hospital outstanding for the period.',
@@ -56,7 +61,7 @@ export const AdmissionSummaryView: React.FC<{ title?: string; subtitle?: string 
       subtitle={subtitle}
       icon={LineChart}
       filenamePrefix="Admission_Summary"
-      showKpis
+      compact
       fetchReport={(range) => fetchAdmissionSummary(range, filters)}
       onResetExtraFilters={reset}
       extraFilters={
@@ -75,7 +80,9 @@ export const AdmissionSummaryView: React.FC<{ title?: string; subtitle?: string 
         { header: 'Discharges', align: 'right', cell: (r) => String(r.discharges), excelValue: (r) => r.discharges },
         { header: 'Active Patients', align: 'right', cell: (r) => String(r.active), excelValue: (r) => r.active },
         { header: 'Pending Discharge', align: 'right', cell: (r) => String(r.pendingDischarge), excelValue: (r) => r.pendingDischarge },
-        { header: 'Hospital Outstanding', align: 'right', cell: (r) => formatPKR(r.hospitalOutstanding), excelValue: (r) => r.hospitalOutstanding },
+        { header: 'Occupied Beds', align: 'right', cell: (r) => String(r.occupiedBeds), excelValue: (r) => r.occupiedBeds },
+        { header: 'Available Beds', align: 'right', cell: (r) => String(r.availableBeds), excelValue: (r) => r.availableBeds },
+        { header: 'Hospital Outstanding (PKR)', align: 'right', cell: (r) => formatAmount(r.hospitalOutstanding), excelValue: (r) => r.hospitalOutstanding },
       ]}
     />
   );

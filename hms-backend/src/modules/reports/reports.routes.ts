@@ -10,9 +10,12 @@ import { admissionReportsController as adm } from './admissionReports.controller
 import * as ads from './admissionReports.schemas';
 import { admissionPharmacyReportsController as admPharm } from './admissionPharmacyReports.controller';
 import * as apds from './admissionPharmacyReports.schemas';
+import { managementReportsController as mgmt } from './managementReports.controller';
+import * as mgs from './managementReports.schemas';
 
 const router = Router();
 const view = authorize('reports', 'view');
+const viewManagement = authorize('management-reports', 'view');
 
 // Super Admin executive overview dashboard aggregation
 router.get(
@@ -78,6 +81,16 @@ router.get('/admission/pharmacy-requests', view, validate({ query: apds.pharmacy
 router.get('/admission/medicine-fulfillment', view, validate({ query: apds.medicineFulfillmentQuerySchema }), asyncHandler(admPharm.medicineFulfillment));
 router.get('/admission/high-value-approvals', view, validate({ query: apds.highValueApprovalQuerySchema }), asyncHandler(admPharm.highValueApproval));
 router.get('/admission/pharmacy-clearance-status', view, validate({ query: apds.pharmacyClearanceStatusQuerySchema }), asyncHandler(admPharm.clearanceStatus));
+
+// ── Admin / Super Admin management reports (reporting.md §8.3) ──────────
+// #4 Admission & Bed Summary uses /admission/summary; #5 Expense Report uses /expenses.
+router.get('/management/summary', viewManagement, validate({ query: mgs.managementSummaryQuerySchema }), asyncHandler(mgmt.summary));
+router.get('/management/billing-collection', viewManagement, validate({ query: mgs.billingCollectionQuerySchema }), asyncHandler(mgmt.billingCollection));
+router.get('/management/outstanding-panel', viewManagement, validate({ query: mgs.outstandingPanelQuerySchema }), asyncHandler(mgmt.outstandingPanel));
+router.get('/management/balance-settlements', viewManagement, validate({ query: mgs.balanceSettlementsQuerySchema }), asyncHandler(mgmt.balanceSettlements));
+router.get('/management/staff-payroll-commission', viewManagement, validate({ query: mgs.staffPayrollQuerySchema }), asyncHandler(mgmt.staffPayrollCommission));
+router.get('/management/inventory-pharmacy', viewManagement, validate({ query: mgs.inventoryPharmacyQuerySchema }), asyncHandler(mgmt.inventoryPharmacy));
+router.get('/management/filter-options', viewManagement, asyncHandler(mgmt.filterOptions));
 
 router.get('/_scaffold', (_req, res) => {
   res.json({ data: { module: 'reports', status: 'scaffolded' } });

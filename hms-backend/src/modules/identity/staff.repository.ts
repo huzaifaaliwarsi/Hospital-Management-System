@@ -167,8 +167,18 @@ export const staffRepository = {
         where: { headStaffId: id },
         data: { headStaffId: null },
       });
+      await tx.ward.updateMany({ where: { headStaffId: id }, data: { headStaffId: null } });
+      // Setup / HR data that only describes this person. Hospital activity
+      // (appointments, admissions, bill lines, commission earnings, salary
+      // slips, discharge summaries) is checked by the service before we get
+      // here — a staff member with any of it is never deleted.
       await tx.staffEmploymentHistory.deleteMany({ where: { staffId: id } });
       await tx.staffSalaryProfile.deleteMany({ where: { staffId: id } });
+      await tx.doctorCommissionRule.deleteMany({ where: { staffId: id } });
+      await tx.attendanceCorrectionLog.deleteMany({ where: { attendanceRecord: { staffId: id } } });
+      await tx.attendanceRecord.deleteMany({ where: { staffId: id } });
+      await tx.biometricRawPunch.deleteMany({ where: { staffId: id } });
+      // StaffDepartment / StaffService / StaffWeeklySchedule / StaffBankAccount cascade.
       return tx.staff.delete({ where: { id } });
     });
   },

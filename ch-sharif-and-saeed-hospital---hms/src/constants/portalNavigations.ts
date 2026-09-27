@@ -168,38 +168,21 @@ export const CANONICAL_HOSPITAL_MANAGEMENT_NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    id: 'hm_fd_reports',
-    title: 'FRONT DESK / BILLING REPORTS',
+    // Super Admin_Admin Reporting.pdf — ONE management report menu, shared by
+    // Admin and Super Admin. Front Desk / Admission operational reports are
+    // NOT duplicated here; their data is reached through these 8 reports'
+    // filters and row drill-down (reporting.md §8.3).
+    id: 'hm_reports',
+    title: 'REPORTS',
     items: [
-      { id: 'front_desk_billing_reports', label: 'Daily Billing Summary', icon: 'BarChart2' },
-      { id: 'fd_encounter_register', label: 'Encounter Register', icon: 'ClipboardList' },
-      { id: 'fd_invoice_register', label: 'Invoice Register', icon: 'FileSpreadsheet' },
-      { id: 'fd_collection_report', label: 'Collection & Receipt Report', icon: 'Wallet' },
-      { id: 'fd_outstanding_invoices', label: 'Outstanding / Partial Invoices', icon: 'AlertCircle' },
-      { id: 'fd_admission_payment_collections', label: 'Admission Payment Collections', icon: 'CreditCard' },
-      { id: 'fd_discount_report', label: 'Discounts / Refunds / Voids', icon: 'Tag' },
-    ],
-  },
-  {
-    id: 'hm_adm_reports',
-    title: 'ADMISSION REPORTS',
-    items: [
-      { id: 'admission_reports', label: 'Admission Summary', icon: 'LineChart' },
-      { id: 'adm_register_report', label: 'Admission Register', icon: 'ClipboardList' },
-      { id: 'adm_outstanding_balance', label: 'Inpatient Outstanding Balance', icon: 'AlertCircle' },
-      { id: 'adm_discharge_clearance_report', label: 'Discharge Clearance Report', icon: 'ShieldCheck' },
-    ],
-  },
-  {
-    id: 'hm_reporting',
-    title: 'OTHER REPORTS',
-    items: [
-      { id: 'management_reports', label: 'Management Reports', icon: 'BarChart2' },
-      { id: 'inventory_reports', label: 'Inventory Reports', icon: 'TrendingUp' },
-      { id: 'staff_reports', label: 'Staff Reports', icon: 'FileBarChart' },
-      { id: 'attendance_reports', label: 'Attendance Reports', icon: 'CalendarCheck' },
-      { id: 'salary_reports', label: 'Salary Reports', icon: 'DollarSign' },
-      { id: 'commission_reports', label: 'Commission Reports', icon: 'BadgePercent' },
+      { id: 'sa_management_summary', label: 'Management Summary', icon: 'BarChart2' },
+      { id: 'sa_billing_collection', label: 'Billing & Collection', icon: 'Receipt' },
+      { id: 'sa_outstanding_panel', label: 'Outstanding / Panel', icon: 'AlertCircle' },
+      { id: 'sa_admission_bed', label: 'Admission & Bed Summary', icon: 'Bed' },
+      { id: 'sa_expense', label: 'Expense Report', icon: 'TrendingDown' },
+      { id: 'sa_balance_settlements', label: 'Balance Sheet & Settlements', icon: 'FileSpreadsheet' },
+      { id: 'sa_staff_payroll_commission', label: 'Staff / Payroll / Commission', icon: 'Users' },
+      { id: 'sa_inventory_pharmacy', label: 'Inventory / Pharmacy Summary', icon: 'Boxes' },
     ],
   },
   {

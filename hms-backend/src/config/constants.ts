@@ -32,6 +32,10 @@ export const MODULE_KEYS = [
   'pharmacy-bridge',
   'cash',
   'reports',
+  // Admin / Super Admin management reports — all users' cash and billing (reporting.md §8.3).
+  'management-reports',
+  // Expense Management — Super Admin and Admin only (reporting.md §8.8).
+  'expenses',
 ] as const;
 
 export type ModuleKey = (typeof MODULE_KEYS)[number];

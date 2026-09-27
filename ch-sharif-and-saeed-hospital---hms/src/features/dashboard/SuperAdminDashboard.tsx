@@ -987,7 +987,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             </div>
             <button
               type="button"
-              onClick={() => onNavigateToModule?.('billing_reports')}
+              onClick={() => onNavigateToModule?.('sa_billing_collection')}
               className="text-xs font-semibold text-[#0e7d5a] hover:underline"
             >
               Full Invoicing Ledger →
@@ -1093,7 +1093,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
               </div>
               <button
                 type="button"
-                onClick={() => onNavigateToModule?.('collection_reports')}
+                onClick={() => onNavigateToModule?.('sa_billing_collection')}
                 className="text-xs font-semibold text-[#0e7d5a] hover:underline"
               >
                 Collections →
@@ -1220,7 +1220,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             </div>
             <button
               type="button"
-              onClick={() => onNavigateToModule?.('inventory_reports')}
+              onClick={() => onNavigateToModule?.('sa_inventory_pharmacy')}
               className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-rose-50 text-rose-800 border border-rose-200 hover:bg-rose-100 transition-colors flex items-center gap-1"
             >
               <span>View Inventory Overview</span>
@@ -1569,7 +1569,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           </div>
           <button
             type="button"
-            onClick={() => onNavigateToModule?.('billing_reports')}
+            onClick={() => onNavigateToModule?.('sa_billing_collection')}
             className="text-xs font-semibold text-[#0e7d5a] hover:underline flex items-center gap-1 self-start sm:self-auto"
           >
             <span>View All Invoices</span>

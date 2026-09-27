@@ -18,6 +18,8 @@ import { PortalArchitectureShowcase } from './features/shared/PortalArchitecture
 import { DesignSystemShowcase } from './features/shared/DesignSystemShowcase';
 import { PORTAL_CONFIGS, PORTAL_NAVIGATION_MAP } from './constants/portalNavigations';
 
+const MONTSERRAT_PORTALS: string[] = ['front-desk', 'super-admin', 'admin'];
+
 const MainPortalRouter: React.FC = () => {
   const { isAuthenticated, currentUser, activePortal } = useAuth();
   const { currentPath, currentPortal, currentModule, navigate } = useRouter();
@@ -37,11 +39,11 @@ const MainPortalRouter: React.FC = () => {
     }
   }, [isAuthenticated, currentUser, currentPath, activePortal, navigate]);
 
-  // Front Desk uses Montserrat (see `.portal-front-desk` in index.css). Set on
-  // <html> so modals rendered into <body> pick it up too.
+  // Front Desk, Super Admin and Admin use Montserrat (see `.portal-montserrat`
+  // in index.css). Set on <html> so modals rendered into <body> pick it up too.
   useEffect(() => {
-    const isFrontDesk = isAuthenticated && currentPortal === 'front-desk';
-    document.documentElement.classList.toggle('portal-front-desk', isFrontDesk);
+    const usesMontserrat = isAuthenticated && MONTSERRAT_PORTALS.includes(currentPortal);
+    document.documentElement.classList.toggle('portal-montserrat', usesMontserrat);
   }, [isAuthenticated, currentPortal]);
 
   // Guard against obsolete removed routes / modules

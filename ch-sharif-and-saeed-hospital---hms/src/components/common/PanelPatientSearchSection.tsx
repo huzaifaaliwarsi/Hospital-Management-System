@@ -9,6 +9,7 @@ import {
   Check,
   Phone,
   CreditCard,
+  AlertCircle,
 } from 'lucide-react';
 import { PanelPatientSearchResult, searchPanelPatients } from '../../services/patientRegistryService';
 import { PanelBadge } from './PanelBadge';

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Loader2, AlertCircle, Filter as FilterIcon, RotateCcw, Search, ArrowUp, ArrowDown, ArrowUpDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Select, TextInput } from '../forms/FormControls';
 import { useAuth } from '../../context/AuthContext';
-import { formatPKR } from '../../utils/formatters';
+import { formatPKR, formatAmount } from '../../utils/formatters';
 import { formatDateISO, getHospitalCurrentDate } from '../../utils/dateConstants';
 import { downloadTablePDF, downloadTableExcel, downloadTableCSV, printTable, ExportColumn } from '../../services/tableExportService';
 import { ExportButtonGroup } from '../../features/superAdmin/financeControl/ExportButtonGroup';
@@ -52,10 +52,17 @@ export interface GenericReportViewProps<T> {
   noTotalColumns?: string[];
   /** Adds an "All Time" period (and makes it the default) — for history lists like settlements. */
   allTimeOption?: boolean;
+  /** Wide tables (management reports): tighter padding, headers and text columns wrap so every money column stays on screen. Money columns never wrap. */
+  compact?: boolean;
+  /** Buttons shown on the right of the title bar (e.g. "Add Expense"). */
+  headerActions?: React.ReactNode;
 }
 
 /** Totals for these columns are counts, not money. */
-const COUNT_HEADER = /qty|count|invoices|receipts|admissions|discharges|patients|pending/i;
+const COUNT_HEADER = /\b(qty|count|invoices|receipts|admissions|discharges|patients|pending|beds)\b/i;
+
+/** Invoice # / Code / ID columns get the green reference style. */
+const isCodeHeader = (header: string) => header.includes('#') || /\b(code|id)\b/i.test(header);
 
 const PAGE_SIZE = 50;
 
@@ -103,6 +110,8 @@ export function GenericReportView<T>({
   onResetExtraFilters,
   noTotalColumns,
   allTimeOption,
+  compact,
+  headerActions,
 }: GenericReportViewProps<T>) {
   const { currentUser } = useAuth();
   const todayISO = formatDateISO(getHospitalCurrentDate());
@@ -187,6 +196,9 @@ export function GenericReportView<T>({
   // Totals row: sums every right-aligned column whose Excel value is numeric,
   // except ones the report marks as not additive (e.g. a per-request amount
   // repeated on each receipt row).
+  // Compact tables bold their "key" — the first plain text column (e.g. the name, not the Emp ID).
+  const keyColumnIndex = columns.findIndex((c) => !isCodeHeader(c.header) && c.align !== 'right' && c.align !== 'center');
+
   const totals = columns.map((c) => {
     if (c.align !== 'right' || !c.excelValue || rows.length === 0 || noTotalColumns?.includes(c.header)) return null;
     let sum = 0;
@@ -209,6 +221,7 @@ export function GenericReportView<T>({
           <h1 className="text-xl font-bold text-slate-900 tracking-tight">{title}</h1>
           <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>
         </div>
+        {headerActions && <div className="flex items-center gap-2">{headerActions}</div>}
       </div>
 
       {/* Filter Bar — change filters, then press Filter to re-query. Point-in-time
@@ -315,9 +328,13 @@ export function GenericReportView<T>({
           {/* Table with proper bordered grid lines */}
           <div className="bg-white rounded-lg border border-slate-300 shadow-xs overflow-hidden">
             <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)]">
-              <table className="w-full text-left text-xs border-collapse">
+              <table className={`w-full text-left border-collapse ${compact ? 'text-[11.5px]' : 'text-xs'}`}>
                 <thead>
-                  <tr className="bg-[#f1f5f9] border-b border-slate-300 sticky top-0 z-10 text-slate-800 text-[11.5px] font-bold uppercase tracking-wider">
+                  <tr
+                    className={`bg-[#f1f5f9] border-b border-slate-300 sticky top-0 z-10 text-slate-800 font-bold uppercase ${
+                      compact ? 'text-[10.5px] tracking-normal text-slate-900' : 'text-[11.5px] tracking-wider'
+                    }`}
+                  >
                     <th className="w-12 py-3 px-3 text-center border-r border-slate-300 font-bold text-slate-700">#</th>
                     {columns.map((c) => {
                       const sortable = !/^actions?$/i.test(c.header);
@@ -327,7 +344,7 @@ export function GenericReportView<T>({
                           key={c.header}
                           onClick={sortable ? () => toggleSort(c.header) : undefined}
                           aria-sort={active ? (sort!.dir === 'asc' ? 'ascending' : 'descending') : undefined}
-                          className={`py-3 px-3.5 border-r border-slate-300 last:border-r-0 whitespace-nowrap ${sortable ? 'cursor-pointer select-none hover:bg-slate-200/70' : ''} ${
+                          className={`${compact ? 'py-2 px-2 whitespace-normal leading-tight' : 'py-3 px-3.5 whitespace-nowrap'} border-r border-slate-300 last:border-r-0 ${sortable ? 'cursor-pointer select-none hover:bg-slate-200/70' : ''} ${
                             c.align === 'right' ? 'text-right' : c.align === 'center' ? 'text-center' : 'text-left'
                           }`}
                           title={sortable ? 'Click to sort' : undefined}
@@ -346,7 +363,8 @@ export function GenericReportView<T>({
                     })}
                   </tr>
                 </thead>
-                <tbody className="text-slate-700">
+                {/* Compact (management) tables: key column bold, values medium, amounts semibold. */}
+                <tbody className={compact ? 'text-slate-800 font-medium' : 'text-slate-700'}>
                   {rows.length === 0 ? (
                     <tr>
                       <td colSpan={columns.length + 1} className="py-12 text-center text-slate-400 border-b border-slate-200">
@@ -361,18 +379,21 @@ export function GenericReportView<T>({
                         <td className="py-2.5 px-3 text-center border-r border-slate-200 text-slate-500 font-mono text-[11px] bg-slate-50/60 whitespace-nowrap">
                           {idx + 1}
                         </td>
-                        {columns.map((c) => {
-                          const isCodeOrId = c.header.toLowerCase().includes('#') || c.header.toLowerCase().includes('code') || c.header.toLowerCase().includes('id');
+                        {columns.map((c, colIndex) => {
+                          const isCodeOrId = isCodeHeader(c.header);
+                          const isCompactKey = compact && colIndex === keyColumnIndex;
                           return (
                             <td
                               key={c.header}
-                              className={`py-2.5 px-3.5 border-r border-slate-200 last:border-r-0 whitespace-nowrap ${
+                              className={`${compact ? (c.align === 'right' ? 'py-2 px-2 whitespace-nowrap' : 'py-2 px-2 whitespace-normal') : 'py-2.5 px-3.5 whitespace-nowrap'} border-r border-slate-200 last:border-r-0 ${
                                 c.align === 'right'
-                                  ? 'text-right font-mono'
+                                  ? `text-right font-mono ${compact ? 'font-semibold text-slate-900' : ''}`
                                   : c.align === 'center'
                                   ? 'text-center'
                                   : isCodeOrId
                                   ? 'font-semibold text-[#08775A]'
+                                  : isCompactKey
+                                  ? 'font-bold text-slate-900'
                                   : ''
                               }`}
                             >
@@ -390,8 +411,8 @@ export function GenericReportView<T>({
                     <tr className="bg-[#f1f5f9] border-t-2 border-slate-300 font-bold text-slate-900 sticky bottom-0">
                       <td className="py-2.5 px-3 text-center border-r border-slate-300 text-[10.5px] uppercase tracking-wider text-slate-600">Total</td>
                       {columns.map((c, i) => (
-                        <td key={c.header} className="py-2.5 px-3.5 border-r border-slate-300 last:border-r-0 whitespace-nowrap text-right font-mono">
-                          {totals[i] === null ? '' : COUNT_HEADER.test(c.header) ? String(totals[i]) : formatPKR(totals[i] as number)}
+                        <td key={c.header} className={`${compact ? 'py-2 px-2' : 'py-2.5 px-3.5'} border-r border-slate-300 last:border-r-0 whitespace-nowrap text-right font-mono`}>
+                          {totals[i] === null ? '' : COUNT_HEADER.test(c.header) ? String(totals[i]) : compact ? formatAmount(totals[i] as number) : formatPKR(totals[i] as number)}
                         </td>
                       ))}
                     </tr>

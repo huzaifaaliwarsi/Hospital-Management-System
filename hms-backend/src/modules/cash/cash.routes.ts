@@ -19,10 +19,13 @@ const router = Router();
 const view = authorize('cash', 'view');
 const create = authorize('cash', 'create');
 const approve = authorize('cash', 'approve');
+// Reading ANOTHER user's cash custody is oversight — Admin / Super Admin only
+// (same roles as `approve`), never a fellow cashier.
+const oversee = authorize('cash', 'approve');
 
 // Cashier's own balance sheet (§8.12)
 router.get('/balance-sheet', view, validate({ query: myBalanceSheetQuerySchema }), asyncHandler(c.getMyBalanceSheet));
-router.get('/balance-sheet/:userId', view, asyncHandler(c.getUserBalanceSheet));
+router.get('/balance-sheet/:userId', oversee, validate({ query: myBalanceSheetQuerySchema }), asyncHandler(c.getUserBalanceSheet));
 
 // My Account Settlement (§3.3) — closes out every currently-unsettled
 // balance-sheet row into one settlement record.
@@ -34,9 +37,9 @@ router.post('/settlements', create, validate({ body: submitSettlementSchema }), 
 // full `cash` access (ADMIN, SUPER_ADMIN — see `authorize.ts`) can act on
 // another user's settlement; FRONT_DESK_BILLING/INVENTORY_MANAGEMENT only
 // hold `view`/`create` and are naturally excluded.
-router.get('/finance-control/balance-sheets', view, validate({ query: listBalanceSheetsQuerySchema }), asyncHandler(c.listBalanceSheets));
-router.get('/finance-control/settlements', view, validate({ query: listSettlementsQuerySchema }), asyncHandler(c.listAllSettlements));
-router.get('/finance-control/kpis', view, validate({ query: financeKpisQuerySchema }), asyncHandler(c.getFinanceKpis));
+router.get('/finance-control/balance-sheets', oversee, validate({ query: listBalanceSheetsQuerySchema }), asyncHandler(c.listBalanceSheets));
+router.get('/finance-control/settlements', oversee, validate({ query: listSettlementsQuerySchema }), asyncHandler(c.listAllSettlements));
+router.get('/finance-control/kpis', oversee, validate({ query: financeKpisQuerySchema }), asyncHandler(c.getFinanceKpis));
 router.post(
   '/finance-control/settlements/:id/review',
   approve,

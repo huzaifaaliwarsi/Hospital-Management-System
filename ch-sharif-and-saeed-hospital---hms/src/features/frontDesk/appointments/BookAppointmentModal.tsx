@@ -397,6 +397,8 @@ export const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({ onCl
     setIsSaving(true);
     try {
       const slotAt = new Date(`${date}T${time}:00`).toISOString();
+      const birthYear = new Date().getFullYear() - Math.max(0, Math.floor(ageNum));
+      const computedDob = `${birthYear}-01-01`;
 
       let finalPanelPatientId: string | undefined = undefined;
 

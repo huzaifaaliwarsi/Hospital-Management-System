@@ -11,7 +11,7 @@ import type { SettlementStatus } from './settlementService';
  * which are always scoped to the logged-in user.
  */
 
-export type DatePreset = 'today' | 'yesterday' | 'this_week' | 'this_month' | 'custom';
+export type DatePreset = 'all' | 'today' | 'yesterday' | 'this_week' | 'this_month' | 'custom';
 
 export interface DateRangeParams {
   preset: DatePreset;
@@ -24,24 +24,6 @@ export interface FinanceUserSummary {
   fullName: string;
   username: string;
   role: string;
-}
-
-export interface UserBalanceSheetRow {
-  portalUserId: string;
-  user: FinanceUserSummary;
-  /** Guide §5.1 — carried forward from this user's last settlement shortfall, already folded into `expectedPhysicalCash`. */
-  carriedForwardAmount: number;
-  expectedPhysicalCash: number;
-  nonPhysicalTotal: number;
-  totalCollections: number;
-  totalRefunds: number;
-  settledCount: number;
-  unsettledCount: number;
-}
-
-export interface BalanceSheetsResult {
-  period: { label: string; start: string; end: string };
-  sheets: UserBalanceSheetRow[];
 }
 
 export interface FinanceSettlementRecord {
@@ -72,37 +54,9 @@ export interface SettlementsResult {
   settlements: FinanceSettlementRecord[];
 }
 
-export interface FinanceKpis {
-  period: { label: string; start: string; end: string };
-  totalCashCollectedToday: number;
-  totalNonCashCollectedToday: number;
-  collectionsByMethod: Record<string, number>;
-  totalRefundsToday: number;
-  totalExpectedCash: number;
-  totalSettledCash: number;
-  totalUnsettledCash: number;
-  usersPendingSettlementCount: number;
-  settlementDifferencesCount: number;
-  settlementsCompletedTodayCount: number;
-}
-
 function toUserSummary(raw: Record<string, any> | null | undefined): FinanceUserSummary {
   if (!raw) return { id: '', fullName: 'Staff User', username: 'staff', role: 'FRONT_DESK_BILLING' };
   return { id: raw.id || '', fullName: raw.displayName || raw.username || 'Staff User', username: raw.username || 'staff', role: raw.role || 'FRONT_DESK_BILLING' };
-}
-
-function toBalanceSheetRow(raw: Record<string, any>): UserBalanceSheetRow {
-  return {
-    portalUserId: raw.portalUserId,
-    user: toUserSummary(raw.user) as FinanceUserSummary,
-    carriedForwardAmount: Number(raw.carriedForwardAmount ?? 0),
-    expectedPhysicalCash: Number(raw.expectedPhysicalCash ?? 0),
-    nonPhysicalTotal: Number(raw.nonPhysicalTotal ?? 0),
-    totalCollections: Number(raw.totalCollections ?? 0),
-    totalRefunds: Number(raw.totalRefunds ?? 0),
-    settledCount: Number(raw.settledCount ?? 0),
-    unsettledCount: Number(raw.unsettledCount ?? 0),
-  };
 }
 
 function toSettlementRecord(raw: Record<string, any>): FinanceSettlementRecord {
@@ -138,23 +92,10 @@ function dateParams(range: DateRangeParams) {
   };
 }
 
-export async function fetchBalanceSheets(range: DateRangeParams, onlyUnsettled?: boolean): Promise<BalanceSheetsResult> {
+/** Same shape as the cashier's own `GET /cash/balance-sheet`; no `range` = current shift (unsettled). */
+export async function fetchUserBalanceSheetDetail(portalUserId: string, range?: { preset: string; fromDate?: string; toDate?: string }) {
   try {
-    const res = await apiClient.get<{ data: Record<string, any> }>('/cash/finance-control/balance-sheets', {
-      params: { ...dateParams(range), ...(onlyUnsettled ? { onlyUnsettled: true } : {}) },
-    });
-    return {
-      period: res.data.data.period,
-      sheets: (res.data.data.sheets || []).map(toBalanceSheetRow),
-    };
-  } catch (err) {
-    throw new Error(toErrorMessage(err));
-  }
-}
-
-export async function fetchUserBalanceSheetDetail(portalUserId: string) {
-  try {
-    const res = await apiClient.get<{ data: any }>(`/cash/balance-sheet/${portalUserId}`);
+    const res = await apiClient.get<{ data: any }>(`/cash/balance-sheet/${portalUserId}`, { params: range });
     return res.data.data;
   } catch (err) {
     throw new Error(toErrorMessage(err));
@@ -172,28 +113,6 @@ export async function fetchAllSettlements(
     return {
       period: res.data.data.period,
       settlements: (res.data.data.settlements || []).map(toSettlementRecord),
-    };
-  } catch (err) {
-    throw new Error(toErrorMessage(err));
-  }
-}
-
-export async function fetchFinanceKpis(range: DateRangeParams): Promise<FinanceKpis> {
-  try {
-    const res = await apiClient.get<{ data: Record<string, any> }>('/cash/finance-control/kpis', { params: dateParams(range) });
-    const d = res.data.data;
-    return {
-      period: d.period,
-      totalCashCollectedToday: Number(d.totalCashCollectedToday ?? 0),
-      totalNonCashCollectedToday: Number(d.totalNonCashCollectedToday ?? 0),
-      collectionsByMethod: Object.fromEntries(Object.entries(d.collectionsByMethod || {}).map(([k, v]) => [k, Number(v ?? 0)])),
-      totalRefundsToday: Number(d.totalRefundsToday ?? 0),
-      totalExpectedCash: Number(d.totalExpectedCash ?? 0),
-      totalSettledCash: Number(d.totalSettledCash ?? 0),
-      totalUnsettledCash: Number(d.totalUnsettledCash ?? 0),
-      usersPendingSettlementCount: Number(d.usersPendingSettlementCount ?? 0),
-      settlementDifferencesCount: Number(d.settlementDifferencesCount ?? 0),
-      settlementsCompletedTodayCount: Number(d.settlementsCompletedTodayCount ?? 0),
     };
   } catch (err) {
     throw new Error(toErrorMessage(err));

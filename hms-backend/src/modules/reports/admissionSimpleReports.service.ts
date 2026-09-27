@@ -80,19 +80,41 @@ export const admissionSimpleReportsService = {
           ...(query.wardId ? { OR: [{ wardId: query.wardId }, { room: { wardId: query.wardId } }] } : {}),
           ...(query.departmentId ? { OR: [{ ward: { departmentId: query.departmentId } }, { room: { ward: { departmentId: query.departmentId } } }] } : {}),
         },
-        select: { status: true },
+        select: {
+          status: true,
+          ward: { select: { department: { select: { name: true } } } },
+          room: { select: { ward: { select: { department: { select: { name: true } } } } } },
+        },
       }),
     ]);
 
-    type Bucket = { department: string; admissions: number; discharges: number; active: number; pendingDischarge: number; hospitalOutstanding: Decimal };
+    type Bucket = {
+      department: string;
+      admissions: number;
+      discharges: number;
+      active: number;
+      pendingDischarge: number;
+      occupiedBeds: number;
+      availableBeds: number;
+      hospitalOutstanding: Decimal;
+    };
     const byDept = new Map<string, Bucket>();
-    for (const a of admissions) {
-      const dept = a.department.name;
+    const bucketFor = (dept: string) => {
       let b = byDept.get(dept);
       if (!b) {
-        b = { department: dept, admissions: 0, discharges: 0, active: 0, pendingDischarge: 0, hospitalOutstanding: new Decimal(0) };
+        b = { department: dept, admissions: 0, discharges: 0, active: 0, pendingDischarge: 0, occupiedBeds: 0, availableBeds: 0, hospitalOutstanding: new Decimal(0) };
         byDept.set(dept, b);
       }
+      return b;
+    };
+    // Every department with beds gets a row, even with no admissions in the period.
+    for (const bed of beds) {
+      const b = bucketFor(bed.ward?.department?.name ?? bed.room?.ward?.department?.name ?? 'Unassigned');
+      if (bed.status === 'OCCUPIED') b.occupiedBeds += 1;
+      if (bed.status === 'AVAILABLE') b.availableBeds += 1;
+    }
+    for (const a of admissions) {
+      const b = bucketFor(a.department.name);
       if (a.createdAt >= start && a.createdAt <= end) b.admissions += 1;
       if (a.dischargedAt && a.dischargedAt >= start && a.dischargedAt <= end) b.discharges += 1;
       if (a.status === 'ACTIVE') b.active += 1;

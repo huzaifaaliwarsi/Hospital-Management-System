@@ -637,6 +637,9 @@ model PortalUser {
   highCostAttendantConfirmations HighCostMedicineAuthorization[] @relation("HighCostAttendantConfirmedBy")
   highCostManagementApprovals    HighCostMedicineAuthorization[] @relation("HighCostManagementApprovedBy")
   finalBillsGenerated            AdmissionRecord[]               @relation("AdmissionFinalBillGeneratedBy")
+  createdExpenses                Expense[]                       @relation("ExpenseCreatedBy")
+  updatedExpenses                Expense[]                       @relation("ExpenseUpdatedBy")
+  voidedExpenses                 Expense[]                       @relation("ExpenseVoidedBy")
 
   createdAt DateTime @default(now()) @map("created_at")
   createdBy String?  @map("created_by")
@@ -751,6 +754,7 @@ model Department {
   serviceRates     ServiceRate[]
   shifts           Shift[]
   staffDepartments StaffDepartment[] // junction for multi-department doctor assignment
+  expenses         Expense[]
 
   createdAt              DateTime                 @default(now()) @map("created_at")
   createdById            String?                  @map("created_by")
@@ -2410,4 +2414,62 @@ model StaffBankAccount {
 
   @@index([staffId, effectiveFrom])
   @@map("staff_bank_accounts")
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Expense Management — Super Admin and Admin only (reporting.md §8.8)
+// Hospital operating expenses recorded centrally. Never edited away: a
+// wrong entry is VOIDed with a reason so the audit trail stays intact.
+// Independent of cashier drawer ledgers (UserCashBalance).
+// ═══════════════════════════════════════════════════════════════════════
+
+enum ExpenseCategory {
+  UTILITIES
+  RENT
+  MAINTENANCE_REPAIRS
+  MEDICAL_SUPPLIES
+  OFFICE_SUPPLIES
+  EQUIPMENT
+  CLEANING_SANITATION
+  FOOD_REFRESHMENTS
+  TRANSPORT
+  MARKETING
+  PROFESSIONAL_FEES
+  MISCELLANEOUS
+}
+
+enum ExpenseStatus {
+  ACTIVE
+  VOID
+}
+
+model Expense {
+  id            String          @id @default(uuid())
+  expenseNumber String          @unique @map("expense_number") // EXP-26-0001
+  expenseDate   DateTime        @map("expense_date") @db.Date
+  category      ExpenseCategory
+  amount        Decimal         @db.Decimal(14, 2)
+  paymentMethod PaymentMethod   @map("payment_method")
+  paidTo        String          @map("paid_to") // vendor / payee
+  reference     String? // bill / cheque / transaction no.
+  description   String?
+  departmentId  String?         @map("department_id")
+  department    Department?     @relation(fields: [departmentId], references: [id])
+  status        ExpenseStatus   @default(ACTIVE)
+
+  voidReason   String?     @map("void_reason")
+  voidedAt     DateTime?   @map("voided_at")
+  voidedById   String?     @map("voided_by")
+  voidedByUser PortalUser? @relation("ExpenseVoidedBy", fields: [voidedById], references: [id])
+
+  createdAt     DateTime    @default(now()) @map("created_at")
+  createdById   String      @map("created_by")
+  createdByUser PortalUser  @relation("ExpenseCreatedBy", fields: [createdById], references: [id])
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+  updatedById   String?     @map("updated_by")
+  updatedByUser PortalUser? @relation("ExpenseUpdatedBy", fields: [updatedById], references: [id])
+
+  @@index([expenseDate])
+  @@index([category])
+  @@map("expenses")
 }
