@@ -169,15 +169,36 @@ export const staffRepository = {
       });
       await tx.ward.updateMany({ where: { headStaffId: id }, data: { headStaffId: null } });
       // Setup / HR data that only describes this person. Hospital activity
-      // (appointments, admissions, bill lines, commission earnings, salary
-      // slips, discharge summaries) is checked by the service before we get
-      // here — a staff member with any of it is never deleted.
+      // (appointments, admissions, bill lines, commission earnings, discharge
+      // summaries) is checked by the service before we get here — a staff
+      // member with any of it is never deleted.
       await tx.staffEmploymentHistory.deleteMany({ where: { staffId: id } });
       await tx.staffSalaryProfile.deleteMany({ where: { staffId: id } });
       await tx.doctorCommissionRule.deleteMany({ where: { staffId: id } });
       await tx.attendanceCorrectionLog.deleteMany({ where: { attendanceRecord: { staffId: id } } });
       await tx.attendanceRecord.deleteMany({ where: { staffId: id } });
       await tx.biometricRawPunch.deleteMany({ where: { staffId: id } });
+
+      // Payroll: drop this person's slips (and their payments), then re-total
+      // every run they were in; a run left with no slips is removed.
+      const slips = await tx.salarySlip.findMany({ where: { staffId: id }, select: { id: true, payrollRunId: true } });
+      if (slips.length > 0) {
+        const slipIds = slips.map((s) => s.id);
+        await tx.salaryPayment.deleteMany({ where: { salarySlipId: { in: slipIds } } });
+        await tx.salarySlip.deleteMany({ where: { id: { in: slipIds } } });
+        const runIds = [...new Set(slips.map((s) => s.payrollRunId).filter((r): r is string => !!r))];
+        for (const runId of runIds) {
+          const left = await tx.salarySlip.aggregate({ where: { payrollRunId: runId }, _count: true, _sum: { generatedAmount: true } });
+          if (left._count === 0) {
+            await tx.payrollRun.delete({ where: { id: runId } });
+          } else {
+            await tx.payrollRun.update({
+              where: { id: runId },
+              data: { staffCount: left._count, totalAmount: left._sum.generatedAmount ?? 0 },
+            });
+          }
+        }
+      }
       // StaffDepartment / StaffService / StaffWeeklySchedule / StaffBankAccount cascade.
       return tx.staff.delete({ where: { id } });
     });

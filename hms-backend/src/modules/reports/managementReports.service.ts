@@ -4,6 +4,8 @@ import { prisma } from '@/db/client';
 import { resolveDateRange } from './dashboard.service';
 import { PAYABLE_EQUIVALENT } from '@/modules/attendance/attendance.service';
 import { expensesService } from '@/modules/expenses/expenses.service';
+import { commissionBalance } from '@/modules/commission/commission.calc';
+import { salaryBalance } from '@/modules/payroll/payroll.balance';
 import type {
   ManagementSummaryQuery,
   BillingCollectionQuery,
@@ -475,8 +477,7 @@ export const managementReportsService = {
 
     const staff = await prisma.staff.findMany({
       where: {
-        isActive: true,
-        ...(query.departmentId ? { departmentId: query.departmentId } : {}),
+        ...(query.departmentId ? { staffDepartments: { some: { departmentId: query.departmentId } } } : {}),
         ...(query.staffId ? { id: query.staffId } : {}),
       },
       select: {
@@ -486,16 +487,17 @@ export const managementReportsService = {
         category: true,
         department: { select: { name: true } },
         salaryProfiles: {
+          where: { effectiveFrom: { lte: end }, OR: [{ effectiveTo: null }, { effectiveTo: { gt: start } }] },
           orderBy: { effectiveFrom: 'desc' },
           take: 1,
           select: { salaryBasis: true, baseAmount: true },
         },
-        attendanceRecords: { where: { attendanceDate: inMonth }, select: { status: true } },
+        attendanceRecords: { where: { attendanceDate: inMonth, isApproved: true }, select: { status: true } },
         salarySlips: {
           where: { periodStart: { lte: end }, periodEnd: { gte: start } },
-          select: { generatedAmount: true, status: true },
+          select: { id: true, payrollRunId: true, generatedAmount: true, status: true, payments: true, correctionEntries: true },
         },
-        commissionAccruals: { where: { periodStart: inMonth }, select: { commissionAmount: true } },
+        commissionAccruals: { where: { periodStart: inMonth }, select: { id: true, commissionRunId: true, commissionAmount: true, ruleSnapshot: true, status: true, payouts: true, reversals: true, adjustments: true } },
       },
       orderBy: { fullName: 'asc' },
     });
@@ -503,9 +505,13 @@ export const managementReportsService = {
     const rows = staff
       .map((s) => {
         const profile = s.salaryProfiles[0];
-        const payrollStatus = s.salarySlips.length
-          ? s.salarySlips[s.salarySlips.length - 1]!.status
-          : 'NOT_GENERATED';
+        const statuses = s.salarySlips.map(x => x.status);
+        const payrollStatus = !statuses.length ? 'NOT_GENERATED'
+          : statuses.every(x => x === 'PAID') ? 'PAID'
+          : statuses.some(x => x === 'PAID' || x === 'PARTIALLY_PAID') ? 'PARTIALLY_PAID'
+          : statuses.some(x => x === 'GENERATED' || x === 'DRAFT') ? 'GENERATED' : 'APPROVED';
+        const salaries = s.salarySlips.map(salaryBalance);
+        const commissions = s.commissionAccruals.map(commissionBalance);
         return {
           staffId: s.id,
           employeeId: s.employeeId,
@@ -519,6 +525,24 @@ export const managementReportsService = {
           salaryBasis: profile ? `${profile.salaryBasis} — ${profile.baseAmount.toFixed(0)}` : null,
           payrollAmount: sumOf(s.salarySlips, (x) => x.generatedAmount),
           commissionAmount: sumOf(s.commissionAccruals, (x) => x.commissionAmount),
+          salaryAdjustments: sumOf(salaries, x => x.adjustments),
+          salaryPayable: sumOf(salaries, x => x.payable),
+          salaryPaid: sumOf(salaries, x => x.paid),
+          salaryRemaining: sumOf(salaries, x => x.remaining),
+          salaryOverpaid: sumOf(salaries, x => x.overpaid),
+          commissionTax: sumOf(commissions, x => x.tax),
+          commissionReversed: sumOf(commissions, x => x.reversed),
+          commissionAdjustments: sumOf(commissions, x => x.adjustments),
+          commissionPayable: sumOf(commissions, x => x.payable),
+          commissionPaid: sumOf(commissions, x => x.paid),
+          commissionRemaining: sumOf(commissions, x => x.remaining),
+          commissionOverpaid: sumOf(commissions, x => x.overpaid),
+          salarySlipIds: s.salarySlips.map(x => x.id),
+          commissionAccrualIds: s.commissionAccruals.map(x => x.id),
+          payrollRunIds: [...new Set(s.salarySlips.map(x => x.payrollRunId).filter(Boolean))],
+          commissionRunIds: [...new Set(s.commissionAccruals.map(x => x.commissionRunId).filter(Boolean))],
+          salaryStatements: s.salarySlips.map(x => ({ ...x, balance: salaryBalance(x) })),
+          commissionStatements: s.commissionAccruals.map(x => ({ ...x, balance: commissionBalance(x) })),
           status: payrollStatus,
         };
       })

@@ -9,6 +9,7 @@ export const payrollRunFiltersSchema = z.object({
   periodEnd: z.coerce.date(),
   departmentId: z.string().uuid().optional(),
   category: z.string().optional(),
+  staffId: z.string().uuid().optional(),
 }).refine((v) => v.periodEnd >= v.periodStart, { message: 'periodEnd must be on or after periodStart', path: ['periodEnd'] });
 export type PayrollRunFilters = z.infer<typeof payrollRunFiltersSchema>;
 
@@ -21,7 +22,7 @@ export const payrollRunIdParamsSchema = z.object({ id: z.string().uuid() });
 export const salarySlipIdParamsSchema = z.object({ id: z.string().uuid() });
 
 export const paySalarySlipBodySchema = z.object({
-  amount: z.coerce.number().positive(),
+  amount: z.coerce.number().positive().multipleOf(0.01),
   method: z.enum(['CASH', 'CARD', 'BANK', 'ONLINE']),
   reference: z.string().max(200).optional(),
 });

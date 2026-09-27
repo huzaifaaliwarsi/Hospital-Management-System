@@ -381,7 +381,7 @@ export const staffService = {
 
     // Hospital activity is permanent history — a staff member who has any is
     // deactivated, never deleted. Everything else (profile, schedule,
-    // attendance, commission rules, login) is removed with the record.
+    // attendance, commission rules, login, payroll slips) is removed with the record.
     const activity = await prisma.staff.findUnique({
       where: { id },
       select: {
@@ -391,7 +391,6 @@ export const staffService = {
             admissionsAsDoctor: true,
             invoiceLinesPerformed: true,
             commissionAccruals: true,
-            salarySlips: true,
             dischargeSummariesAuthorized: true,
             dischargeSummariesFollowUp: true,
           },
@@ -405,7 +404,6 @@ export const staffService = {
           [c.admissionsAsDoctor, 'patient admission'],
           [c.invoiceLinesPerformed, 'billed service'],
           [c.commissionAccruals, 'doctor commission entry'],
-          [c.salarySlips, 'salary slip'],
           [c.dischargeSummariesAuthorized + c.dischargeSummariesFollowUp, 'discharge summary'],
         ]
           .filter(([n]) => (n as number) > 0)
@@ -432,7 +430,7 @@ export const staffService = {
 
       if (isFkError) {
         throw new ConflictError(
-          'This staff member has recorded hospital activity (appointments, patient admissions, billing, or salary history) and cannot be deleted. Deactivate them instead.',
+          'This staff member has recorded hospital activity (appointments, patient admissions or billing) and cannot be deleted. Deactivate them instead.',
         );
       }
       throw error;

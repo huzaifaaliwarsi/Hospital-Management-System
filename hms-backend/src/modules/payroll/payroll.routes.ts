@@ -4,6 +4,8 @@ import { validate } from '@/middleware/validate';
 import { asyncHandler } from '@/shared/asyncHandler';
 import { payrollController as c } from './payroll.controller';
 import * as s from './payroll.schemas';
+import { financialAdjustmentSchema } from '../commission/commission.schemas';
+import { payrollService } from './payroll.service';
 
 /**
  * Payroll Run — Daily/Monthly/Custom, attendance-driven (staff.md §19).
@@ -24,5 +26,8 @@ router.post('/runs/:id/approve', approve, validate({ params: s.payrollRunIdParam
 
 router.get('/slips', view, validate({ query: s.listSalarySlipsQuerySchema }), asyncHandler(c.listSlips));
 router.post('/slips/:id/pay', create, validate({ params: s.salarySlipIdParamsSchema, body: s.paySalarySlipBodySchema }), asyncHandler(c.paySlip));
+router.post('/slips/:id/adjustments', approve, validate({ params: s.salarySlipIdParamsSchema, body: financialAdjustmentSchema }), asyncHandler(async (req, res) => {
+  res.status(201).json({ data: await payrollService.adjustSlip(req.params.id as string, req.body, req.user!.sub) });
+}));
 
 export default router;

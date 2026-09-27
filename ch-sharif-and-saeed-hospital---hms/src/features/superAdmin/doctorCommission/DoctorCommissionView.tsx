@@ -13,9 +13,13 @@ import {
   fetchCommissionAccruals,
   approveCommissionAccrual,
   payCommissionAccrual,
+  adjustCommission,
 } from '../../../services/commissionService';
-import { StaffUserService } from '../../../services/staffUserService';
-import { ServiceRatesService } from '../../../services/serviceRatesService';
+import { fetchStaffUsers } from '../../../services/staffUserService';
+import { fetchServices } from '../../../services/serviceRatesService';
+import { CommissionRunsPanel } from './CommissionRunsPanel';
+import { FinancialAdjustmentModal } from '../payroll/FinancialAdjustmentModal';
+import { PreferredPaymentAccount } from '../payroll/PreferredPaymentAccount';
 import { getHospitalCurrentDate, formatDateISO } from '../../../utils/dateConstants';
 import { Modal } from '../../../components/common/Modal';
 import { TextInput, NumberInput, Select } from '../../../components/forms/FormControls';
@@ -45,6 +49,11 @@ export const DoctorCommissionView: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [doctorFilter, setDoctorFilter] = useState<string>('All');
+  const [staff, setStaff] = useState<Awaited<ReturnType<typeof fetchStaffUsers>>>([]);
+  const [services, setServices] = useState<Awaited<ReturnType<typeof fetchServices>>>([]);
+  const [adjusting, setAdjusting] = useState<CommissionAccrual | null>(null);
+  const [accrualError, setAccrualError] = useState('');
+  const [ledgerVersion, setLedgerVersion] = useState(0);
 
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [formValues, setFormValues] = useState<CommissionRuleFormValues>(emptyForm());
@@ -61,10 +70,12 @@ export const DoctorCommissionView: React.FC = () => {
 
   const loadAccruals = async () => {
     setIsLoadingAccruals(true);
+    setAccrualError('');
     try {
       setAccruals(await fetchCommissionAccruals());
+      setLedgerVersion(v => v + 1);
     } catch {
-      // Surfaced silently here — the rules table above is this screen's primary content.
+      setAccrualError('Unable to load commission payments. Please retry.');
     } finally {
       setIsLoadingAccruals(false);
     }
@@ -72,6 +83,10 @@ export const DoctorCommissionView: React.FC = () => {
 
   useEffect(() => {
     loadAccruals();
+    let active = true;
+    Promise.all([fetchStaffUsers(), fetchServices()]).then(([s, v]) => { if (active) { setStaff(s); setServices(v); } })
+      .catch(() => { if (active) setAccrualError('Unable to load doctor/service choices. Refresh to retry.'); });
+    return () => { active = false; };
   }, []);
 
   const handleApproveAccrual = async (id: string) => {
@@ -106,7 +121,7 @@ export const DoctorCommissionView: React.FC = () => {
     }
   };
 
-  const doctors = useMemo(() => StaffUserService.getStaffUsers().filter((s) => s.staffCategory === 'Doctor' && s.status === 'ACTIVE'), []);
+  const doctors = useMemo(() => staff.filter((s) => s.staffCategory === 'Doctor' && s.status === 'ACTIVE'), [staff]);
 
   // staff.md §4/§7 — a commission rate can only be set for a service the
   // doctor is actually assigned to (Doctor Assignments, Staff Add/Edit).
@@ -114,9 +129,9 @@ export const DoctorCommissionView: React.FC = () => {
   const selectedDoctor = useMemo(() => doctors.find((d) => d.id === formValues.staffId), [doctors, formValues.staffId]);
   const doctorAssignedServices = useMemo(() => {
     if (!selectedDoctor) return [];
-    const allActive = ServiceRatesService.getServices().filter((s) => s.status === 'Active');
+    const allActive = services.filter((s) => s.status === 'Active');
     return allActive.filter((s) => selectedDoctor.assignedServiceIds?.includes(s.id));
-  }, [selectedDoctor]);
+  }, [selectedDoctor, services]);
 
   const loadRules = async () => {
     setIsLoading(true);
@@ -206,7 +221,7 @@ export const DoctorCommissionView: React.FC = () => {
           </div>
           <p className="text-xs text-slate-500 mt-1 max-w-2xl">
             Fixed/% commission rules per doctor (optionally per service), Gross/Net basis, and Commission Tax — a stream fully
-            independent of Salary Tax. Doctor-Sponsored Discounts are deducted from commission payable at billing time.
+            independent of Salary Tax. Net-basis commission uses the eligible service amount after discount.
           </p>
         </div>
         <button
@@ -287,6 +302,8 @@ export const DoctorCommissionView: React.FC = () => {
         </div>
       </div>
 
+      <CommissionRunsPanel doctors={doctors.map(d => ({ id: d.id, name: d.fullName }))} services={services.map(s => ({ id: s.id, name: s.name }))} ledgerVersion={ledgerVersion} onChanged={loadAccruals} />
+
       {/* Commission Accruals & Payments (staff.md §14/§20) — created automatically at billing time
           from the rules above; never a manual entry. Approve locks it, Pay records a real CommissionPayout. */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
@@ -294,6 +311,7 @@ export const DoctorCommissionView: React.FC = () => {
           <Banknote className="h-4 w-4 text-[#08775A]" />
           <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Commission Accruals &amp; Payments</h3>
         </div>
+        {accrualError && <div role="alert" className="p-3 text-rose-700 text-xs">{accrualError} <button onClick={loadAccruals}>Retry</button></div>}
         {isLoadingAccruals ? (
           <div className="flex items-center justify-center py-10 text-slate-500 gap-2 text-sm"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
         ) : accruals.length === 0 ? (
@@ -311,7 +329,7 @@ export const DoctorCommissionView: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700">
-                {accruals.map((a) => (
+                {accruals.filter(a => doctorFilter === 'All' || a.staffId === doctorFilter).map((a) => (
                   <tr key={a.id} className="hover:bg-slate-50/80">
                     <td className="py-2.5 px-4 font-bold text-slate-900">{a.doctorName}</td>
                     <td className="py-2.5 px-4">{a.serviceName || '—'}</td>
@@ -319,6 +337,9 @@ export const DoctorCommissionView: React.FC = () => {
                       {formatPKR(a.commissionAmount)}
                       {a.paidTotal > 0 && <div className="text-[10px] text-slate-400 font-normal">Paid: {formatPKR(a.paidTotal)}</div>}
                       {a.reversedTotal > 0 && <div className="text-[10px] text-red-500 font-normal">Reversed: {formatPKR(a.reversedTotal)}</div>}
+                      <div className="text-xs font-normal">Tax: {formatPKR(a.tax)} · Payable: {formatPKR(a.payable)} · Remaining: {formatPKR(a.remaining)}</div>
+                      {a.overpaid > 0 && <div className="text-rose-700">Overpaid / recoverable: {formatPKR(a.overpaid)}</div>}
+                      {!!a.corrections.length && <details><summary>Adjustment history</summary>{a.corrections.map((c, i) => <div key={i}>{formatPKR(Number(c.amount))} · {c.reason} · {c.createdAt.slice(0, 10)}</div>)}</details>}
                     </td>
                     <td className="py-2.5 px-4">
                       <span className={`px-2 py-0.5 rounded-md text-[11px] font-semibold border ${
@@ -341,6 +362,7 @@ export const DoctorCommissionView: React.FC = () => {
                           <Banknote className="h-3 w-3" /> Pay
                         </button>
                       )}
+                      {['APPROVED', 'PARTIALLY_PAID', 'PAID'].includes(a.status) && <button className="ml-2 text-xs text-[#08775A] underline" onClick={() => setAdjusting(a)}>Adjust / Reverse</button>}
                     </td>
                   </tr>
                 ))}
@@ -350,6 +372,8 @@ export const DoctorCommissionView: React.FC = () => {
         )}
       </div>
 
+      {adjusting && <FinancialAdjustmentModal title={`Commission correction — ${adjusting.doctorName}`} onClose={() => setAdjusting(null)} onSave={async (amount, reason) => { await adjustCommission(adjusting.id, amount, reason); await loadAccruals(); }} />}
+
       {payingAccrual && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
           <div className="bg-white rounded-2xl max-w-sm w-full shadow-2xl border border-slate-200 overflow-hidden">
@@ -358,6 +382,7 @@ export const DoctorCommissionView: React.FC = () => {
               <p className="text-[11px] text-slate-500">{payingAccrual.doctorName} · {payingAccrual.serviceName || '—'}</p>
             </div>
             <div className="p-5 space-y-3.5">
+              <PreferredPaymentAccount staffId={payingAccrual.staffId} purpose="Commission" onMethod={setPayMethod} />
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Amount (PKR) — remaining {formatPKR(payingAccrual.remaining)}</label>
                 <input type="number" onWheel={(e) => e.currentTarget.blur()} min={0} value={payAmount} onChange={(e) => setPayAmount(e.target.value === '' ? '' : Number(e.target.value))} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono bg-white" />

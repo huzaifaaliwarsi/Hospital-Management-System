@@ -14,6 +14,9 @@ function actorId(req: Request): string {
 }
 
 export const commissionController = {
+  adjustAccrual: async (req: Request, res: Response) => {
+    res.status(201).json({ data: await commissionService.adjustAccrual(req.params.id as string, req.body, actorId(req)) });
+  },
   createRule: async (req: Request, res: Response) => {
     const rule = await commissionService.createCommissionRule(
       req.body as CreateCommissionRuleBody,

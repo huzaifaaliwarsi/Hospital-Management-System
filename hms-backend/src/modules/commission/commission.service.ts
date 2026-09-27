@@ -9,6 +9,17 @@ import type {
   PayAccrualBody,
 } from './commission.schemas';
 import { isCommissionBasis } from '@/modules/identity/staff.schemas';
+import { commissionBalance } from './commission.calc';
+
+export const commissionInclude = {
+  doctor: { select: { id: true, fullName: true, employeeId: true } },
+  invoiceLineItem: { include: { serviceRate: true, hospitalInvoice: { select: { id: true, invoiceNumber: true, status: true } } } },
+  payouts: true, reversals: true, adjustments: true,
+} as const;
+
+export function commissionStatement<T extends Parameters<typeof commissionBalance>[0]>(row: T) {
+  return { ...row, balance: commissionBalance(row) };
+}
 
 export const commissionService = {
   /**
@@ -27,6 +38,7 @@ export const commissionService = {
       discountAmount: Decimal;
     },
     doctorStaffId: string,
+    actorId?: string,
   ) {
     // 1. Check if commission is already accrued for this invoice line (enforces 1:1 constraint)
     const existing = await tx.doctorCommissionAccrual.findUnique({
@@ -34,17 +46,25 @@ export const commissionService = {
     });
     if (existing) return existing;
 
-    const now = new Date();
+    const source = await tx.invoiceLineItem.findUnique({ where: { id: lineItem.id }, include: { hospitalInvoice: true } });
+    if (!source?.isCompleted || source.hospitalInvoice.status === 'VOID' || source.performedByStaffId !== doctorStaffId) return null;
+    const assignment = await tx.staffService.findFirst({ where: {
+      staffId: doctorStaffId, serviceRateId: source.serviceRateId, isActive: true,
+      staff: { isActive: true }, serviceRate: { isActive: true, isDeleted: false },
+    } });
+    if (!assignment) return null;
+    // Select the rule/profile applicable when the service was posted.
+    const now = source.createdAt;
 
     // PDF §9 — only "+ Commission" salary types earn commission. A staff member
-    // whose current Salary Profile is plain Monthly/Daily earns none, even if
-    // an old rule is still open. (No salary profile yet = legacy commission-only doctor.)
+    // whose Salary Profile is plain Monthly/Daily (or missing) earns none,
+    // even if an old commission rule is still open.
     const salaryProfile = await tx.staffSalaryProfile.findFirst({
       where: { staffId: doctorStaffId, effectiveFrom: { lte: now }, OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }] },
       orderBy: { effectiveFrom: 'desc' },
       select: { salaryBasis: true },
     });
-    if (salaryProfile && !isCommissionBasis(salaryProfile.salaryBasis)) return null;
+    if (!salaryProfile || !isCommissionBasis(salaryProfile.salaryBasis)) return null;
 
     // 2. Query doctor-specific rule for this specific service rate
     let rule = await tx.doctorCommissionRule.findFirst({
@@ -52,7 +72,7 @@ export const commissionService = {
         staffId: doctorStaffId,
         serviceRateId: lineItem.serviceRateId,
         effectiveFrom: { lte: now },
-        OR: [{ effectiveTo: null }, { effectiveTo: { gte: now } }],
+        OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
       },
       orderBy: { effectiveFrom: 'desc' },
     });
@@ -64,7 +84,7 @@ export const commissionService = {
           staffId: doctorStaffId,
           serviceRateId: null,
           effectiveFrom: { lte: now },
-          OR: [{ effectiveTo: null }, { effectiveTo: { gte: now } }],
+          OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
         },
         orderBy: { effectiveFrom: 'desc' },
       });
@@ -88,12 +108,15 @@ export const commissionService = {
     }
 
     // 6. Hospital Remaining Share = Net Service Amount - Doctor Commission
+    commissionAmount = commissionAmount.toDecimalPlaces(2);
     const hospitalShare = lineItem.lineNet.minus(commissionAmount);
+    const commissionTaxAmount = Decimal.min(commissionAmount,
+      rule.commissionTaxMethod === 'PERCENTAGE' ? commissionAmount.mul(rule.commissionTaxValue ?? 0).div(100)
+        : rule.commissionTaxMethod === 'FIXED' ? rule.commissionTaxValue ?? new Decimal(0) : new Decimal(0),
+    ).toDecimalPlaces(2);
 
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date();
-    endOfDay.setHours(23, 59, 59, 999);
+    const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const endOfDay = startOfDay;
 
     const ruleSnapshot = {
       ruleId: rule.id,
@@ -105,6 +128,10 @@ export const commissionService = {
       discountAmount: lineItem.discountAmount.toNumber(),
       lineNet: lineItem.lineNet.toNumber(),
       commissionAmount: commissionAmount.toNumber(),
+      commissionTaxMethod: rule.commissionTaxMethod,
+      commissionTaxValue: rule.commissionTaxValue?.toNumber() ?? null,
+      commissionTaxAmount: commissionTaxAmount.toNumber(),
+      postedById: actorId ?? source.hospitalInvoice.createdById,
       hospitalRemainingShare: hospitalShare.toNumber(),
       calculatedAt: now.toISOString(),
     };
@@ -133,32 +160,66 @@ export const commissionService = {
     invoiceLineItemId: string,
     reason: string,
     reversedById: string,
+    fraction = new Decimal(1),
   ) {
+    await tx.$queryRaw`SELECT id FROM doctor_commission_accruals WHERE invoice_line_item_id = ${invoiceLineItemId} FOR UPDATE`;
     const accrual = await tx.doctorCommissionAccrual.findUnique({
-      where: { invoiceLineItemId },
+      where: { invoiceLineItemId }, include: { reversals: true },
     });
     if (!accrual) return null;
 
+    const priceChanges = accrual.reversals.filter(r => r.source === 'SERVICE_REPRICE').reduce((s, r) => s.plus(r.reversalAmount), new Decimal(0));
+    const serviceGross = Decimal.max(accrual.commissionAmount.minus(priceChanges), 0);
+    const alreadyReversed = accrual.reversals.filter(r => r.source !== 'SERVICE_REPRICE').reduce((s, r) => s.plus(r.reversalAmount), new Decimal(0));
+    const amount = Decimal.min(serviceGross.minus(alreadyReversed), serviceGross.mul(fraction)).toDecimalPlaces(2);
+    if (amount.lte(0)) return null;
     return tx.commissionReversal.create({
       data: {
         doctorCommissionAccrualId: accrual.id,
-        reversalAmount: accrual.commissionAmount,
+        reversalAmount: amount,
         reason,
         reversedById,
       },
     });
   },
 
+  /** Discount corrections append a signed reversal instead of rewriting earnings. */
+  async repriceCommission(tx: Prisma.TransactionClient, lineId: string, oldNet: Decimal, newNet: Decimal, actorId: string, reason: string) {
+    await tx.$queryRaw`SELECT id FROM doctor_commission_accruals WHERE invoice_line_item_id = ${lineId} FOR UPDATE`;
+    const accrual = await tx.doctorCommissionAccrual.findUnique({ where: { invoiceLineItemId: lineId }, include: { reversals: true } });
+    if (!accrual || oldNet.equals(newNet)) return;
+    const rule = accrual.ruleSnapshot as Record<string, unknown>;
+    if (rule.ruleType !== 'PERCENTAGE' || rule.basis !== 'NET') return;
+    if (accrual.reversals.some(r => r.source === 'REFUND')) throw new ConflictError('A refunded commission service requires a separate commission adjustment, not repricing.');
+    const amount = oldNet.minus(newNet).mul(String(rule.rate)).div(100).toDecimalPlaces(2);
+    if (amount.isZero()) return;
+    await tx.commissionReversal.create({ data: { doctorCommissionAccrualId: accrual.id, reversalAmount: amount, source: 'SERVICE_REPRICE', reason, reversedById: actorId } });
+  },
+
   async createCommissionRule(body: CreateCommissionRuleBody, actorId: string) {
     const salaryProfile = await prisma.staffSalaryProfile.findFirst({
-      where: { staffId: body.staffId, effectiveTo: null },
+      where: { staffId: body.staffId, effectiveFrom: { lte: body.effectiveFrom }, OR: [{ effectiveTo: null }, { effectiveTo: { gt: body.effectiveFrom } }] },
       orderBy: { effectiveFrom: 'desc' },
       select: { salaryBasis: true },
     });
-    if (salaryProfile && !isCommissionBasis(salaryProfile.salaryBasis)) {
+    if (!salaryProfile || !isCommissionBasis(salaryProfile.salaryBasis)) {
       throw new ValidationError('This staff member is on a salary type without commission. Change the Salary Type to Monthly + Commission or Daily + Commission first.');
     }
-    return prisma.doctorCommissionRule.create({
+    const assignment = await prisma.staffService.findFirst({ where: {
+      staffId: body.staffId, ...(body.serviceRateId ? { serviceRateId: body.serviceRateId } : {}),
+      isActive: true, staff: { isActive: true }, serviceRate: { isActive: true, isDeleted: false },
+    } });
+    if (!assignment) throw new ValidationError('Commission requires an active service assigned to this staff member.');
+    return prisma.$transaction(async tx => {
+      const future = await tx.doctorCommissionRule.findFirst({ where: {
+        staffId: body.staffId, serviceRateId: body.serviceRateId ?? null, effectiveFrom: { gte: body.effectiveFrom },
+      } });
+      if (future) throw new ConflictError('A rule already starts on or after this date. Choose a later effective date to preserve history.');
+      await tx.doctorCommissionRule.updateMany({ where: {
+        staffId: body.staffId, serviceRateId: body.serviceRateId ?? null,
+        effectiveFrom: { lt: body.effectiveFrom }, OR: [{ effectiveTo: null }, { effectiveTo: { gt: body.effectiveFrom } }],
+      }, data: { effectiveTo: body.effectiveFrom } });
+      return tx.doctorCommissionRule.create({
       data: {
         staffId: body.staffId,
         serviceRateId: body.serviceRateId ?? null,
@@ -175,6 +236,7 @@ export const commissionService = {
         doctor: { select: { id: true, fullName: true, designation: true } },
         serviceRate: { select: { id: true, name: true, standardRate: true } },
       },
+    });
     });
   },
 
@@ -196,12 +258,10 @@ export const commissionService = {
     const where: Prisma.DoctorCommissionAccrualWhereInput = {};
     if (query.staffId) where.staffId = query.staffId;
     if (query.status) where.status = query.status;
-    if (query.startDate && query.endDate) {
-      where.periodStart = { gte: new Date(query.startDate) };
-      where.periodEnd = { lte: new Date(`${query.endDate}T23:59:59.999Z`) };
-    }
+    if (query.startDate) where.periodStart = { gte: new Date(query.startDate) };
+    if (query.endDate) where.periodEnd = { lte: new Date(`${query.endDate}T23:59:59.999Z`) };
 
-    return prisma.doctorCommissionAccrual.findMany({
+    const rows = await prisma.doctorCommissionAccrual.findMany({
       where,
       include: {
         doctor: { select: { id: true, fullName: true, designation: true } },
@@ -213,53 +273,51 @@ export const commissionService = {
         },
         reversals: true,
         payouts: true,
+        adjustments: true,
       },
       orderBy: { createdAt: 'desc' },
-      take: 100,
     });
+    return rows.map(commissionStatement);
   },
 
-  /** Commission Run's "Approve" step (staff.md §20) — locks an accrual before it can be paid out. */
+  /** Standalone approvals are retained for existing accruals; run lines approve together. */
   async approveAccrual(id: string, actorId: string) {
-    const accrual = await prisma.doctorCommissionAccrual.findUnique({ where: { id } });
-    if (!accrual) throw new NotFoundError('Commission accrual not found');
-    if (accrual.status !== 'ACCRUED') {
-      throw new ConflictError('Only a freshly accrued commission line can be approved.');
-    }
-    return prisma.doctorCommissionAccrual.update({
-      where: { id },
+    const updated = await prisma.doctorCommissionAccrual.updateMany({
+      where: { id, status: 'ACCRUED', commissionRunId: null },
       data: { status: 'APPROVED', approvedById: actorId, approvedAt: new Date() },
-      include: { doctor: { select: { id: true, fullName: true, employeeId: true } }, payouts: true },
+    });
+    if (!updated.count) throw new ConflictError('Only an unassigned accrued line can be approved here. Approve generated lines from their Commission Run.');
+    return commissionStatement(await prisma.doctorCommissionAccrual.findUniqueOrThrow({ where: { id }, include: commissionInclude }));
+  },
+
+  async payAccrual(id: string, body: PayAccrualBody, actorId: string) {
+    return prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM doctor_commission_accruals WHERE id = ${id} FOR UPDATE`;
+      const accrual = await tx.doctorCommissionAccrual.findUnique({ where: { id }, include: commissionInclude });
+      if (!accrual) throw new NotFoundError('Commission accrual not found');
+      if (!['APPROVED', 'PARTIALLY_PAID'].includes(accrual.status)) throw new ConflictError('Only approved commission can be paid.');
+      const balance = commissionBalance(accrual);
+      if (balance.remaining.lte(0) || new Decimal(body.amount).gt(balance.remaining)) throw new ValidationError(`Payment exceeds remaining commission ${balance.remaining.toFixed(2)}.`);
+      await tx.commissionPayout.create({ data: { doctorCommissionAccrualId: id, amount: body.amount, method: body.method, reference: body.reference, paidById: actorId } });
+      return commissionStatement(await tx.doctorCommissionAccrual.update({
+        where: { id }, data: { status: balance.paid.plus(body.amount).gte(balance.payable) ? 'PAID' : 'PARTIALLY_PAID' }, include: commissionInclude,
+      }));
     });
   },
 
-  /** Only an APPROVED (or already PARTIALLY_PAID) accrual can be paid — mirrors Payroll's slip-payment gate. */
-  async payAccrual(id: string, body: PayAccrualBody, actorId: string) {
-    const accrual = await prisma.doctorCommissionAccrual.findUnique({ where: { id }, include: { payouts: true, reversals: true } });
-    if (!accrual) throw new NotFoundError('Commission accrual not found');
-    if (accrual.status !== 'APPROVED' && accrual.status !== 'PARTIALLY_PAID') {
-      throw new ConflictError('Only an approved commission accrual can be paid.');
-    }
-    const alreadyPaid = accrual.payouts.reduce((sum, p) => sum.plus(p.amount), new Decimal(0));
-    const reversed = accrual.reversals.reduce((sum, r) => sum.plus(r.reversalAmount), new Decimal(0));
-    const payable = accrual.commissionAmount.minus(reversed);
-    const remaining = payable.minus(alreadyPaid);
-    if (remaining.lte(0)) throw new ConflictError('This commission accrual is already fully paid (or fully reversed).');
-    if (new Decimal(body.amount).gt(remaining)) {
-      throw new ValidationError(`Payment amount exceeds the remaining balance of ${remaining.toFixed(2)}.`);
-    }
-
-    return prisma.$transaction(async (tx) => {
-      await tx.commissionPayout.create({
-        data: { doctorCommissionAccrualId: id, amount: body.amount, method: body.method, reference: body.reference, paidById: actorId },
-      });
-      const newPaidTotal = alreadyPaid.plus(body.amount);
-      const newStatus = newPaidTotal.gte(payable) ? 'PAID' : 'PARTIALLY_PAID';
-      return tx.doctorCommissionAccrual.update({
-        where: { id },
-        data: { status: newStatus },
-        include: { doctor: { select: { id: true, fullName: true, employeeId: true } }, payouts: true, reversals: true },
-      });
+  async adjustAccrual(id: string, body: { amount: number; reason: string }, actorId: string) {
+    return prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM doctor_commission_accruals WHERE id = ${id} FOR UPDATE`;
+      const row = await tx.doctorCommissionAccrual.findUnique({ where: { id }, include: commissionInclude });
+      if (!row) throw new NotFoundError('Commission accrual not found');
+      if (!row.approvedAt) throw new ConflictError('Approve commission before posting a correction.');
+      const balance = commissionBalance(row);
+      if (balance.payable.plus(body.amount).lt(0)) throw new ValidationError('Correction cannot reduce payable below zero.');
+      await tx.commissionAdjustment.create({ data: { accrualId: id, ...body, createdById: actorId } });
+      const payable = balance.payable.plus(body.amount);
+      return commissionStatement(await tx.doctorCommissionAccrual.update({ where: { id }, data: {
+        status: balance.paid.gte(payable) ? 'PAID' : balance.paid.gt(0) ? 'PARTIALLY_PAID' : 'APPROVED',
+      }, include: commissionInclude }));
     });
   },
 };

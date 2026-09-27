@@ -195,6 +195,8 @@ export async function fetchBalanceSettlements(range: RangeParams, filters?: Repo
 // ── #7 Staff / Payroll / Doctor Commission ────────────────────────────────
 
 export interface StaffPayrollRow {
+  salaryStatements: FinancialSource[];
+  commissionStatements: FinancialSource[];
   staffId: string;
   employeeId: string;
   name: string;
@@ -204,7 +206,21 @@ export interface StaffPayrollRow {
   salaryBasis: string | null;
   payrollAmount: number;
   commissionAmount: number;
+  salaryAdjustments: number; salaryPayable: number; salaryPaid: number; salaryRemaining: number; salaryOverpaid: number;
+  commissionTax: number; commissionReversed: number; commissionAdjustments: number; commissionPayable: number;
+  commissionPaid: number; commissionRemaining: number; commissionOverpaid: number;
+  salarySlipIds: string[]; commissionAccrualIds: string[]; payrollRunIds: string[]; commissionRunIds: string[];
   status: string;
+}
+
+export interface FinancialSource {
+  id: string; status: string; payrollRunId?: string | null; commissionRunId?: string | null;
+  balance: { payable: string; paid: string; remaining: string; overpaid: string };
+  payments?: { amount: string; method: string; paidAt: string; reference?: string; paidById: string }[];
+  payouts?: { amount: string; method: string; paidAt: string; reference?: string; paidById: string }[];
+  correctionEntries?: { amount: string; reason: string; createdAt: string; createdById: string }[];
+  adjustments?: { amount: string; reason: string; createdAt: string; createdById: string }[];
+  reversals?: { reversalAmount: string; reason: string; reversedAt: string; reversedById: string }[];
 }
 
 /** Payroll Period is a month (YYYY-MM), not a date range. */
@@ -212,7 +228,9 @@ export async function fetchStaffPayrollCommission(filters?: ReportFilters): Prom
   const d = await get<any>('staff-payroll-commission', params(null, filters));
   return {
     periodLabel: d.period.label,
-    rows: d.rows.map((r: any) => toNumbers<StaffPayrollRow>(r, ['attendanceDays', 'payrollAmount', 'commissionAmount'])),
+    rows: d.rows.map((r: any) => toNumbers<StaffPayrollRow>(r, ['attendanceDays', 'payrollAmount', 'commissionAmount',
+      'salaryAdjustments', 'salaryPayable', 'salaryPaid', 'salaryRemaining', 'salaryOverpaid',
+      'commissionTax', 'commissionReversed', 'commissionAdjustments', 'commissionPayable', 'commissionPaid', 'commissionRemaining', 'commissionOverpaid'])),
   };
 }
 

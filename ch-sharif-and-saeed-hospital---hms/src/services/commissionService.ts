@@ -104,6 +104,16 @@ export interface CommissionAccrual {
   paidTotal: number;
   reversedTotal: number;
   remaining: number;
+  tax: number;
+  payable: number;
+  adjustmentsTotal: number;
+  overpaid: number;
+  commissionRunId: string | null;
+  invoiceNumber: string;
+  quantity: number;
+  eligibleNet: number;
+  ruleLabel: string;
+  corrections: { amount: string; reason: string; createdAt: string; createdById: string }[];
   periodStart: string;
   createdAt: string;
 }
@@ -123,15 +133,56 @@ function toAccrual(raw: Record<string, any>): CommissionAccrual {
     status: raw.status,
     paidTotal,
     reversedTotal,
-    remaining: commissionAmount - reversedTotal - paidTotal,
+    remaining: Number(raw.balance?.remaining ?? commissionAmount - reversedTotal - paidTotal),
+    tax: Number(raw.balance?.tax ?? 0),
+    payable: Number(raw.balance?.payable ?? commissionAmount - reversedTotal),
+    adjustmentsTotal: Number(raw.balance?.adjustments ?? 0),
+    overpaid: Number(raw.balance?.overpaid ?? 0),
+    commissionRunId: raw.commissionRunId ?? null,
+    invoiceNumber: raw.invoiceLineItem?.hospitalInvoice?.invoiceNumber ?? '',
+    quantity: Number(raw.invoiceLineItem?.quantity ?? 0),
+    eligibleNet: Number(raw.ruleSnapshot?.lineNet ?? 0),
+    ruleLabel: raw.ruleSnapshot?.ruleType === 'PERCENTAGE' ? `${raw.ruleSnapshot.rate}%` : `PKR ${raw.ruleSnapshot?.rate ?? 0}/service`,
+    corrections: raw.adjustments ?? [],
     periodStart: formatDate(raw.periodStart),
     createdAt: formatDate(raw.createdAt),
   };
 }
 
-export async function fetchCommissionAccruals(filters?: { staffId?: string; status?: AccrualStatus }): Promise<CommissionAccrual[]> {
+export async function fetchCommissionAccruals(filters?: { staffId?: string; status?: AccrualStatus; startDate?: string; endDate?: string }): Promise<CommissionAccrual[]> {
   const res = await apiClient.get<{ data: Record<string, any>[] }>('/commission/accruals', { params: filters });
   return res.data.data.map(toAccrual);
+}
+
+export interface CommissionRunFilters {
+  periodType: 'DAILY' | 'MONTHLY' | 'CUSTOM'; periodStart: string; periodEnd: string;
+  staffId?: string; departmentId?: string; serviceRateId?: string;
+}
+export interface CommissionRun {
+  id: string; periodType: string; periodStart: string; periodEnd: string;
+  status: string; totalAmount: string; generatedAt: string; lines?: CommissionAccrual[];
+}
+export async function previewCommissionRun(filters: CommissionRunFilters) {
+  const { data } = await apiClient.post('/commission/preview', filters);
+  return { lines: data.data.lines.map(toAccrual) as CommissionAccrual[], totalAmount: Number(data.data.totalAmount) };
+}
+export async function generateCommissionRun(filters: CommissionRunFilters): Promise<CommissionRun> {
+  const { data } = await apiClient.post('/commission/runs', filters);
+  return { ...data.data, lines: data.data.lines.map(toAccrual) };
+}
+export async function fetchCommissionRuns(): Promise<CommissionRun[]> {
+  return (await apiClient.get('/commission/runs')).data.data;
+}
+export async function getCommissionRun(id: string): Promise<CommissionRun> {
+  const { data } = await apiClient.get(`/commission/runs/${id}`);
+  return { ...data.data, lines: data.data.lines.map(toAccrual) };
+}
+export async function approveCommissionRun(id: string): Promise<CommissionRun> {
+  const { data } = await apiClient.post(`/commission/runs/${id}/approve`, {});
+  return { ...data.data, lines: data.data.lines.map(toAccrual) };
+}
+export async function adjustCommission(id: string, amount: number, reason: string) {
+  return (await apiClient.post(`/commission/accruals/${id}/adjustments`, { amount, reason })).data.data;
 }
 
 export async function approveCommissionAccrual(id: string): Promise<CommissionAccrual> {

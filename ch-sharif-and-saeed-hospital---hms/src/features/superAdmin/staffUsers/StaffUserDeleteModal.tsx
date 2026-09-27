@@ -109,8 +109,8 @@ export const StaffUserDeleteModal: React.FC<StaffUserDeleteModalProps> = ({
                 <div>
                   <span className="font-bold block">Permanent Deletion Warning</span>
                   <span>
-                    This staff member has no recorded transactions. Deletion will permanently erase
-                    all personal details, contact data, and workstation credentials.
+                    Deletion will permanently erase all personal details, contact data, workstation
+                    credentials, attendance and payroll records (salary slips and salary payments).
                   </span>
                 </div>
               </div>

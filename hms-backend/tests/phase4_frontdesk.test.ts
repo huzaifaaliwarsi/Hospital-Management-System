@@ -30,6 +30,7 @@ vi.mock('@/db/client', () => {
       update: vi.fn(),
     },
     invoiceLineItem: {
+      findUnique: vi.fn().mockResolvedValue(null),
       create: vi.fn(),
       findMany: vi.fn(),
       update: vi.fn(),
@@ -64,7 +65,7 @@ vi.mock('@/db/client', () => {
     commissionReversal: {
       create: vi.fn(),
     },
-    // No Salary Profile = legacy commission-only doctor (commission still accrues).
+    // No Salary Profile is ineligible under the four-salary-type blueprint.
     staffSalaryProfile: {
       findFirst: vi.fn().mockResolvedValue(null),
     },
@@ -230,6 +231,7 @@ describe('Phase 4: Front Desk Billing, Appointments & Doctor Commission Engine',
       ]);
 
       (prisma.hospitalInvoice.create as any).mockResolvedValue({
+        lines: [],
         id: 'inv-001',
         invoiceNumber: 'INV-TEST-001',
         subtotal: new Decimal(2000),
@@ -276,6 +278,7 @@ describe('Phase 4: Front Desk Billing, Appointments & Doctor Commission Engine',
       });
       (prisma.paymentReceipt.findMany as any).mockResolvedValue([]);
       (prisma.hospitalInvoice.create as any).mockResolvedValue({
+        lines: [],
         id: 'inv-selfpay-1',
         invoiceNumber: 'INV-TEST-SP-1',
         total: new Decimal(2000),
@@ -331,6 +334,7 @@ describe('Phase 4: Front Desk Billing, Appointments & Doctor Commission Engine',
       });
       (prisma.paymentReceipt.findMany as any).mockResolvedValue([]);
       (prisma.hospitalInvoice.create as any).mockResolvedValue({
+        lines: [],
         id: 'inv-panel-cov-1',
         invoiceNumber: 'INV-TEST-PC-1',
         total: new Decimal(10000),
@@ -373,6 +377,7 @@ describe('Phase 4: Front Desk Billing, Appointments & Doctor Commission Engine',
       });
       (prisma.paymentReceipt.findMany as any).mockResolvedValue([]);
       (prisma.hospitalInvoice.create as any).mockResolvedValue({
+        lines: [],
         id: 'inv-panel-nc-1',
         invoiceNumber: 'INV-TEST-NC-1',
         total: new Decimal(3000),
@@ -486,6 +491,7 @@ describe('Phase 4: Front Desk Billing, Appointments & Doctor Commission Engine',
   describe('2. Invoicing, Corporate Panel Discounts & Policy Threshold (§4.6, §16 Q-05)', () => {
     it('creates walk-in OPD encounter', async () => {
       (prisma.hospitalInvoice.create as any).mockResolvedValue({
+        lines: [],
         id: 'inv-walkin-1',
         invoiceNumber: 'INV-WALKIN-1',
         sourceType: 'WALK_IN',
@@ -623,7 +629,9 @@ describe('Phase 4: Front Desk Billing, Appointments & Doctor Commission Engine',
   describe('3. Doctor Commission Calculation Engine (§4.5, D15 §4, D16 p.21)', () => {
     it('calculates doctor commission on NET eligible amount and computes hospital share', async () => {
       const mockTx: any = {
-        staffSalaryProfile: { findFirst: vi.fn().mockResolvedValue(null) },
+        invoiceLineItem: { findUnique: vi.fn().mockResolvedValue({ isCompleted: true, performedByStaffId: doctorStaffId, serviceRateId, createdAt: new Date(), hospitalInvoice: { status: 'PAID', createdById: cashierId } }) },
+        staffService: { findFirst: vi.fn().mockResolvedValue({ id: 'assignment' }) },
+        staffSalaryProfile: { findFirst: vi.fn().mockResolvedValue({ salaryBasis: 'MONTHLY_COMMISSION' }) },
         doctorCommissionAccrual: {
           findUnique: vi.fn().mockResolvedValue(null),
           create: vi.fn().mockImplementation((args) => args.data),
@@ -665,7 +673,9 @@ describe('Phase 4: Front Desk Billing, Appointments & Doctor Commission Engine',
 
     it('calculates FIXED_PER_SERVICE doctor commission', async () => {
       const mockTx: any = {
-        staffSalaryProfile: { findFirst: vi.fn().mockResolvedValue(null) },
+        invoiceLineItem: { findUnique: vi.fn().mockResolvedValue({ isCompleted: true, performedByStaffId: doctorStaffId, serviceRateId, createdAt: new Date(), hospitalInvoice: { status: 'PAID', createdById: cashierId } }) },
+        staffService: { findFirst: vi.fn().mockResolvedValue({ id: 'assignment' }) },
+        staffSalaryProfile: { findFirst: vi.fn().mockResolvedValue({ salaryBasis: 'MONTHLY_COMMISSION' }) },
         doctorCommissionAccrual: {
           findUnique: vi.fn().mockResolvedValue(null),
           create: vi.fn().mockImplementation((args) => args.data),
@@ -704,6 +714,8 @@ describe('Phase 4: Front Desk Billing, Appointments & Doctor Commission Engine',
 
     it('accrues no commission for a doctor on a plain Monthly/Daily salary type (PDF §9)', async () => {
       const mockTx: any = {
+        invoiceLineItem: { findUnique: vi.fn().mockResolvedValue({ isCompleted: true, performedByStaffId: doctorStaffId, serviceRateId, createdAt: new Date(), hospitalInvoice: { status: 'PAID', createdById: cashierId } }) },
+        staffService: { findFirst: vi.fn().mockResolvedValue({ id: 'assignment' }) },
         staffSalaryProfile: { findFirst: vi.fn().mockResolvedValue({ salaryBasis: 'MONTHLY' }) },
         doctorCommissionAccrual: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn() },
         doctorCommissionRule: { findFirst: vi.fn().mockResolvedValue({ id: 'rule-x', ruleType: 'PERCENTAGE', rate: new Decimal(20), basis: 'NET' }) },
@@ -725,9 +737,11 @@ describe('Phase 4: Front Desk Billing, Appointments & Doctor Commission Engine',
 
     it('creates linked commission reversal on refund without silent delete', async () => {
       const mockTx: any = {
+        $queryRaw: vi.fn(),
         doctorCommissionAccrual: {
           findUnique: vi.fn().mockResolvedValue({
             id: 'accrual-123',
+            reversals: [],
             commissionAmount: new Decimal(800),
           }),
         },

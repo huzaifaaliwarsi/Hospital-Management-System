@@ -5,6 +5,7 @@ import { TextInput } from '../../../components/forms/FormControls';
 import { useReportFilters, useFilterOptions, FilterSelect, opts } from '../../../components/reports/reportFilters';
 import { InvoiceDetailModal } from '../../frontDesk/billing/InvoiceDetailModal';
 import { AdmissionSummaryView } from '../../admission/AdmissionSimpleReports';
+import { StaffFinancialSources } from './StaffFinancialSources';
 import {
   fetchExpenses,
   EXPENSE_CATEGORY_LABEL,
@@ -331,12 +332,13 @@ const formatSalaryBasis = (basis: string | null) => {
 };
 
 export const StaffPayrollCommissionReport: React.FC = () => {
+  const [sourceRow, setSourceRow] = useState<StaffPayrollRow | null>(null);
   const options = useOptions();
   const { filters, bind, reset } = useReportFilters({ period: currentMonth(), departmentId: '', staffId: '', status: '' });
   return (
-    <GenericReportView<StaffPayrollRow>
+    <><GenericReportView<StaffPayrollRow>
       title="Staff / Payroll / Doctor Commission"
-      subtitle="Attendance days, salary basis, payroll amount and doctor commission for the payroll month."
+      subtitle="Approved attendance and separate salary/commission ledgers for this earning month. Payments and corrections include subsequent settlements; overlapping salary runs are shown in full."
       icon={Users}
       filenamePrefix="Staff_Payroll_Commission"
       compact
@@ -356,6 +358,7 @@ export const StaffPayrollCommissionReport: React.FC = () => {
       rowKey={(r) => r.staffId}
       noTotalColumns={['Attendance Days']}
       emptyMessage="No staff match these filters."
+      renderCell={(col, row) => col.header === 'Source Records' ? <button className="text-[#08775A] underline" onClick={() => setSourceRow(row)}>View statements &amp; payments</button> : col.cell(row)}
       columns={[
         { header: 'Emp ID', cell: (r) => r.employeeId },
         { header: 'Staff / Doctor', cell: (r) => r.name },
@@ -364,10 +367,23 @@ export const StaffPayrollCommissionReport: React.FC = () => {
         count('Attendance Days', (r) => r.attendanceDays),
         { header: 'Salary Basis', cell: (r) => formatSalaryBasis(r.salaryBasis) },
         money('Payroll Amount', (r) => r.payrollAmount),
+        money('Salary Adjustments', (r) => r.salaryAdjustments),
+        money('Salary Payable', (r) => r.salaryPayable),
+        money('Salary Paid', (r) => r.salaryPaid),
+        money('Salary Remaining', (r) => r.salaryRemaining),
+        money('Salary Recoverable', (r) => r.salaryOverpaid),
         money('Doctor Commission', (r) => r.commissionAmount),
+        money('Commission Reversed', (r) => r.commissionReversed),
+        money('Commission Tax', (r) => r.commissionTax),
+        money('Commission Adjustments', (r) => r.commissionAdjustments),
+        money('Commission Payable', (r) => r.commissionPayable),
+        money('Commission Paid', (r) => r.commissionPaid),
+        money('Commission Remaining', (r) => r.commissionRemaining),
+        money('Commission Recoverable', (r) => r.commissionOverpaid),
+        { header: 'Source Records', cell: (r) => `${r.salarySlipIds.length} salary slips / ${r.commissionAccrualIds.length} service commissions` },
         { header: 'Status', cell: (r) => labelOf(PAYROLL_STATUS, r.status) },
       ]}
-    />
+    />{sourceRow && <StaffFinancialSources row={sourceRow} onClose={() => setSourceRow(null)} />}</>
   );
 };
 
