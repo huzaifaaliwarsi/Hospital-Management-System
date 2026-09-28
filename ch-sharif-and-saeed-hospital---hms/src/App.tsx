@@ -13,12 +13,13 @@ import { InventoryDashboard } from './features/dashboard/InventoryDashboard';
 import { SuperAdminModuleView } from './features/superAdmin/SuperAdminModuleView';
 import { FrontDeskModuleView } from './features/frontDesk/FrontDeskModuleView';
 import { AdmissionModuleView } from './features/admission/AdmissionModuleView';
+import { InventoryModuleView } from './features/inventory/InventoryModuleView';
 import { ModulePlaceholderView } from './features/shared/ModulePlaceholderView';
 import { PortalArchitectureShowcase } from './features/shared/PortalArchitectureShowcase';
 import { DesignSystemShowcase } from './features/shared/DesignSystemShowcase';
 import { PORTAL_CONFIGS, PORTAL_NAVIGATION_MAP } from './constants/portalNavigations';
 
-const MONTSERRAT_PORTALS: string[] = ['front-desk', 'super-admin', 'admin'];
+const MONTSERRAT_PORTALS: string[] = ['front-desk', 'super-admin', 'admin', 'inventory'];
 
 const MainPortalRouter: React.FC = () => {
   const { isAuthenticated, currentUser, activePortal } = useAuth();
@@ -39,7 +40,7 @@ const MainPortalRouter: React.FC = () => {
     }
   }, [isAuthenticated, currentUser, currentPath, activePortal, navigate]);
 
-  // Front Desk, Super Admin and Admin use Montserrat (see `.portal-montserrat`
+  // Front Desk, Super Admin, Admin and Inventory use Montserrat (see `.portal-montserrat`
   // in index.css). Set on <html> so modals rendered into <body> pick it up too.
   useEffect(() => {
     const usesMontserrat = isAuthenticated && MONTSERRAT_PORTALS.includes(currentPortal);
@@ -189,6 +190,15 @@ const MainPortalRouter: React.FC = () => {
         // (v7.2 §2.4) and the High-Cost Medicine gate (§2.6) are still on
         // the pre-v7.2 mechanism, a deliberately separate next pass.
         <AdmissionModuleView
+          moduleId={currentModule}
+          moduleName={currentModuleName}
+          groupTitle={currentGroupTitle}
+        />
+      ) : currentPortal === 'inventory' ? (
+        // Inventory — only `dashboard` is real so far (inventory.md §9 steps
+        // 11-14 build the rest); everything else still falls through to
+        // ModulePlaceholderView inside InventoryModuleView itself.
+        <InventoryModuleView
           moduleId={currentModule}
           moduleName={currentModuleName}
           groupTitle={currentGroupTitle}

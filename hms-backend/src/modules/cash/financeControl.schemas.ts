@@ -7,7 +7,9 @@ const dateRangeSchema = z.object({
   toDate: z.string().optional(),
 });
 
+/** `all` (default) = full live custody picture, not just today's movements — Petty Cash Oversight §2 wants total issued/spent since ever, not a day's slice. */
 export const listBalanceSheetsQuerySchema = dateRangeSchema.extend({
+  preset: z.enum(['all', 'today', 'yesterday', 'this_week', 'this_month', 'custom']).default('all'),
   portalUserId: z.string().uuid().optional(),
   onlyUnsettled: z.coerce.boolean().optional(),
 });
@@ -62,3 +64,19 @@ export const reverseSettlementBodySchema = z.object({
   reason: z.string().min(1, 'A reversal reason is required.'),
 });
 export type ReverseSettlementBody = z.infer<typeof reverseSettlementBodySchema>;
+
+/**
+ * Super Admin "Issue Petty Cash" (opening float / top-up) to a cash-handling
+ * staff user — Finance Control oversight, not a self-service cashier action.
+ * `issueType` is a UI-facing distinction only; both post as the same
+ * `CashCategory.PETTY_CASH_ISSUE` row (`financeControl.service.ts`
+ * `issuePettyCash`) so `cash.service.ts`'s existing "Petty Cash Received"
+ * total keeps working unchanged.
+ */
+export const issuePettyCashBodySchema = z.object({
+  portalUserId: z.string().uuid(),
+  amount: z.coerce.number().positive('Amount must be greater than zero.'),
+  issueType: z.enum(['OPENING_FLOAT', 'TOP_UP']),
+  note: z.string().trim().min(1, 'Purpose / note is required.'),
+});
+export type IssuePettyCashBody = z.infer<typeof issuePettyCashBodySchema>;

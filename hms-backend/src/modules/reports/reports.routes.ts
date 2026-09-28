@@ -12,6 +12,8 @@ import { admissionPharmacyReportsController as admPharm } from './admissionPharm
 import * as apds from './admissionPharmacyReports.schemas';
 import { managementReportsController as mgmt } from './managementReports.controller';
 import * as mgs from './managementReports.schemas';
+import { inventoryReportsController as inv } from './inventoryReports.controller';
+import * as invs from './inventoryReports.schemas';
 
 const router = Router();
 const view = authorize('reports', 'view');
@@ -91,6 +93,21 @@ router.get('/management/balance-settlements', viewManagement, validate({ query: 
 router.get('/management/staff-payroll-commission', viewManagement, validate({ query: mgs.staffPayrollQuerySchema }), asyncHandler(mgmt.staffPayrollCommission));
 router.get('/management/inventory-pharmacy', viewManagement, validate({ query: mgs.inventoryPharmacyQuerySchema }), asyncHandler(mgmt.inventoryPharmacy));
 router.get('/management/filter-options', viewManagement, asyncHandler(mgmt.filterOptions));
+
+// ── Inventory Reports (inventory.md §7/§8, §9 step 7) ──────────────────
+router.get('/inventory/summary', view, validate({ query: invs.inventorySummaryQuerySchema }), asyncHandler(inv.summary));
+router.get('/inventory/stock-movement', view, validate({ query: invs.stockMovementReportQuerySchema }), asyncHandler(inv.stockMovement));
+router.get('/inventory/purchases', view, validate({ query: invs.purchaseReportQuerySchema }), asyncHandler(inv.purchases));
+router.get(
+  '/inventory/department-issue-return',
+  view,
+  validate({ query: invs.departmentIssueReturnReportQuerySchema }),
+  asyncHandler(inv.departmentIssueReturn),
+);
+router.get('/inventory/suppliers', view, validate({ query: invs.supplierReportQuerySchema }), asyncHandler(inv.supplierReport));
+router.get('/inventory/expenses', view, validate({ query: invs.inventoryExpenseReportQuerySchema }), asyncHandler(inv.expenseReport));
+router.get('/inventory/stock-status', view, validate({ query: invs.stockStatusReportQuerySchema }), asyncHandler(inv.stockStatus));
+router.get('/inventory/cash-settlement', view, validate({ query: invs.cashSettlementReportQuerySchema }), asyncHandler(inv.cashSettlement));
 
 router.get('/_scaffold', (_req, res) => {
   res.json({ data: { module: 'reports', status: 'scaffolded' } });

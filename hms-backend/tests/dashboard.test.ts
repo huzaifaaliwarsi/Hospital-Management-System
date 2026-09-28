@@ -85,6 +85,12 @@ vi.mock('@/db/client', () => {
         groupBy: vi.fn().mockResolvedValue([
           { stockItemId: 's-1', _sum: { quantityDelta: 30 } }, // Below reorderLevel (50) -> Low stock
         ]),
+        // Batch/expiry lookup for the Inventory Alert Summary (inventory.md
+        // §9 step 1) — no batches in this fixture, so no near-expiry/expired.
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      supplierLedger: {
+        findMany: vi.fn().mockResolvedValue([]),
       },
       pharmacyDispense: {
         findMany: vi.fn().mockResolvedValue([]),

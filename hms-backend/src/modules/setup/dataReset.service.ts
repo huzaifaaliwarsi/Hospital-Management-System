@@ -17,14 +17,27 @@ export interface ResetSummary {
   pharmacyDispenses: number;
   pharmacyDispenseLines: number;
   resetBeds: number;
+  mainCashFundEntries: number;
+  staff: number;
+  departments: number;
+  shifts: number;
+  wards: number;
+  rooms: number;
 }
 
 export const dataResetService = {
   /**
    * Resets all runtime transactional data (appointments, invoices, receipts,
-   * cashier ledgers, admissions, patient encounters, panel patients, and corporate panels)
-   * while preserving all master setup data (hospital profile, departments, staff,
-   * users, services, wards, rooms, beds).
+   * cashier ledgers, admissions, patient encounters, panel patients, corporate
+   * panels, the Main Cash Fund) AND the Staff / Department / Ward-Room-Bed
+   * master directories — while preserving Portal User login accounts
+   * (Super Admin, Admin, and every operational role's username/password),
+   * Services & Rates, and the Hospital Profile itself.
+   *
+   * Staff/Department/Ward carry deep RESTRICT foreign keys across HR,
+   * attendance, payroll, and requisition tables — each must be cleared in
+   * dependency order (children before parents) or the whole transaction
+   * fails atomically with no partial deletion.
    */
   resetTransactionalData: async (actorId: string, actorRole?: string): Promise<{ success: boolean; summary: ResetSummary }> => {
     if (actorRole && actorRole !== 'SUPER_ADMIN') {
@@ -84,19 +97,41 @@ export const dataResetService = {
       await tx.panelDiscountRule.deleteMany();
       const deletedCorporatePanels = await tx.corporatePanel.deleteMany();
 
-      // 11. Reset occupied/reserved beds back to AVAILABLE
-      const updatedBeds = await tx.bed.updateMany({
-        where: {
-          status: {
-            in: ['OCCUPIED', 'RESERVED'],
-          },
-        },
-        data: {
-          status: 'AVAILABLE',
-        },
-      });
+      // 11. Main Cash Fund ledger (hospital's central physical cash reserve)
+      const deletedMainCashFundEntries = await tx.mainCashFundEntry.deleteMany();
 
-      // 12. Record Audit Log entry
+      // 12. Staff HR data — attendance, payroll, and commission rows that
+      // RESTRICT-block deleting the Staff row itself. Portal User login
+      // accounts are deliberately left untouched (§16 Q-02: a login need not
+      // outlive its Staff record, but this reset never removes credentials).
+      await tx.attendanceCorrectionLog.deleteMany();
+      await tx.attendanceRecord.deleteMany();
+      await tx.salaryAdjustment.deleteMany();
+      await tx.salaryPayment.deleteMany();
+      await tx.salarySlip.deleteMany();
+      await tx.staffEmploymentHistory.deleteMany();
+      await tx.staffSalaryProfile.deleteMany();
+      await tx.biometricRawPunch.deleteMany();
+      await tx.doctorCommissionRule.deleteMany();
+      // staffDepartments / staffServices / staffWeeklySchedule /
+      // staffBankAccounts all CASCADE from Staff — no explicit delete needed.
+      const deletedStaff = await tx.staff.deleteMany();
+
+      // 13. Department — unlink Services & Rates (kept, not deleted) then
+      // clear the requisitions/shifts that RESTRICT-block the department row.
+      await tx.serviceRate.updateMany({ where: { departmentId: { not: null } }, data: { departmentId: null } });
+      await tx.departmentRequisitionLine.deleteMany();
+      await tx.departmentRequisition.deleteMany();
+      const deletedShifts = await tx.shift.deleteMany();
+      const deletedDepartments = await tx.department.deleteMany();
+
+      // 14. Ward / Room / Bed hierarchy (children first, though FKs are
+      // ON DELETE SET NULL so order is not strictly required).
+      const deletedBeds = await tx.bed.deleteMany();
+      const deletedRooms = await tx.room.deleteMany();
+      const deletedWards = await tx.ward.deleteMany();
+
+      // 15. Record Audit Log entry
       await tx.auditLog.create({
         data: {
           actorId,
@@ -111,7 +146,13 @@ export const dataResetService = {
             deletedSelfPayEncounters: deletedSelfPayEncounters.count,
             deletedPanelPatients: deletedPanelPatients.count,
             deletedCorporatePanels: deletedCorporatePanels.count,
-            resetBedsCount: updatedBeds.count,
+            deletedMainCashFundEntries: deletedMainCashFundEntries.count,
+            deletedStaff: deletedStaff.count,
+            deletedDepartments: deletedDepartments.count,
+            deletedShifts: deletedShifts.count,
+            deletedWards: deletedWards.count,
+            deletedRooms: deletedRooms.count,
+            deletedBeds: deletedBeds.count,
           },
         },
       });
@@ -133,7 +174,13 @@ export const dataResetService = {
           pharmacyClearances: deletedPharmacyClearances.count,
           pharmacyDispenses: deletedPharmacyDispenses.count,
           pharmacyDispenseLines: deletedPharmacyDispenseLines.count,
-          resetBeds: updatedBeds.count,
+          resetBeds: deletedBeds.count,
+          mainCashFundEntries: deletedMainCashFundEntries.count,
+          staff: deletedStaff.count,
+          departments: deletedDepartments.count,
+          shifts: deletedShifts.count,
+          wards: deletedWards.count,
+          rooms: deletedRooms.count,
         },
       };
     });

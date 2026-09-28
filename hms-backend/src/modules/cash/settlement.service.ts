@@ -4,6 +4,7 @@ import { ValidationError } from '@/shared/errors/AppError';
 import type { SubmitSettlementBody } from './settlement.schemas';
 import type { MySettlementsQuery } from './financeControl.schemas';
 import { resolveDateRange } from '@/modules/reports/dashboard.service';
+import { resolveCashModuleScope } from './moduleScope.util';
 
 /**
  * My Account Settlement (HMS_V7.2_NEW_REQUIREMENTS.md §3.3; Balance Sheet &
@@ -23,15 +24,24 @@ import { resolveDateRange } from '@/modules/reports/dashboard.service';
  * an "Opening Float" (a fixed till amount handed to a cashier at shift
  * start) — that's a separate, not-yet-built feature.
  *
- * Scoped to `moduleScope: 'BILLING'` — the only scope a Front Desk cashier
- * ever writes to.
+ * Scoped to the submitting user's own `moduleScope`, resolved from their
+ * role (`resolveCashModuleScope` — inventory.md §9 step 2). Previously
+ * hardcoded to `'BILLING'`, which silently mis-tagged every non-Front-Desk
+ * user's settlement (e.g. an Inventory user's submission was written as a
+ * BILLING settlement).
  */
 export const settlementService = {
   async submitSettlement(portalUserId: string, body: SubmitSettlementBody) {
     return prisma.$transaction(async (tx) => {
+      const targetUser = await tx.portalUser.findUniqueOrThrow({
+        where: { id: portalUserId },
+        select: { role: true },
+      });
+      const moduleScope = resolveCashModuleScope(targetUser.role);
+
       const [unsettled, previousSettlement] = await Promise.all([
         tx.userCashBalance.findMany({
-          where: { portalUserId, isSettled: false },
+          where: { portalUserId, moduleScope, isSettled: false },
           orderBy: { occurredAt: 'asc' },
         }),
         // The most recent non-reversed settlement carries this user's
@@ -39,7 +49,7 @@ export const settlementService = {
         // re-opens its linked rows (`financeControlService.reverseSettlement`),
         // so a reversed settlement's carry-forward must never be counted.
         tx.accountSettlement.findFirst({
-          where: { portalUserId, moduleScope: 'BILLING', status: { not: 'REVERSED' } },
+          where: { portalUserId, moduleScope, status: { not: 'REVERSED' } },
           orderBy: { createdAt: 'desc' },
           select: { carryForwardAmount: true },
         }),
@@ -80,7 +90,7 @@ export const settlementService = {
       const settlement = await tx.accountSettlement.create({
         data: {
           portalUserId,
-          moduleScope: 'BILLING',
+          moduleScope,
           periodStart,
           periodEnd,
           expectedCash,
@@ -111,6 +121,12 @@ export const settlementService = {
 
   /** reporting.md §2 #9 — own settlement history, filterable by From/To (settlement creation) and Settlement Status. */
   async listMySettlements(portalUserId: string, query?: MySettlementsQuery) {
+    const targetUser = await prisma.portalUser.findUniqueOrThrow({
+      where: { id: portalUserId },
+      select: { role: true },
+    });
+    const moduleScope = resolveCashModuleScope(targetUser.role);
+
     const range =
       query && query.preset !== 'all'
         ? resolveDateRange({ preset: query.preset as Exclude<MySettlementsQuery['preset'], 'all'>, fromDate: query.fromDate, toDate: query.toDate })
@@ -118,6 +134,7 @@ export const settlementService = {
     return prisma.accountSettlement.findMany({
       where: {
         portalUserId,
+        moduleScope,
         ...(range ? { createdAt: { gte: range.start, lte: range.end } } : {}),
         ...(query?.status ? { status: query.status } : {}),
       },

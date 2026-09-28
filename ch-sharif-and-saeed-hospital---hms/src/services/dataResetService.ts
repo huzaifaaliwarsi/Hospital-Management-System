@@ -16,6 +16,12 @@ export interface ResetSummary {
   pharmacyDispenses: number;
   pharmacyDispenseLines: number;
   resetBeds: number;
+  mainCashFundEntries: number;
+  staff: number;
+  departments: number;
+  shifts: number;
+  wards: number;
+  rooms: number;
 }
 
 export interface ResetResponse {

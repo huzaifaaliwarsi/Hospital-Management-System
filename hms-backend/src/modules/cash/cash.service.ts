@@ -1,6 +1,7 @@
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '@/db/client';
 import { resolveDateRange } from '@/modules/reports/dashboard.service';
+import { resolveCashModuleScope } from './moduleScope.util';
 import type { MyBalanceSheetQuery } from './financeControl.schemas';
 
 export const cashService = {
@@ -18,6 +19,15 @@ export const cashService = {
     const isShift = !query || query.preset === 'shift';
     const range = isShift ? null : resolveDateRange({ preset: query.preset as Exclude<MyBalanceSheetQuery['preset'], 'shift'>, fromDate: query.fromDate, toDate: query.toDate });
 
+    // Resolve scope from the TARGET user's own role, not the caller's — an
+    // Admin/Super Admin viewing someone else's sheet via `getUserBalanceSheet`
+    // must still see that user's real module (inventory.md §9 step 2).
+    const targetUser = await prisma.portalUser.findUniqueOrThrow({
+      where: { id: portalUserId },
+      select: { role: true },
+    });
+    const moduleScope = resolveCashModuleScope(targetUser.role);
+
     // Shift view: unsettled entries plus the current carry-forward liability
     // (Balance Sheet & Account Settlement Guide §5.1) — the most recent
     // non-reversed settlement's `carryForwardAmount`, same lookup
@@ -26,6 +36,7 @@ export const cashService = {
       prisma.userCashBalance.findMany({
         where: {
           portalUserId,
+          moduleScope,
           ...(range ? { occurredAt: { gte: range.start, lte: range.end } } : { isSettled: false }),
         },
         include: {
@@ -41,14 +52,14 @@ export const cashService = {
       }),
       isShift
         ? prisma.accountSettlement.findFirst({
-            where: { portalUserId, moduleScope: 'BILLING', status: { not: 'REVERSED' } },
+            where: { portalUserId, moduleScope, status: { not: 'REVERSED' } },
             orderBy: { createdAt: 'desc' },
             select: { carryForwardAmount: true },
           })
         : Promise.resolve(null),
       range
         ? prisma.accountSettlement.findMany({
-            where: { portalUserId, status: { not: 'REVERSED' }, createdAt: { gte: range.start, lte: range.end } },
+            where: { portalUserId, moduleScope, status: { not: 'REVERSED' }, createdAt: { gte: range.start, lte: range.end } },
             select: { physicalCash: true, variance: true },
           })
         : Promise.resolve([]),
@@ -132,6 +143,7 @@ export const cashService = {
         receiptNumber: t.paymentReceipt?.receiptNumber ?? null,
         invoiceNumber: t.paymentReceipt?.hospitalInvoice?.invoiceNumber ?? null,
         paymentMethod: t.paymentReceipt?.method ?? (t.isPhysicalCash ? 'CASH' : 'NON_CASH'),
+        note: t.note,
       })),
     };
   },

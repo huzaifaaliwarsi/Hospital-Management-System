@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import { cashService } from './cash.service';
 import { settlementService } from './settlement.service';
 import { financeControlService } from './financeControl.service';
+import { mainFundService } from './mainFund.service';
 import { AuthenticationError } from '@/shared/errors/AppError';
 import type { SubmitSettlementBody } from './settlement.schemas';
 import type {
@@ -12,7 +13,9 @@ import type {
   FinanceKpisQuery,
   ReviewSettlementBody,
   ReverseSettlementBody,
+  IssuePettyCashBody,
 } from './financeControl.schemas';
+import type { ListMainFundEntriesQuery, MainFundTransactionBody } from './mainFund.schemas';
 
 function actorId(req: Request): string {
   if (!req.user) throw new AuthenticationError();
@@ -72,5 +75,36 @@ export const cashController = {
       actorId(req),
     );
     res.json({ data: settlement });
+  },
+
+  listIssuableUsers: async (_req: Request, res: Response) => {
+    const users = await financeControlService.listIssuableUsers();
+    res.json({ data: users });
+  },
+
+  issuePettyCash: async (req: Request, res: Response) => {
+    const entry = await financeControlService.issuePettyCash(req.body as IssuePettyCashBody, actorId(req));
+    res.status(201).json({ data: entry });
+  },
+
+  // ── Main Cash Fund (hospital's central physical cash reserve) ────────
+  getMainFundSummary: async (_req: Request, res: Response) => {
+    const result = await mainFundService.getSummary();
+    res.json({ data: result });
+  },
+
+  listMainFundEntries: async (req: Request, res: Response) => {
+    const result = await mainFundService.listEntries(req.query as unknown as ListMainFundEntriesQuery);
+    res.json({ data: result });
+  },
+
+  depositMainFund: async (req: Request, res: Response) => {
+    const entry = await mainFundService.deposit(req.body as MainFundTransactionBody, actorId(req));
+    res.status(201).json({ data: entry });
+  },
+
+  withdrawMainFund: async (req: Request, res: Response) => {
+    const entry = await mainFundService.withdraw(req.body as MainFundTransactionBody, actorId(req));
+    res.status(201).json({ data: entry });
   },
 };

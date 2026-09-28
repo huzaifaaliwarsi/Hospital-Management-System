@@ -138,4 +138,53 @@ export function formatDateTimeDDMMYYYY(date?: Date | string | null): string {
   return `${dateStr}, ${timeStr}`;
 }
 
+/**
+ * Formats inventory references, voucher numbers, and IDs into short numbers
+ * strictly max 5 to 6 characters (e.g. GRN-01, ITM-01, PAY-01, BN-01, ISS-01, RET-01, EXP-01).
+ * Also compresses any legacy long date strings like "GRN-20260928-003" into "GRN-03".
+ */
+export function formatShortRef(ref?: string | null, fallbackId?: string, prefix = 'REF'): string {
+  if (ref && ref.trim()) {
+    const clean = ref.trim();
+    // Match date-stamped codes like GRN-20260928-003, PAY-20260928-0012, BN-20260928-01, EXP-20260928-0004
+    const match = clean.match(/^([A-Za-z]+)-?(?:\d{8}|\d{4,8})-?0*(\d{1,4})$/);
+    if (match) {
+      const pfx = match[1].slice(0, 3).toUpperCase();
+      const num = parseInt(match[2], 10);
+      const shortNum = String(num % 100 || 1).padStart(2, '0');
+      return `${pfx}-${shortNum}`;
+    }
+    // Match ITM-0001 -> ITM-01
+    const itmMatch = clean.match(/^([A-Za-z]+)-0*(\d{1,4})$/);
+    if (itmMatch) {
+      const pfx = itmMatch[1].slice(0, 3).toUpperCase();
+      const num = parseInt(itmMatch[2], 10);
+      const shortNum = String(num % 100 || 1).padStart(2, '0');
+      return `${pfx}-${shortNum}`;
+    }
+    // If it's already short (<= 6 chars)
+    if (clean.length <= 6) {
+      return clean;
+    }
+    // If it has multiple hyphens
+    const parts = clean.split('-');
+    if (parts.length >= 2) {
+      const pfx = parts[0].slice(0, 3).toUpperCase();
+      const last = parts[parts.length - 1];
+      const digits = last.replace(/\D/g, '');
+      if (digits) {
+        return `${pfx}-${digits.slice(-2).padStart(2, '0')}`;
+      }
+      return `${pfx}-${last.slice(-2).toUpperCase()}`;
+    }
+    return clean.slice(0, 6).toUpperCase();
+  }
+  if (fallbackId) {
+    const cleanId = fallbackId.replace(/[^a-zA-Z0-9]/g, '');
+    const pfx = prefix.slice(0, 3).toUpperCase();
+    return `${pfx}-${cleanId.slice(0, 2).toUpperCase()}`;
+  }
+  return '—';
+}
+
 

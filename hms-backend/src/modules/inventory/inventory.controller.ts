@@ -8,7 +8,12 @@ import type {
   UpdateStockItemBody,
   CreatePurchaseBody,
   CreateDepartmentIssueBody,
+  CreateDepartmentReturnBody,
+  CreateSupplierReturnBody,
+  CreateAdjustmentBody,
   CreateFundRequestBody,
+  CreateInventoryExpenseBody,
+  PaySupplierBody,
 } from './inventory.schemas';
 
 function actorId(req: Request): string {
@@ -43,6 +48,16 @@ export const inventoryController = {
     res.json({ data: ledger });
   },
 
+  deleteSupplier: async (req: Request, res: Response) => {
+    const result = await inventoryService.deleteSupplier(req.params.id!);
+    res.json({ data: result });
+  },
+
+  paySupplier: async (req: Request, res: Response) => {
+    const entry = await inventoryService.paySupplier(req.params.id!, req.body as PaySupplierBody, actorId(req));
+    res.status(201).json({ data: entry });
+  },
+
   createStockItem: async (req: Request, res: Response) => {
     const item = await inventoryService.createStockItem(
       req.body as CreateStockItemBody,
@@ -59,6 +74,11 @@ export const inventoryController = {
     res.json({ data: updated });
   },
 
+  deleteStockItem: async (req: Request, res: Response) => {
+    const result = await inventoryService.deleteStockItem(req.params.id!);
+    res.json({ data: result });
+  },
+
   listStockItems: async (req: Request, res: Response) => {
     const items = await inventoryService.listStockItems(req.query.search as string | undefined);
     res.json({ data: items });
@@ -70,10 +90,28 @@ export const inventoryController = {
   },
 
   approveFundRequest: async (req: Request, res: Response) => {
-    const body = req.body as CreateFundRequestBody & { recipientUserId?: string };
+    const body = req.body as CreateFundRequestBody;
     const recipientId = body.recipientUserId ?? actorId(req);
-    const balance = await inventoryService.approveFundRequest(recipientId, body.amount);
+    const balance = await inventoryService.approveFundRequest(recipientId, body.amount, body.reason, actorId(req));
     res.status(201).json({ data: balance });
+  },
+
+  listPettyCash: async (req: Request, res: Response) => {
+    const rows = await inventoryService.listPettyCash(actorId(req));
+    res.json({ data: rows });
+  },
+
+  createInventoryExpense: async (req: Request, res: Response) => {
+    const expense = await inventoryService.createInventoryExpense(
+      req.body as CreateInventoryExpenseBody,
+      actorId(req),
+    );
+    res.status(201).json({ data: expense });
+  },
+
+  listInventoryExpenses: async (req: Request, res: Response) => {
+    const rows = await inventoryService.listInventoryExpenses(actorId(req));
+    res.json({ data: rows });
   },
 
   createPurchase: async (req: Request, res: Response) => {
@@ -90,5 +128,34 @@ export const inventoryController = {
       actorId(req),
     );
     res.status(201).json({ data: requisition });
+  },
+
+  receiveDepartmentReturn: async (req: Request, res: Response) => {
+    const requisition = await inventoryService.receiveDepartmentReturn(
+      req.body as CreateDepartmentReturnBody,
+      actorId(req),
+    );
+    res.status(201).json({ data: requisition });
+  },
+
+  returnToSupplier: async (req: Request, res: Response) => {
+    const result = await inventoryService.returnToSupplier(
+      req.body as CreateSupplierReturnBody,
+      actorId(req),
+    );
+    res.status(201).json({ data: result });
+  },
+
+  createAdjustment: async (req: Request, res: Response) => {
+    const adjustment = await inventoryService.createAdjustment(
+      req.body as CreateAdjustmentBody,
+      actorId(req),
+    );
+    res.status(201).json({ data: adjustment });
+  },
+
+  listAdjustments: async (_req: Request, res: Response) => {
+    const rows = await inventoryService.listAdjustments();
+    res.json({ data: rows });
   },
 };

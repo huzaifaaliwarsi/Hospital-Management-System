@@ -1,16 +1,35 @@
 import { Decimal } from '@prisma/client/runtime/library';
+import type { CashModuleScope } from '@prisma/client';
 import { prisma } from '@/db/client';
 import { NotFoundError, ValidationError, BusinessRuleError } from '@/shared/errors/AppError';
 import { resolveDateRange } from '@/modules/reports/dashboard.service';
+import { resolveCashModuleScope } from './moduleScope.util';
 import type {
   ListBalanceSheetsQuery,
   ListSettlementsQuery,
   FinanceKpisQuery,
   ReviewSettlementBody,
   ReverseSettlementBody,
+  IssuePettyCashBody,
 } from './financeControl.schemas';
 
 const userSummarySelect = { id: true, displayName: true, username: true, role: true } as const;
+
+// HMS-side oversight scopes (inventory.md §7.3, §9 step 2) — Billing and
+// Inventory both settle through Admin/Super Admin's Finance Control screen.
+// Deliberately excludes PHARMACY: Standalone Pharmacy is its own project
+// with its own oversight hierarchy (Pharmacy Super Admin/Manager,
+// PROJECT_MASTER_SPEC.md §4.10) — not this screen's job to review.
+const HMS_OVERSIGHT_SCOPES: CashModuleScope[] = ['BILLING', 'INVENTORY'];
+
+/**
+ * Roles Super Admin's "Issue Petty Cash" screen may target — Inventory Store
+ * Managers and Front Desk Cashiers per the feature spec. Deliberately
+ * narrower than `HMS_OVERSIGHT_SCOPES`/`CASH_ROLES` elsewhere: Pharmacy cash
+ * users have their own oversight hierarchy (see the module-scope note above)
+ * and are not issued petty cash from this screen.
+ */
+const ISSUABLE_ROLES = ['INVENTORY_MANAGEMENT', 'FRONT_DESK_BILLING'] as const;
 
 const REVIEW_ACTION_TO_STATUS = {
   ACCEPT: 'ACCEPTED',
@@ -30,7 +49,7 @@ const REVIEW_ACTION_TO_STATUS = {
 async function getLatestCarryForwardsByUser(portalUserId?: string) {
   const rows = await prisma.accountSettlement.findMany({
     where: {
-      moduleScope: 'BILLING',
+      moduleScope: { in: HMS_OVERSIGHT_SCOPES },
       status: { not: 'REVERSED' },
       ...(portalUserId ? { portalUserId } : {}),
     },
@@ -51,19 +70,27 @@ async function getLatestCarryForwardsByUser(portalUserId?: string) {
  * Settlement Guide §6) — sits alongside `cash.service.ts` (a user's own
  * balance sheet) and `settlement.service.ts` (a user's own settlement
  * submission), but reads *across every cash-handling user* instead of the
- * one attached to the request. Scoped to `moduleScope: 'BILLING'` only —
- * Inventory's own petty-cash sheet is out of scope for this phase (see
- * `Balance_sheet&Account_settlement.md`).
+ * one attached to the request. Scoped to `HMS_OVERSIGHT_SCOPES` (Billing +
+ * Inventory, inventory.md §9 step 2) — Pharmacy is deliberately excluded,
+ * it has its own oversight hierarchy.
  */
 export const financeControlService = {
   async listBalanceSheets(query: ListBalanceSheetsQuery) {
-    const { start, end, label } = resolveDateRange(query);
+    // `all` (default) — the full live custody picture, not one day's slice
+    // (Petty Cash Oversight needs cumulative total issued/spent since ever).
+    const range =
+      query.preset === 'all'
+        ? null
+        : resolveDateRange({ preset: query.preset, fromDate: query.fromDate, toDate: query.toDate });
+    const period = range
+      ? { label: range.label, start: range.start.toISOString(), end: range.end.toISOString() }
+      : { label: 'All Time', start: null, end: null };
 
     const [rows, carryForwards] = await Promise.all([
       prisma.userCashBalance.findMany({
         where: {
-          moduleScope: 'BILLING',
-          occurredAt: { gte: start, lte: end },
+          moduleScope: { in: HMS_OVERSIGHT_SCOPES },
+          ...(range ? { occurredAt: { gte: range.start, lte: range.end } } : {}),
           ...(query.portalUserId ? { portalUserId: query.portalUserId } : {}),
         },
         include: { portalUser: { select: userSummarySelect } },
@@ -80,6 +107,8 @@ export const financeControlService = {
       nonPhysicalTotal: Decimal;
       totalCollections: Decimal;
       totalRefunds: Decimal;
+      pettyCashIssued: Decimal;
+      cashExpenses: Decimal;
       settledCount: number;
       unsettledCount: number;
     };
@@ -96,6 +125,8 @@ export const financeControlService = {
           nonPhysicalTotal: new Decimal(0),
           totalCollections: new Decimal(0),
           totalRefunds: new Decimal(0),
+          pettyCashIssued: new Decimal(0),
+          cashExpenses: new Decimal(0),
           settledCount: 0,
           unsettledCount: 0,
         };
@@ -106,9 +137,11 @@ export const financeControlService = {
         if (row.direction === 'IN') {
           bucket.physicalCashIn = bucket.physicalCashIn.plus(row.amount);
           if (row.category === 'COLLECTION') bucket.totalCollections = bucket.totalCollections.plus(row.amount);
+          else if (row.category === 'PETTY_CASH_ISSUE') bucket.pettyCashIssued = bucket.pettyCashIssued.plus(row.amount);
         } else {
           bucket.physicalCashOut = bucket.physicalCashOut.plus(row.amount);
           if (row.category === 'REFUND') bucket.totalRefunds = bucket.totalRefunds.plus(row.amount);
+          else if (row.category === 'EXPENSE') bucket.cashExpenses = bucket.cashExpenses.plus(row.amount);
         }
       } else {
         bucket.nonPhysicalTotal = bucket.nonPhysicalTotal.plus(row.amount);
@@ -131,6 +164,8 @@ export const financeControlService = {
           nonPhysicalTotal: new Decimal(0),
           totalCollections: new Decimal(0),
           totalRefunds: new Decimal(0),
+          pettyCashIssued: new Decimal(0),
+          cashExpenses: new Decimal(0),
           settledCount: 0,
           unsettledCount: 0,
         });
@@ -148,6 +183,8 @@ export const financeControlService = {
           nonPhysicalTotal: b.nonPhysicalTotal,
           totalCollections: b.totalCollections,
           totalRefunds: b.totalRefunds,
+          pettyCashIssued: b.pettyCashIssued,
+          cashExpenses: b.cashExpenses,
           settledCount: b.settledCount,
           unsettledCount: b.unsettledCount,
         };
@@ -155,7 +192,7 @@ export const financeControlService = {
       .filter((b) => !query.onlyUnsettled || b.unsettledCount > 0 || !b.carriedForwardAmount.isZero())
       .sort((a, b) => b.expectedPhysicalCash.comparedTo(a.expectedPhysicalCash));
 
-    return { period: { label, start: start.toISOString(), end: end.toISOString() }, sheets };
+    return { period, sheets };
   },
 
   async listSettlements(query: ListSettlementsQuery) {
@@ -166,7 +203,7 @@ export const financeControlService = {
 
     const rows = await prisma.accountSettlement.findMany({
       where: {
-        moduleScope: 'BILLING',
+        moduleScope: { in: HMS_OVERSIGHT_SCOPES },
         ...(range ? { submittedAt: { gte: range.start, lte: range.end } } : {}),
         ...(query.status ? { status: query.status } : {}),
         ...(query.portalUserId ? { portalUserId: query.portalUserId } : {}),
@@ -187,20 +224,51 @@ export const financeControlService = {
   },
 
   async reviewSettlement(id: string, body: ReviewSettlementBody, reviewerPortalUserId: string) {
-    const settlement = await prisma.accountSettlement.findUnique({ where: { id } });
+    const settlement = await prisma.accountSettlement.findUnique({
+      where: { id },
+      include: { submittedByUser: { select: userSummarySelect } },
+    });
     if (!settlement) throw new NotFoundError('Settlement not found');
     if (settlement.status !== 'SUBMITTED') {
       throw new BusinessRuleError(`Only a SUBMITTED settlement can be reviewed (current status: ${settlement.status}).`);
     }
 
-    return prisma.accountSettlement.update({
-      where: { id },
-      data: {
-        status: REVIEW_ACTION_TO_STATUS[body.action],
-        reviewedById: reviewerPortalUserId,
-        reviewedAt: new Date(),
-        ...(body.remarks?.trim() ? { remarks: body.remarks.trim() } : {}),
-      },
+    const newStatus = REVIEW_ACTION_TO_STATUS[body.action];
+
+    return prisma.$transaction(async (tx) => {
+      const reviewed = await tx.accountSettlement.update({
+        where: { id },
+        data: {
+          status: newStatus,
+          reviewedById: reviewerPortalUserId,
+          reviewedAt: new Date(),
+          ...(body.remarks?.trim() ? { remarks: body.remarks.trim() } : {}),
+        },
+      });
+
+      // Accepting a settlement is the cashier physically handing custody
+      // back — that cash re-enters the Main Cash Fund (`mainFund.service.ts`)
+      // so it can be re-issued as petty cash to someone else. `handoverAmount`
+      // is the explicit "cash actually handed over" figure when the cashier
+      // keeps part of what they counted; falls back to the full counted
+      // `physicalCash` when not specified.
+      if (newStatus === 'ACCEPTED' || newStatus === 'PARTIALLY_ACCEPTED') {
+        const returnedAmount = reviewed.handoverAmount ?? reviewed.physicalCash;
+        if (returnedAmount.greaterThan(0)) {
+          await tx.mainCashFundEntry.create({
+            data: {
+              direction: 'IN',
+              amount: returnedAmount,
+              type: 'SETTLEMENT_RETURN',
+              note: `Settlement handover from ${settlement.submittedByUser.displayName || settlement.submittedByUser.username}`,
+              performedById: reviewerPortalUserId,
+              relatedAccountSettlementId: reviewed.id,
+            },
+          });
+        }
+      }
+
+      return reviewed;
     });
   },
 
@@ -241,30 +309,53 @@ export const financeControlService = {
         });
       }
 
+      // Undo the Main Cash Fund credit this settlement's acceptance posted
+      // (`reviewSettlement` above) — the cash handover it represented never
+      // really happened, so the fund's balance must give it back. Always
+      // proceeds even if it takes the fund negative: the reversal itself
+      // must never be blocked (same rule as the `UserCashBalance` side above).
+      const priorCredits = await tx.mainCashFundEntry.findMany({
+        where: { relatedAccountSettlementId: id, direction: 'IN' },
+        select: { amount: true },
+      });
+      const creditedAmount = priorCredits.reduce((sum, e) => sum.plus(e.amount), new Decimal(0));
+      if (creditedAmount.greaterThan(0)) {
+        await tx.mainCashFundEntry.create({
+          data: {
+            direction: 'OUT',
+            amount: creditedAmount,
+            type: 'SETTLEMENT_RETURN',
+            note: `Reversal of settlement handover — ${body.reason.trim()}`,
+            performedById: actorPortalUserId,
+            relatedAccountSettlementId: id,
+          },
+        });
+      }
+
       return reversed;
     });
   },
 
-  /** Guide §6.3 KPI set — hospital-wide, scoped to `moduleScope: 'BILLING'`. */
+  /** Guide §6.3 KPI set — hospital-wide, scoped to `HMS_OVERSIGHT_SCOPES` (Billing + Inventory). */
   async getFinanceKpis(query: FinanceKpisQuery) {
     const { start, end, label } = resolveDateRange(query);
     const dateFilter = { gte: start, lte: end };
 
     const [collectionRows, refundRows, allTimeUnsettled, settlementsInRange, carryForwards] = await Promise.all([
       prisma.userCashBalance.findMany({
-        where: { moduleScope: 'BILLING', category: 'COLLECTION', direction: 'IN', occurredAt: dateFilter },
+        where: { moduleScope: { in: HMS_OVERSIGHT_SCOPES }, category: 'COLLECTION', direction: 'IN', occurredAt: dateFilter },
         select: { amount: true, isPhysicalCash: true, paymentReceipt: { select: { method: true } } },
       }),
       prisma.userCashBalance.findMany({
-        where: { moduleScope: 'BILLING', category: 'REFUND', direction: 'OUT', occurredAt: dateFilter },
+        where: { moduleScope: { in: HMS_OVERSIGHT_SCOPES }, category: 'REFUND', direction: 'OUT', occurredAt: dateFilter },
         select: { amount: true },
       }),
       prisma.userCashBalance.findMany({
-        where: { moduleScope: 'BILLING', isSettled: false },
+        where: { moduleScope: { in: HMS_OVERSIGHT_SCOPES }, isSettled: false },
         select: { amount: true, direction: true, isPhysicalCash: true, portalUserId: true },
       }),
       prisma.accountSettlement.findMany({
-        where: { moduleScope: 'BILLING', submittedAt: dateFilter },
+        where: { moduleScope: { in: HMS_OVERSIGHT_SCOPES }, submittedAt: dateFilter },
         select: { status: true, variance: true, expectedCash: true, physicalCash: true },
       }),
       getLatestCarryForwardsByUser(),
@@ -327,5 +418,80 @@ export const financeControlService = {
       settlementDifferencesCount: settlementDifferences,
       settlementsCompletedTodayCount: settlementsCompletedToday,
     };
+  },
+
+  /** Staff a Super Admin may issue petty cash to — Inventory Store Managers and Front Desk Cashiers only. */
+  async listIssuableUsers() {
+    const users = await prisma.portalUser.findMany({
+      where: { role: { in: [...ISSUABLE_ROLES] }, status: 'ACTIVE' },
+      select: userSummarySelect,
+      orderBy: [{ role: 'asc' }, { displayName: 'asc' }],
+    });
+    return users;
+  },
+
+  /**
+   * Super Admin issues petty cash (Opening Float / Top-Up) to a staff user —
+   * posts a `UserCashBalance` row exactly like any other cash-in entry so it
+   * shows up on the recipient's own Balance Sheet / "Petty Cash Received"
+   * total (`cash.service.ts`'s `pettyCash` line) with no separate model.
+   */
+  async issuePettyCash(body: IssuePettyCashBody, issuedByPortalUserId: string) {
+    const target = await prisma.portalUser.findUnique({
+      where: { id: body.portalUserId },
+      select: { id: true, role: true, status: true },
+    });
+    if (!target) throw new NotFoundError('Staff user not found.');
+    if (target.status !== 'ACTIVE') throw new BusinessRuleError('Cannot issue petty cash to an inactive staff user.');
+    if (!(ISSUABLE_ROLES as readonly string[]).includes(target.role)) {
+      throw new ValidationError('Petty cash can only be issued to Inventory Store Managers or Front Desk Cashiers.');
+    }
+
+    const issueLabel = body.issueType === 'OPENING_FLOAT' ? 'Opening Float' : 'Top-Up';
+
+    // Petty cash issued to a staff user must come FROM somewhere — the
+    // hospital's Main Cash Fund (`mainFund.service.ts`). Both ledger writes
+    // happen in one transaction: the recipient's `UserCashBalance` credit and
+    // the fund's matching debit, linked by `relatedUserCashBalanceId` so
+    // every issuance traces back to the fund entry that paid for it.
+    return prisma.$transaction(async (tx) => {
+      const fundRows = await tx.mainCashFundEntry.findMany({ select: { direction: true, amount: true } });
+      const fundBalance = fundRows.reduce(
+        (sum, r) => (r.direction === 'IN' ? sum.plus(r.amount) : sum.minus(r.amount)),
+        new Decimal(0),
+      );
+      if (fundBalance.lessThan(body.amount)) {
+        throw new BusinessRuleError(
+          `Insufficient Main Cash Fund balance — PKR ${fundBalance.toFixed(2)} available. Deposit funds into the Main Fund before issuing petty cash.`,
+        );
+      }
+
+      const entry = await tx.userCashBalance.create({
+        data: {
+          portalUserId: target.id,
+          moduleScope: resolveCashModuleScope(target.role),
+          direction: 'IN',
+          amount: body.amount,
+          category: 'PETTY_CASH_ISSUE',
+          isPhysicalCash: true,
+          note: `[${issueLabel}] ${body.note}`,
+          issuedById: issuedByPortalUserId,
+        },
+        include: { portalUser: { select: userSummarySelect } },
+      });
+
+      await tx.mainCashFundEntry.create({
+        data: {
+          direction: 'OUT',
+          amount: body.amount,
+          type: 'PETTY_CASH_ISSUE',
+          note: `${issueLabel} to ${entry.portalUser.displayName || entry.portalUser.username}`,
+          performedById: issuedByPortalUserId,
+          relatedUserCashBalanceId: entry.id,
+        },
+      });
+
+      return entry;
+    });
   },
 };

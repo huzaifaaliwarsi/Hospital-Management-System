@@ -105,7 +105,7 @@ export const ResetDataModal: React.FC<ResetDataModalProps> = ({
                   Database Reset Completed Successfully!
                 </h4>
                 <p className="text-xs text-emerald-700">
-                  All transactional test clutter has been deleted. Master records remain intact.
+                  All transactional test clutter, plus the Staff / Department / Ward-Room-Bed setup, has been deleted. Portal logins, Services &amp; Rates, and the Hospital Profile remain intact.
                 </p>
               </div>
 
@@ -144,8 +144,32 @@ export const ResetDataModal: React.FC<ResetDataModalProps> = ({
                     <span className="font-bold text-[#111827]">{summaryResult.corporatePanels}</span>
                   </div>
                   <div className="p-2.5 bg-white rounded-lg border border-[#e2eae5] flex justify-between">
-                    <span className="text-[#52665e]">Beds Reset:</span>
+                    <span className="text-[#52665e]">Beds Deleted:</span>
                     <span className="font-bold text-[#111827]">{summaryResult.resetBeds}</span>
+                  </div>
+                  <div className="p-2.5 bg-white rounded-lg border border-[#e2eae5] flex justify-between">
+                    <span className="text-[#52665e]">Rooms Deleted:</span>
+                    <span className="font-bold text-[#111827]">{summaryResult.rooms}</span>
+                  </div>
+                  <div className="p-2.5 bg-white rounded-lg border border-[#e2eae5] flex justify-between">
+                    <span className="text-[#52665e]">Wards Deleted:</span>
+                    <span className="font-bold text-[#111827]">{summaryResult.wards}</span>
+                  </div>
+                  <div className="p-2.5 bg-white rounded-lg border border-[#e2eae5] flex justify-between">
+                    <span className="text-[#52665e]">Staff Deleted:</span>
+                    <span className="font-bold text-[#111827]">{summaryResult.staff}</span>
+                  </div>
+                  <div className="p-2.5 bg-white rounded-lg border border-[#e2eae5] flex justify-between">
+                    <span className="text-[#52665e]">Departments Deleted:</span>
+                    <span className="font-bold text-[#111827]">{summaryResult.departments}</span>
+                  </div>
+                  <div className="p-2.5 bg-white rounded-lg border border-[#e2eae5] flex justify-between">
+                    <span className="text-[#52665e]">Shifts Deleted:</span>
+                    <span className="font-bold text-[#111827]">{summaryResult.shifts}</span>
+                  </div>
+                  <div className="p-2.5 bg-white rounded-lg border border-[#e2eae5] flex justify-between">
+                    <span className="text-[#52665e]">Main Fund Entries:</span>
+                    <span className="font-bold text-[#111827]">{summaryResult.mainCashFundEntries}</span>
                   </div>
                 </div>
               </div>
@@ -169,7 +193,8 @@ export const ResetDataModal: React.FC<ResetDataModalProps> = ({
                 </div>
                 <p className="text-[11px] leading-relaxed text-amber-800">
                   This action will permanently delete all operational records (patients, appointments,
-                  bills, cash books, admission stays) created during testing.
+                  bills, cash books, admission stays) created during testing, AND the Staff, Department,
+                  and Ward/Room/Bed master directories.
                 </p>
               </div>
 
@@ -182,10 +207,13 @@ export const ResetDataModal: React.FC<ResetDataModalProps> = ({
                   <ul className="text-[11px] text-rose-700 space-y-1 list-disc list-inside">
                     <li>All Appointments & Queues</li>
                     <li>All Invoices & Payments</li>
-                    <li>Cashier Shifts & Cashbook</li>
+                    <li>Cashier Shifts, Cashbook & Main Cash Fund</li>
                     <li>Admissions & Bed Stays</li>
                     <li>All Patients (Panel & Self-Pay)</li>
                     <li>Corporate Panel Companies</li>
+                    <li>Staff Directory (HR, Attendance, Payroll)</li>
+                    <li>Departments & Shift Management</li>
+                    <li>Wards, Rooms & Beds Setup</li>
                   </ul>
                 </div>
 
@@ -195,10 +223,9 @@ export const ResetDataModal: React.FC<ResetDataModalProps> = ({
                   </span>
                   <ul className="text-[11px] text-emerald-700 space-y-1 list-disc list-inside">
                     <li>Super Admin / Admin Logins</li>
-                    <li>Doctors & Staff Users</li>
-                    <li>Departments & Shifts</li>
+                    <li>Every Staff Portal Login (username/password)</li>
                     <li>Services & Charge Rates</li>
-                    <li>Hospital Profile & Ward/Bed Setup</li>
+                    <li>Hospital Profile</li>
                   </ul>
                 </div>
               </div>

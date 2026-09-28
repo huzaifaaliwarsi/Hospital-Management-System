@@ -114,11 +114,11 @@ export const AdminDashboard: React.FC = () => {
     },
     {
       title: 'Stock & Expiry Alerts',
-      value: `${(inventorySummary?.lowStockItemsCount ?? 0) + (inventorySummary?.outOfStockItemsCount ?? 0)} Items`,
-      sub: `${inventorySummary?.lowStockItemsCount ?? 0} low stock • ${inventorySummary?.outOfStockItemsCount ?? 0} out`,
+      value: `${(inventorySummary?.lowStockItemsCount ?? 0) + (inventorySummary?.outOfStockItemsCount ?? 0) + (inventorySummary?.nearExpiryItemsCount ?? 0) + (inventorySummary?.expiredItemsCount ?? 0)} Alerts`,
+      sub: `${inventorySummary?.lowStockItemsCount ?? 0} low • ${inventorySummary?.outOfStockItemsCount ?? 0} out • ${inventorySummary?.nearExpiryItemsCount ?? 0} near-expiry • ${inventorySummary?.expiredItemsCount ?? 0} expired`,
       icon: AlertCircle,
       color: 'text-amber-700 bg-amber-50 border-amber-200',
-      nav: '/admin/services_rates',
+      nav: '/admin/sa_inventory_pharmacy',
     },
   ];
 

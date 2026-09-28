@@ -6,6 +6,7 @@ import { PAYABLE_EQUIVALENT } from '@/modules/attendance/attendance.service';
 import { expensesService } from '@/modules/expenses/expenses.service';
 import { commissionBalance } from '@/modules/commission/commission.calc';
 import { salaryBalance } from '@/modules/payroll/payroll.balance';
+import { getPositiveBatchBalances } from '@/shared/inventoryBatchBalances';
 import type {
   ManagementSummaryQuery,
   BillingCollectionQuery,
@@ -557,7 +558,7 @@ export const managementReportsService = {
     const soon = new Date();
     soon.setDate(soon.getDate() + 60);
 
-    const [items, purchases, expiring, expired, requests] = await Promise.all([
+    const [items, purchases, expiring, expired, requests, inventoryExpiringBatches, inventoryExpiredBatches, supplierLedgerAll] = await Promise.all([
       prisma.stockItem.findMany({
         where: { isActive: true, ...(query.category ? { category: query.category } : {}) },
         select: { id: true, reorderLevel: true },
@@ -574,7 +575,19 @@ export const managementReportsService = {
         where: { requestedAt: { gte: start, lte: end } },
         _count: { _all: true },
       }),
+      // General HMS Inventory's own batch/expiry — deliberately separate from
+      // Pharmacy's `medicineBatch` above (Domain F/G never intersect,
+      // inventory.md §7.2/§9 step 1).
+      getPositiveBatchBalances(soon),
+      getPositiveBatchBalances(new Date()),
+      prisma.supplierLedger.findMany({ select: { entryType: true, amount: true } }),
     ]);
+    const inventoryExpiredCount = inventoryExpiredBatches.length;
+    const inventoryNearExpiryOnlyCount = Math.max(0, inventoryExpiringBatches.length - inventoryExpiredCount);
+    const inventorySupplierPayable = supplierLedgerAll.reduce(
+      (acc, e) => (e.entryType === 'PURCHASE_CREDIT' ? acc.plus(e.amount) : acc.minus(e.amount)),
+      ZERO(),
+    );
 
     const ids = items.map((i) => i.id);
     const [balances, movements] = ids.length
@@ -654,6 +667,27 @@ export const managementReportsService = {
         value: lowStockItems,
         isAmount: false,
         isAlert: true,
+      },
+      {
+        section: 'Inventory Stock',
+        metric: 'Batches Near Expiry (60 Days)',
+        value: inventoryNearExpiryOnlyCount,
+        isAmount: false,
+        isAlert: true,
+      },
+      {
+        section: 'Inventory Stock',
+        metric: 'Expired Batches',
+        value: inventoryExpiredCount,
+        isAmount: false,
+        isAlert: true,
+      },
+      {
+        section: 'Inventory Stock',
+        metric: 'Supplier Payable',
+        value: Number(inventorySupplierPayable),
+        isAmount: true,
+        isAlert: inventorySupplierPayable.greaterThan(0),
       },
       {
         section: 'Medicine Expiry',

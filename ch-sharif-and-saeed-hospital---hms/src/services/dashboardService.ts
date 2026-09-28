@@ -247,9 +247,9 @@ export const dashboardService = {
       inventorySummary: {
         lowStockItemsCount: d.inventorySummary?.lowStockItemsCount ?? 0,
         outOfStockItemsCount: d.inventorySummary?.outOfStockItemsCount ?? 0,
-        nearExpiryItemsCount: (d.inventorySummary as any)?.nearExpiryItemsCount ?? 0,
-        expiredItemsCount: (d.inventorySummary as any)?.expiredItemsCount ?? 0,
-        pendingStockRequestsCount: d.inventorySummary?.pendingStockRequestsCount ?? 0,
+        nearExpiryItemsCount: d.inventorySummary?.nearExpiryItemsCount ?? 0,
+        expiredItemsCount: d.inventorySummary?.expiredItemsCount ?? 0,
+        supplierPayable: d.inventorySummary?.supplierPayable ?? 0,
       },
       flaggedStockItems: d.inventorySummary?.flaggedItems || [],
       attentionAlerts: (d.attentionAlerts || []).map((a: any) => ({

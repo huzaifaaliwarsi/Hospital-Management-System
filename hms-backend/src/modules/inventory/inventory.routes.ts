@@ -9,6 +9,7 @@ const router = Router();
 const view = authorize('inventory', 'view');
 const create = authorize('inventory', 'create');
 const edit = authorize('inventory', 'edit');
+const del = authorize('inventory', 'delete');
 
 // Suppliers
 router.post(
@@ -31,11 +32,25 @@ router.patch(
   asyncHandler(c.updateSupplier),
 );
 
+router.delete(
+  '/suppliers/:id',
+  del,
+  validate({ params: s.idParamsSchema }),
+  asyncHandler(c.deleteSupplier),
+);
+
 router.get(
   '/suppliers/:id/ledger',
   view,
   validate({ params: s.idParamsSchema }),
   asyncHandler(c.getSupplierLedger),
+);
+
+router.post(
+  '/suppliers/:id/payments',
+  create,
+  validate({ params: s.idParamsSchema, body: s.paySupplierSchema }),
+  asyncHandler(c.paySupplier),
 );
 
 // Stock Items
@@ -59,6 +74,13 @@ router.patch(
   asyncHandler(c.updateStockItem),
 );
 
+router.delete(
+  '/items/:id',
+  del,
+  validate({ params: s.idParamsSchema }),
+  asyncHandler(c.deleteStockItem),
+);
+
 router.get(
   '/items/:id/ledger',
   view,
@@ -66,12 +88,32 @@ router.get(
   asyncHandler(c.getItemLedger),
 );
 
-// Fund Requests (Petty Cash for inventory)
+// Fund Requests / Petty Cash Received (inventory)
 router.post(
   '/fund-requests',
   create,
   validate({ body: s.createFundRequestSchema }),
   asyncHandler(c.approveFundRequest),
+);
+
+router.get(
+  '/petty-cash',
+  view,
+  asyncHandler(c.listPettyCash),
+);
+
+// Inventory Expenses
+router.post(
+  '/expenses',
+  create,
+  validate({ body: s.createInventoryExpenseSchema }),
+  asyncHandler(c.createInventoryExpense),
+);
+
+router.get(
+  '/expenses',
+  view,
+  asyncHandler(c.listInventoryExpenses),
 );
 
 // Purchases (Goods receipt & vendor credit/cash payment)
@@ -88,6 +130,35 @@ router.post(
   create,
   validate({ body: s.createDepartmentIssueSchema }),
   asyncHandler(c.issueToDepartment),
+);
+
+router.post(
+  '/department-returns',
+  create,
+  validate({ body: s.createDepartmentReturnSchema }),
+  asyncHandler(c.receiveDepartmentReturn),
+);
+
+// Supplier Returns
+router.post(
+  '/supplier-returns',
+  create,
+  validate({ body: s.createSupplierReturnSchema }),
+  asyncHandler(c.returnToSupplier),
+);
+
+// Adjustments (Damage/Expiry/Count Correction/Loss/Surplus/Quarantine)
+router.post(
+  '/adjustments',
+  create,
+  validate({ body: s.createAdjustmentSchema }),
+  asyncHandler(c.createAdjustment),
+);
+
+router.get(
+  '/adjustments',
+  view,
+  asyncHandler(c.listAdjustments),
 );
 
 export default router;

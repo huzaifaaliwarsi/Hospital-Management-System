@@ -138,3 +138,159 @@ export async function reverseSettlement(id: string, reason: string): Promise<Fin
     throw new Error(toErrorMessage(err));
   }
 }
+
+// ── Petty Cash Issuance & Custody Oversight ─────────────────────────────
+
+/** Every cash-handling user's live custody position — `GET /cash/finance-control/balance-sheets`. */
+export interface CashCustodySheet {
+  portalUserId: string;
+  user: FinanceUserSummary;
+  physicalCashInHand: number;
+  pettyCashIssued: number;
+  cashExpenses: number;
+  carriedForwardAmount: number;
+  totalCollections: number;
+  totalRefunds: number;
+  unsettledCount: number;
+}
+
+function toCustodySheet(raw: Record<string, any>): CashCustodySheet {
+  return {
+    portalUserId: raw.portalUserId,
+    user: toUserSummary(raw.user),
+    physicalCashInHand: Number(raw.expectedPhysicalCash ?? 0),
+    pettyCashIssued: Number(raw.pettyCashIssued ?? 0),
+    cashExpenses: Number(raw.cashExpenses ?? 0),
+    carriedForwardAmount: Number(raw.carriedForwardAmount ?? 0),
+    totalCollections: Number(raw.totalCollections ?? 0),
+    totalRefunds: Number(raw.totalRefunds ?? 0),
+    unsettledCount: Number(raw.unsettledCount ?? 0),
+  };
+}
+
+/** `preset: 'all'` (default) — full live custody picture, not one day's slice. */
+export async function fetchCashCustodyOverview(range: DateRangeParams = { preset: 'all' }): Promise<{ period: { label: string; start: string | null; end: string | null }; sheets: CashCustodySheet[] }> {
+  try {
+    const res = await apiClient.get<{ data: { period: any; sheets: any[] } }>('/cash/finance-control/balance-sheets', {
+      params: dateParams(range),
+    });
+    return { period: res.data.data.period, sheets: (res.data.data.sheets || []).map(toCustodySheet) };
+  } catch (err) {
+    throw new Error(toErrorMessage(err));
+  }
+}
+
+/** Staff a Super Admin may issue petty cash to — Inventory Store Managers / Front Desk Cashiers only. */
+export async function fetchIssuablePettyCashUsers(): Promise<FinanceUserSummary[]> {
+  try {
+    const res = await apiClient.get<{ data: Record<string, any>[] }>('/cash/finance-control/issuable-users');
+    return (res.data.data || []).map(toUserSummary);
+  } catch (err) {
+    throw new Error(toErrorMessage(err));
+  }
+}
+
+export type PettyCashIssueType = 'OPENING_FLOAT' | 'TOP_UP';
+
+export interface IssuePettyCashPayload {
+  portalUserId: string;
+  amount: number;
+  issueType: PettyCashIssueType;
+  note: string;
+}
+
+export async function issuePettyCash(payload: IssuePettyCashPayload): Promise<void> {
+  try {
+    await apiClient.post('/cash/finance-control/petty-cash', payload);
+  } catch (err) {
+    throw new Error(toErrorMessage(err));
+  }
+}
+
+// ── Main Cash Fund (hospital's central physical cash reserve) ──────────
+//
+// This is the "source" account petty cash is issued FROM — issuing petty
+// cash debits this fund and credits the recipient's own `UserCashBalance`
+// in the same backend transaction (`financeControl.service.ts`'s
+// `issuePettyCash`), so the two ledgers always move together.
+
+export interface MainFundSummary {
+  currentBalance: number;
+  totalDeposited: number;
+  totalIssued: number;
+  totalWithdrawn: number;
+}
+
+export async function fetchMainFundSummary(): Promise<MainFundSummary> {
+  try {
+    const res = await apiClient.get<{ data: Record<string, any> }>('/cash/main-fund/summary');
+    const d = res.data.data;
+    return {
+      currentBalance: Number(d.currentBalance ?? 0),
+      totalDeposited: Number(d.totalDeposited ?? 0),
+      totalIssued: Number(d.totalIssued ?? 0),
+      totalWithdrawn: Number(d.totalWithdrawn ?? 0),
+    };
+  } catch (err) {
+    throw new Error(toErrorMessage(err));
+  }
+}
+
+export type MainFundEntryType = 'DEPOSIT' | 'WITHDRAWAL' | 'PETTY_CASH_ISSUE' | 'SETTLEMENT_RETURN';
+
+export interface MainFundEntry {
+  id: string;
+  direction: 'IN' | 'OUT';
+  amount: number;
+  type: MainFundEntryType;
+  note: string;
+  performedByUser: FinanceUserSummary;
+  occurredAt: string;
+}
+
+function toMainFundEntry(raw: Record<string, any>): MainFundEntry {
+  return {
+    id: raw.id,
+    direction: raw.direction,
+    amount: Number(raw.amount ?? 0),
+    type: raw.type,
+    note: raw.note || '',
+    performedByUser: toUserSummary(raw.performedByUser),
+    occurredAt: formatDateTimeDDMMYYYY(raw.occurredAt),
+  };
+}
+
+export async function fetchMainFundEntries(
+  range: { preset: DatePreset; fromDate?: string; toDate?: string },
+  type?: MainFundEntryType,
+): Promise<{ periodLabel: string; rows: MainFundEntry[] }> {
+  try {
+    const res = await apiClient.get<{ data: { period: any; entries: any[] } }>('/cash/main-fund/entries', {
+      params: { ...dateParams(range), ...(type ? { type } : {}) },
+    });
+    return { periodLabel: res.data.data.period.label, rows: (res.data.data.entries || []).map(toMainFundEntry) };
+  } catch (err) {
+    throw new Error(toErrorMessage(err));
+  }
+}
+
+export interface MainFundTransactionPayload {
+  amount: number;
+  note: string;
+}
+
+export async function depositMainFund(payload: MainFundTransactionPayload): Promise<void> {
+  try {
+    await apiClient.post('/cash/main-fund/deposit', payload);
+  } catch (err) {
+    throw new Error(toErrorMessage(err));
+  }
+}
+
+export async function withdrawMainFund(payload: MainFundTransactionPayload): Promise<void> {
+  try {
+    await apiClient.post('/cash/main-fund/withdraw', payload);
+  } catch (err) {
+    throw new Error(toErrorMessage(err));
+  }
+}

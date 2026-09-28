@@ -148,7 +148,8 @@ export const CANONICAL_HOSPITAL_MANAGEMENT_NAV_GROUPS: NavGroup[] = [
       { id: 'refunds', label: 'Refunds', icon: 'RotateCcw' },
       { id: 'outstanding_balances', label: 'Outstanding Balances', icon: 'AlertCircle' },
       { id: 'expenses', label: 'Expenses', icon: 'TrendingDown' },
-      { id: 'petty_cash_advances', label: 'Petty Cash / Advances', icon: 'Wallet' },
+      { id: 'main_cash_fund', label: 'Main Cash Fund', icon: 'Landmark' },
+      { id: 'petty_cash_advances', label: 'Petty Cash Issuance', icon: 'Wallet' },
       { id: 'provider_settlements', label: 'Department Payables / Provider Settlements', icon: 'Landmark' },
       { id: 'balance_sheets', label: 'Balance Sheets', icon: 'FileSpreadsheet' },
       { id: 'account_settlements', label: 'Account Settlements', icon: 'CheckSquare' },
@@ -332,7 +333,12 @@ export const ADMISSION_NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-// 5. INVENTORY MANAGEMENT FINAL NAVIGATION (General Hospital Inventory ONLY, no medicines/batches)
+// 5. INVENTORY MANAGEMENT FINAL NAVIGATION — inventory.md §2 "Final Sidebar /
+// Navigation Structure": exactly 5 groups, 9 screens. Do NOT re-expand this
+// into one sidebar item per transaction type (that was the pre-v-final
+// structure this replaced) — related stock transactions live together in
+// the Stock Movement Center (tabs), Category/Unit CRUD lives in modal/drawer
+// actions off Stock Overview, not their own sidebar items.
 export const INVENTORY_NAV_GROUPS: NavGroup[] = [
   {
     id: 'inv_main',
@@ -342,50 +348,30 @@ export const INVENTORY_NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    id: 'inv_masters',
-    title: 'MASTERS',
+    id: 'inv_inventory',
+    title: 'INVENTORY',
     items: [
-      { id: 'items_products', label: 'Items / Products', icon: 'Package' },
-      { id: 'categories', label: 'Categories', icon: 'Tag' },
-      { id: 'units', label: 'Units', icon: 'Sliders' },
-      { id: 'suppliers', label: 'Suppliers', icon: 'Building' },
-      { id: 'stock_locations', label: 'Stock Locations', icon: 'LayoutGrid' },
+      { id: 'stock_overview', label: 'Stock Overview', icon: 'Package' },
+      { id: 'stock_in', label: 'Stock In / Purchase', icon: 'Truck' },
+      { id: 'department_issue', label: 'Department Issue', icon: 'Layers' },
+      { id: 'department_return', label: 'Department Return', icon: 'RotateCcw' },
+      { id: 'supplier_return', label: 'Supplier Return', icon: 'CornerDownLeft' },
+      { id: 'adjustment', label: 'Adjustment', icon: 'SlidersHorizontal' },
     ],
   },
   {
-    id: 'inv_procurement',
-    title: 'PROCUREMENT',
+    id: 'inv_suppliers',
+    title: 'SUPPLIERS',
     items: [
-      { id: 'purchase_requirements', label: 'Purchase Requirements', icon: 'ClipboardList' },
-      { id: 'fund_petty_cash_requests', label: 'Fund / Petty Cash Requests', icon: 'Coins' },
-      { id: 'purchases_goods_receipt', label: 'Purchases / Goods Receipt', icon: 'Truck', badge: 'Inward', badgeVariant: 'success' },
-    ],
-  },
-  {
-    id: 'inv_ledgers_stock',
-    title: 'LEDGERS & STOCK',
-    items: [
-      { id: 'stock_ledger', label: 'Stock Ledger', icon: 'FileSpreadsheet' },
+      { id: 'supplier_directory', label: 'Supplier Directory', icon: 'Building' },
       { id: 'supplier_ledger', label: 'Supplier Ledger', icon: 'Building2' },
-      { id: 'stock_balance', label: 'Stock Balance', icon: 'Layers' },
     ],
   },
   {
-    id: 'inv_movements',
-    title: 'MOVEMENTS',
+    id: 'inv_cash_expenses',
+    title: 'CASH & EXPENSES',
     items: [
-      { id: 'department_issue_return', label: 'Department Issue / Return', icon: 'ArrowLeftRight' },
-      { id: 'stock_transfers', label: 'Stock Transfers', icon: 'Boxes' },
-      { id: 'supplier_returns', label: 'Supplier Returns', icon: 'CornerDownLeft' },
-      { id: 'adjustments_damage', label: 'Adjustments / Damage', icon: 'AlertTriangle' },
-      { id: 'low_stock_reorder', label: 'Low Stock / Reorder', icon: 'AlertCircle', badge: 'Low', badgeVariant: 'danger' },
-    ],
-  },
-  {
-    id: 'inv_cash_control',
-    title: 'CASH CONTROL',
-    items: [
-      { id: 'inventory_expenses', label: 'Expenses', icon: 'DollarSign' },
+      { id: 'petty_cash_expenses', label: 'Petty Cash & Expenses', icon: 'DollarSign' },
       { id: 'my_balance_sheet', label: 'My Balance Sheet', icon: 'Coins' },
       { id: 'my_account_settlement', label: 'My Account Settlement', icon: 'UserCheck' },
     ],
@@ -394,7 +380,14 @@ export const INVENTORY_NAV_GROUPS: NavGroup[] = [
     id: 'inv_reports',
     title: 'REPORTS',
     items: [
-      { id: 'inventory_reports', label: 'Inventory Reports', icon: 'TrendingUp' },
+      { id: 'inventory_summary', label: 'Inventory Summary', icon: 'FileBarChart' },
+      { id: 'stock_movement_report', label: 'Stock Movement', icon: 'ArrowLeftRight' },
+      { id: 'purchase_report', label: 'Purchase / Stock In', icon: 'Truck' },
+      { id: 'department_issue_return_report', label: 'Department Issue & Return', icon: 'ClipboardList' },
+      { id: 'supplier_report', label: 'Supplier Report', icon: 'Building2' },
+      { id: 'expense_report', label: 'Expense Report', icon: 'Wallet' },
+      { id: 'stock_status_report', label: 'Stock Status', icon: 'Layers' },
+      { id: 'cash_settlement_report', label: 'Cash & Settlement', icon: 'Coins' },
     ],
   },
   {

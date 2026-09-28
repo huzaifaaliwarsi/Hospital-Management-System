@@ -94,6 +94,8 @@ const policy: Policy = {
     setup: new Set<Action>(['view']),
     inventory: new Set(fullAccess),
     cash: new Set<Action>(['view', 'create']),
+    // Inventory's own reporting center (inventory.md §7/§8, §9 step 7).
+    reports: new Set<Action>(['view']),
   },
   PHARMACY_SUPER_ADMIN: {
     setup: new Set<Action>(['view']),

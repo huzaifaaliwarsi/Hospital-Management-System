@@ -17,9 +17,11 @@ export interface BackendStockItem {
   name: string;
   category?: string;
   unit: string;
+  location?: string;
   reorderLevel: string | number;
   currentStock: string | number;
   isLowStock: boolean;
+  isActive: boolean;
 }
 
 export const inventoryApiService = {
@@ -42,8 +44,26 @@ export const inventoryApiService = {
     return res.data.data;
   },
 
+  async updateSupplier(
+    id: string,
+    data: Partial<{ name: string; contact: string; phone: string; address: string; terms: string; isActive: boolean }>,
+  ) {
+    const res = await apiClient.patch<{ data: BackendSupplier }>(`/inventory/suppliers/${id}`, data);
+    return res.data.data;
+  },
+
   async getSupplierLedger(id: string) {
     const res = await apiClient.get<{ data: any }>(`/inventory/suppliers/${id}/ledger`);
+    return res.data.data;
+  },
+
+  async deleteSupplier(id: string) {
+    const res = await apiClient.delete<{ data: any }>(`/inventory/suppliers/${id}`);
+    return res.data.data;
+  },
+
+  async paySupplier(id: string, data: { amount: number; paymentMethod: 'PETTY_CASH' | 'MANAGEMENT_DIRECT' | 'ONLINE'; reference?: string }) {
+    const res = await apiClient.post<{ data: any }>(`/inventory/suppliers/${id}/payments`, data);
     return res.data.data;
   },
 
@@ -56,13 +76,30 @@ export const inventoryApiService = {
   },
 
   async createStockItem(data: {
-    code: string;
+    code?: string;
     name: string;
     category?: string;
     unit: string;
+    location?: string;
     reorderLevel?: number;
+    supplierId?: string;
+    initialQuantity?: number;
+    unitCost?: number;
   }) {
     const res = await apiClient.post<{ data: BackendStockItem }>('/inventory/items', data);
+    return res.data.data;
+  },
+
+  async updateStockItem(
+    id: string,
+    data: Partial<{ name: string; category: string; unit: string; location: string; reorderLevel: number; isActive: boolean }>,
+  ) {
+    const res = await apiClient.patch<{ data: BackendStockItem }>(`/inventory/items/${id}`, data);
+    return res.data.data;
+  },
+
+  async deleteStockItem(id: string) {
+    const res = await apiClient.delete<{ data: any }>(`/inventory/items/${id}`);
     return res.data.data;
   },
 
@@ -71,7 +108,7 @@ export const inventoryApiService = {
     return res.data.data;
   },
 
-  // Purchases
+  // Purchases (Stock In)
   async createPurchase(data: {
     supplierId: string;
     invoiceReference?: string;
@@ -80,6 +117,8 @@ export const inventoryApiService = {
       stockItemId: string;
       quantity: number;
       rate: number;
+      batchNo?: string;
+      expiryDate?: string;
     }>;
   }) {
     const res = await apiClient.post<{ data: any }>('/inventory/purchases', data);
@@ -96,6 +135,98 @@ export const inventoryApiService = {
     }>;
   }) {
     const res = await apiClient.post<{ data: any }>('/inventory/department-issues', data);
+    return res.data.data;
+  },
+
+  // Department Returns
+  async receiveDepartmentReturn(data: {
+    departmentRequisitionId: string;
+    returnedByName?: string;
+    lines: Array<{
+      departmentRequisitionLineId: string;
+      quantity: number;
+      condition: 'USABLE' | 'DAMAGED' | 'EXPIRED';
+    }>;
+  }) {
+    const res = await apiClient.post<{ data: any }>('/inventory/department-returns', data);
+    return res.data.data;
+  },
+
+  // Supplier Returns
+  async returnToSupplier(data: {
+    supplierId: string;
+    purchaseOrderId: string;
+    reason: string;
+    refundMethod: 'SUPPLIER_CREDIT' | 'CASH_REFUND';
+    lines: Array<{ stockItemId: string; quantity: number; rate: number }>;
+  }) {
+    const res = await apiClient.post<{ data: any }>('/inventory/supplier-returns', data);
+    return res.data.data;
+  },
+
+  // Adjustments (Damage/Expiry/Count Correction/Loss/Surplus/Quarantine)
+  async createAdjustment(data: {
+    stockItemId: string;
+    batchNo?: string;
+    type: 'DAMAGE' | 'EXPIRY' | 'COUNT_CORRECTION' | 'LOSS' | 'SURPLUS' | 'QUARANTINE';
+    direction: 'INCREASE' | 'DECREASE';
+    quantity: number;
+    reason: string;
+    requiresApproval?: boolean;
+  }) {
+    const res = await apiClient.post<{ data: any }>('/inventory/adjustments', data);
+    return res.data.data;
+  },
+
+  async listAdjustments() {
+    const res = await apiClient.get<{ data: any[] }>('/inventory/adjustments');
+    return res.data.data;
+  },
+
+  // Petty Cash Received (read-only — credited by Admin/Super Admin via fund-requests)
+  async listPettyCash() {
+    const res = await apiClient.get<{ data: any[] }>('/inventory/petty-cash');
+    return res.data.data;
+  },
+
+  // Inventory Expenses
+  async createInventoryExpense(data: {
+    expenseDate?: string;
+    category: string;
+    amount: number;
+    paymentMethod: 'CASH' | 'CARD' | 'BANK' | 'ONLINE';
+    payee?: string;
+    description?: string;
+    reference?: string;
+  }) {
+    const res = await apiClient.post<{ data: any }>('/inventory/expenses', data);
+    return res.data.data;
+  },
+
+  async listInventoryExpenses() {
+    const res = await apiClient.get<{ data: any[] }>('/inventory/expenses');
+    return res.data.data;
+  },
+
+  // My cash position — same generic `/cash/balance-sheet` Front Desk uses
+  // (frontdeskApiService.getCashBalance), scope-resolved server-side from
+  // the caller's own role (inventory.md §7.3, §9 step 2).
+  async getCashBalance(period?: { preset?: string; fromDate?: string; toDate?: string }) {
+    const res = await apiClient.get<{ data: any }>('/cash/balance-sheet', { params: period });
+    return res.data.data;
+  },
+
+  // Dashboard KPIs (inventory.md §3, §9 step 10) — one call covers Total
+  // Stock Value / Low Stock / Near Expiry / Supplier Payable (point-in-time)
+  // plus Stock In / Department Issues for the given period.
+  async getInventorySummary(params?: {
+    preset?: string;
+    fromDate?: string;
+    toDate?: string;
+    category?: string;
+    nearExpiryDays?: number;
+  }) {
+    const res = await apiClient.get<{ data: any }>('/reports/inventory/summary', { params });
     return res.data.data;
   },
 };

@@ -244,7 +244,7 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
           subtitle: `${group.title}`,
           category: 'navigation',
           path: `${config.routePrefix}/${navItem.id}`,
-          icon: navItem.icon || Layers,
+          icon: Layers,
           badge: group.title,
         });
       }

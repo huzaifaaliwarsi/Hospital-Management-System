@@ -1,4 +1,5 @@
 import { prisma } from '@/db/client';
+import { getPositiveBatchBalances } from '@/shared/inventoryBatchBalances';
 import type { GetSuperAdminDashboardQuery } from './dashboard.schemas';
 
 export interface SuperAdminDashboardData {
@@ -68,7 +69,11 @@ export interface SuperAdminDashboardData {
     totalItemsCount: number;
     lowStockItemsCount: number;
     outOfStockItemsCount: number;
-    pendingStockRequestsCount: number;
+    /** Batches expiring within 60 days / already past expiry — real `StockLedger` batch data (inventory.md §9 step 1). */
+    nearExpiryItemsCount: number;
+    expiredItemsCount: number;
+    /** Total current supplier payable across the whole Inventory module (inventory.md §3, §5). */
+    supplierPayable: number;
     /** Real flagged central-store items (out-of-stock first), for dashboard alert tiles — never fabricated names. */
     flaggedItems: Array<{
       id: string;
@@ -498,7 +503,9 @@ export const dashboardService = {
     ];
 
     // 5. Inventory & Pharmacy
-    const [stockItems, stockLedgerAggregates, pharmacyDispenses] = await Promise.all([
+    const nearExpiryThreshold = new Date();
+    nearExpiryThreshold.setDate(nearExpiryThreshold.getDate() + 60);
+    const [stockItems, stockLedgerAggregates, pharmacyDispenses, expiringBatches, expiredBatches, supplierLedgerAll] = await Promise.all([
       prisma.stockItem.findMany({
         where: { isActive: true },
         select: {
@@ -519,7 +526,21 @@ export const dashboardService = {
         where: { createdAt: { gte: periodStart, lte: periodEnd } },
         select: { id: true, total: true, status: true },
       }),
+      getPositiveBatchBalances(nearExpiryThreshold),
+      getPositiveBatchBalances(new Date()),
+      prisma.supplierLedger.findMany({ select: { entryType: true, amount: true } }),
     ]);
+
+    const nearExpiryItemsCount = expiringBatches.length;
+    // "Expiring within 60 days" already includes anything already past expiry
+    // (expiryDate <= threshold covers both) — subtract the already-expired
+    // batches so the two tiles don't double-count the same batch.
+    const expiredItemsCount = expiredBatches.length;
+    const nearExpiryOnlyCount = Math.max(0, nearExpiryItemsCount - expiredItemsCount);
+    const supplierPayable = supplierLedgerAll.reduce(
+      (acc, e) => (e.entryType === 'PURCHASE_CREDIT' ? acc + Number(e.amount) : acc - Number(e.amount)),
+      0,
+    );
 
     const stockBalances = new Map<string, number>();
     for (const agg of stockLedgerAggregates) {
@@ -916,7 +937,9 @@ export const dashboardService = {
         totalItemsCount: stockItems.length,
         lowStockItemsCount: lowStockCount,
         outOfStockItemsCount: outOfStockCount,
-        pendingStockRequestsCount: 0,
+        nearExpiryItemsCount: nearExpiryOnlyCount,
+        expiredItemsCount,
+        supplierPayable,
         flaggedItems: topFlaggedStockItems,
       },
       pharmacySummary: {

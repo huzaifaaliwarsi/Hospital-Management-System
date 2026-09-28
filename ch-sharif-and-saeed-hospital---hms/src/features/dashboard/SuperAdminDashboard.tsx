@@ -115,7 +115,7 @@ const EMPTY_DASHBOARD: ResolvedDashboardState = {
     outOfStockItemsCount: 0,
     nearExpiryItemsCount: 0,
     expiredItemsCount: 0,
-    pendingStockRequestsCount: 0,
+    supplierPayable: 0,
   },
   flaggedStockItems: [],
   attentionAlerts: [],
@@ -1262,11 +1262,11 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             </div>
 
             <div className="p-3 bg-[#effaf5] rounded-lg border border-[#c2e7db] sm:col-span-2">
-              <span className="text-[11px] text-[#0e7d5a] font-medium block">Pending Stock Requests</span>
+              <span className="text-[11px] text-[#0e7d5a] font-medium block">Supplier Payable</span>
               <span className="text-lg font-bold text-[#0e7d5a] font-mono mt-0.5 block">
-                {inventoryAlerts.pendingStockRequestsCount} Purchase Requisitions
+                {formatPKR(inventoryAlerts.supplierPayable)}
               </span>
-              <span className="text-[10px] text-[#129b70] font-semibold">Awaiting store manager approval</span>
+              <span className="text-[10px] text-[#129b70] font-semibold">Total current payable across all suppliers</span>
             </div>
           </div>
         </div>

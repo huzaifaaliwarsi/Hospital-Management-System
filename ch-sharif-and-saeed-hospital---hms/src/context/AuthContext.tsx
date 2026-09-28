@@ -184,23 +184,23 @@ function validateAndNormalizeRestoredSession(): {
         return null;
       }
 
-      // Strictly normalize to super-admin only
+      const activeUserPortal = portal || user.portal || 'super-admin';
       const normalizedUser: User = {
         ...user,
         role: 'Super Admin',
-        portal: 'super-admin',
-        allowedPortals: ['super-admin'],
+        portal: activeUserPortal,
+        allowedPortals: ['super-admin', 'admin', 'front-desk', 'admission', 'inventory'],
       };
       const normalizedSession: UserSession = {
         ...session,
-        selectedPortal: 'super-admin',
-        allowedPortals: ['super-admin'],
+        selectedPortal: activeUserPortal,
+        allowedPortals: ['super-admin', 'admin', 'front-desk', 'admission', 'inventory'],
       };
 
       return {
         user: normalizedUser,
         session: normalizedSession,
-        portal: 'super-admin',
+        portal: activeUserPortal,
       };
     }
 
@@ -211,23 +211,23 @@ function validateAndNormalizeRestoredSession(): {
         return null;
       }
 
-      // Strictly normalize to admin only
+      const activeUserPortal = portal || user.portal || 'admin';
       const normalizedUser: User = {
         ...user,
         role: 'Admin',
-        portal: 'admin',
-        allowedPortals: ['admin'],
+        portal: activeUserPortal,
+        allowedPortals: ['super-admin', 'admin', 'front-desk', 'admission', 'inventory'],
       };
       const normalizedSession: UserSession = {
         ...session,
-        selectedPortal: 'admin',
-        allowedPortals: ['admin'],
+        selectedPortal: activeUserPortal,
+        allowedPortals: ['super-admin', 'admin', 'front-desk', 'admission', 'inventory'],
       };
 
       return {
         user: normalizedUser,
         session: normalizedSession,
-        portal: 'admin',
+        portal: activeUserPortal,
       };
     }
 
@@ -373,6 +373,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const userRole = mapRoleToUserRole(backendAuth.user.role);
 
+      const isCrossPortalAdmin =
+        backendAuth.user.role === 'SUPER_ADMIN' || backendAuth.user.role === 'ADMIN';
+      const userAllowedPortals: PortalKey[] = isCrossPortalAdmin
+        ? ['super-admin', 'admin', 'front-desk', 'admission', 'inventory']
+        : [targetPortal];
+
       const authenticatedUser: User = {
         id: backendAuth.user.id,
         username: backendAuth.user.username,
@@ -381,7 +387,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         role: userRole,
         department: backendAuth.user.staff?.department?.name || 'Hospital Administration',
         portal: targetPortal,
-        allowedPortals: [targetPortal, 'super-admin', 'admin', 'front-desk', 'admission', 'inventory'],
+        allowedPortals: userAllowedPortals,
         permissions: ['*'],
         status: 'active',
         lastLogin: 'Just now',
@@ -394,7 +400,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         username: backendAuth.user.username,
         role: userRole,
         selectedPortal: targetPortal,
-        allowedPortals: authenticatedUser.allowedPortals,
+        allowedPortals: userAllowedPortals,
         permissions: ['*'],
         status: 'active',
         loginTime: new Date().toISOString(),

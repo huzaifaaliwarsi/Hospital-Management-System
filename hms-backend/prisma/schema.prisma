@@ -179,6 +179,19 @@ enum StockMovementType {
   NEGATIVE_ADJUSTMENT
 }
 
+// inventory.md §4.2 Adjustment tab / §9 step 5. DAMAGE/EXPIRY/LOSS/QUARANTINE
+// are always a stock decrease; SURPLUS is always an increase;
+// COUNT_CORRECTION can be either (inventoryService.createAdjustment enforces
+// this per-type direction rule).
+enum StockAdjustmentType {
+  DAMAGE
+  EXPIRY
+  COUNT_CORRECTION
+  LOSS
+  SURPLUS
+  QUARANTINE
+}
+
 enum SupplierLedgerEntryType {
   PURCHASE_CREDIT
   PAYMENT
@@ -260,6 +273,24 @@ enum CashCategory {
   EXPENSE
   PETTY_CASH_ISSUE
   RECOVERY
+}
+
+// DEPOSIT — Super Admin/Admin banks money INTO the fund (e.g. a bank
+// withdrawal brought into the hospital's physical cash reserve).
+// WITHDRAWAL — money manually taken back OUT of the fund (e.g. returned to
+// the bank), never a staff issuance.
+// PETTY_CASH_ISSUE — auto-posted OUT entry mirroring a `UserCashBalance`
+// petty-cash issuance (`financeControl.service.ts`'s `issuePettyCash`) —
+// one row per issuance, linked via `relatedUserCashBalanceId`.
+// SETTLEMENT_RETURN — auto-posted entry mirroring an `AccountSettlement`
+// being accepted (IN — the cashier's physical cash handover replenishes the
+// fund) or a previously-accepted settlement being reversed (OUT — the
+// handover is undone), linked via `relatedAccountSettlementId`.
+enum MainFundEntryType {
+  DEPOSIT
+  WITHDRAWAL
+  PETTY_CASH_ISSUE
+  SETTLEMENT_RETURN
 }
 
 enum SettlementStatus {
@@ -590,6 +621,9 @@ model PortalUser {
   createdHospitalInvoices     HospitalInvoice[]         @relation("HospitalInvoiceCreatedBy")
   collectedPaymentReceipts    PaymentReceipt[]          @relation("PaymentReceiptCollectedBy")
   cashBalanceEntries          UserCashBalance[]         @relation("UserCashBalanceOwner")
+  issuedCashBalanceEntries    UserCashBalance[]         @relation("UserCashBalanceIssuedBy")
+  mainCashFundEntries         MainCashFundEntry[]       @relation("MainCashFundEntryPerformedBy")
+  createdInventoryExpenses    InventoryExpense[]        @relation("InventoryExpenseCreatedBy")
   submittedSettlements        AccountSettlement[]       @relation("AccountSettlementSubmittedBy")
   reviewedSettlements         AccountSettlement[]       @relation("AccountSettlementReviewedBy")
   reversedSettlements         AccountSettlement[]       @relation("AccountSettlementReversedBy")
@@ -609,6 +643,8 @@ model PortalUser {
   createdSalaryTemplates      SalaryTemplate[]          @relation("SalaryTemplateCreatedBy")
   createdSalaryProfiles       StaffSalaryProfile[]      @relation("SalaryProfileCreatedBy")
   createdRequisitions         DepartmentRequisition[]   @relation("RequisitionIssuedBy")
+  createdStockAdjustments     StockAdjustment[]         @relation("StockAdjustmentCreatedBy")
+  approvedStockAdjustments    StockAdjustment[]         @relation("StockAdjustmentApprovedBy")
   createdMedicines            MedicineMaster[]          @relation("MedicineMasterCreatedBy")
   createdMedicineBatches      MedicineBatch[]           @relation("MedicineBatchCreatedBy")
   medicineStockLedgerActor    MedicineStockLedger[]     @relation("MedicineStockLedgerActor")
@@ -1494,10 +1530,46 @@ model UserCashBalance {
   paymentReceipt   PaymentReceipt? @relation(fields: [paymentReceiptId], references: [id])
   isSettled        Boolean         @default(false) @map("is_settled")
   occurredAt       DateTime        @default(now()) @map("occurred_at")
+  /// Free-text purpose/note — e.g. a petty-cash issuance's reason (inventory.md
+  /// §6.1 "Petty Cash Received" tab's Purpose column, §9 step 6).
+  note             String?
+  /// Who issued/approved this entry when it's not self-service (e.g. an
+  /// Admin crediting an Inventory user's petty cash) — distinct from
+  /// `portalUserId`, the recipient/owner of the cash position.
+  issuedById       String?         @map("issued_by")
+  issuedByUser     PortalUser?     @relation("UserCashBalanceIssuedBy", fields: [issuedById], references: [id])
 
   settlementLinks SettlementTransaction[]
 
   @@map("user_cash_balances")
+}
+
+/// Hospital's central physical cash reserve — the source petty cash is
+/// issued FROM. Same append-only signed-delta ledger pattern as
+/// `UserCashBalance`: the current balance is always summed at query time
+/// (`mainFund.service.ts`), never stored as a mutable running total.
+model MainCashFundEntry {
+  id           String            @id @default(uuid())
+  direction    CashDirection
+  amount       Decimal           @db.Decimal(14, 2)
+  type         MainFundEntryType
+  note         String?
+  performedById String           @map("performed_by")
+  performedByUser PortalUser     @relation("MainCashFundEntryPerformedBy", fields: [performedById], references: [id])
+  /// Set only for a `PETTY_CASH_ISSUE` entry — the `UserCashBalance` row it
+  /// mirrors (one fund debit per issuance, no relation object needed).
+  relatedUserCashBalanceId String? @unique @map("related_user_cash_balance_id")
+  /// Set only for a `SETTLEMENT_RETURN` entry — the `AccountSettlement` it
+  /// mirrors. Not unique: an accepted settlement posts one IN row here, and
+  /// a later reversal of that same settlement posts a second, offsetting
+  /// OUT row referencing the same settlement id.
+  relatedAccountSettlementId String? @map("related_account_settlement_id")
+  occurredAt   DateTime          @default(now()) @map("occurred_at")
+  createdAt    DateTime          @default(now()) @map("created_at")
+
+  @@index([occurredAt])
+  @@index([relatedAccountSettlementId])
+  @@map("main_cash_fund_entries")
 }
 
 model AccountSettlement {
@@ -1791,11 +1863,16 @@ model StockItem {
   category     String?
   unit         String
   reorderLevel Decimal @default(0) @map("reorder_level") @db.Decimal(14, 3)
+  /// Free-text store/warehouse location (§2 of inventory.md — lightweight field,
+  /// not a separate master screen; upgrade to a lookup table if multi-store is
+  /// ever needed).
+  location     String?
   isActive     Boolean @default(true) @map("is_active")
 
   purchaseOrderLines PurchaseOrderLine[]
   stockLedgerEntries StockLedger[]
   requisitionLines   DepartmentRequisitionLine[]
+  adjustments        StockAdjustment[]
 
   createdAt     DateTime    @default(now()) @map("created_at")
   createdById   String?     @map("created_by")
@@ -1836,18 +1913,27 @@ model PurchaseOrderLine {
   quantity         Decimal       @db.Decimal(14, 3)
   rate             Decimal       @db.Decimal(14, 2)
   receivedQuantity Decimal       @default(0) @map("received_quantity") @db.Decimal(14, 3)
+  /// Batch/expiry as captured on the Stock In form (inventory.md §4.2). Nullable —
+  /// not every general-inventory line is batch-tracked.
+  batchNo          String?       @map("batch_no")
+  expiryDate       DateTime?     @map("expiry_date") @db.Date
 
   @@map("purchase_order_lines")
 }
 
 /// Append-only, delta-only (§6.1 ledger pattern). Running balance is a
 /// `SUM(quantity_delta)` at query time — never a stored mutable total.
+/// Per-batch balance is `SUM(quantity_delta)` grouped by (stock_item_id, batch_no)
+/// — deliberately no separate mutable `StockBatch` table, same reasoning as the
+/// item-level balance above (inventory.md §7.2/§9 step 1).
 model StockLedger {
   id             String            @id @default(uuid())
   stockItemId    String            @map("stock_item_id")
   stockItem      StockItem         @relation(fields: [stockItemId], references: [id])
   movementType   StockMovementType @map("movement_type")
   quantityDelta  Decimal           @map("quantity_delta") @db.Decimal(14, 3) // signed: +IN / −OUT
+  batchNo        String?           @map("batch_no")
+  expiryDate     DateTime?         @map("expiry_date") @db.Date
   referenceTable String            @map("reference_table") // polymorphic source (purchase/issue/transfer/adjustment)
   referenceId    String            @map("reference_id")
   actorId        String            @map("actor_id")
@@ -1855,6 +1941,8 @@ model StockLedger {
   createdAt      DateTime          @default(now()) @map("created_at")
 
   @@index([stockItemId, createdAt])
+  @@index([stockItemId, batchNo])
+  @@index([expiryDate])
   @@map("stock_ledger")
 }
 
@@ -1900,6 +1988,57 @@ model DepartmentRequisitionLine {
   returnedQuantity        Decimal               @default(0) @map("returned_quantity") @db.Decimal(14, 3)
 
   @@map("department_requisition_lines")
+}
+
+/// Adjustment tab (inventory.md §4.2, §9 step 5) — Damage/Expiry/Count
+/// Correction/Loss/Surplus/Quarantine. Always paired with a `StockLedger`
+/// POSITIVE_ADJUSTMENT/NEGATIVE_ADJUSTMENT entry referencing this row's id;
+/// `quantity` here is always a positive magnitude, direction lives in the
+/// paired ledger entry's signed `quantityDelta`.
+model StockAdjustment {
+  id          String              @id @default(uuid())
+  stockItemId String              @map("stock_item_id")
+  stockItem   StockItem           @relation(fields: [stockItemId], references: [id])
+  batchNo     String?             @map("batch_no")
+  type        StockAdjustmentType
+  quantity    Decimal             @db.Decimal(14, 3)
+  reason      String
+
+  requiresApproval Boolean     @default(false) @map("requires_approval")
+  approvedById     String?     @map("approved_by")
+  approvedByUser   PortalUser? @relation("StockAdjustmentApprovedBy", fields: [approvedById], references: [id])
+  approvedAt       DateTime?   @map("approved_at")
+
+  createdAt     DateTime   @default(now()) @map("created_at")
+  createdById   String     @map("created_by")
+  createdByUser PortalUser @relation("StockAdjustmentCreatedBy", fields: [createdById], references: [id])
+
+  @@index([stockItemId, createdAt])
+  @@map("stock_adjustments")
+}
+
+/// Inventory Expenses tab (inventory.md §6.1, §9 step 6) — deliberately NOT
+/// the shared `Expense` model (that one is Super Admin/Admin's hospital-wide
+/// operating-expense ledger, explicitly "independent of cashier drawer
+/// ledgers" per its own doc comment). Every row here also posts a
+/// `UserCashBalance` OUT/EXPENSE entry for the creating Inventory user, so
+/// it correctly reduces their own expected cash (§6.2 formula).
+model InventoryExpense {
+  id            String          @id @default(uuid())
+  expenseDate   DateTime        @default(now()) @map("expense_date") @db.Date
+  category      ExpenseCategory
+  amount        Decimal         @db.Decimal(14, 2)
+  paymentMethod PaymentMethod   @map("payment_method")
+  payee         String?
+  description   String?
+  reference     String?
+
+  createdAt     DateTime   @default(now()) @map("created_at")
+  createdById   String     @map("created_by")
+  createdByUser PortalUser @relation("InventoryExpenseCreatedBy", fields: [createdById], references: [id])
+
+  @@index([expenseDate])
+  @@map("inventory_expenses")
 }
 
 // ═══════════════════════════════════════════════════════════════════════

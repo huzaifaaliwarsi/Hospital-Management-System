@@ -30,7 +30,7 @@ html, body, input, button, select, textarea {
   font-family: var(--font-sans);
 }
 
-/* Front Desk / Super Admin / Admin portals: Montserrat everywhere, including
+/* Front Desk / Super Admin / Admin / Inventory portals: Montserrat everywhere, including
    amounts that use `font-mono` (the mono face is too thin to read figures).
    Class is set on <html> by App.tsx. */
 html.portal-montserrat {

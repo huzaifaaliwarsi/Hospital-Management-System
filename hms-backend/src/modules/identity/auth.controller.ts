@@ -7,11 +7,12 @@ import { AuthenticationError } from '@/shared/errors/AppError';
 const REFRESH_COOKIE_NAME = 'hms_refresh_token';
 
 function refreshCookieOptions(expiresAt: Date) {
+  const isProd = env.NODE_ENV === 'production';
   return {
     httpOnly: true,
-    secure: env.NODE_ENV === 'production',
-    sameSite: 'strict' as const,
-    domain: env.COOKIE_DOMAIN,
+    secure: isProd,
+    sameSite: isProd ? ('none' as const) : ('lax' as const),
+    domain: env.COOKIE_DOMAIN && env.COOKIE_DOMAIN !== 'localhost' ? env.COOKIE_DOMAIN : undefined,
     expires: expiresAt,
     path: '/api/v1/auth',
   };
@@ -45,7 +46,13 @@ export const authController = {
   async logout(req: Request, res: Response) {
     const rawToken = req.cookies?.[REFRESH_COOKIE_NAME] as string | undefined;
     await authService.logout(rawToken);
-    res.clearCookie(REFRESH_COOKIE_NAME, { path: '/api/v1/auth' });
+    const isProd = env.NODE_ENV === 'production';
+    res.clearCookie(REFRESH_COOKIE_NAME, {
+      path: '/api/v1/auth',
+      secure: isProd,
+      sameSite: isProd ? 'none' : 'lax',
+      domain: env.COOKIE_DOMAIN && env.COOKIE_DOMAIN !== 'localhost' ? env.COOKIE_DOMAIN : undefined,
+    });
     res.status(204).send();
   },
 

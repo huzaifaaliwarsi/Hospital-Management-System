@@ -13,7 +13,9 @@ import {
   settlementIdParamsSchema,
   reviewSettlementBodySchema,
   reverseSettlementBodySchema,
+  issuePettyCashBodySchema,
 } from './financeControl.schemas';
+import { listMainFundEntriesQuerySchema, mainFundTransactionBodySchema } from './mainFund.schemas';
 
 const router = Router();
 const view = authorize('cash', 'view');
@@ -52,5 +54,23 @@ router.post(
   validate({ params: settlementIdParamsSchema, body: reverseSettlementBodySchema }),
   asyncHandler(c.reverseSettlement),
 );
+
+// Petty Cash Issuance — Super Admin/Admin issue an opening float or top-up
+// to a cash-handling staff user. `approve`-gated, same as settlement review.
+router.get('/finance-control/issuable-users', approve, asyncHandler(c.listIssuableUsers));
+router.post(
+  '/finance-control/petty-cash',
+  approve,
+  validate({ body: issuePettyCashBodySchema }),
+  asyncHandler(c.issuePettyCash),
+);
+
+// Main Cash Fund — the hospital's central physical cash reserve that petty
+// cash is issued FROM. Same `approve` gate: only Admin/Super Admin can
+// deposit into or withdraw from it.
+router.get('/main-fund/summary', approve, asyncHandler(c.getMainFundSummary));
+router.get('/main-fund/entries', approve, validate({ query: listMainFundEntriesQuerySchema }), asyncHandler(c.listMainFundEntries));
+router.post('/main-fund/deposit', approve, validate({ body: mainFundTransactionBodySchema }), asyncHandler(c.depositMainFund));
+router.post('/main-fund/withdraw', approve, validate({ body: mainFundTransactionBodySchema }), asyncHandler(c.withdrawMainFund));
 
 export default router;

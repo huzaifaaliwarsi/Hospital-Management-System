@@ -350,6 +350,16 @@ export const setupService = {
   async deleteDepartment(id: string) {
     const dept = (await this.assertExists('department', id)) as any;
 
+    const [staffCount, wardCount, apptCount, admCount, rateCount] = await Promise.all([
+      prisma.staff.count({ where: { departmentId: id } }),
+      prisma.ward.count({ where: { departmentId: id } }),
+      prisma.appointment.count({ where: { departmentId: id } }),
+      prisma.admissionRecord.count({ where: { departmentId: id } }),
+      prisma.serviceRate.count({ where: { departmentId: id } }),
+    ]);
+
+    const hasLinkedRecords = staffCount > 0 || wardCount > 0 || apptCount > 0 || admCount > 0 || rateCount > 0;
+
     // Find a fallback active department to safely preserve and reassign staff/doctors (Doctors/staff are NEVER deleted)
     let fallbackDept = await prisma.department.findFirst({
       where: { id: { not: id }, isActive: true },
@@ -361,49 +371,53 @@ export const setupService = {
         orderBy: { createdAt: 'asc' },
       });
     }
-    if (!fallbackDept) {
-      fallbackDept = await prisma.department.create({
-        data: {
-          name: 'General OPD',
-          code: 'GEN-OPD',
-          departmentType: 'CLINICAL',
-          supportsOpd: true,
-          isActive: true,
-        },
-      });
+
+    if (hasLinkedRecords && !fallbackDept) {
+      const blockers: string[] = [
+        staffCount > 0 ? `${staffCount} staff member${staffCount > 1 ? 's' : ''}` : '',
+        wardCount > 0 ? `${wardCount} ward${wardCount > 1 ? 's' : ''}` : '',
+        apptCount > 0 ? `${apptCount} admission/clinical record${apptCount > 1 ? 's' : ''}` : '',
+        rateCount > 0 ? `${rateCount} service rate${rateCount > 1 ? 's' : ''}` : '',
+      ].filter(Boolean);
+
+      throw new ValidationError(
+        `Cannot delete "${dept.name}" because it is the only department in the hospital and has active records (${blockers.join(', ')}). Please create another department first to preserve staff and clinical records.`
+      );
     }
 
     try {
       await prisma.$transaction(async (tx) => {
-        // 1. Reassign all staff and doctors to the fallback department (DO NOT DELETE STAFF/DOCTORS)
-        await tx.staff.updateMany({
-          where: { departmentId: id },
-          data: { departmentId: fallbackDept.id },
-        });
+        if (fallbackDept) {
+          // 1. Reassign all staff and doctors to the fallback department (DO NOT DELETE STAFF/DOCTORS)
+          await tx.staff.updateMany({
+            where: { departmentId: id },
+            data: { departmentId: fallbackDept.id },
+          });
 
-        // 2. Reassign any wards to fallback department
-        await tx.ward.updateMany({
-          where: { departmentId: id },
-          data: { departmentId: fallbackDept.id },
-        });
+          // 2. Reassign any wards to fallback department
+          await tx.ward.updateMany({
+            where: { departmentId: id },
+            data: { departmentId: fallbackDept.id },
+          });
 
-        // 3. Reassign any appointments to fallback department
-        await tx.appointment.updateMany({
-          where: { departmentId: id },
-          data: { departmentId: fallbackDept.id },
-        });
+          // 3. Reassign any appointments to fallback department
+          await tx.appointment.updateMany({
+            where: { departmentId: id },
+            data: { departmentId: fallbackDept.id },
+          });
 
-        // 4. Reassign any admissions to fallback department
-        await tx.admissionRecord.updateMany({
-          where: { departmentId: id },
-          data: { departmentId: fallbackDept.id },
-        });
+          // 4. Reassign any admissions to fallback department
+          await tx.admissionRecord.updateMany({
+            where: { departmentId: id },
+            data: { departmentId: fallbackDept.id },
+          });
 
-        // 5. Reassign service rates to fallback department
-        await tx.serviceRate.updateMany({
-          where: { departmentId: id },
-          data: { departmentId: fallbackDept.id },
-        });
+          // 5. Reassign service rates to fallback department
+          await tx.serviceRate.updateMany({
+            where: { departmentId: id },
+            data: { departmentId: fallbackDept.id },
+          });
+        }
 
         // 6. Unlink hospital invoices
         await tx.hospitalInvoice.updateMany({
@@ -455,6 +469,9 @@ export const setupService = {
         await tx.department.delete({ where: { id } });
       });
     } catch (error: any) {
+      if (error instanceof ValidationError) {
+        throw error;
+      }
       this.rethrowFkError(
         error,
         `Department "${dept.name}" could not be deleted due to active database constraints.`

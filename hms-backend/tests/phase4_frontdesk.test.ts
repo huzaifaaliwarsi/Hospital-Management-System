@@ -48,6 +48,7 @@ vi.mock('@/db/client', () => {
     accountSettlement: {
       create: vi.fn(),
       findMany: vi.fn(),
+      findFirst: vi.fn().mockResolvedValue(null),
     },
     settlementTransaction: {
       createMany: vi.fn(),
@@ -76,6 +77,11 @@ vi.mock('@/db/client', () => {
       findUnique: vi.fn(),
       findMany: vi.fn(),
       update: vi.fn(),
+    },
+    // Resolves the caller's moduleScope for cash/settlement (inventory.md
+    // §7.3, §9 step 2) — Front Desk cashiers resolve to BILLING.
+    portalUser: {
+      findUniqueOrThrow: vi.fn(),
     },
   };
 
@@ -108,6 +114,7 @@ describe('Phase 4: Front Desk Billing, Appointments & Doctor Commission Engine',
       id: 'self-pay-mock-id',
       fullName: 'Ahmad Khan',
     });
+    (prisma.portalUser.findUniqueOrThrow as any).mockResolvedValue({ role: 'FRONT_DESK_BILLING' });
   });
 
   describe('1. Appointments Flow & Advance Collection (§4.6, D16 p.8)', () => {

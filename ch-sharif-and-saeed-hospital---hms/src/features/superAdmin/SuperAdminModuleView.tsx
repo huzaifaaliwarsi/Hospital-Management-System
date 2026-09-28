@@ -56,6 +56,8 @@ import { AppointmentsView } from '../frontDesk/appointments/AppointmentsView';
 import { ActiveAdmissionsView } from '../admission/ActiveAdmissionsView';
 import { FinanceControlBalanceSheetsView } from './financeControl/FinanceControlBalanceSheetsView';
 import { FinanceControlAccountSettlementsView } from './financeControl/FinanceControlAccountSettlementsView';
+import { PettyCashIssuanceView } from './financeControl/PettyCashIssuanceView';
+import { MainCashFundView } from './financeControl/MainCashFundView';
 import { MANAGEMENT_REPORT_VIEWS } from './reports/ManagementReports';
 import { ExpenseManagementView } from './expenses/ExpenseManagementView';
 import { useRouter } from '../../context/RouterContext';
@@ -446,6 +448,19 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
 
   if (activeModuleId === 'account_settlements' || activeModuleId === 'my_account_settlement' || activeModuleId === 'accounts_settlement') {
     return <FinanceControlAccountSettlementsView />;
+  }
+
+  // Petty Cash Issuance & Management — Super Admin issues opening floats /
+  // top-ups to Inventory Store Managers and Front Desk Cashiers, and sees
+  // every cash-handling user's live custody position.
+  if (activeModuleId === 'petty_cash_advances') {
+    return <PettyCashIssuanceView />;
+  }
+
+  // Main Cash Fund — the hospital's central physical cash reserve that
+  // petty cash issuance debits from; Super Admin deposits/withdraws here.
+  if (activeModuleId === 'main_cash_fund') {
+    return <MainCashFundView />;
   }
 
   // Management reporting (Super Admin_Admin Reporting.pdf, reporting.md §8.3):

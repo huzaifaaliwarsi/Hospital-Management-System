@@ -90,7 +90,8 @@ export interface InventoryAlertSummaryData {
   outOfStockItemsCount: number;
   nearExpiryItemsCount: number;
   expiredItemsCount: number;
-  pendingStockRequestsCount: number;
+  /** Total current supplier payable across the whole Inventory module (inventory.md §3, §5). */
+  supplierPayable: number;
 }
 
 export interface ExpenseCategoryItem {
@@ -229,7 +230,7 @@ export const CURRENT_STATE_INVENTORY_ALERTS: InventoryAlertSummaryData = {
   outOfStockItemsCount: 3,
   nearExpiryItemsCount: 14,
   expiredItemsCount: 2,
-  pendingStockRequestsCount: 6,
+  supplierPayable: 0,
 };
 
 // DATASETS PER TIME PERIOD
