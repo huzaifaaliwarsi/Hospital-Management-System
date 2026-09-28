@@ -159,12 +159,15 @@ export const financeControlService = {
   },
 
   async listSettlements(query: ListSettlementsQuery) {
-    const { start, end, label } = resolveDateRange(query);
+    const range =
+      query.preset === 'all'
+        ? null
+        : resolveDateRange({ preset: query.preset, fromDate: query.fromDate, toDate: query.toDate });
 
     const rows = await prisma.accountSettlement.findMany({
       where: {
         moduleScope: 'BILLING',
-        submittedAt: { gte: start, lte: end },
+        ...(range ? { submittedAt: { gte: range.start, lte: range.end } } : {}),
         ...(query.status ? { status: query.status } : {}),
         ...(query.portalUserId ? { portalUserId: query.portalUserId } : {}),
       },
@@ -177,7 +180,10 @@ export const financeControlService = {
       take: 200,
     });
 
-    return { period: { label, start: start.toISOString(), end: end.toISOString() }, settlements: rows };
+    const period = range
+      ? { label: range.label, start: range.start.toISOString(), end: range.end.toISOString() }
+      : { label: 'All Time', start: null, end: null };
+    return { period, settlements: rows };
   },
 
   async reviewSettlement(id: string, body: ReviewSettlementBody, reviewerPortalUserId: string) {

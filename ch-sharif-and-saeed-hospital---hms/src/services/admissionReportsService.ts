@@ -259,23 +259,16 @@ export interface AdmissionSummaryRow {
   discharges: number;
   active: number;
   pendingDischarge: number;
+  occupiedBeds: number;
+  availableBeds: number;
   hospitalOutstanding: number;
 }
 
-/** #1 Admission Summary — the portal's only KPI-strip report. */
+/** #1 Admission Summary — one row per department; no KPI cards (totals are the table's footer row). */
 export async function fetchAdmissionSummary(range: RangeParams, filters?: ReportFilters): Promise<ReportResult<AdmissionSummaryRow>> {
   const d = await get<any>('/reports/admission/summary', params(range, filters));
-  const s = d.summary;
   return {
     periodLabel: d.period.label,
-    kpis: [
-      { label: 'Admissions', value: String(s.admissions) },
-      { label: 'Discharges', value: String(s.discharges) },
-      { label: 'Active Patients', value: String(s.activePatients), accent: 'positive' },
-      { label: 'Pending Discharge', value: String(s.pendingDischarge), accent: 'warning' },
-      { label: 'Beds Occupied / Available', value: `${s.occupiedBeds} / ${s.availableBeds}` },
-      { label: 'Hospital Outstanding', value: formatPKR(Number(s.hospitalOutstanding)), accent: 'negative' },
-    ],
     rows: d.rows.map((r: any) => ({ ...r, hospitalOutstanding: Number(r.hospitalOutstanding) })),
   };
 }

@@ -17,7 +17,11 @@ import {
   getPayrollRun,
   approvePayrollRun,
   paySalarySlip,
+  adjustSalarySlip,
 } from '../../../services/payrollService';
+import { FinancialAdjustmentModal } from './FinancialAdjustmentModal';
+import { PreferredPaymentAccount } from './PreferredPaymentAccount';
+import { fetchStaffUsers } from '../../../services/staffUserService';
 import { fetchDepartments } from '../../../services/departmentService';
 import { Department } from '../../../types/department';
 import { PayrollFilters, PayrollPeriodType, PayrollPreview, PayrollRun, SalarySlip } from '../../../types/payroll';
@@ -194,6 +198,9 @@ const GenerateTab: React.FC<{ departments: Department[]; toast: ReturnType<typeo
   const [periodEnd, setPeriodEnd] = useState(todayISO());
   const [departmentId, setDepartmentId] = useState('');
   const [category, setCategory] = useState('');
+  const [staffId, setStaffId] = useState('');
+  const [staff, setStaff] = useState<Awaited<ReturnType<typeof fetchStaffUsers>>>([]);
+  useEffect(() => { fetchStaffUsers().then(setStaff).catch(() => toast.error('Unable to load staff filters.')); }, []);
   const [preview, setPreview] = useState<PayrollPreview | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -204,7 +211,10 @@ const GenerateTab: React.FC<{ departments: Department[]; toast: ReturnType<typeo
     periodEnd,
     departmentId: departmentId || undefined,
     category: category || undefined,
-  }), [periodType, periodStart, periodEnd, departmentId, category]);
+    staffId: staffId || undefined,
+  }), [periodType, periodStart, periodEnd, departmentId, category, staffId]);
+
+  useEffect(() => { setPreview(null); }, [filters]);
 
   const handlePreview = async () => {
     setIsPreviewing(true);
@@ -240,6 +250,7 @@ const GenerateTab: React.FC<{ departments: Department[]; toast: ReturnType<typeo
 
   return (
     <div className="space-y-4">
+      <Select label="Staff / Doctor" value={staffId} options={[{ value: '', label: 'All staff' }, ...staff.map(s => ({ value: s.id, label: s.fullName }))]} onChange={e => setStaffId(e.target.value)} />
       {/* Filter bar — one landscape row on wide screens (5 equal filters + buttons), wraps on smaller ones */}
       <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs grid grid-cols-2 md:grid-cols-3 xl:grid-cols-[repeat(5,minmax(0,1fr))_auto] items-end gap-3">
         <div className="min-w-0">
@@ -311,7 +322,7 @@ const GenerateTab: React.FC<{ departments: Department[]; toast: ReturnType<typeo
                 <th className={TH}>Salary Type</th>
                 <th className={`${TH} text-center`}>Sched. Days</th>
                 <th className={`${TH} text-center`}>Present Days</th>
-                <th className={`${TH} text-right`}>Base Salary</th>
+                <th className={`${TH} text-right`}>Period Base</th>
                 <th className={`${TH} text-right`}>Attendance Ded.</th>
                 <th className={`${TH} text-right`}>Allowance</th>
                 <th className={`${TH} text-right`}>Gross</th>
@@ -344,7 +355,14 @@ const GenerateTab: React.FC<{ departments: Department[]; toast: ReturnType<typeo
                   <td className={TD_NUM}>{i + 1}</td>
                   <td className={`${TD} font-semibold text-slate-900`}>{r.fullName}</td>
                   <td className={`${TD} font-semibold text-[#08775A]`}>{r.employeeId}</td>
-                  <td className={TD}>{basisLabel(r.salaryBasis)}</td>
+                  <td className={TD}>
+                    {basisLabel(r.salaryBasis)}
+                    {r.salaryBasis === 'MONTHLY' && r.monthlyBaseAmount != null && (
+                      <div className="text-xs font-normal text-slate-500">
+                        {formatPKR(Number(r.monthlyBaseAmount))}/month · {formatPKR(Number(r.monthlyPerDayAmount))}/day (÷ 30)
+                      </div>
+                    )}
+                  </td>
                   <td className={`${TD} text-center tabular-nums`}>{r.scheduledPayableDays}</td>
                   <td className={`${TD} text-center tabular-nums`}>{r.attendanceEquivalentDays}</td>
                   <td className={`${TD} ${AMT}`}>{formatPKR(Number(r.periodBaseAmount))}</td>
@@ -375,6 +393,7 @@ const RunsTab: React.FC<{
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [detail, setDetail] = useState<PayrollRun | null>(null);
+  const [adjustingSlip, setAdjustingSlip] = useState<SalarySlip | null>(null);
   const [payingSlip, setPayingSlip] = useState<SalarySlip | null>(null);
   const [payAmount, setPayAmount] = useState<number | ''>('');
   const [payMethod, setPayMethod] = useState('BANK');
@@ -417,11 +436,12 @@ const RunsTab: React.FC<{
     }
   };
 
+  const payableOf = (slip: SalarySlip) => Number(slip.balance?.payable ?? slip.generatedAmount);
   const paidOf = (slip: SalarySlip) => slip.payments.reduce((sum, p) => sum + Number(p.amount), 0);
 
   const openPay = (slip: SalarySlip) => {
     setPayingSlip(slip);
-    setPayAmount(Number(slip.generatedAmount) - paidOf(slip));
+    setPayAmount(payableOf(slip) - paidOf(slip));
     setPayMethod('BANK');
     setPayReference('');
   };
@@ -452,7 +472,7 @@ const RunsTab: React.FC<{
         allow: t.allow + Number(s.allowances),
         tax: t.tax + Number(s.componentBreakdown?.tax ?? 0),
         other: t.other + Number(s.otherDeductions),
-        net: t.net + Number(s.generatedAmount),
+        net: t.net + payableOf(s),
         paid: t.paid + paid,
       };
     },
@@ -588,23 +608,27 @@ const RunsTab: React.FC<{
             ) : (
               detail.lines.map((slip, i) => {
                 const paid = paidOf(slip);
-                const balance = Number(slip.generatedAmount) - paid;
+                const balance = payableOf(slip) - paid;
                 const canPay = slip.status === 'APPROVED' || slip.status === 'PARTIALLY_PAID';
                 return (
                   <tr key={slip.id} className={ROW}>
                     <td className={TD_NUM}>{i + 1}</td>
-                    <td className={`${TD} font-semibold text-slate-900`}>{slip.staff.fullName}</td>
+                    <td className={`${TD} font-semibold text-slate-900`}>{slip.staff.fullName}
+                      {!!slip.correctionEntries?.length && <details className="text-xs font-normal"><summary>Adjustments: {formatPKR(Number(slip.balance?.adjustments ?? 0))}</summary>{slip.correctionEntries.map(c => <div key={c.id}>{formatPKR(Number(c.amount))} ? {c.reason} ? {c.createdAt.slice(0, 10)}</div>)}</details>}
+                      {Number(slip.balance?.overpaid ?? 0) > 0 && <div className="text-xs text-rose-700">Recoverable: {formatPKR(Number(slip.balance?.overpaid))}</div>}
+                    </td>
                     <td className={`${TD} font-semibold text-[#08775A]`}>{slip.staff.employeeId}</td>
                     <td className={`${TD} ${AMT}`}>{formatPKR(Number(slip.baseAmount))}</td>
                     <td className={`${TD} ${AMT} text-rose-700`}>({formatPKR(Number(slip.attendanceDeductions))})</td>
                     <td className={`${TD} ${AMT}`}>{formatPKR(Number(slip.allowances))}</td>
                     <td className={`${TD} ${AMT} text-amber-700`}>({formatPKR(Number(slip.componentBreakdown?.tax ?? 0))})</td>
                     <td className={`${TD} ${AMT} text-rose-700`}>({formatPKR(Number(slip.otherDeductions))})</td>
-                    <td className={`${TD} ${AMT} font-bold text-[15px] text-[#08775A]`}>{formatPKR(Number(slip.generatedAmount))}</td>
+                    <td className={`${TD} ${AMT} font-bold text-[15px] text-[#08775A]`}>{formatPKR(payableOf(slip))}</td>
                     <td className={`${TD} ${AMT}`}>{formatPKR(paid)}</td>
                     <td className={`${TD} ${AMT} ${balance > 0 ? 'text-rose-700' : 'text-slate-400'}`}>{formatPKR(balance)}</td>
                     <td className={TD}><StatusBadge status={slip.status} /></td>
                     <td className={`${TD} text-center`}>
+                      {['APPROVED', 'PARTIALLY_PAID', 'PAID'].includes(slip.status) && <button onClick={() => setAdjustingSlip(slip)} className="mr-2 text-xs text-[#08775A] underline">Adjust / Reverse</button>}
                       {canPay ? (
                         <button
                           type="button"
@@ -627,6 +651,11 @@ const RunsTab: React.FC<{
         </>
       )}
 
+      {adjustingSlip && <FinancialAdjustmentModal title={`Salary correction ? ${adjustingSlip.staff.fullName}`} onClose={() => setAdjustingSlip(null)} onSave={async (amount, reason) => {
+        await adjustSalarySlip(adjustingSlip.id, amount, reason);
+        if (selectedRunId) setDetail(await getPayrollRun(selectedRunId));
+        await loadRuns();
+      }} />}
       {payingSlip && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
           <div className="bg-white rounded-xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden font-montserrat">
@@ -638,7 +667,7 @@ const RunsTab: React.FC<{
               <tbody>
                 <tr className="border-b border-slate-100">
                   <td className="py-2 px-5 text-slate-500">Net Payable</td>
-                  <td className="py-2 px-5 text-right font-semibold tabular-nums">{formatPKR(Number(payingSlip.generatedAmount))}</td>
+                  <td className="py-2 px-5 text-right font-semibold tabular-nums">{formatPKR(payableOf(payingSlip))}</td>
                 </tr>
                 <tr className="border-b border-slate-100">
                   <td className="py-2 px-5 text-slate-500">Already Paid</td>
@@ -647,12 +676,13 @@ const RunsTab: React.FC<{
                 <tr className="bg-slate-50">
                   <td className="py-2 px-5 font-bold text-slate-800">Balance</td>
                   <td className="py-2 px-5 text-right font-bold tabular-nums text-rose-700">
-                    {formatPKR(Number(payingSlip.generatedAmount) - paidOf(payingSlip))}
+                    {formatPKR(payableOf(payingSlip) - paidOf(payingSlip))}
                   </td>
                 </tr>
               </tbody>
             </table>
             <div className="p-5 space-y-3.5">
+              <PreferredPaymentAccount staffId={payingSlip.staffId} purpose="Salary" onMethod={setPayMethod} />
               <TextInput
                 label="Amount (PKR)"
                 type="number"

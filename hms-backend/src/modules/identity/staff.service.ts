@@ -379,6 +379,42 @@ export const staffService = {
     const staff = await staffRepository.findById(id);
     if (!staff) throw new NotFoundError('Staff record not found');
 
+    // Hospital activity is permanent history — a staff member who has any is
+    // deactivated, never deleted. Everything else (profile, schedule,
+    // attendance, commission rules, login, payroll slips) is removed with the record.
+    const activity = await prisma.staff.findUnique({
+      where: { id },
+      select: {
+        _count: {
+          select: {
+            appointmentsAsDoctor: true,
+            admissionsAsDoctor: true,
+            invoiceLinesPerformed: true,
+            commissionAccruals: true,
+            dischargeSummariesAuthorized: true,
+            dischargeSummariesFollowUp: true,
+          },
+        },
+      },
+    });
+    const c = activity?._count;
+    const blockers = c
+      ? [
+          [c.appointmentsAsDoctor, 'appointment'],
+          [c.admissionsAsDoctor, 'patient admission'],
+          [c.invoiceLinesPerformed, 'billed service'],
+          [c.commissionAccruals, 'doctor commission entry'],
+          [c.dischargeSummariesAuthorized + c.dischargeSummariesFollowUp, 'discharge summary'],
+        ]
+          .filter(([n]) => (n as number) > 0)
+          .map(([n, label]) => `${n} ${label}${(n as number) > 1 ? 's' : ''}`)
+      : [];
+    if (blockers.length > 0) {
+      throw new ConflictError(
+        `${staff.fullName} cannot be deleted — they have hospital records (${blockers.join(', ')}). Deactivate them instead; their history stays intact.`,
+      );
+    }
+
     try {
       await staffRepository.delete(id);
     } catch (error: any) {
@@ -394,7 +430,7 @@ export const staffService = {
 
       if (isFkError) {
         throw new ConflictError(
-          'This staff member has recorded hospital activity (appointments, patient admissions, billing, or salary history) and cannot be deleted. Deactivate them instead.',
+          'This staff member has recorded hospital activity (appointments, patient admissions or billing) and cannot be deleted. Deactivate them instead.',
         );
       }
       throw error;

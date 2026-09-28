@@ -26,7 +26,7 @@ export const cashController = {
   },
 
   getUserBalanceSheet: async (req: Request, res: Response) => {
-    const sheet = await cashService.getCashierBalanceSheet(req.params.userId as string);
+    const sheet = await cashService.getCashierBalanceSheet(req.params.userId as string, req.query as unknown as MyBalanceSheetQuery);
     res.json({ data: sheet });
   },
 

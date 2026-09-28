@@ -1,4 +1,5 @@
 import { Decimal } from '@prisma/client/runtime/library';
+import { commissionService } from '@/modules/commission/commission.service';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
 import { NotFoundError, ValidationError } from '@/shared/errors/AppError';
@@ -315,7 +316,7 @@ export const appointmentsService = {
         where: { id: appointmentId },
         include: {
           serviceRate: true,
-          hospitalInvoices: { include: { paymentReceipts: true } },
+          hospitalInvoices: { include: { paymentReceipts: true, lines: true } },
           panelPatient: {
             include: {
               corporatePanel: {
@@ -410,6 +411,10 @@ export const appointmentsService = {
             paymentReceipts: true,
           },
         });
+
+        for (const line of invoice.lines) {
+          if (line.performedByStaffId) await commissionService.calculateAndAccrueCommission(tx, line, line.performedByStaffId, actorId);
+        }
 
         // Link the advance receipts to this invoice (kept linked to the
         // appointment too — dual-linked, both reads stay valid).

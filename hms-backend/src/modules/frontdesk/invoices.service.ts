@@ -285,6 +285,7 @@ export const invoicesService = {
           tx,
           createdLine,
           body.performedByStaffId,
+          _actorId,
         );
       }
 
@@ -475,6 +476,13 @@ export const invoicesService = {
         where: { hospitalInvoiceId: invoice.id },
       });
 
+      for (const line of refreshedLines) {
+        const original = invoice.lines.find(l => l.id === line.id);
+        if (original && !original.lineNet.equals(line.lineNet)) {
+          await commissionService.repriceCommission(tx, line.id, original.lineNet, line.lineNet, _actorId, `Service discount: ${body.discountReason}`);
+        }
+      }
+
       const newSubtotal = refreshedLines.reduce((acc, l) => acc.plus(l.lineGross), new Decimal(0));
       const newDiscountTotal = refreshedLines.reduce((acc, l) => acc.plus(l.discountAmount), new Decimal(0));
       const newTotal = refreshedLines.reduce((acc, l) => acc.plus(l.lineNet), new Decimal(0));
@@ -647,6 +655,7 @@ export const invoicesService = {
             line.id,
             `Refund: ${body.reason}`,
             actorId,
+            invoice.total.gt(0) ? refundAmount.div(invoice.total) : new Decimal(0),
           );
         }
       }

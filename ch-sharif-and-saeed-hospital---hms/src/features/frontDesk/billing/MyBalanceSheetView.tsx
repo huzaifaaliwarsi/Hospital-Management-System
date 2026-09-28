@@ -19,6 +19,7 @@ import {
 import { formatPKR, formatDateTimeDDMMYYYY } from '../../../utils/formatters';
 import { formatDateISO, getHospitalCurrentDate } from '../../../utils/dateConstants';
 import { frontdeskApiService } from '../../../services/frontdeskApiService';
+import { fetchUserBalanceSheetDetail } from '../../../services/financeControlService';
 import { useRouter } from '../../../context/RouterContext';
 import { useAuth } from '../../../context/AuthContext';
 import { printTable, downloadTablePDF, downloadTableExcel, downloadTableCSV, ExportColumn } from '../../../services/tableExportService';
@@ -90,11 +91,22 @@ const PRINT_COLUMNS: ExportColumn<BalanceSheetTransaction>[] = [
   { header: 'Occurred At', align: 'right', cell: (t) => formatDateTimeDDMMYYYY(t.occurredAt) },
 ];
 
+interface MyBalanceSheetViewProps {
+  /** Admin / Super Admin oversight: show this user's sheet (read-only, no Settle button) instead of the logged-in cashier's. */
+  userId?: string;
+  userName?: string;
+  title?: string;
+  /** Extra control rendered at the end of the period bar (e.g. the Super Admin user picker). */
+  filterExtra?: React.ReactNode;
+}
+
 /**
  * "My Balance Sheet" (Guide §3) — the logged-in cashier's live, unsettled
- * custody position, backed by `GET /cash/balance-sheet`.
+ * custody position, backed by `GET /cash/balance-sheet`. With `userId` the
+ * same screen shows another user's sheet for Admin / Super Admin
+ * (`GET /cash/balance-sheet/:userId`).
  */
-export const MyBalanceSheetView: React.FC = () => {
+export const MyBalanceSheetView: React.FC<MyBalanceSheetViewProps> = ({ userId, userName, title = 'My Balance Sheet', filterExtra }) => {
   const { navigate } = useRouter();
   const { currentUser } = useAuth();
   const [data, setData] = useState<BalanceSheetData | null>(null);
@@ -111,9 +123,8 @@ export const MyBalanceSheetView: React.FC = () => {
     else setIsLoading(true);
     setLoadError(null);
     try {
-      const raw = await frontdeskApiService.getCashBalance(
-        period === 'shift' ? undefined : { preset: period, ...(period === 'custom' ? { fromDate, toDate } : {}) },
-      );
+      const range = period === 'shift' ? undefined : { preset: period, ...(period === 'custom' ? { fromDate, toDate } : {}) };
+      const raw = userId ? await fetchUserBalanceSheetDetail(userId, range) : await frontdeskApiService.getCashBalance(range);
       const n = (v: unknown) => Number(v ?? 0);
       setData({
         period: raw.period ?? { mode: 'shift', label: 'Current Shift (unsettled)' },
@@ -149,7 +160,7 @@ export const MyBalanceSheetView: React.FC = () => {
         })),
       });
     } catch (err: any) {
-      setLoadError(err?.response?.data?.error?.message || err?.message || 'Failed to load your balance sheet.');
+      setLoadError(err?.response?.data?.error?.message || err?.message || 'Failed to load the balance sheet.');
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -164,12 +175,12 @@ export const MyBalanceSheetView: React.FC = () => {
     load(hasLoaded);
     setHasLoaded(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period, fromDate, toDate]);
+  }, [period, fromDate, toDate, userId]);
 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-24 text-slate-500 gap-2 text-sm">
-        <Loader2 className="h-5 w-5 animate-spin" /> <span>Loading your balance sheet…</span>
+        <Loader2 className="h-5 w-5 animate-spin" /> <span>Loading balance sheet…</span>
       </div>
     );
   }
@@ -197,9 +208,9 @@ export const MyBalanceSheetView: React.FC = () => {
   const outTransactions = transactions.filter((t) => t.direction === 'OUT');
 
   const exportContext = {
-    documentTitle: 'My Balance Sheet & Cash Custody',
-    documentSubtitle: `Cash Custody — ${currentUser?.name || ''} (${currentUser?.role || ''})`,
-    filenamePrefix: 'My_Balance_Sheet',
+    documentTitle: `${title} & Cash Custody`,
+    documentSubtitle: userId ? `Cash Custody — ${userName || ''}` : `Cash Custody — ${currentUser?.name || ''} (${currentUser?.role || ''})`,
+    filenamePrefix: title.replace(/W+/g, '_'),
     columns: PRINT_COLUMNS,
     rows: transactions,
     currentUser,
@@ -216,7 +227,7 @@ export const MyBalanceSheetView: React.FC = () => {
       {/* Header & Export Toolbar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold text-slate-900 tracking-tight">My Balance Sheet</h1>
+          <h1 className="text-xl font-bold text-slate-900 tracking-tight">{title}</h1>
           <p className="text-xs text-slate-500 mt-0.5">{data.period.label}</p>
         </div>
 
@@ -238,7 +249,7 @@ export const MyBalanceSheetView: React.FC = () => {
             <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
             <span>{isRefreshing ? 'Refreshing…' : 'Refresh'}</span>
           </button>
-          {!isShift ? null : hasUnsettled ? (
+          {userId || !isShift ? null : hasUnsettled ? (
             <button
               type="button"
               onClick={() => navigate('/front-desk/my_account_settlement')}
@@ -294,9 +305,10 @@ export const MyBalanceSheetView: React.FC = () => {
           </div>
         )}
         {isRefreshing && <Loader2 className="h-4 w-4 animate-spin text-slate-400 ml-2" />}
-        {!isShift && (
+        {!isShift && !userId && (
           <span className="ml-auto text-[11px] text-slate-500">Historical view — settle from “Current Shift”.</span>
         )}
+        {filterExtra && <div className="ml-auto">{filterExtra}</div>}
       </div>
 
       {/* Dual Side-by-Side Tables (Payments vs Expenses / Refunds) */}

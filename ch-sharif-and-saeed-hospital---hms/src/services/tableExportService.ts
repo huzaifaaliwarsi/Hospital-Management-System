@@ -159,7 +159,9 @@ export function downloadTableExcel<T>({ documentTitle, filenamePrefix, columns, 
   wsInfo['!cols'] = [{ wch: 26 }, { wch: 55 }];
 
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, wsData, documentTitle.slice(0, 31));
+  // Excel sheet names can't contain : \ / ? * [ ] and max out at 31 chars.
+  const sheetName = documentTitle.replace(/[:\\/?*[\]]/g, '-').slice(0, 31);
+  XLSX.utils.book_append_sheet(workbook, wsData, sheetName);
   XLSX.utils.book_append_sheet(workbook, wsInfo, 'Export Information');
 
   const { dateStr } = nowStamp();

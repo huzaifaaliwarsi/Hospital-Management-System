@@ -35,3 +35,7 @@ export async function paySalarySlip(id: string, body: { amount: number; method: 
   const res = await apiClient.post<{ data: SalarySlip }>(`/payroll/slips/${id}/pay`, body);
   return res.data.data;
 }
+
+export async function adjustSalarySlip(id: string, amount: number, reason: string): Promise<SalarySlip> {
+  return (await apiClient.post(`/payroll/slips/${id}/adjustments`, { amount, reason })).data.data;
+}

@@ -3,7 +3,8 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '@/db/client';
 import { NotFoundError, ConflictError, ValidationError } from '@/shared/errors/AppError';
 import { buildPaginationMeta, paginationSkipTake } from '@/shared/pagination';
-import { PAYABLE_EQUIVALENT } from '../attendance/attendance.service';
+import { computeSalaryAmounts, MONTHLY_SALARY_DIVISOR, workingDaySet } from './payroll.calc';
+import { salaryBalance } from './payroll.balance';
 import type { PayrollRunFilters, ListPayrollRunsQuery, PaySalarySlipBody, ListSalarySlipsQuery } from './payroll.schemas';
 
 interface EligibleRow {
@@ -11,6 +12,8 @@ interface EligibleRow {
   fullName: string;
   employeeId: string;
   salaryBasis: string;
+  monthlyBaseAmount?: Decimal;
+  monthlyPerDayAmount?: Decimal;
   scheduledPayableDays: number;
   attendanceEquivalentDays: number;
   periodBaseAmount: Decimal;
@@ -33,74 +36,14 @@ interface SkippedRow {
   reason: string;
 }
 
-const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const DAY_MS = 86_400_000;
-
-const utcDay = (d: Date) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
-const monthKey = (t: number) => {
-  const d = new Date(t);
-  return `${d.getUTCFullYear()}-${d.getUTCMonth()}`;
-};
-
 /**
- * A staff member's working weekdays (PDF §8): their own Weekly Timing when set
- * (OFF days excluded), otherwise their Shift's weekly-off days, otherwise every day.
- */
-function workingDaySet(schedule: { dayOfWeek: string; isWorking: boolean }[], shiftOffDays: string[]): Set<string> {
-  if (schedule.length > 0) return new Set(schedule.filter((d) => d.isWorking).map((d) => d.dayOfWeek));
-  const off = new Set(shiftOffDays);
-  return new Set(WEEKDAY_NAMES.filter((d) => !off.has(d)));
-}
-
-/** Scheduled working days in [from, to] (UTC day timestamps, inclusive). */
-function countWorkingDays(from: number, to: number, working: Set<string>): number {
-  let n = 0;
-  for (let t = from; t <= to; t += DAY_MS) {
-    if (working.has(WEEKDAY_NAMES[new Date(t).getUTCDay()] as string)) n += 1;
-  }
-  return n;
-}
-
-/**
- * For each calendar month the period touches: scheduled days of the whole
- * month vs. scheduled days that fall inside the period. Monthly salaries are
- * earned per month (PDF §11 "Monthly Base / Scheduled Payable Days"), so a
- * 10-day custom run pays 10 days' worth — not a full month — and a run that
- * crosses a month boundary uses each month's own per-day rate.
- */
-function monthSlices(periodStart: Date, periodEnd: Date, working: Set<string>) {
-  const start = utcDay(periodStart);
-  const end = utcDay(periodEnd);
-  const slices = new Map<string, { monthDays: number; periodDays: number }>();
-  for (let t = start; t <= end; ) {
-    const d = new Date(t);
-    const monthStart = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
-    const monthEnd = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0);
-    const sliceEnd = Math.min(monthEnd, end);
-    slices.set(monthKey(t), {
-      monthDays: countWorkingDays(monthStart, monthEnd, working),
-      periodDays: countWorkingDays(t, sliceEnd, working),
-    });
-    t = monthEnd + DAY_MS;
-  }
-  return slices;
-}
-
-/**
- * PDF §11 — attendance-based salary per staff for the period. Read-only; never persists.
- *
- *   Attendance Equivalent = Present + Half×0.5 + Paid Leave
- *   Monthly: per-day = Monthly Base / scheduled days of that month; Daily: per-day = Daily Rate
- *   Earned Base = per-day × attendance equivalent days
- *   Gross = Earned Base + Allowance;  Tax% = Gross × %;  Net = Gross − Tax − Deduction
- *
- * Fixed allowance / deduction / fixed tax are monthly amounts for Monthly types
- * (prorated to the period's share of each month) and per-run amounts for Daily
- * types, matching the PDF's §12 monthly and §13 daily examples.
+ * PDF §11 — attendance-based salary per staff for the period. Read-only; never
+ * persists. The maths lives in payroll.calc `computeSalaryAmounts`.
  */
 async function computeEligibility(filters: PayrollRunFilters): Promise<{ eligible: EligibleRow[]; skipped: SkippedRow[] }> {
   const staffWhere: Prisma.StaffWhereInput = { isActive: true };
   if (filters.category) staffWhere.category = filters.category;
+  if (filters.staffId) staffWhere.id = filters.staffId;
   if (filters.departmentId) staffWhere.staffDepartments = { some: { departmentId: filters.departmentId } };
 
   const staff = await prisma.staff.findMany({
@@ -116,6 +59,10 @@ async function computeEligibility(filters: PayrollRunFilters): Promise<{ eligibl
   if (staff.length === 0) return { eligible: [], skipped: [] };
 
   const staffIds = staff.map((s) => s.id);
+  const existingSlips = await prisma.salarySlip.findMany({ where: {
+    staffId: { in: staffIds }, periodStart: { lte: filters.periodEnd }, periodEnd: { gte: filters.periodStart },
+  }, select: { staffId: true } });
+  const alreadyGenerated = new Set(existingSlips.map(s => s.staffId));
 
   // Current salary profile as of the period: effectiveFrom <= periodEnd, still open or overlapping the period.
   const profiles = await prisma.staffSalaryProfile.findMany({
@@ -148,9 +95,12 @@ async function computeEligibility(filters: PayrollRunFilters): Promise<{ eligibl
 
   const eligible: EligibleRow[] = [];
   const skipped: SkippedRow[] = [];
-  const zero = new Decimal(0);
 
   for (const s of staff) {
+    if (alreadyGenerated.has(s.id)) {
+      skipped.push({ staffId: s.id, fullName: s.fullName, employeeId: s.employeeId, reason: 'Salary already generated for an overlapping period; use an adjustment to correct it.' });
+      continue;
+    }
     const profile = profileByStaff.get(s.id);
     if (!profile) {
       skipped.push({ staffId: s.id, fullName: s.fullName, employeeId: s.employeeId, reason: 'No Salary Profile configured for this period' });
@@ -163,72 +113,22 @@ async function computeEligibility(filters: PayrollRunFilters): Promise<{ eligibl
     }
 
     const working = workingDaySet(s.weeklySchedule, s.assignedShift?.defaultWeeklyOffDays ?? []);
-    const slices = monthSlices(filters.periodStart, filters.periodEnd, working);
-    const scheduledPayableDays = [...slices.values()].reduce((n, m) => n + m.periodDays, 0);
-    if (scheduledPayableDays === 0) {
+    const amounts = computeSalaryAmounts(profile, working, filters.periodStart, filters.periodEnd, records);
+    if (!amounts) {
       skipped.push({ staffId: s.id, fullName: s.fullName, employeeId: s.employeeId, reason: 'No scheduled working days in this period (all weekly OFF)' });
       continue;
     }
-
-    const isMonthly = profile.salaryBasis.startsWith('MONTHLY');
-    const base = profile.baseAmount;
-
-    // Attendance equivalent days, grouped by month so each month uses its own per-day rate.
-    const equivByMonth = new Map<string, number>();
-    let attendanceEquivalentDays = 0;
-    for (const r of records) {
-      const eq = PAYABLE_EQUIVALENT[r.status] ?? 0;
-      attendanceEquivalentDays += eq;
-      const key = monthKey(utcDay(r.attendanceDate));
-      equivByMonth.set(key, (equivByMonth.get(key) ?? 0) + eq);
-    }
-
-    let periodBaseAmount = zero;
-    let earnedBase = zero;
-    // Share of a monthly amount that belongs to this period (1 for a full month).
-    let monthFraction = zero;
-    if (isMonthly) {
-      for (const [key, m] of slices) {
-        if (m.monthDays === 0) continue;
-        const perDay = base.div(m.monthDays);
-        periodBaseAmount = periodBaseAmount.plus(perDay.mul(m.periodDays));
-        earnedBase = earnedBase.plus(perDay.mul(equivByMonth.get(key) ?? 0));
-        monthFraction = monthFraction.plus(new Decimal(m.periodDays).div(m.monthDays));
-      }
-    } else {
-      periodBaseAmount = base.mul(scheduledPayableDays);
-      earnedBase = base.mul(attendanceEquivalentDays);
-    }
-    const attendanceDeductions = Decimal.max(periodBaseAmount.minus(earnedBase), zero);
-
-    const scale = (amount: Decimal) => (isMonthly ? amount.mul(monthFraction) : amount);
-    const allowances = scale(profile.fixedAllowance);
-    const otherDeductions = scale(profile.fixedDeduction);
-    const grossAmount = earnedBase.plus(allowances);
-
-    let tax = zero;
-    if (profile.salaryTaxMethod === 'PERCENTAGE' && profile.salaryTaxValue) {
-      tax = grossAmount.mul(profile.salaryTaxValue).div(100);
-    } else if (profile.salaryTaxMethod === 'FIXED' && profile.salaryTaxValue) {
-      tax = scale(profile.salaryTaxValue);
-    }
-    const netAmount = Decimal.max(grossAmount.minus(tax).minus(otherDeductions), zero);
 
     eligible.push({
       staffId: s.id,
       fullName: s.fullName,
       employeeId: s.employeeId,
       salaryBasis: profile.salaryBasis,
-      scheduledPayableDays,
-      attendanceEquivalentDays,
-      periodBaseAmount,
-      earnedBase,
-      attendanceDeductions,
-      allowances,
-      grossAmount,
-      tax,
-      otherDeductions,
-      netAmount,
+      ...(profile.salaryBasis === 'MONTHLY' ? {
+        monthlyBaseAmount: profile.baseAmount,
+        monthlyPerDayAmount: profile.baseAmount.div(MONTHLY_SALARY_DIVISOR),
+      } : {}),
+      ...amounts,
       taxMethod: profile.salaryTaxMethod,
       taxValue: profile.salaryTaxValue,
       salaryProfileId: profile.id,
@@ -254,6 +154,15 @@ export const payrollService = {
     const totalAmount = eligible.reduce((sum, r) => sum.plus(r.netAmount), new Decimal(0));
 
     return prisma.$transaction(async (tx) => {
+      // Serialize generation per employee; concurrent or overlapping runs must
+      // not create a second liability for the same attendance period.
+      for (const row of [...eligible].sort((a, b) => a.staffId.localeCompare(b.staffId))) {
+        await tx.$queryRaw`SELECT id FROM staff WHERE id = ${row.staffId} FOR UPDATE`;
+      }
+      const duplicate = await tx.salarySlip.findFirst({ where: {
+        staffId: { in: eligible.map(r => r.staffId) }, periodStart: { lte: filters.periodEnd }, periodEnd: { gte: filters.periodStart },
+      } });
+      if (duplicate) throw new ConflictError('Salary was generated concurrently for this period. Refresh Preview.');
       const run = await tx.payrollRun.create({
         data: {
           periodType: filters.periodType,
@@ -295,6 +204,10 @@ export const payrollService = {
             },
             calculationSnapshot: {
               salaryBasis: row.salaryBasis,
+              ...(row.salaryBasis === 'MONTHLY' ? {
+                monthlyBaseAmount: row.monthlyBaseAmount?.toString(),
+                monthlyPerDayAmount: row.monthlyPerDayAmount?.toString(),
+              } : {}),
               salaryProfileId: row.salaryProfileId,
               scheduledPayableDays: row.scheduledPayableDays,
               attendanceEquivalentDays: row.attendanceEquivalentDays,
@@ -340,27 +253,26 @@ export const payrollService = {
           include: {
             staff: { select: { id: true, fullName: true, employeeId: true, category: true } },
             payments: true,
+            correctionEntries: true,
           },
         },
       },
     });
     if (!run) throw new NotFoundError('Payroll run not found');
-    return run;
+    return { ...run, lines: run.lines.map(line => ({ ...line, balance: salaryBalance(line) })) };
   },
 
   /** Locks every generated line at once — never edited after this except via payment/adjustment. */
   async approve(id: string, actorId: string) {
-    const run = await prisma.payrollRun.findUnique({ where: { id } });
-    if (!run) throw new NotFoundError('Payroll run not found');
-    if (run.status === 'APPROVED') throw new ConflictError('This payroll run is already approved.');
-
     return prisma.$transaction(async (tx) => {
-      await tx.salarySlip.updateMany({ where: { payrollRunId: id }, data: { status: 'APPROVED', approvedById: actorId, approvedAt: new Date() } });
-      return tx.payrollRun.update({
-        where: { id },
-        data: { status: 'APPROVED', approvedById: actorId, approvedAt: new Date() },
-        include: { lines: true },
+      const approvedAt = new Date();
+      const changed = await tx.payrollRun.updateMany({
+        where: { id, status: 'GENERATED' },
+        data: { status: 'APPROVED', approvedById: actorId, approvedAt },
       });
+      if (!changed.count) throw new ConflictError('Only a generated payroll run can be approved.');
+      await tx.salarySlip.updateMany({ where: { payrollRunId: id, status: 'GENERATED' }, data: { status: 'APPROVED', approvedById: actorId, approvedAt } });
+      return tx.payrollRun.findUniqueOrThrow({ where: { id }, include: { lines: true } });
     });
   },
 
@@ -373,46 +285,45 @@ export const payrollService = {
     const [rows, totalItems] = await prisma.$transaction([
       prisma.salarySlip.findMany({
         where,
-        include: { staff: { select: { id: true, fullName: true, employeeId: true } }, payments: true },
+        include: { staff: { select: { id: true, fullName: true, employeeId: true } }, payments: true, correctionEntries: true },
         orderBy: { createdAt: 'desc' },
         ...paginationSkipTake(query),
       }),
       prisma.salarySlip.count({ where }),
     ]);
-    return { rows, meta: buildPaginationMeta(query, totalItems) };
+    return { rows: rows.map(row => ({ ...row, balance: salaryBalance(row) })), meta: buildPaginationMeta(query, totalItems) };
   },
 
-  /** Only an APPROVED (or already PARTIALLY_PAID) slip can be paid — never a DRAFT/unapproved one. */
   async paySlip(id: string, body: PaySalarySlipBody, actorId: string) {
-    const slip = await prisma.salarySlip.findUnique({ where: { id }, include: { payments: true } });
-    if (!slip) throw new NotFoundError('Salary slip not found');
-    if (slip.status !== 'APPROVED' && slip.status !== 'PARTIALLY_PAID') {
-      throw new ConflictError('Only an approved salary slip can be paid.');
-    }
-    const alreadyPaid = slip.payments.reduce((sum, p) => sum.plus(p.amount), new Decimal(0));
-    const remaining = slip.generatedAmount.minus(alreadyPaid);
-    if (remaining.lte(0)) throw new ConflictError('This salary slip is already fully paid.');
-    if (new Decimal(body.amount).gt(remaining)) {
-      throw new ValidationError(`Payment amount exceeds the remaining balance of ${remaining.toFixed(2)}.`);
-    }
+    return prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM salary_slips WHERE id = ${id} FOR UPDATE`;
+      const slip = await tx.salarySlip.findUnique({ where: { id }, include: { payments: true, correctionEntries: true } });
+      if (!slip) throw new NotFoundError('Salary slip not found');
+      if (!['APPROVED', 'PARTIALLY_PAID'].includes(slip.status)) throw new ConflictError('Only an approved salary slip can be paid.');
+      const balance = salaryBalance(slip);
+      if (balance.remaining.lte(0) || new Decimal(body.amount).gt(balance.remaining)) throw new ValidationError(`Payment exceeds remaining salary ${balance.remaining.toFixed(2)}.`);
+      await tx.salaryPayment.create({ data: { salarySlipId: id, ...body, paidById: actorId } });
+      const updated = await tx.salarySlip.update({ where: { id }, data: {
+        status: balance.paid.plus(body.amount).gte(balance.payable) ? 'PAID' : 'PARTIALLY_PAID',
+      }, include: { payments: true, correctionEntries: true, staff: { select: { id: true, fullName: true, employeeId: true } } } });
+      return { ...updated, balance: salaryBalance(updated) };
+    });
+  },
 
-    return prisma.$transaction(async (tx) => {
-      await tx.salaryPayment.create({
-        data: {
-          salarySlipId: id,
-          amount: body.amount,
-          method: body.method,
-          reference: body.reference,
-          paidById: actorId,
-        },
-      });
-      const newPaidTotal = alreadyPaid.plus(body.amount);
-      const newStatus = newPaidTotal.gte(slip.generatedAmount) ? 'PAID' : 'PARTIALLY_PAID';
-      return tx.salarySlip.update({
-        where: { id },
-        data: { status: newStatus },
-        include: { payments: true, staff: { select: { id: true, fullName: true, employeeId: true } } },
-      });
+  async adjustSlip(id: string, body: { amount: number; reason: string }, actorId: string) {
+    return prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM salary_slips WHERE id = ${id} FOR UPDATE`;
+      const slip = await tx.salarySlip.findUnique({ where: { id }, include: { payments: true, correctionEntries: true } });
+      if (!slip) throw new NotFoundError('Salary slip not found');
+      if (!slip.approvedAt) throw new ConflictError('Only approved salary can be corrected.');
+      const balance = salaryBalance(slip);
+      const payable = balance.payable.plus(body.amount);
+      if (payable.lt(0)) throw new ValidationError('Correction cannot reduce payable below zero.');
+      await tx.salaryAdjustment.create({ data: { salarySlipId: id, ...body, createdById: actorId } });
+      const updated = await tx.salarySlip.update({ where: { id }, data: {
+        status: balance.paid.gte(payable) ? 'PAID' : balance.paid.gt(0) ? 'PARTIALLY_PAID' : 'APPROVED',
+      }, include: { payments: true, correctionEntries: true, staff: { select: { id: true, fullName: true, employeeId: true } } } });
+      return { ...updated, balance: salaryBalance(updated) };
     });
   },
 };

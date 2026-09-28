@@ -29,6 +29,7 @@ import pharmacyRoutes from '@/modules/pharmacy/pharmacy.routes';
 import pharmacyBridgeRoutes from '@/modules/pharmacy-bridge/pharmacy-bridge.routes';
 import cashRoutes from '@/modules/cash/cash.routes';
 import reportsRoutes from '@/modules/reports/reports.routes';
+import expensesRoutes from '@/modules/expenses/expenses.routes';
 import notificationsRoutes from '@/modules/notifications/notifications.routes';
 
 /**
@@ -77,6 +78,7 @@ export function createApp() {
   app.use('/api/v1/pharmacy-bridge', pharmacyBridgeRoutes);
   app.use('/api/v1/cash', cashRoutes);
   app.use('/api/v1/reports', reportsRoutes);
+  app.use('/api/v1/expenses', expensesRoutes);
   app.use('/api/v1/notifications', notificationsRoutes);
 
   app.use(notFoundHandler);

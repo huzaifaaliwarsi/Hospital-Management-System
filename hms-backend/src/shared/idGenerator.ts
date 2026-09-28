@@ -155,3 +155,11 @@ export async function generateFinalBillNumber(tx?: PrismaClientOrTx): Promise<st
   const prefix = `FBL-${currentYear2()}-`;
   return generateSequentialId(tx, 'admissionRecord', 'finalBillNumber', prefix, 4);
 }
+
+/**
+ * Expense Number: e.g. `EXP-26-0001`
+ */
+export async function generateExpenseNumber(tx?: PrismaClientOrTx): Promise<string> {
+  const prefix = `EXP-${currentYear2()}-`;
+  return generateSequentialId(tx, 'expense', 'expenseNumber', prefix, 4);
+}

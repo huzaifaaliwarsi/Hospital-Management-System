@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import { Decimal } from '@prisma/client/runtime/library';
+import { commissionService } from '@/modules/commission/commission.service';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
 import { notificationsService } from '../notifications/notifications.service';
@@ -1021,6 +1022,10 @@ export const admissionService = {
       // Recalculate this department invoice's totals (never another
       // department's — each stays independently owned per §2.2).
       await recalcInvoiceTotals(tx, invoice, [...invoice.lines, createdLine]);
+
+      if (!isSelf && createdLine.performedByStaffId) {
+        await commissionService.calculateAndAccrueCommission(tx, createdLine, createdLine.performedByStaffId, actorId);
+      }
 
       // Notify Front Desk that bill has increased
       try {

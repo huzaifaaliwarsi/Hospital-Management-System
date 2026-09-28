@@ -23,6 +23,11 @@ export function formatPKR(amount: number | string | null | undefined): string {
 /**
  * Formats a standard integer or decimal with commas
  */
+/** Whole-rupee amount without the "PKR" prefix — for tables whose header already says PKR. */
+export function formatAmount(amount: number | string | null | undefined): string {
+  return formatPKR(amount).replace(/^PKR /, '');
+}
+
 export function formatNumber(num: number | string | null | undefined): string {
   if (num === null || num === undefined || isNaN(Number(num))) {
     return '0';

@@ -324,7 +324,7 @@ export const PERIOD_DATASETS: Record<DateFilterPreset, DashboardPeriodDataset> =
         isPositive: true,
         colorClass: 'text-[#0e7d5a]',
         accentBg: 'bg-[#effaf5] border-[#c2e7db]',
-        navModule: 'billing_reports',
+        navModule: 'sa_billing_collection',
       },
       {
         id: 'kpi_today_collections',
@@ -337,7 +337,7 @@ export const PERIOD_DATASETS: Record<DateFilterPreset, DashboardPeriodDataset> =
         isPositive: true,
         colorClass: 'text-[#0e7d5a]',
         accentBg: 'bg-[#effaf5] border-[#c2e7db]',
-        navModule: 'collection_reports',
+        navModule: 'sa_billing_collection',
       },
       {
         id: 'kpi_outstanding_balance',
@@ -387,7 +387,7 @@ export const PERIOD_DATASETS: Record<DateFilterPreset, DashboardPeriodDataset> =
         isPositive: false,
         colorClass: 'text-rose-700',
         accentBg: 'bg-rose-50 border-rose-200',
-        navModule: 'inventory_reports',
+        navModule: 'sa_inventory_pharmacy',
       },
     ],
     patientFlow: [
@@ -1613,7 +1613,7 @@ export const ATTENTION_REQUIRED_ALERTS: AttentionAlertItem[] = [
     description: '2 batches in Operating Theatre pharmacy passed shelf life.',
     relevantMetric: '2 Batches Expired',
     actionLabel: 'Review Expired Stock',
-    navModule: 'inventory_reports',
+    navModule: 'sa_inventory_pharmacy',
     detailedMessage:
       'Batch #BTH-8821 (Atracurium Inj) and #BTH-9014 (Sodium Bicarbonate) in OT-2 Sub-store passed shelf life. Immediate quarantine and write-off disposal protocol is mandatory under hospital safety standards.',
   },
@@ -1624,7 +1624,7 @@ export const ATTENTION_REQUIRED_ALERTS: AttentionAlertItem[] = [
     description: '3 emergency consumables and life-saving ampoules below safety reserve.',
     relevantMetric: '8 Items Low / 3 Zero',
     actionLabel: 'Inspect Inventory',
-    navModule: 'inventory_reports',
+    navModule: 'sa_inventory_pharmacy',
     detailedMessage:
       'Zero stock recorded for Epinephrine 1mg/ml (Emergency cart) and Arterial Line Kits 20G. 5 additional items are below min-threshold. Purchase requisition PR-2026-088 is awaiting store manager approval.',
   },
@@ -1657,7 +1657,7 @@ export const ATTENTION_REQUIRED_ALERTS: AttentionAlertItem[] = [
     description: 'Cash refund exceeding PKR 15,000 processed without second supervisor signature.',
     relevantMetric: 'PKR 18,500 Refunded',
     actionLabel: 'Review Audit Slip',
-    navModule: 'billing_reports',
+    navModule: 'sa_billing_collection',
     detailedMessage:
       'Refund slip RF-000038 for PKR 18,500 was initiated on Invoice INV-001092 (Cath Lab Consumables canceled due to diagnostic reassessment). Requires Super Admin review according to hospital financial regulations.',
   },
@@ -1668,7 +1668,7 @@ export const ATTENTION_REQUIRED_ALERTS: AttentionAlertItem[] = [
     description: '2 vendor supply orders awaiting management verification.',
     relevantMetric: '2 Orders Pending',
     actionLabel: 'View Requisitions',
-    navModule: 'inventory_reports',
+    navModule: 'sa_inventory_pharmacy',
     detailedMessage:
       'Requisition PR-00412 (Medical Gases Supply - Pakistan Oxygen Ltd) for PKR 165,000 and PR-00413 (Sterile Surgical Drape Packs) for PKR 82,000 are in queue for executive clearance.',
   },

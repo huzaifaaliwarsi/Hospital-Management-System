@@ -34,7 +34,9 @@ export const mySettlementsQuerySchema = z.object({
 });
 export type MySettlementsQuery = z.infer<typeof mySettlementsQuerySchema>;
 
+/** Settlement register: `all` = full history, so settlements awaiting review are never hidden by the period. */
 export const listSettlementsQuerySchema = dateRangeSchema.extend({
+  preset: z.enum(['all', 'today', 'yesterday', 'this_week', 'this_month', 'custom']).default('all'),
   portalUserId: z.string().uuid().optional(),
   status: z.enum(['PREPARED', 'SUBMITTED', 'ACCEPTED', 'PARTIALLY_ACCEPTED', 'RETURNED', 'REJECTED', 'REVERSED']).optional(),
 });

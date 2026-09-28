@@ -7,6 +7,7 @@ export interface PayrollFilters {
   periodEnd: string;
   departmentId?: string;
   category?: string;
+  staffId?: string;
 }
 
 export interface EligibleRow {
@@ -14,6 +15,8 @@ export interface EligibleRow {
   fullName: string;
   employeeId: string;
   salaryBasis: string;
+  monthlyBaseAmount?: string;
+  monthlyPerDayAmount?: string;
   scheduledPayableDays: number;
   attendanceEquivalentDays: number;
   periodBaseAmount: string;
@@ -49,6 +52,8 @@ export interface SalaryPayment {
 }
 
 export interface SalarySlip {
+  balance?: { adjustments: string; payable: string; paid: string; remaining: string; overpaid: string };
+  correctionEntries?: { id: string; amount: string; reason: string; createdAt: string; createdById: string }[];
   id: string;
   staffId: string;
   payrollRunId: string | null;
