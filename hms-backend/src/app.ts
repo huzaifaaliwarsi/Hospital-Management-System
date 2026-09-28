@@ -51,6 +51,17 @@ export function createApp() {
   app.use(cookieParser());
   app.use(globalRateLimiter);
 
+  // Root and favicon routes for deployment sanity checks
+  app.get('/', (_req, res) => {
+    res.json({
+      status: 'ok',
+      message: 'CH Sharif and Saeed Hospital HMS API is running',
+      version: 'v1',
+      health: '/api/v1/health',
+    });
+  });
+  app.get('/favicon.ico', (_req, res) => res.status(204).end());
+
   // Public routes — must be mounted before the blanket `authenticate` below.
   app.use('/api/v1/health', healthRoutes);
   app.use('/api/v1/auth', authRoutes);
