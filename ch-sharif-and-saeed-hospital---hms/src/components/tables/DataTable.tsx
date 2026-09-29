@@ -184,9 +184,9 @@ export function DataTable<T extends Record<string, any>>({
   const activeColumns = columns.filter((col) => visibleColumns[col.key] !== false);
 
   return (
-    <div className="w-full bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+    <div className="w-full bg-white rounded-lg border border-slate-300 shadow-xs overflow-hidden flex flex-col">
       {/* Table Header / Toolbar */}
-      <div className="p-3.5 sm:p-4 border-b border-slate-200 space-y-3 bg-white">
+      <div className="p-3.5 sm:p-4 border-b border-slate-300 space-y-3 bg-white">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             {title && <h3 className="text-base font-bold text-slate-900">{title}</h3>}
@@ -372,10 +372,14 @@ export function DataTable<T extends Record<string, any>>({
           />
         ) : (
           <table className="w-full text-left text-xs border-collapse">
-            <thead className="bg-slate-50 sticky top-0 border-b border-slate-200 select-none">
-              <tr className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+            <thead className="bg-[#f1f5f9] sticky top-0 border-b border-slate-300 select-none z-10">
+              <tr className="text-[11px] font-bold text-slate-800 uppercase tracking-wider">
+                {/* 0. Row Sequence # */}
+                <th className="py-2.5 px-3 text-center border-r border-slate-300 w-12 font-bold uppercase text-[11px] tracking-wider select-none text-slate-800">
+                  #
+                </th>
                 {enableSelection && (
-                  <th className="w-10 px-4 py-2.5 text-center">
+                  <th className="w-10 px-3 py-2.5 text-center border-r border-slate-300">
                     <input
                       type="checkbox"
                       checked={isAllSelected}
@@ -393,8 +397,8 @@ export function DataTable<T extends Record<string, any>>({
                       style={{ width: col.width }}
                       onClick={() => handleSort(col.key, col.sortable)}
                       className={cn(
-                        'px-4 py-2.5 font-semibold text-slate-500 uppercase text-[11px] tracking-wider',
-                        col.sortable !== false && 'cursor-pointer hover:bg-slate-100/70',
+                        'px-3.5 py-2.5 font-bold text-slate-800 uppercase text-[11px] tracking-wider border-r border-slate-300 whitespace-nowrap',
+                        col.sortable !== false && 'cursor-pointer hover:bg-slate-200/60',
                         col.align === 'center' && 'text-center',
                         col.align === 'right' && 'text-right'
                       )}
@@ -425,14 +429,14 @@ export function DataTable<T extends Record<string, any>>({
                   );
                 })}
                 {(onView || onEdit || onDelete || onPrintRow) && (
-                  <th className="w-24 px-4 py-2.5 text-right uppercase text-[11px] font-semibold text-slate-500 tracking-wider">
+                  <th className="w-24 px-3.5 py-2.5 text-right uppercase text-[11px] font-bold text-slate-800 tracking-wider whitespace-nowrap">
                     Actions
                   </th>
                 )}
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 text-xs">
-              {paginatedData.map((item) => {
+            <tbody className="divide-y divide-slate-200 text-xs">
+              {paginatedData.map((item, idx) => {
                 const key = keyExtractor(item);
                 const isSelected = selectedKeys.has(key);
 
@@ -440,12 +444,17 @@ export function DataTable<T extends Record<string, any>>({
                   <tr
                     key={key}
                     className={cn(
-                      'hover:bg-slate-50 transition-colors',
+                      'hover:bg-slate-50/90 transition-colors group border-b border-slate-200',
                       isSelected && 'bg-[#effaf5]'
                     )}
                   >
+                    {/* Row Sequence Number */}
+                    <td className="py-2.5 px-3 text-center border-r border-slate-200 text-slate-500 font-mono text-[11px] bg-slate-50/60 whitespace-nowrap">
+                      {(currentPage - 1) * rowsPerPage + idx + 1}
+                    </td>
+
                     {enableSelection && (
-                      <td className="px-4 py-2 text-center">
+                      <td className="px-3 py-2 text-center border-r border-slate-200">
                         <input
                           type="checkbox"
                           checked={isSelected}
@@ -458,7 +467,7 @@ export function DataTable<T extends Record<string, any>>({
                       <td
                         key={col.key}
                         className={cn(
-                          'px-4 py-2 text-slate-900 font-medium',
+                          'px-3.5 py-2.5 text-slate-800 font-medium border-r border-slate-200 whitespace-nowrap text-xs',
                           col.align === 'center' && 'text-center',
                           col.align === 'right' && 'text-right font-mono'
                         )}
@@ -467,7 +476,7 @@ export function DataTable<T extends Record<string, any>>({
                       </td>
                     ))}
                     {(onView || onEdit || onDelete || onPrintRow) && (
-                      <td className="px-4 py-2 text-right">
+                      <td className="px-3.5 py-2.5 text-right whitespace-nowrap">
                         <div className="inline-flex items-center justify-end gap-1">
                           {onView && (
                             <button

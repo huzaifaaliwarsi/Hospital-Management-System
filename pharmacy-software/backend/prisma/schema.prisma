@@ -1,0 +1,567 @@
+// Standalone Pharmacy Management Software — Prisma schema.
+// Separate project, separate database from hms-backend (PROJECT_MASTER_SPEC.md
+// §1: "a separate project"). Never a direct FK into HMS's schema — the future
+// HMS<->Pharmacy integration (pharmacy.md §7/§15) is an API-level hand-off,
+// so `PharmacyInvoice.externalAdmissionRef` below is a plain string, not a
+// relation. See pharmacy.md for the full functional spec this schema follows.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Enums
+// ═══════════════════════════════════════════════════════════════════════
+
+/// pharmacy.md §2/§13 — collapsed from the older 3-portal design (D07-D10):
+/// SUPER_ADMIN and ADMIN now share one Management Portal (permission-based
+/// difference only); SALES_DISPENSING keeps its own separate Sales Portal.
+enum PortalRole {
+  SUPER_ADMIN
+  ADMIN
+  SALES_DISPENSING
+}
+
+enum PortalUserStatus {
+  ACTIVE
+  SUSPENDED
+  INACTIVE
+}
+
+/// pharmacy.md §6/§7 — a sale is either a walk-in POS sale or fulfillment
+/// of an HMS-originated medicine request.
+enum SaleChannel {
+  RETAIL
+  HMS_LINKED
+}
+
+enum InvoiceStatus {
+  UNPAID
+  PARTIALLY_PAID
+  PAID
+}
+
+/// pharmacy.md §8 — only meaningful for SaleChannel.HMS_LINKED invoices;
+/// null for RETAIL. Drives what HMS is told back (§15).
+enum ClearanceStatus {
+  OUTSTANDING
+  CLEARED
+  APPROVED_CREDIT
+}
+
+/// pharmacy.md §7.1 steps 3-4 — the Accept/Partial/Reject decision on an
+/// inbound HMS medicine request, before it becomes a PharmacyInvoice.
+enum MedicineRequestStatus {
+  REQUESTED
+  ACCEPTED
+  PARTIALLY_ACCEPTED
+  REJECTED
+  DISPENSED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  ONLINE
+}
+
+/// pharmacy.md §9.1 — every Stock Movement Center tab, all wired from day one
+/// (unlike hms-backend's MedicineStockLedger, which only ever posts RECEIPT/
+/// SALE/DISPENSE today — pharmacy.md §19.3).
+enum StockMovementType {
+  PURCHASE_IN
+  POS_SALE_OUT
+  HMS_DISPENSE_OUT
+  SALES_RETURN_IN
+  PURCHASE_RETURN_OUT
+  POSITIVE_ADJUSTMENT
+  NEGATIVE_ADJUSTMENT
+  OPENING_STOCK
+}
+
+enum AdjustmentType {
+  DAMAGE
+  EXPIRY
+  COUNT_CORRECTION
+  LOSS
+  SURPLUS
+  QUARANTINE
+}
+
+/// pharmacy.md §10.3 vendor ledger formula:
+/// Opening + Purchases - Payments - Returns/Credits +/- Adjustments = Closing.
+enum VendorLedgerEntryType {
+  PURCHASE_CREDIT
+  PAYMENT
+  RETURN_CREDIT
+  ADJUSTMENT
+}
+
+enum PurchaseStatus {
+  DRAFT
+  POSTED
+}
+
+/// pharmacy.md §11 petty-cash flow direction, from each user's own point of view.
+enum CashDirection {
+  IN
+  OUT
+}
+
+enum CashCategory {
+  PETTY_CASH_ISSUED
+  PETTY_CASH_RECEIVED
+  POS_COLLECTION
+  HMS_COLLECTION
+  REFUND
+  VENDOR_PAYMENT
+  EXPENSE_PAYMENT
+  SETTLEMENT_HANDOVER
+  ADJUSTMENT
+}
+
+enum SettlementStatus {
+  SUBMITTED
+  ACCEPTED
+  REJECTED
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Identity (pharmacy.md §13 — Super Admin -> Admin only, Admin -> Sales only)
+// ═══════════════════════════════════════════════════════════════════════
+
+model PortalUser {
+  id                String            @id @default(uuid())
+  username          String            @unique
+  email             String?           @unique
+  fullName          String            @map("full_name")
+  phone             String?
+  passwordHash      String            @map("password_hash")
+  role              PortalRole
+  status            PortalUserStatus  @default(ACTIVE)
+  /// true only for the bootstrap SUPER_ADMIN — mirrors hms-backend's
+  /// isProtected pattern (pharmacy.md §2.1 "Protected Super Admin").
+  isProtected       Boolean           @default(false) @map("is_protected")
+  mustResetPassword Boolean           @default(true) @map("must_reset_password")
+  lastLoginAt       DateTime?         @map("last_login_at")
+
+  createdById   String?     @map("created_by")
+  createdByUser PortalUser? @relation("PortalUserCreatedBy", fields: [createdById], references: [id])
+  createdUsers  PortalUser[] @relation("PortalUserCreatedBy")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  refreshTokens         RefreshToken[]
+  createdMedicines       MedicineMaster[]       @relation("MedicineCreatedBy")
+  createdBatches         MedicineBatch[]        @relation("BatchCreatedBy")
+  stockMovements         StockLedgerEntry[]     @relation("StockMovementActor")
+  createdVendors         Vendor[]               @relation("VendorCreatedBy")
+  vendorLedgerEntries    VendorLedgerEntry[]    @relation("VendorLedgerActor")
+  createdPurchases       Purchase[]             @relation("PurchaseCreatedBy")
+  dispensedInvoices      PharmacyInvoice[]      @relation("InvoiceDispensedBy")
+  collectedPayments      PharmacyPayment[]      @relation("PaymentCollectedBy")
+  handledRequests        MedicineRequest[]      @relation("RequestHandledBy")
+  approvedRequests       MedicineRequest[]      @relation("RequestApprovedBy")
+  enteredExpenses         Expense[]              @relation("ExpenseEnteredBy")
+  approvedExpenses        Expense[]              @relation("ExpenseApprovedBy")
+  cashEntriesOwned        CashLedgerEntry[]      @relation("CashEntryOwner")
+  cashEntriesIssued        CashLedgerEntry[]      @relation("CashEntryIssuedBy")
+  settlementsSubmitted     AccountSettlement[]    @relation("SettlementSubmittedBy")
+  settlementsReviewed      AccountSettlement[]    @relation("SettlementReviewedBy")
+
+  @@map("portal_users")
+}
+
+model RefreshToken {
+  id           String     @id @default(uuid())
+  portalUserId String     @map("portal_user_id")
+  portalUser   PortalUser @relation(fields: [portalUserId], references: [id])
+  tokenHash    String     @unique @map("token_hash")
+  expiresAt    DateTime   @map("expires_at")
+  revokedAt    DateTime?  @map("revoked_at")
+  createdAt    DateTime   @default(now()) @map("created_at")
+
+  @@map("refresh_tokens")
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Medicines, Batches, Stock (pharmacy.md §9)
+// ═══════════════════════════════════════════════════════════════════════
+
+model MedicineMaster {
+  id           String   @id @default(uuid())
+  code         String   @unique
+  barcode      String?  @unique
+  name         String
+  genericName  String?  @map("generic_name")
+  category     String?
+  unit         String
+  batchManaged Boolean  @default(true) @map("batch_managed")
+  reorderLevel Decimal  @default(0) @map("reorder_level") @db.Decimal(14, 3)
+  purchaseRate Decimal? @map("purchase_rate") @db.Decimal(14, 2)
+  saleRate     Decimal  @default(0) @map("sale_rate") @db.Decimal(14, 2)
+  /// Percentage, e.g. 17 = 17%. pharmacy.md §19.2 flags this as entirely
+  /// absent in hms-backend's pharmacy module — present from day one here.
+  taxPercent   Decimal  @default(0) @map("tax_percent") @db.Decimal(5, 2)
+  isActive     Boolean  @default(true) @map("is_active")
+
+  batches       MedicineBatch[]
+  stockEntries  StockLedgerEntry[]
+  purchaseLines PurchaseLine[]
+  invoiceLines  PharmacyInvoiceLine[]
+  requestLines  MedicineRequestLine[]
+
+  createdById   String?      @map("created_by")
+  createdByUser PortalUser?  @relation("MedicineCreatedBy", fields: [createdById], references: [id])
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  @@map("medicine_masters")
+}
+
+/// FEFO enforced in the service layer (earliest expiryDate with stock wins) —
+/// this table only stores batch identity; quantity is always derived from
+/// StockLedgerEntry, never stored/edited directly (pharmacy.md §9 "Quantity Rule").
+model MedicineBatch {
+  id          String         @id @default(uuid())
+  medicineId  String         @map("medicine_id")
+  medicine    MedicineMaster @relation(fields: [medicineId], references: [id])
+  batchNumber String         @map("batch_number")
+  expiryDate  DateTime       @map("expiry_date") @db.Date
+  costRate    Decimal        @map("cost_rate") @db.Decimal(14, 2)
+  saleRate    Decimal?       @map("sale_rate") @db.Decimal(14, 2)
+
+  stockEntries  StockLedgerEntry[]
+  purchaseLines PurchaseLine[]
+  invoiceLines  PharmacyInvoiceLine[]
+  requestLines  MedicineRequestLine[]
+
+  createdById   String?     @map("created_by")
+  createdByUser PortalUser? @relation("BatchCreatedBy", fields: [createdById], references: [id])
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  @@unique([medicineId, batchNumber])
+  @@index([medicineId, expiryDate])
+  @@map("medicine_batches")
+}
+
+/// Append-only, delta-only (pharmacy.md §9.1) — all 8 movement types wired
+/// from day one, not just RECEIPT/SALE/DISPENSE.
+model StockLedgerEntry {
+  id             String            @id @default(uuid())
+  medicineId     String            @map("medicine_id")
+  medicine       MedicineMaster    @relation(fields: [medicineId], references: [id])
+  batchId        String?           @map("batch_id")
+  batch          MedicineBatch?    @relation(fields: [batchId], references: [id])
+  movementType   StockMovementType @map("movement_type")
+  quantityDelta  Decimal           @map("quantity_delta") @db.Decimal(14, 3)
+  referenceTable String            @map("reference_table")
+  referenceId    String            @map("reference_id")
+  note           String?
+  actorId        String            @map("actor_id")
+  actor          PortalUser        @relation("StockMovementActor", fields: [actorId], references: [id])
+  createdAt      DateTime          @default(now()) @map("created_at")
+
+  @@index([medicineId, batchId, createdAt])
+  @@map("stock_ledger_entries")
+}
+
+model StockAdjustment {
+  id         String         @id @default(uuid())
+  medicineId String         @map("medicine_id")
+  batchId    String?        @map("batch_id")
+  type       AdjustmentType
+  quantity   Decimal        @db.Decimal(14, 3)
+  reason     String
+  approvedById String?      @map("approved_by")
+  createdById  String       @map("created_by")
+  createdAt    DateTime     @default(now()) @map("created_at")
+
+  @@map("stock_adjustments")
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Vendors & Purchases (pharmacy.md §10 — entirely new, own model, never
+// reuses hms-backend Inventory's Supplier/SupplierLedger — §19.3)
+// ═══════════════════════════════════════════════════════════════════════
+
+model Vendor {
+  id               String   @id @default(uuid())
+  code             String   @unique
+  name             String
+  contactPerson    String?  @map("contact_person")
+  phone            String?
+  email            String?
+  paymentTermsDays Int      @default(0) @map("payment_terms_days")
+  isActive         Boolean  @default(true) @map("is_active")
+
+  purchases     Purchase[]
+  ledgerEntries VendorLedgerEntry[]
+
+  createdById   String?     @map("created_by")
+  createdByUser PortalUser? @relation("VendorCreatedBy", fields: [createdById], references: [id])
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  @@map("vendors")
+}
+
+/// pharmacy.md §10.3 formula: Opening + Purchases - Payments - Returns/Credits
+/// +/- Adjustments = Closing. `amount` is the signed payable delta — positive
+/// for PURCHASE_CREDIT (vendor owed more), negative for PAYMENT/RETURN_CREDIT.
+model VendorLedgerEntry {
+  id             String                 @id @default(uuid())
+  vendorId       String                 @map("vendor_id")
+  vendor         Vendor                 @relation(fields: [vendorId], references: [id])
+  entryType      VendorLedgerEntryType  @map("entry_type")
+  amount         Decimal                @db.Decimal(14, 2)
+  description    String?
+  referenceTable String?                @map("reference_table")
+  referenceId    String?                @map("reference_id")
+  actorId        String                 @map("actor_id")
+  actor          PortalUser             @relation("VendorLedgerActor", fields: [actorId], references: [id])
+  createdAt      DateTime               @default(now()) @map("created_at")
+
+  @@index([vendorId, createdAt])
+  @@map("vendor_ledger_entries")
+}
+
+model Purchase {
+  id              String         @id @default(uuid())
+  purchaseNumber  String         @unique @map("purchase_number")
+  vendorId        String         @map("vendor_id")
+  vendor          Vendor         @relation(fields: [vendorId], references: [id])
+  purchaseDate    DateTime       @map("purchase_date") @db.Date
+  vendorInvoiceNo String?        @map("vendor_invoice_no")
+  paymentType     PaymentMethod?  @map("payment_type")
+  notes           String?
+  status          PurchaseStatus @default(DRAFT)
+
+  subtotal      Decimal @default(0) @db.Decimal(14, 2)
+  discountTotal Decimal @default(0) @map("discount_total") @db.Decimal(14, 2)
+  taxTotal      Decimal @default(0) @map("tax_total") @db.Decimal(14, 2)
+  total         Decimal @default(0) @db.Decimal(14, 2)
+  paidNow       Decimal @default(0) @map("paid_now") @db.Decimal(14, 2)
+  vendorDue     Decimal @default(0) @map("vendor_due") @db.Decimal(14, 2)
+
+  lines PurchaseLine[]
+
+  createdById   String      @map("created_by")
+  createdByUser PortalUser  @relation("PurchaseCreatedBy", fields: [createdById], references: [id])
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  @@map("purchases")
+}
+
+model PurchaseLine {
+  id             String         @id @default(uuid())
+  purchaseId     String         @map("purchase_id")
+  purchase       Purchase       @relation(fields: [purchaseId], references: [id])
+  medicineId     String         @map("medicine_id")
+  medicine       MedicineMaster @relation(fields: [medicineId], references: [id])
+  batchId        String?        @map("batch_id")
+  batch          MedicineBatch? @relation(fields: [batchId], references: [id])
+  quantity       Decimal        @db.Decimal(14, 3)
+  unitCost       Decimal        @map("unit_cost") @db.Decimal(14, 2)
+  discountAmount Decimal        @default(0) @map("discount_amount") @db.Decimal(14, 2)
+  taxAmount      Decimal        @default(0) @map("tax_amount") @db.Decimal(14, 2)
+  lineTotal      Decimal        @map("line_total") @db.Decimal(14, 2)
+
+  @@map("purchase_lines")
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Sales / HMS Requests / Invoices (pharmacy.md §6/§7/§8 — real tax,
+// discount, split payment and Outstanding/Clearance built in from day one,
+// unlike hms-backend's pharmacy module which hardcodes full-cash-PAID — §19.2)
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Inbound HMS medicine request, pre-invoice (pharmacy.md §7.1 steps 1-4).
+/// `externalAdmissionRef`/`externalRequestRef` are plain strings, never a
+/// cross-database FK — see the file header note on integration boundary.
+model MedicineRequest {
+  id                    String                @id @default(uuid())
+  requestNumber         String                @unique @map("request_number")
+  externalAdmissionRef  String                @map("external_admission_ref")
+  externalRequestRef    String?               @unique @map("external_request_ref")
+  patientNameSnapshot   String?               @map("patient_name_snapshot")
+  urgency               String?
+  requestedByExternal   String?               @map("requested_by_external")
+  status                MedicineRequestStatus @default(REQUESTED)
+  rejectionReason       String?               @map("rejection_reason")
+  /// pharmacy.md §7.3 — set only when a line/request crosses the configured
+  /// high-value threshold; dispense is blocked until this is non-null.
+  approvedById          String?               @map("approved_by")
+  approvedByUser        PortalUser?           @relation("RequestApprovedBy", fields: [approvedById], references: [id])
+  approvedAt            DateTime?             @map("approved_at")
+
+  lines   MedicineRequestLine[]
+  invoice PharmacyInvoice?
+
+  handledById   String?     @map("handled_by")
+  handledByUser PortalUser? @relation("RequestHandledBy", fields: [handledById], references: [id])
+  requestedAt   DateTime    @default(now()) @map("requested_at")
+
+  @@map("medicine_requests")
+}
+
+model MedicineRequestLine {
+  id                String          @id @default(uuid())
+  medicineRequestId String          @map("medicine_request_id")
+  medicineRequest   MedicineRequest @relation(fields: [medicineRequestId], references: [id])
+  medicineId        String          @map("medicine_id")
+  medicine          MedicineMaster  @relation(fields: [medicineId], references: [id])
+  batchId           String?         @map("batch_id")
+  batch             MedicineBatch?  @relation(fields: [batchId], references: [id])
+  requestedQuantity Decimal         @map("requested_quantity") @db.Decimal(14, 3)
+  dispensedQuantity Decimal         @default(0) @map("dispensed_quantity") @db.Decimal(14, 3)
+  notes             String?
+
+  @@map("medicine_request_lines")
+}
+
+model PharmacyInvoice {
+  id                String           @id @default(uuid())
+  invoiceNumber     String           @unique @map("invoice_number")
+  channel           SaleChannel
+  medicineRequestId String?          @unique @map("medicine_request_id")
+  medicineRequest   MedicineRequest? @relation(fields: [medicineRequestId], references: [id])
+  customerName      String?          @map("customer_name")
+
+  subtotal        Decimal         @default(0) @db.Decimal(14, 2)
+  discountTotal   Decimal         @default(0) @map("discount_total") @db.Decimal(14, 2)
+  taxTotal        Decimal         @default(0) @map("tax_total") @db.Decimal(14, 2)
+  total           Decimal         @default(0) @db.Decimal(14, 2)
+  paidTotal       Decimal         @default(0) @map("paid_total") @db.Decimal(14, 2)
+  outstanding     Decimal         @default(0) @db.Decimal(14, 2)
+  status          InvoiceStatus   @default(UNPAID)
+  /// Only set for channel = HMS_LINKED (pharmacy.md §8).
+  clearanceStatus ClearanceStatus? @map("clearance_status")
+
+  lines    PharmacyInvoiceLine[]
+  payments PharmacyPayment[]
+
+  dispensedById   String     @map("dispensed_by")
+  dispensedByUser PortalUser @relation("InvoiceDispensedBy", fields: [dispensedById], references: [id])
+  createdAt       DateTime   @default(now()) @map("created_at")
+
+  @@map("pharmacy_invoices")
+}
+
+model PharmacyInvoiceLine {
+  id             String          @id @default(uuid())
+  invoiceId      String          @map("invoice_id")
+  invoice        PharmacyInvoice @relation(fields: [invoiceId], references: [id])
+  medicineId     String          @map("medicine_id")
+  medicine       MedicineMaster  @relation(fields: [medicineId], references: [id])
+  batchId        String?         @map("batch_id")
+  batch          MedicineBatch?  @relation(fields: [batchId], references: [id])
+  quantity       Decimal         @db.Decimal(14, 3)
+  rateSnapshot   Decimal         @map("rate_snapshot") @db.Decimal(14, 2)
+  discountAmount Decimal         @default(0) @map("discount_amount") @db.Decimal(14, 2)
+  taxAmount      Decimal         @default(0) @map("tax_amount") @db.Decimal(14, 2)
+  lineNet        Decimal         @map("line_net") @db.Decimal(14, 2)
+
+  @@map("pharmacy_invoice_lines")
+}
+
+/// One row per payment against an invoice — supports split and partial
+/// payment (pharmacy.md §6.1/§8, entirely absent in hms-backend today).
+model PharmacyPayment {
+  id            String          @id @default(uuid())
+  invoiceId     String          @map("invoice_id")
+  invoice       PharmacyInvoice @relation(fields: [invoiceId], references: [id])
+  amount        Decimal         @db.Decimal(14, 2)
+  method        PaymentMethod
+  reference     String?
+  collectedById String          @map("collected_by")
+  collectedByUser PortalUser    @relation("PaymentCollectedBy", fields: [collectedById], references: [id])
+  paidAt        DateTime        @default(now()) @map("paid_at")
+
+  @@map("pharmacy_payments")
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Cash, Expenses, Settlement (pharmacy.md §11/§12 — own dedicated tables;
+// no `moduleScope` discriminator needed since this DB is Pharmacy-only, so
+// the hms-backend cash.service.ts moduleScope='BILLING' hardcode bug
+// (pharmacy.md §19.3) cannot occur here structurally)
+// ═══════════════════════════════════════════════════════════════════════
+
+model CashLedgerEntry {
+  id             String       @id @default(uuid())
+  portalUserId   String       @map("portal_user_id")
+  portalUser     PortalUser   @relation("CashEntryOwner", fields: [portalUserId], references: [id])
+  direction      CashDirection
+  amount         Decimal      @db.Decimal(14, 2)
+  category       CashCategory
+  isPhysicalCash Boolean      @default(true) @map("is_physical_cash")
+  referenceTable String?      @map("reference_table")
+  referenceId    String?      @map("reference_id")
+  note           String?
+  issuedById     String?      @map("issued_by")
+  issuedByUser   PortalUser?  @relation("CashEntryIssuedBy", fields: [issuedById], references: [id])
+  isSettled      Boolean      @default(false) @map("is_settled")
+  occurredAt     DateTime     @default(now()) @map("occurred_at")
+
+  @@index([portalUserId, occurredAt])
+  @@map("cash_ledger_entries")
+}
+
+model AccountSettlement {
+  id             String           @id @default(uuid())
+  portalUserId   String           @map("portal_user_id")
+  submittedByUser PortalUser      @relation("SettlementSubmittedBy", fields: [portalUserId], references: [id])
+  periodFrom     DateTime         @map("period_from") @db.Date
+  periodTo       DateTime         @map("period_to") @db.Date
+  expectedCash   Decimal          @map("expected_cash") @db.Decimal(14, 2)
+  physicalCash   Decimal          @map("physical_cash") @db.Decimal(14, 2)
+  variance       Decimal          @db.Decimal(14, 2)
+  varianceReason String?          @map("variance_reason")
+  settlementAmount Decimal        @default(0) @map("settlement_amount") @db.Decimal(14, 2)
+  status         SettlementStatus @default(SUBMITTED)
+  submittedAt    DateTime         @default(now()) @map("submitted_at")
+  reviewedById   String?          @map("reviewed_by")
+  reviewedByUser PortalUser?      @relation("SettlementReviewedBy", fields: [reviewedById], references: [id])
+  reviewedAt     DateTime?        @map("reviewed_at")
+
+  @@map("account_settlements")
+}
+
+model Expense {
+  id              String     @id @default(uuid())
+  category        String
+  date            DateTime   @db.Date
+  amount          Decimal    @db.Decimal(14, 2)
+  paymentMethod   PaymentMethod @map("payment_method")
+  payeeOrVendor   String?    @map("payee_or_vendor")
+  description     String
+  referenceNo     String?    @map("reference_no")
+  attachmentUrl   String?    @map("attachment_url")
+
+  enteredById   String      @map("entered_by")
+  enteredByUser PortalUser  @relation("ExpenseEnteredBy", fields: [enteredById], references: [id])
+  approvedById  String?     @map("approved_by")
+  approvedByUser PortalUser? @relation("ExpenseApprovedBy", fields: [approvedById], references: [id])
+  approvedAt    DateTime?   @map("approved_at")
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  @@map("expenses")
+}
+
+/// Singleton — pharmacy.md §3 Settings screen / §7.3 "Configured by
+/// Management/Super Admin settings; not hardcoded." One row, always upserted.
+model PharmacySettings {
+  id                       String   @id @default(uuid())
+  highValueApprovalEnabled Boolean  @default(false) @map("high_value_approval_enabled")
+  /// PKR — request/invoice total at or above this needs approval before dispense.
+  highValueThreshold       Decimal  @default(0) @db.Decimal(14, 2) @map("high_value_threshold")
+  updatedAt                DateTime @updatedAt @map("updated_at")
+  updatedById              String?  @map("updated_by")
+
+  @@map("pharmacy_settings")
+}

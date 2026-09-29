@@ -69,9 +69,12 @@ export const dataResetService = {
       const deletedPharmacyDispenseLines = await tx.pharmacyDispenseLine.deleteMany();
       const deletedPharmacyDispenses = await tx.pharmacyDispense.deleteMany();
       const deletedPharmacyClearances = await tx.pharmacyClearance.deleteMany();
+      await tx.medicineStockLedger.deleteMany();
 
       // 5b. Admission room charge logs (references both admission records and invoice line items)
       await tx.admissionRoomChargeLog.deleteMany();
+      await tx.hospitalDayClose.deleteMany();
+      await tx.hospitalNotification.deleteMany();
 
       // 6. Invoices & line items
       const deletedInvoiceLines = await tx.invoiceLineItem.deleteMany();
@@ -107,11 +110,16 @@ export const dataResetService = {
       await tx.commissionRun.deleteMany();
       await tx.payrollRun.deleteMany();
 
-      // 1c. Inventory stock & purchase orders
+      // 1c. Department requisitions (must be deleted before StockItem and Department)
+      await tx.departmentRequisitionLine.deleteMany();
+      await tx.departmentRequisition.deleteMany();
+
+      // 1d. Inventory stock, purchase orders & supplier ledger
       await tx.stockAdjustment.deleteMany();
       await tx.stockLedger.deleteMany();
       await tx.purchaseOrderLine.deleteMany();
       await tx.purchaseOrder.deleteMany();
+      await tx.supplierLedger.deleteMany();
       await tx.stockItem.deleteMany();
 
       // 12. Staff HR data — attendance, payroll, and commission rows that
@@ -127,6 +135,10 @@ export const dataResetService = {
       await tx.staffSalaryProfile.deleteMany();
       await tx.biometricRawPunch.deleteMany();
       await tx.doctorCommissionRule.deleteMany();
+      await tx.staffService.deleteMany();
+      await tx.staffDepartment.deleteMany();
+      await tx.staffWeeklySchedule.deleteMany();
+      await tx.staffBankAccount.deleteMany();
 
       // Disconnect all references to Staff before deleting Staff rows
       await tx.department.updateMany({ where: { headStaffId: { not: null } }, data: { headStaffId: null } });
@@ -144,10 +156,8 @@ export const dataResetService = {
       const deletedWards = await tx.ward.deleteMany();
 
       // 14. Department — unlink Services & Rates (kept, not deleted) then
-      // clear the requisitions/shifts that RESTRICT-block the department row.
+      // clear the shifts that RESTRICT-block the department row.
       await tx.serviceRate.updateMany({ where: { departmentId: { not: null } }, data: { departmentId: null } });
-      await tx.departmentRequisitionLine.deleteMany();
-      await tx.departmentRequisition.deleteMany();
       const deletedShifts = await tx.shift.deleteMany();
       const deletedDepartments = await tx.department.deleteMany();
 

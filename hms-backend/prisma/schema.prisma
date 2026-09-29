@@ -197,6 +197,10 @@ enum SupplierLedgerEntryType {
   PAYMENT
   RETURN
   CREDIT_NOTE
+  /// inventory.md §5 "Add Approved Adjustment" — `amount` is signed here
+  /// (unlike the other entry types): positive increases payable, negative
+  /// decreases it. See `getSupplierLedger`'s totalOutstanding formula.
+  ADJUSTMENT
 }
 
 enum PurchasePaymentMethod {

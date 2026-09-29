@@ -315,15 +315,9 @@ export const PettyCashExpensesView: React.FC = () => {
         const dateStr = formatDateTimeDDMMYYYY(r.occurredAt);
         const [d, t] = dateStr.includes(',') ? dateStr.split(', ') : [dateStr, ''];
         return (
-          <div className="flex flex-col">
-            <span className="font-semibold text-slate-800 text-xs">{d}</span>
-            {t && (
-              <span className="text-[11px] text-slate-500 font-mono flex items-center gap-1 mt-0.5">
-                <Clock className="h-3 w-3 text-slate-400" />
-                {t}
-              </span>
-            )}
-          </div>
+          <span className="font-medium text-slate-800 text-xs whitespace-nowrap">
+            {d} {t && <span className="text-slate-500 font-mono text-[11px] font-normal">({t})</span>}
+          </span>
         );
       },
     },
@@ -337,16 +331,13 @@ export const PettyCashExpensesView: React.FC = () => {
           'Super Admin';
         const initial = (name.charAt(0) || 'A').toUpperCase();
         return (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 whitespace-nowrap">
             <div className="h-6 w-6 rounded-full bg-emerald-100 text-emerald-800 font-bold text-xs flex items-center justify-center border border-emerald-200 uppercase shrink-0">
               {initial}
             </div>
-            <div>
-              <div className="font-semibold text-slate-800 text-xs capitalize">
-                {name}
-              </div>
-              <div className="text-[10px] text-slate-400">Finance & Admin</div>
-            </div>
+            <span className="font-semibold text-slate-800 text-xs capitalize whitespace-nowrap">
+              {name}
+            </span>
           </div>
         );
       },
@@ -356,7 +347,7 @@ export const PettyCashExpensesView: React.FC = () => {
       header: 'Credit Amount',
       align: 'right',
       render: (r) => (
-        <span className="font-mono font-bold text-xs text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded border border-emerald-200 inline-flex items-center gap-1 shadow-2xs">
+        <span className="font-mono font-bold text-xs text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded border border-emerald-200 inline-flex items-center gap-1 shadow-2xs whitespace-nowrap">
           <ArrowDownLeft className="h-3.5 w-3.5 text-emerald-600" />
           + {formatPKR(r.amount)}
         </span>
@@ -366,7 +357,7 @@ export const PettyCashExpensesView: React.FC = () => {
       key: 'receivedBy',
       header: 'Recipient Custody',
       render: () => (
-        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 whitespace-nowrap">
           <User className="h-3 w-3 text-slate-500" />
           <span className="capitalize">
             {currentUser?.name || currentUser?.username || 'Inventory Store'}
@@ -390,10 +381,10 @@ export const PettyCashExpensesView: React.FC = () => {
           const isTopUp = badgeType.toLowerCase().includes('top');
 
           return (
-            <div className="flex flex-col gap-1 items-start py-0.5">
+            <div className="flex items-center gap-2 whitespace-nowrap">
               <span
                 className={cn(
-                  'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold border shadow-2xs',
+                  'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border shadow-2xs whitespace-nowrap',
                   isOpening
                     ? 'bg-amber-100 text-amber-900 border-amber-300'
                     : isTopUp
@@ -413,20 +404,14 @@ export const PettyCashExpensesView: React.FC = () => {
                 />
                 {badgeType}
               </span>
-              {description ? (
-                <span className="text-xs text-slate-700 font-medium">
-                  {description}
-                </span>
-              ) : (
-                <span className="text-[11px] text-slate-400 italic">
-                  No additional note
-                </span>
-              )}
+              <span className="text-xs text-slate-700 font-medium whitespace-nowrap">
+                {description || '—'}
+              </span>
             </div>
           );
         }
 
-        return <span className="text-xs text-slate-800 font-medium">{raw}</span>;
+        return <span className="text-xs text-slate-800 font-medium whitespace-nowrap">{raw}</span>;
       },
     },
   ];
@@ -448,15 +433,9 @@ export const PettyCashExpensesView: React.FC = () => {
         const dateStr = formatDateTimeDDMMYYYY(r.expenseDate || r.createdAt);
         const [d, t] = dateStr.includes(',') ? dateStr.split(', ') : [dateStr, ''];
         return (
-          <div className="flex flex-col">
-            <span className="font-semibold text-slate-800 text-xs">{d}</span>
-            {t && (
-              <span className="text-[11px] text-slate-500 font-mono flex items-center gap-1 mt-0.5">
-                <Clock className="h-3 w-3 text-slate-400" />
-                {t}
-              </span>
-            )}
-          </div>
+          <span className="font-medium text-slate-800 text-xs whitespace-nowrap">
+            {d} {t && <span className="text-slate-500 font-mono text-[11px] font-normal">({t})</span>}
+          </span>
         );
       },
     },
@@ -464,7 +443,7 @@ export const PettyCashExpensesView: React.FC = () => {
       key: 'category',
       header: 'Category',
       render: (r) => (
-        <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+        <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200 whitespace-nowrap">
           {r.category.replace(/_/g, ' ')}
         </span>
       ),

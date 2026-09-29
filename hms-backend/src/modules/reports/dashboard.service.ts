@@ -515,20 +515,38 @@ export const dashboardService = {
           unit: true,
           reorderLevel: true,
         },
+      }).catch((e) => {
+        console.warn('Dashboard stockItem query error:', e);
+        return [];
       }),
       prisma.stockLedger.groupBy({
         by: ['stockItemId'],
         _sum: {
           quantityDelta: true,
         },
+      }).catch((e) => {
+        console.warn('Dashboard stockLedger groupBy error:', e);
+        return [];
       }),
       prisma.pharmacyDispense.findMany({
         where: { createdAt: { gte: periodStart, lte: periodEnd } },
         select: { id: true, total: true, status: true },
+      }).catch((e) => {
+        console.warn('Dashboard pharmacyDispense query error:', e);
+        return [];
       }),
-      getPositiveBatchBalances(nearExpiryThreshold),
-      getPositiveBatchBalances(new Date()),
-      prisma.supplierLedger.findMany({ select: { entryType: true, amount: true } }),
+      getPositiveBatchBalances(nearExpiryThreshold).catch((e) => {
+        console.warn('Dashboard nearExpiry error:', e);
+        return [];
+      }),
+      getPositiveBatchBalances(new Date()).catch((e) => {
+        console.warn('Dashboard expiredBatches error:', e);
+        return [];
+      }),
+      prisma.supplierLedger.findMany({ select: { entryType: true, amount: true } }).catch((e) => {
+        console.warn('Dashboard supplierLedger query error:', e);
+        return [];
+      }),
     ]);
 
     const nearExpiryItemsCount = expiringBatches.length;
@@ -538,7 +556,11 @@ export const dashboardService = {
     const expiredItemsCount = expiredBatches.length;
     const nearExpiryOnlyCount = Math.max(0, nearExpiryItemsCount - expiredItemsCount);
     const supplierPayable = supplierLedgerAll.reduce(
-      (acc, e) => (e.entryType === 'PURCHASE_CREDIT' ? acc + Number(e.amount) : acc - Number(e.amount)),
+      (acc, e) => {
+        if (e.entryType === 'PURCHASE_CREDIT') return acc + Number(e.amount);
+        if ((e.entryType as string) === 'ADJUSTMENT') return acc + Number(e.amount);
+        return acc - Number(e.amount);
+      },
       0,
     );
 
@@ -683,15 +705,20 @@ export const dashboardService = {
     });
 
     // 8. Recent Activity (from AuditLog)
-    const recentAuditLogs = await prisma.auditLog.findMany({
-      orderBy: { createdAt: 'desc' },
-      take: 8,
-      include: {
-        actor: {
-          select: { displayName: true, username: true, role: true },
+    const recentAuditLogs = await prisma.auditLog
+      .findMany({
+        orderBy: { createdAt: 'desc' },
+        take: 8,
+        include: {
+          actor: {
+            select: { displayName: true, username: true, role: true },
+          },
         },
-      },
-    });
+      })
+      .catch((e) => {
+        console.warn('Dashboard recentAuditLogs query error:', e);
+        return [];
+      });
 
     const recentActivity = recentAuditLogs.map((log) => {
       const userLabel = log.actor?.displayName || log.actor?.username || 'System Administrator';
@@ -712,15 +739,20 @@ export const dashboardService = {
     });
 
     // 8.1 Recent Transactions (from real HospitalInvoice table)
-    const recentInvoices = await prisma.hospitalInvoice.findMany({
-      orderBy: { createdAt: 'desc' },
-      take: 10,
-      include: {
-        panelPatient: { select: { fullName: true } },
-        selfPayEncounter: { select: { fullName: true } },
-        createdByUser: { select: { displayName: true, username: true, role: true } },
-      },
-    });
+    const recentInvoices = await prisma.hospitalInvoice
+      .findMany({
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+        include: {
+          panelPatient: { select: { fullName: true } },
+          selfPayEncounter: { select: { fullName: true } },
+          createdByUser: { select: { displayName: true, username: true, role: true } },
+        },
+      })
+      .catch((e) => {
+        console.warn('Dashboard recentInvoices query error:', e);
+        return [];
+      });
 
     const recentTransactions: SuperAdminDashboardData['recentTransactions'] = recentInvoices.map((inv) => {
       const patientName = inv.panelPatient?.fullName || inv.selfPayEncounter?.fullName || 'Walk-in Patient';

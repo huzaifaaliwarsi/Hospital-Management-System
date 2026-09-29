@@ -51,7 +51,7 @@ export const inventoryReportsService = {
         where: range ? { createdAt: { gte: range.start, lte: range.end } } : {},
         select: { movementType: true },
       }),
-      prisma.supplierLedger.findMany({ select: { entryType: true, amount: true } }),
+      prisma.supplierLedger.findMany({ select: { entryType: true, amount: true } }).catch(() => []),
       getPositiveBatchBalances(nearExpiryThreshold),
     ]);
 
@@ -73,7 +73,11 @@ export const inventoryReportsService = {
     ).length;
 
     const supplierPayable = supplierLedgerAll.reduce(
-      (acc, e) => (e.entryType === 'PURCHASE_CREDIT' ? acc.plus(e.amount) : acc.minus(e.amount)),
+      (acc, e) => {
+        if (e.entryType === 'PURCHASE_CREDIT') return acc.plus(e.amount);
+        if ((e.entryType as string) === 'ADJUSTMENT') return acc.plus(e.amount);
+        return acc.minus(e.amount);
+      },
       new Decimal(0),
     );
 

@@ -22,14 +22,14 @@ import { LoadingState, ErrorState, EmptyState } from '../../components/common/St
 import { Modal } from '../../components/common/Modal';
 import { useRouter } from '../../context/RouterContext';
 import { useToast } from '../../context/ToastContext';
-import { inventoryApiService, BackendSupplier } from '../../services/inventoryApiService';
+import { inventoryApiService, BackendSupplier, BackendStockItem } from '../../services/inventoryApiService';
 import { toErrorMessage } from '../../utils/apiErrors';
 import { formatPKR, formatDateTimeDDMMYYYY, formatShortRef } from '../../utils/formatters';
 
-// Clean table tokens - only tables get grid borders
-const TH = 'py-3 px-3.5 border-r border-slate-200 last:border-r-0 whitespace-nowrap text-xs font-bold text-slate-700 uppercase tracking-wider bg-slate-50/90';
-const TD = 'py-2.5 px-3.5 border-r border-slate-100 last:border-r-0 whitespace-nowrap text-slate-800 text-xs';
-const TD_NUM = 'py-2.5 px-2.5 text-center border-r border-slate-100 text-slate-400 tabular-nums text-xs bg-slate-50/50 w-12';
+// Clean table tokens - hospital reporting table grid
+const TH = 'py-2.5 px-3.5 border-r border-slate-300 last:border-r-0 whitespace-nowrap text-[11px] font-bold text-slate-800 uppercase tracking-wider bg-[#f1f5f9] select-none sticky top-0 z-10';
+const TD = 'py-2.5 px-3.5 border-r border-slate-200 last:border-r-0 whitespace-nowrap text-slate-800 text-xs font-medium';
+const TD_NUM = 'py-2.5 px-3 text-center border-r border-slate-200 text-slate-500 font-mono text-[11px] bg-slate-50/60 whitespace-nowrap w-12';
 
 export const SupplierLedgerView: React.FC = () => {
   const { navigate } = useRouter();
@@ -62,6 +62,24 @@ export const SupplierLedgerView: React.FC = () => {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [deletingSupplier, setDeletingSupplier] = useState(false);
 
+  // Add Approved Adjustment Modal (inventory.md §5 — posts to this supplier's ledger too)
+  const [isAdjModalOpen, setIsAdjModalOpen] = useState(false);
+  const [stockItems, setStockItems] = useState<BackendStockItem[]>([]);
+  const [adjStockItemId, setAdjStockItemId] = useState('');
+  const [adjBatchNo, setAdjBatchNo] = useState('');
+  const [adjType, setAdjType] = useState<'DAMAGE' | 'EXPIRY' | 'COUNT_CORRECTION' | 'LOSS' | 'SURPLUS' | 'QUARANTINE'>('DAMAGE');
+  const [adjDirection, setAdjDirection] = useState<'INCREASE' | 'DECREASE'>('DECREASE');
+  const [adjQuantity, setAdjQuantity] = useState('');
+  const [adjReason, setAdjReason] = useState('');
+  const [savingAdj, setSavingAdj] = useState(false);
+  const ADJ_FIXED_DIRECTION: Record<string, 'INCREASE' | 'DECREASE'> = {
+    DAMAGE: 'DECREASE',
+    EXPIRY: 'DECREASE',
+    LOSS: 'DECREASE',
+    QUARANTINE: 'DECREASE',
+    SURPLUS: 'INCREASE',
+  };
+
   const loadSuppliers = async (autoSelectId?: string) => {
     try {
       const res = await inventoryApiService.getSuppliers();
@@ -81,6 +99,7 @@ export const SupplierLedgerView: React.FC = () => {
 
   useEffect(() => {
     loadSuppliers();
+    inventoryApiService.getStockItems().then(setStockItems).catch(() => {});
   }, []);
 
   const load = (id: string) => {
@@ -102,7 +121,16 @@ export const SupplierLedgerView: React.FC = () => {
   }, [supplierId]);
 
   const openPayModal = (suggestedAmount?: number) => {
-    const due = suggestedAmount ?? Number(ledger?.totalOutstanding ?? 0);
+    const netDue = Number(ledger?.totalOutstanding ?? 0);
+    // A per-bill "Pay" shortcut used to suggest that bill's full original
+    // amount even after it (or part of it) was already paid off — clicking
+    // it again just kept posting fresh PAYMENT rows past what was actually
+    // owed. Cap the suggestion to what's genuinely still due.
+    if (netDue <= 0) {
+      toast.error(`${ledger?.supplier?.name ?? 'This supplier'}'s account is already fully settled — nothing left to pay.`, 'Nothing Due');
+      return;
+    }
+    const due = Math.min(suggestedAmount ?? netDue, netDue);
     setPayAmount(due > 0 ? String(due) : '');
     const nextPay = ((ledger?.entries?.length || 0) + 1) % 100 || 1;
     setPayReference(`PAY-${String(nextPay).padStart(2, '0')}`);
@@ -112,8 +140,13 @@ export const SupplierLedgerView: React.FC = () => {
   const handlePaySupplier = async () => {
     if (!supplierId || !ledger?.supplier) return;
     const amt = Number(payAmount);
+    const netDue = Number(ledger?.totalOutstanding ?? 0);
     if (!amt || amt <= 0) {
       toast.error('Please enter an amount greater than zero.', 'Invalid Amount');
+      return;
+    }
+    if (amt > netDue) {
+      toast.error(`Amount exceeds the outstanding balance of ${formatPKR(netDue)}.`, 'Amount Too High');
       return;
     }
 
@@ -163,6 +196,49 @@ export const SupplierLedgerView: React.FC = () => {
     }
   };
 
+  const openAdjModal = () => {
+    setAdjStockItemId('');
+    setAdjBatchNo('');
+    setAdjType('DAMAGE');
+    setAdjDirection('DECREASE');
+    setAdjQuantity('');
+    setAdjReason('');
+    setIsAdjModalOpen(true);
+  };
+
+  const handleAdjTypeChange = (next: typeof adjType) => {
+    setAdjType(next);
+    const fixed = ADJ_FIXED_DIRECTION[next];
+    if (fixed) setAdjDirection(fixed);
+  };
+
+  const handleCreateAdjustment = async () => {
+    if (!supplierId) return;
+    if (!adjStockItemId) return toast.error('Select an item.', 'Missing Field');
+    if (!(Number(adjQuantity) > 0)) return toast.error('Enter a quantity greater than zero.', 'Missing Field');
+    if (!adjReason.trim()) return toast.error('A reason is required.', 'Missing Reason');
+
+    setSavingAdj(true);
+    try {
+      await inventoryApiService.createAdjustment({
+        stockItemId: adjStockItemId,
+        batchNo: adjBatchNo.trim() || undefined,
+        type: adjType,
+        direction: adjDirection,
+        quantity: Number(adjQuantity),
+        reason: adjReason.trim(),
+        supplierId,
+      });
+      toast.success(`Adjustment posted and reflected in ${ledger?.supplier?.name}'s ledger.`, 'Adjustment Posted');
+      setIsAdjModalOpen(false);
+      load(supplierId);
+    } catch (e) {
+      toast.error(toErrorMessage(e), 'Adjustment Failed');
+    } finally {
+      setSavingAdj(false);
+    }
+  };
+
   const handleDeleteSupplier = async () => {
     if (!supplierId || !ledger?.supplier) return;
     setDeletingSupplier(true);
@@ -184,7 +260,10 @@ export const SupplierLedgerView: React.FC = () => {
   const chronological = [...entries].reverse();
   let running = 0;
   const withRunningBalance = chronological.map((e) => {
-    const signed = e.entryType === 'PURCHASE_CREDIT' ? Number(e.amount) : -Number(e.amount);
+    // ADJUSTMENT amounts are stored pre-signed (inventory.md §5's "± Adjustments"),
+    // so they add straight in like PURCHASE_CREDIT rather than being negated.
+    const signed =
+      e.entryType === 'PURCHASE_CREDIT' || e.entryType === 'ADJUSTMENT' ? Number(e.amount) : -Number(e.amount);
     running += signed;
     return { ...e, runningBalance: running };
   });
@@ -200,15 +279,15 @@ export const SupplierLedgerView: React.FC = () => {
       return ref.includes(s) || desc.includes(s);
     });
 
-  const totalPurchases = entries
-    .filter((e) => e.entryType === 'PURCHASE_CREDIT')
-    .reduce((s, e) => s + Number(e.amount), 0);
+  const totalPurchases =
+    entries.filter((e) => e.entryType === 'PURCHASE_CREDIT').reduce((s, e) => s + Number(e.amount), 0) +
+    entries.filter((e) => e.entryType === 'ADJUSTMENT' && Number(e.amount) >= 0).reduce((s, e) => s + Number(e.amount), 0);
   const totalPayments = entries
     .filter((e) => e.entryType === 'PAYMENT')
     .reduce((s, e) => s + Number(e.amount), 0);
-  const totalCredits = entries
-    .filter((e) => e.entryType === 'RETURN' || e.entryType === 'CREDIT_NOTE')
-    .reduce((s, e) => s + Number(e.amount), 0);
+  const totalCredits =
+    entries.filter((e) => e.entryType === 'RETURN' || e.entryType === 'CREDIT_NOTE').reduce((s, e) => s + Number(e.amount), 0) +
+    entries.filter((e) => e.entryType === 'ADJUSTMENT' && Number(e.amount) < 0).reduce((s, e) => s + Math.abs(Number(e.amount)), 0);
   const netDue = Number(ledger?.totalOutstanding ?? 0);
 
   function formatParticulars(e: any) {
@@ -229,6 +308,9 @@ export const SupplierLedgerView: React.FC = () => {
     }
     if (e.entryType === 'RETURN') {
       return 'Purchase Return / Goods Returned to Vendor';
+    }
+    if (e.entryType === 'ADJUSTMENT') {
+      return `Approved Adjustment (${Number(e.amount) >= 0 ? 'increases' : 'decreases'} payable)`;
     }
     return e.entryType;
   }
@@ -272,6 +354,7 @@ export const SupplierLedgerView: React.FC = () => {
               <option value="PURCHASE_CREDIT">Purchases / Bills (Cr)</option>
               <option value="PAYMENT">Payments (Dr)</option>
               <option value="RETURN">Returns (Debit Notes)</option>
+              <option value="ADJUSTMENT">Adjustments</option>
             </select>
           </div>
 
@@ -298,8 +381,21 @@ export const SupplierLedgerView: React.FC = () => {
           {supplierId && (
             <button
               type="button"
+              onClick={openAdjModal}
+              className="px-3.5 py-2 text-xs font-semibold rounded-lg bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 shadow-2xs inline-flex items-center gap-1.5 transition-colors"
+            >
+              <AlertTriangle className="h-3.5 w-3.5" />
+              <span>Add Approved Adjustment</span>
+            </button>
+          )}
+
+          {supplierId && (
+            <button
+              type="button"
               onClick={() => openPayModal()}
-              className="px-4 py-2 text-xs font-semibold rounded-lg bg-[#08775A] hover:bg-[#065f46] text-white inline-flex items-center gap-1.5 shadow-xs transition-colors"
+              disabled={netDue <= 0}
+              title={netDue <= 0 ? 'Account is already fully settled — nothing due to pay.' : undefined}
+              className="px-4 py-2 text-xs font-semibold rounded-lg bg-[#08775A] hover:bg-[#065f46] text-white inline-flex items-center gap-1.5 shadow-xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[#08775A]"
             >
               <CreditCard className="h-3.5 w-3.5" />
               <span>Record Payment</span>
@@ -382,8 +478,8 @@ export const SupplierLedgerView: React.FC = () => {
           </div>
 
           {/* Table Container - Only the Table gets Clean Borders */}
-          <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-            <div className="px-4 py-3 bg-slate-50/80 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+          <div className="bg-white rounded-lg border border-slate-300 shadow-xs overflow-hidden flex flex-col">
+            <div className="px-4 py-3 bg-[#f1f5f9] border-b border-slate-300 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <Receipt className="h-4 w-4 text-[#08775A]" />
                 <h2 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
@@ -406,7 +502,7 @@ export const SupplierLedgerView: React.FC = () => {
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
-                  <tr className="border-b border-slate-200">
+                  <tr className="border-b border-slate-300 bg-[#f1f5f9]">
                     <th className={TD_NUM}>#</th>
                     <th className={`${TH} w-32`}>Date & Time</th>
                     <th className={`${TH} w-32`}>Voucher / Ref</th>
@@ -418,7 +514,7 @@ export const SupplierLedgerView: React.FC = () => {
                     <th className={`${TH} w-20 text-center`}>Action</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 text-slate-700">
+                <tbody className="divide-y divide-slate-200 text-slate-700">
                   {displayRows.length === 0 ? (
                     <tr>
                       <td colSpan={9} className="py-8 text-center text-slate-400">
@@ -430,9 +526,11 @@ export const SupplierLedgerView: React.FC = () => {
                       const isPurchase = e.entryType === 'PURCHASE_CREDIT';
                       const isPayment = e.entryType === 'PAYMENT';
                       const isReturn = e.entryType === 'RETURN' || e.entryType === 'CREDIT_NOTE';
+                      const isAdjustment = e.entryType === 'ADJUSTMENT';
+                      const adjIncreasesPayable = isAdjustment && Number(e.amount) >= 0;
 
                       return (
-                        <tr key={e.id} className="hover:bg-slate-50/60 transition-colors">
+                        <tr key={e.id} className="hover:bg-slate-50/90 transition-colors group border-b border-slate-200">
                           <td className={TD_NUM}>{index + 1}</td>
                           <td className={TD}>
                             <span className="font-mono text-slate-700">
@@ -445,12 +543,9 @@ export const SupplierLedgerView: React.FC = () => {
                             </span>
                           </td>
                           <td className={TD}>
-                            <div className="font-medium text-slate-900">{formatParticulars(e)}</div>
-                            {e.actor?.username && (
-                              <div className="text-[10px] text-slate-400 mt-0.5">
-                                Operator: {e.actor.username}
-                              </div>
-                            )}
+                            <span className="font-medium text-slate-900 whitespace-nowrap">
+                              {formatParticulars(e)} {e.actor?.username && <span className="text-[11px] text-slate-400 font-normal">({e.actor.username})</span>}
+                            </span>
                           </td>
                           <td className={`${TD} text-center`}>
                             <span
@@ -459,17 +554,19 @@ export const SupplierLedgerView: React.FC = () => {
                                   ? 'bg-amber-50 text-amber-900 border border-amber-200'
                                   : isPayment
                                   ? 'bg-blue-50 text-blue-900 border border-blue-200'
+                                  : isAdjustment
+                                  ? 'bg-purple-50 text-purple-900 border border-purple-200'
                                   : 'bg-rose-50 text-rose-900 border border-rose-200'
                               }`}
                             >
-                              {isPurchase ? 'Bill' : isPayment ? 'Payment' : 'Return'}
+                              {isPurchase ? 'Bill' : isPayment ? 'Payment' : isAdjustment ? 'Adjustment' : 'Return'}
                             </span>
                           </td>
                           <td className={`${TD} text-right font-mono font-bold text-slate-900`}>
-                            {isPurchase ? formatPKR(e.amount) : '—'}
+                            {isPurchase || (isAdjustment && adjIncreasesPayable) ? formatPKR(Math.abs(Number(e.amount))) : '—'}
                           </td>
                           <td className={`${TD} text-right font-mono font-bold text-emerald-700`}>
-                            {isPayment ? formatPKR(e.amount) : isReturn ? formatPKR(e.amount) : '—'}
+                            {isPayment || isReturn || (isAdjustment && !adjIncreasesPayable) ? formatPKR(Math.abs(Number(e.amount))) : '—'}
                           </td>
                           <td className={`${TD} text-right font-mono font-bold text-slate-900`}>
                             {formatPKR(Math.abs(Number(e.runningBalance)))}
@@ -478,7 +575,7 @@ export const SupplierLedgerView: React.FC = () => {
                             </span>
                           </td>
                           <td className={`${TD} text-center`}>
-                            {isPurchase && (
+                            {isPurchase && netDue > 0 && (
                               <button
                                 type="button"
                                 onClick={() => openPayModal(Number(e.amount))}
@@ -543,7 +640,7 @@ export const SupplierLedgerView: React.FC = () => {
               <button
                 type="button"
                 onClick={handlePaySupplier}
-                disabled={paying}
+                disabled={paying || !Number(payAmount) || Number(payAmount) > netDue}
                 className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-[#08775A] hover:bg-[#065f46] text-white disabled:opacity-50 inline-flex items-center gap-1.5 shadow-xs"
               >
                 <CheckCircle2 className="h-3.5 w-3.5" />
@@ -573,6 +670,9 @@ export const SupplierLedgerView: React.FC = () => {
             placeholder="e.g. 50000"
             value={payAmount}
             onChange={(e) => setPayAmount(e.target.value)}
+            min={0.01}
+            max={netDue}
+            hint={`Cannot exceed the outstanding balance of ${formatPKR(netDue)}.`}
           />
 
           <Select
@@ -607,6 +707,68 @@ export const SupplierLedgerView: React.FC = () => {
               Consecutive disbursement voucher stamped in general financial audit log.
             </p>
           </div>
+        </div>
+      </Modal>
+
+      {/* Add Approved Adjustment Modal (inventory.md §5) */}
+      <Modal
+        isOpen={isAdjModalOpen}
+        onClose={() => setIsAdjModalOpen(false)}
+        title="Add Approved Adjustment"
+        subtitle={`Posts a stock adjustment that also updates ${ledger?.supplier?.name ?? 'this supplier'}'s ledger.`}
+        footer={
+          <>
+            <button type="button" onClick={() => setIsAdjModalOpen(false)} className="px-3.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50">
+              Cancel
+            </button>
+            <button type="button" onClick={handleCreateAdjustment} disabled={savingAdj} className="px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-[#129b70] text-white hover:bg-[#0e7d5a] disabled:opacity-50">
+              {savingAdj ? 'Posting…' : 'Post Adjustment'}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <Select
+            label="Item"
+            required
+            value={adjStockItemId}
+            onChange={(e) => setAdjStockItemId(e.target.value)}
+            options={stockItems.map((it) => ({ value: it.id, label: `${it.code} — ${it.name} (Available: ${it.currentStock} ${it.unit})` }))}
+          />
+          <TextInput label="Batch No. (optional)" value={adjBatchNo} onChange={(e) => setAdjBatchNo(e.target.value)} />
+          <div className="grid grid-cols-2 gap-3">
+            <Select
+              label="Adjustment Type"
+              required
+              value={adjType}
+              onChange={(e) => handleAdjTypeChange(e.target.value as typeof adjType)}
+              options={[
+                { value: 'DAMAGE', label: 'Damage' },
+                { value: 'EXPIRY', label: 'Expiry' },
+                { value: 'LOSS', label: 'Loss' },
+                { value: 'SURPLUS', label: 'Surplus' },
+                { value: 'QUARANTINE', label: 'Quarantine' },
+                { value: 'COUNT_CORRECTION', label: 'Count Correction' },
+              ]}
+            />
+            <Select
+              label="Direction"
+              required
+              value={adjDirection}
+              onChange={(e) => setAdjDirection(e.target.value as any)}
+              disabled={!!ADJ_FIXED_DIRECTION[adjType]}
+              hint={ADJ_FIXED_DIRECTION[adjType] ? `${adjType} is always a stock ${ADJ_FIXED_DIRECTION[adjType] === 'INCREASE' ? 'increase' : 'decrease'}.` : undefined}
+              options={[
+                { value: 'DECREASE', label: 'Decrease Stock' },
+                { value: 'INCREASE', label: 'Increase Stock' },
+              ]}
+            />
+          </div>
+          <NumberInput label="Quantity" required value={adjQuantity} onChange={(e) => setAdjQuantity(e.target.value)} />
+          <TextInput label="Reason" required value={adjReason} onChange={(e) => setAdjReason(e.target.value)} />
+          <p className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-2.5">
+            Valued off {ledger?.supplier?.name ?? 'this supplier'}'s most recent purchase rate for the item. A stock decrease reduces what's owed to them; a stock increase adds to it.
+          </p>
         </div>
       </Modal>
 

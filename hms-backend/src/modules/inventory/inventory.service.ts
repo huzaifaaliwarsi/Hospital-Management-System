@@ -26,6 +26,22 @@ const FIXED_ADJUSTMENT_DIRECTION: Partial<Record<StockAdjustmentType, 'INCREASE'
   SURPLUS: 'INCREASE',
 };
 
+/**
+ * Single source of truth for a supplier's running payable, used by
+ * `listSuppliers`, `getSupplierLedger` and `paySupplier`'s overpayment guard
+ * (inventory.md §5's formula) — previously duplicated ad hoc in two places
+ * and missing the ADJUSTMENT entry type in one of them.
+ * PURCHASE_CREDIT/ADJUSTMENT amounts are pre-signed and add straight in;
+ * PAYMENT/RETURN/CREDIT_NOTE are stored as positive magnitudes and always
+ * reduce payable.
+ */
+function computeOutstanding(entries: { entryType: string; amount: Decimal | string | number }[]): Decimal {
+  return entries.reduce((acc, entry) => {
+    const amount = new Decimal(entry.amount);
+    return entry.entryType === 'PURCHASE_CREDIT' || entry.entryType === 'ADJUSTMENT' ? acc.plus(amount) : acc.minus(amount);
+  }, new Decimal(0));
+}
+
 export const inventoryService = {
   // ── Suppliers ──────────────────────────────────────────────────────────
   async createSupplier(body: CreateSupplierBody, actorId: string) {
@@ -60,14 +76,7 @@ export const inventoryService = {
     });
 
     return suppliers.map((s) => {
-      // Outstanding balance: Credit purchases (+) minus Payments/returns (-)
-      const outstanding = s.supplierLedger.reduce((acc, entry) => {
-        if (entry.entryType === 'PURCHASE_CREDIT') {
-          return acc.plus(entry.amount);
-        } else {
-          return acc.minus(entry.amount);
-        }
-      }, new Decimal(0));
+      const outstanding = computeOutstanding(s.supplierLedger);
 
       return {
         id: s.id,
@@ -94,11 +103,7 @@ export const inventoryService = {
     });
     if (!supplier) throw new NotFoundError('Supplier not found');
 
-    const totalOutstanding = supplier.supplierLedger.reduce((acc, entry) => {
-      return entry.entryType === 'PURCHASE_CREDIT'
-        ? acc.plus(entry.amount)
-        : acc.minus(entry.amount);
-    }, new Decimal(0));
+    const totalOutstanding = computeOutstanding(supplier.supplierLedger);
 
     // Fetch associated purchase orders so line items are displayed in the ledger
     const poIds = supplier.supplierLedger
@@ -157,10 +162,21 @@ export const inventoryService = {
    * (mirrors createPurchase's cash-purchase deduction). */
   async paySupplier(supplierId: string, body: PaySupplierBody, actorId: string) {
     return prisma.$transaction(async (tx) => {
-      const supplier = await tx.supplier.findUnique({ where: { id: supplierId } });
+      const supplier = await tx.supplier.findUnique({ where: { id: supplierId }, include: { supplierLedger: true } });
       if (!supplier || !supplier.isActive) throw new NotFoundError('Supplier not found or inactive');
 
       const amount = new Decimal(body.amount);
+
+      // Previously unguarded — a "Pay" click stayed clickable even after the
+      // bill was already settled, so repeated clicks kept posting fresh
+      // PAYMENT rows with nothing to stop them (§5's Paid/Due tracking gap).
+      const outstanding = computeOutstanding(supplier.supplierLedger);
+      if (outstanding.lessThanOrEqualTo(0)) {
+        throw new ValidationError(`${supplier.name}'s account is already fully settled — there is no outstanding balance to pay.`);
+      }
+      if (amount.greaterThan(outstanding)) {
+        throw new ValidationError(`Payment of PKR ${amount.toFixed(2)} exceeds the outstanding balance of PKR ${outstanding.toFixed(2)} for ${supplier.name}.`);
+      }
 
       let payRef = body.reference?.trim();
       if (!payRef) {
@@ -965,6 +981,39 @@ export const inventoryService = {
           actorId,
         },
       });
+
+      // inventory.md §5 "Add Approved Adjustment" — approved adjustment against
+      // stock bought from a specific vendor also posts to that vendor's ledger,
+      // valued off their most recent purchase rate for this item (previously
+      // missing entirely: adjustments never touched SupplierLedger — §7.3 gap).
+      if (body.supplierId) {
+        const supplier = await tx.supplier.findUnique({ where: { id: body.supplierId } });
+        if (!supplier || !supplier.isActive) throw new NotFoundError('Supplier not found or inactive');
+
+        const lastPurchaseLine = await tx.purchaseOrderLine.findFirst({
+          where: {
+            stockItemId: item.id,
+            ...(body.batchNo ? { batchNo: body.batchNo } : {}),
+            purchaseOrder: { supplierId: body.supplierId },
+          },
+          orderBy: { purchaseOrder: { createdAt: 'desc' } },
+        });
+        if (!lastPurchaseLine) {
+          throw new ValidationError(`No purchase history found for "${item.name}" from this supplier — cannot link adjustment to their ledger.`);
+        }
+
+        const signedAmount = qty.mul(lastPurchaseLine.rate).mul(body.direction === 'INCREASE' ? 1 : -1);
+        await tx.supplierLedger.create({
+          data: {
+            supplierId: body.supplierId,
+            entryType: 'ADJUSTMENT',
+            amount: signedAmount,
+            referenceTable: 'stock_adjustments',
+            referenceId: adjustment.id,
+            actorId,
+          },
+        });
+      }
 
       return adjustment;
     });

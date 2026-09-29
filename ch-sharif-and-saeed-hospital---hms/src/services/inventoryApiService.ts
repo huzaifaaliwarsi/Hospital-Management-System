@@ -173,6 +173,7 @@ export const inventoryApiService = {
     quantity: number;
     reason: string;
     requiresApproval?: boolean;
+    supplierId?: string;
   }) {
     const res = await apiClient.post<{ data: any }>('/inventory/adjustments', data);
     return res.data.data;

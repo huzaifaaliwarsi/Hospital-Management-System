@@ -120,10 +120,12 @@ export const SupplierDirectoryView: React.FC = () => {
       key: 'name',
       header: 'Supplier Name',
       render: (s) => (
-        <div>
-          <div className="font-semibold text-slate-900">{s.name}</div>
-          {s.address && <div className="text-[11px] text-slate-400 truncate max-w-xs">{s.address}</div>}
-        </div>
+        <span
+          className="font-semibold text-slate-900 whitespace-nowrap"
+          title={s.address ? `Address: ${s.address}` : undefined}
+        >
+          {s.name}
+        </span>
       ),
     },
     {

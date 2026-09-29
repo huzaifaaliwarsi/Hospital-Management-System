@@ -179,6 +179,10 @@ export const createAdjustmentSchema = z.object({
   quantity: z.coerce.number().positive('Quantity must be greater than zero'),
   reason: z.string().min(1, 'Reason is required'),
   requiresApproval: z.boolean().optional().default(false),
+  // inventory.md §5's Supplier Ledger "Add Approved Adjustment" — when set,
+  // this adjustment also posts a signed ADJUSTMENT entry to that supplier's
+  // ledger (valued off their most recent purchase rate for this item).
+  supplierId: z.string().uuid().optional(),
 });
 
 export type CreateAdjustmentBody = z.infer<typeof createAdjustmentSchema>;

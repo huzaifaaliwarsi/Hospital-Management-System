@@ -3,7 +3,7 @@ import { DataTable } from '../../../components/tables/DataTable';
 import { TableColumn } from '../../../types';
 import { Modal } from '../../../components/common/Modal';
 import { TextInput, NumberInput, Select } from '../../../components/forms/FormControls';
-import { inventoryApiService, BackendStockItem } from '../../../services/inventoryApiService';
+import { inventoryApiService, BackendStockItem, BackendSupplier } from '../../../services/inventoryApiService';
 import { useToast } from '../../../context/ToastContext';
 import { toErrorMessage } from '../../../utils/apiErrors';
 import { formatDateTimeDDMMYYYY, formatShortRef } from '../../../utils/formatters';
@@ -26,6 +26,7 @@ export const AdjustmentTab: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [items, setItems] = useState<BackendStockItem[]>([]);
+  const [suppliers, setSuppliers] = useState<BackendSupplier[]>([]);
 
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [stockItemId, setStockItemId] = useState('');
@@ -34,6 +35,8 @@ export const AdjustmentTab: React.FC = () => {
   const [direction, setDirection] = useState<'INCREASE' | 'DECREASE'>('DECREASE');
   const [quantity, setQuantity] = useState('');
   const [reason, setReason] = useState('');
+  const [linkToSupplier, setLinkToSupplier] = useState(false);
+  const [supplierId, setSupplierId] = useState('');
   const [saving, setSaving] = useState(false);
 
   const load = () => {
@@ -49,6 +52,7 @@ export const AdjustmentTab: React.FC = () => {
   useEffect(load, []);
   useEffect(() => {
     inventoryApiService.getStockItems().then(setItems).catch(() => {});
+    inventoryApiService.getSuppliers().then(setSuppliers).catch(() => {});
   }, []);
 
   const columns: TableColumn<any>[] = [
@@ -117,6 +121,8 @@ export const AdjustmentTab: React.FC = () => {
     setDirection('DECREASE');
     setQuantity('');
     setReason('');
+    setLinkToSupplier(false);
+    setSupplierId('');
     setIsFormOpen(true);
   };
 
@@ -130,6 +136,7 @@ export const AdjustmentTab: React.FC = () => {
     if (!stockItemId) return toast.error('Select an item.', 'Missing Field');
     if (!(Number(quantity) > 0)) return toast.error('Enter a quantity greater than zero.', 'Missing Field');
     if (!reason.trim()) return toast.error('A reason is required.', 'Missing Reason');
+    if (linkToSupplier && !supplierId) return toast.error('Select a supplier to link this adjustment to their ledger.', 'Missing Field');
 
     setSaving(true);
     try {
@@ -140,6 +147,7 @@ export const AdjustmentTab: React.FC = () => {
         direction,
         quantity: Number(quantity),
         reason: reason.trim(),
+        supplierId: linkToSupplier ? supplierId : undefined,
       });
       toast.success('Adjustment posted.', 'Adjustment Posted');
       setIsFormOpen(false);
@@ -226,6 +234,25 @@ export const AdjustmentTab: React.FC = () => {
           </div>
           <NumberInput label="Quantity" required value={quantity} onChange={(e) => setQuantity(e.target.value)} />
           <TextInput label="Reason" required value={reason} onChange={(e) => setReason(e.target.value)} />
+
+          <div className="pt-1 border-t border-slate-100">
+            <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 mt-2">
+              <input type="checkbox" checked={linkToSupplier} onChange={(e) => setLinkToSupplier(e.target.checked)} />
+              This item was bought from a vendor — also post this adjustment to their Supplier Ledger
+            </label>
+            {linkToSupplier && (
+              <div className="mt-2">
+                <Select
+                  label="Supplier"
+                  required
+                  value={supplierId}
+                  onChange={(e) => setSupplierId(e.target.value)}
+                  options={suppliers.map((s) => ({ value: s.id, label: s.name }))}
+                  hint="Valued off this supplier's most recent purchase rate for the item; increases/decreases what's owed to them."
+                />
+              </div>
+            )}
+          </div>
         </div>
       </Modal>
     </div>
