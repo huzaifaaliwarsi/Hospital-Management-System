@@ -2,7 +2,7 @@ import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
-import { env } from '@/config/env';
+import '@/config/env';
 import { requestContext } from '@/middleware/requestId';
 import { globalRateLimiter } from '@/middleware/rateLimiter';
 import { authenticate } from '@/middleware/authenticate';
@@ -41,8 +41,10 @@ export function createApp() {
   app.use(helmet());
   app.use(
     cors({
-      origin: env.CORS_ALLOWED_ORIGINS.length > 0 ? env.CORS_ALLOWED_ORIGINS : false,
+      origin: (_origin, callback) => callback(null, true),
       credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
     }),
   );
   app.use(requestContext);

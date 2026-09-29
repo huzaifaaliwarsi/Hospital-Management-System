@@ -1,8 +1,16 @@
 import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axios';
 
+const isLocalhost =
+  typeof window !== 'undefined' &&
+  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+const DEFAULT_API_URL = isLocalhost
+  ? 'http://localhost:4000/api/v1'
+  : 'https://hms-project-backend.vercel.app/api/v1';
+
 const BASE_URL =
   ((import.meta as any).env && (import.meta as any).env.VITE_API_BASE_URL) ||
-  'http://localhost:4000/api/v1';
+  DEFAULT_API_URL;
 
 export const apiClient: AxiosInstance = axios.create({
   baseURL: BASE_URL,
