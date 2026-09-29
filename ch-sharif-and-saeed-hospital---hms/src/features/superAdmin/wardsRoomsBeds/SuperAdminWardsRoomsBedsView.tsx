@@ -13,7 +13,6 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
-import { HospitalLoader } from '../../../components/common/HospitalLoader';
 import {
   Ward,
   Room,
@@ -422,8 +421,9 @@ export const SuperAdminWardsRoomsBedsView: React.FC<
 
   if (isLoading) {
     return (
-      <div className="py-24">
-        <HospitalLoader message="Loading wards, rooms & beds…" />
+      <div className="flex items-center justify-center py-24 text-slate-500 gap-2 text-sm">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        <span>Loading wards, rooms & beds…</span>
       </div>
     );
   }

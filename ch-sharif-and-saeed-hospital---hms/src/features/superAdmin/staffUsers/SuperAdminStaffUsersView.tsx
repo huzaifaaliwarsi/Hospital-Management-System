@@ -23,7 +23,6 @@ import { ServiceRatesService, fetchServices } from '../../../services/serviceRat
 import { fetchShifts } from '../../../services/shiftService';
 import { Department } from '../../../types/department';
 import { HospitalService } from '../../../types/serviceRates';
-import { HospitalLoader } from '../../../components/common/HospitalLoader';
 import { Shift } from '../../../types/shift';
 import { useAuth } from '../../../context/AuthContext';
 import { StaffUsersKPIBar } from './StaffUsersKPIBar';
@@ -149,8 +148,9 @@ export const SuperAdminStaffUsersView: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="py-24">
-        <HospitalLoader message="Loading staff users…" />
+      <div className="flex items-center justify-center py-24 text-slate-500 gap-2 text-sm">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        <span>Loading staff users…</span>
       </div>
     );
   }

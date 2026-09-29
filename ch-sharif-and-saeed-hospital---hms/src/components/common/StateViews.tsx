@@ -1,7 +1,6 @@
 import React from 'react';
 import { AlertCircle, FolderSearch, RefreshCw } from 'lucide-react';
 import { cn } from '../../utils/formatters';
-import { HospitalLoader } from './HospitalLoader';
 
 interface EmptyStateProps {
   title?: string;
@@ -89,13 +88,17 @@ export const LoadingState: React.FC<LoadingStateProps> = ({
   }
 
   return (
-    <HospitalLoader
-      message={message}
-      className={className}
-    />
+    <div
+      className={cn(
+        'flex flex-col items-center justify-center p-8 text-center text-slate-500',
+        className
+      )}
+    >
+      <div className="animate-spin rounded-full h-8 w-8 border-2 border-[#149E75] border-t-transparent mb-3" />
+      <p className="text-xs font-medium text-slate-600">{message}</p>
+    </div>
   );
 };
-
 
 interface ErrorStateProps {
   title?: string;

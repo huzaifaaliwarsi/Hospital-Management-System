@@ -18,7 +18,6 @@ import {
 import { ServiceRatesService, fetchServices } from '../../../services/serviceRatesService';
 import { Department } from '../../../types/department';
 import { DepartmentService, fetchDepartments } from '../../../services/departmentService';
-import { HospitalLoader } from '../../../components/common/HospitalLoader';
 import { ServicesKPIBar } from './ServicesKPIBar';
 import { ServicesFilterBar } from './ServicesFilterBar';
 import { ServicesTable } from './ServicesTable';
@@ -187,8 +186,9 @@ export const SuperAdminServicesRatesView: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="py-24">
-        <HospitalLoader message="Loading services & rates…" />
+      <div className="flex items-center justify-center py-24 text-slate-500 gap-2 text-sm">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        <span>Loading services & rates…</span>
       </div>
     );
   }

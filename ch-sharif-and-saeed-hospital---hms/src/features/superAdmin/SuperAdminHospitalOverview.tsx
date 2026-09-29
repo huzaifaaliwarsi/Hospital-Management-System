@@ -11,7 +11,6 @@ import {
 import { HospitalProfile, DEFAULT_HOSPITAL_PROFILE, HospitalSystemAggregateCounts } from '../../types/hospital';
 import { fetchHospitalProfile, saveHospitalProfile } from '../../services/hospitalProfileService';
 import { getHospitalSystemSummaryAggregates } from '../../mocks/hospitalSummaryMock';
-import { HospitalLoader } from '../../components/common/HospitalLoader';
 import { useToast } from '../../context/ToastContext';
 import { HospitalProfileSummaryCard } from './hospitalOverview/HospitalProfileSummaryCard';
 import { HospitalIdentitySection } from './hospitalOverview/HospitalIdentitySection';
@@ -73,8 +72,9 @@ export const SuperAdminHospitalOverview: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="py-24">
-        <HospitalLoader message="Loading hospital profile…" />
+      <div className="flex items-center justify-center py-24 text-[#52665e] gap-2 text-sm">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        <span>Loading hospital profile…</span>
       </div>
     );
   }

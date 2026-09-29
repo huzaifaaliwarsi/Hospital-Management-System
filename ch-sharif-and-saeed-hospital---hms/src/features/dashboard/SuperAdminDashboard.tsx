@@ -49,7 +49,6 @@ import {
 } from './superAdminDashboardData';
 import { dashboardService, ResolvedDashboardState } from '../../services/dashboardService';
 import { formatPKR, formatNumber } from '../../utils/formatters';
-import { HospitalLoader } from '../../components/common/HospitalLoader';
 import {
   formatDateISO,
   getStartOfMonth,
@@ -295,39 +294,6 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     }
   };
 
-  // 1. Initial full-screen loading state when data is first loading
-  if (isLoading && !dashboardData) {
-    return (
-      <div className="min-h-[70vh] flex flex-col items-center justify-center p-8 bg-white rounded-xl border border-slate-200 shadow-2xs">
-        <HospitalLoader
-          size="lg"
-          message="Loading Super Admin Hospital Dashboard..."
-          submessage="Connecting to Neon database and aggregating clinical encounters, occupancy, and financial custody"
-        />
-      </div>
-    );
-  }
-
-  // 2. Initial error state if live connection failed on startup
-  if (loadError && !dashboardData) {
-    return (
-      <div className="min-h-[60vh] flex flex-col items-center justify-center p-8 bg-white rounded-xl border border-rose-200 text-center shadow-2xs">
-        <div className="p-3 rounded-full bg-rose-50 text-rose-600 mb-3 border border-rose-100">
-          <AlertCircle className="h-7 w-7" />
-        </div>
-        <h3 className="text-base font-bold text-slate-900">Dashboard Synchronization Failed</h3>
-        <p className="text-xs text-rose-700 mt-1 max-w-md">{loadError}</p>
-        <button
-          type="button"
-          onClick={() => loadDashboardData(selectedPreset, fromDate, toDate)}
-          className="mt-4 px-4 py-2 text-xs font-semibold rounded-lg bg-[#129b70] text-white hover:bg-[#0e7d5a] transition-colors shadow-xs"
-        >
-          Retry Connection
-        </button>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6 pb-12 font-sans text-slate-800">
       {/* =========================================================================
@@ -439,27 +405,11 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
               className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-xs font-medium flex items-center gap-1.5 transition-colors"
               title="Reset filter to Today"
             >
-              <RefreshCw className={`h-3 w-3 ${isLoading || isApplying ? 'animate-spin text-[#129b70]' : ''}`} />
+              <RefreshCw className={`h-3 w-3 ${isLoading || isApplying ? 'animate-spin' : ''}`} />
               Reset
             </button>
           </div>
         </div>
-
-        {/* Loading indicator bar when filtering or refreshing */}
-        {(isLoading || isApplying) && dashboardData && (
-          <div className="mt-3.5 p-2.5 bg-emerald-50/90 border border-emerald-200 rounded-lg flex items-center justify-between gap-3 text-xs text-emerald-900 shadow-2xs">
-            <div className="flex items-center gap-2.5">
-              <div className="h-4 w-4 rounded-full border-2 border-emerald-200 border-t-[#129b70] border-r-[#08775A] animate-spin shrink-0" />
-              <span className="font-semibold">
-                Syncing dashboard metrics for {displayPeriodLabel}…
-              </span>
-            </div>
-            <span className="text-[11px] font-medium text-emerald-700 flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-emerald-600 animate-pulse" />
-              Live Neon Sync
-            </span>
-          </div>
-        )}
 
         {dateValidationError && (
           <div className="mt-3 p-2 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-700 flex items-center gap-2">
