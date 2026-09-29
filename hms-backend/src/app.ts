@@ -51,7 +51,7 @@ export function createApp() {
   app.use(globalRateLimiter);
 
   // Root and favicon routes for deployment sanity checks
-  app.get('/', (_req, res) => {
+  app.get(['/', '/api'], (_req, res) => {
     res.json({
       status: 'ok',
       message: 'CH Sharif and Saeed Hospital HMS API is running',
