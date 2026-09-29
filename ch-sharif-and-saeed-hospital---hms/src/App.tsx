@@ -5,6 +5,7 @@ import { RouterProvider, useRouter } from './context/RouterContext';
 import { PortalLayout } from './components/layout/PortalLayout';
 import { CentralHospitalLoginScreen } from './features/auth/CentralHospitalLoginScreen';
 import { AccessDeniedGuard } from './components/common/AccessDeniedGuard';
+import { HospitalLoader } from './components/common/HospitalLoader';
 import { SuperAdminDashboard } from './features/dashboard/SuperAdminDashboard';
 import { AdminDashboard } from './features/dashboard/AdminDashboard';
 import { FrontDeskDashboard } from './features/dashboard/FrontDeskDashboard';
@@ -99,10 +100,11 @@ const MainPortalRouter: React.FC = () => {
   if (currentPath === '/login' || currentPath.startsWith('/login')) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="flex items-center gap-3 text-slate-300 text-sm">
-          <div className="h-5 w-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-          <span>Opening authorized workstation...</span>
-        </div>
+        <HospitalLoader
+          size="md"
+          message="Opening authorized workstation..."
+          className="text-slate-300"
+        />
       </div>
     );
   }

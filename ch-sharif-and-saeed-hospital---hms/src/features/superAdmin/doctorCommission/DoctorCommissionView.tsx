@@ -22,6 +22,7 @@ import { FinancialAdjustmentModal } from '../payroll/FinancialAdjustmentModal';
 import { PreferredPaymentAccount } from '../payroll/PreferredPaymentAccount';
 import { getHospitalCurrentDate, formatDateISO } from '../../../utils/dateConstants';
 import { Modal } from '../../../components/common/Modal';
+import { HospitalLoader } from '../../../components/common/HospitalLoader';
 import { TextInput, NumberInput, Select } from '../../../components/forms/FormControls';
 import { useToast } from '../../../context/ToastContext';
 
@@ -192,9 +193,8 @@ export const DoctorCommissionView: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-24 text-slate-500 gap-2 text-sm">
-        <Loader2 className="h-5 w-5 animate-spin" />
-        <span>Loading doctor commission rules…</span>
+      <div className="py-24">
+        <HospitalLoader message="Loading doctor commission rules…" />
       </div>
     );
   }

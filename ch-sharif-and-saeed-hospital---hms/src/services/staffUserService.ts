@@ -46,14 +46,24 @@ const apiError = (err: any, fallback: string): string => {
 const hasSalary = (v: StaffUserFormValues) => v.salaryEnabled && v.baseSalary !== '' && Number(v.baseSalary) > 0;
 
 function toSchedulePayload(v: StaffUserFormValues) {
-  return v.weeklySchedule.map((d) => ({
-    dayOfWeek: d.dayOfWeek,
-    isWorking: d.isWorking,
-    useShiftDefault: d.useShiftDefault,
-    startTime: d.isWorking && !d.useShiftDefault ? d.startTime : null,
-    endTime: d.isWorking && !d.useShiftDefault ? d.endTime : null,
-    breakMinutes: num(d.breakMinutes),
-  }));
+  // A day only truly follows the shift default when a shift is actually
+  // assigned — this must mirror the wizard's own "custom" condition
+  // (`!d.useShiftDefault || !selectedShift` in StaffUserModal), otherwise a
+  // staff member with no assigned shift has every typed custom start/end
+  // time silently nulled out here (useShiftDefault stays true because the
+  // toggle that would flip it is disabled with no shift selected).
+  const hasShift = !!v.assignedShiftId;
+  return v.weeklySchedule.map((d) => {
+    const usesShiftDefault = hasShift && d.useShiftDefault;
+    return {
+      dayOfWeek: d.dayOfWeek,
+      isWorking: d.isWorking,
+      useShiftDefault: usesShiftDefault,
+      startTime: d.isWorking && !usesShiftDefault ? d.startTime : null,
+      endTime: d.isWorking && !usesShiftDefault ? d.endTime : null,
+      breakMinutes: num(d.breakMinutes),
+    };
+  });
 }
 
 function toSalaryPayload(v: StaffUserFormValues) {
