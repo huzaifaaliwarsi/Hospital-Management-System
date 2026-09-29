@@ -31,6 +31,10 @@ import {
   isDailyBasis,
   defaultWizardExtras,
   defaultWeeklySchedule,
+  DeductionRuleForm,
+  DeductionMode,
+  DEDUCTION_MODE_OPTIONS,
+  emptyDeductionRule,
 } from '../../../types/staffUser';
 import { Department } from '../../../types/department';
 import { HospitalService } from '../../../types/serviceRates';
@@ -93,7 +97,7 @@ const emptyForm = (): StaffUserFormValues => ({
 // JSON snapshots of each wizard section — used on Edit to re-save only what changed.
 const sectionSnapshot = (f: StaffUserFormValues) => ({
   schedule: JSON.stringify([f.weeklySchedule]),
-  salary: JSON.stringify([f.salaryBasis, f.baseSalary, f.salaryTaxMethod, f.salaryTaxValue, f.salaryAllowance, f.salaryDeduction, f.salaryEffectiveFrom]),
+  salary: JSON.stringify([f.salaryBasis, f.baseSalary, f.salaryTaxMethod, f.salaryTaxValue, f.salaryAllowance, f.salaryDeduction, f.salaryEffectiveFrom, f.lateInDeduction, f.earlyOutDeduction]),
   commission: JSON.stringify([f.commissionRules, f.commissionTaxMethod, f.commissionTaxValue, f.commissionEffectiveFrom]),
   bank: JSON.stringify([f.bank]),
 });
@@ -217,6 +221,14 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
           next.salaryAllowance = Number(salary.fixedAllowance) || '';
           next.salaryDeduction = Number(salary.fixedDeduction) || '';
           next.salaryEffectiveFrom = today();
+
+          const rules = (salary.deductionRules ?? {}) as { late?: { mode?: string; amount?: number }; early_exit?: { mode?: string; amount?: number } };
+          const readRule = (r?: { mode?: string; amount?: number }): DeductionRuleForm =>
+            r && (r.mode === 'PER_MINUTE' || r.mode === 'FIXED_PER_OCCURRENCE')
+              ? { mode: r.mode, amount: r.amount != null ? Number(r.amount) : '' }
+              : emptyDeductionRule();
+          next.lateInDeduction = readRule(rules.late);
+          next.earlyOutDeduction = readRule(rules.early_exit);
         }
 
         const schedule = (profile?.weeklySchedule ?? []) as any[];
@@ -725,6 +737,50 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
           <p className="text-[11px] text-rose-600 mt-1.5">{errors.schedule || 'Enter start and end time for every custom working day.'}</p>
         )}
       </div>
+      <div>
+        <SectionTitle
+          title="Late Arrival / Early Departure Deductions"
+          note="Cut automatically in payroll from actual attendance"
+        />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {(
+            [
+              { key: 'lateInDeduction' as const, label: 'Late-In Cutting' },
+              { key: 'earlyOutDeduction' as const, label: 'Early-Out Cutting' },
+            ]
+          ).map(({ key, label }) => {
+            const rule = formData[key];
+            const setRule = (patch: Partial<DeductionRuleForm>) => set({ [key]: { ...rule, ...patch } } as Partial<StaffUserFormValues>);
+            return (
+              <div key={key} className="border border-slate-200 rounded-lg p-3 space-y-3">
+                <p className="text-xs font-bold text-slate-800">{label}</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Mode">
+                    <select
+                      className={inputCls()}
+                      value={rule.mode}
+                      onChange={(e) => {
+                        const mode = e.target.value as DeductionMode;
+                        setRule({ mode, amount: mode === 'NONE' ? '' : rule.amount });
+                      }}
+                    >
+                      {DEDUCTION_MODE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label={rule.mode === 'FIXED_PER_OCCURRENCE' ? 'Amount (PKR / day)' : 'Amount (PKR / min)'}>
+                    <NumberInput value={rule.amount} disabled={rule.mode === 'NONE'} placeholder="0" onChange={(v) => setRule({ amount: v })} />
+                  </Field>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <p className="text-[11px] text-slate-500 mt-2">
+          Grace/tolerance minutes come from the assigned Shift's Attendance Timing Defaults — configure those in Shift Management.
+        </p>
+      </div>
     </div>
   );
 
@@ -1002,6 +1058,9 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
     </div>
   );
 
+  const deductionLabel = (r: DeductionRuleForm) =>
+    r.mode === 'NONE' || r.amount === '' ? 'No cutting' : `${formatPKR(Number(r.amount))} ${r.mode === 'PER_MINUTE' ? 'per late/early minute' : 'per day'}`;
+
   const renderReview = () => {
     const working = formData.weeklySchedule.filter((d) => d.isWorking);
     const off = formData.weeklySchedule.filter((d) => !d.isWorking).map((d) => d.dayOfWeek.slice(0, 3));
@@ -1034,6 +1093,8 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
                 .map((d) => `${d.dayOfWeek.slice(0, 3)} ${d.startTime}–${d.endTime}`)
                 .join(', ') || 'None',
             ],
+            ['Late-In Cutting', deductionLabel(formData.lateInDeduction)],
+            ['Early-Out Cutting', deductionLabel(formData.earlyOutDeduction)],
           ]}
         />
         <ReviewTable

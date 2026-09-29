@@ -726,52 +726,55 @@ export const SuperAdminDepartmentsView: React.FC = () => {
       </div>
 
       {/* 4. Master Departments Table */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
+      <div className="bg-white rounded-lg border border-slate-300 shadow-xs overflow-hidden flex flex-col">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
-            <thead className="bg-[#effaf5] text-[11px] font-bold text-[#08775A] border-b border-[#c2e7db]">
+            <thead className="bg-[#f1f5f9] border-b border-slate-300 text-[11px] font-bold text-slate-800 uppercase tracking-wider select-none sticky top-0 z-10">
               <tr>
-                {visibleColumns.code && <th className="py-3 px-4">Code</th>}
-                {visibleColumns.name && <th className="py-3 px-4">Department Name</th>}
-                {visibleColumns.type && <th className="py-3 px-3">Type</th>}
-                {visibleColumns.floor && <th className="py-3 px-3">Location / Floor</th>}
-                {visibleColumns.fixedPrice && <th className="py-3 px-3">Fixed Price (PKR)</th>}
-                {visibleColumns.head && <th className="py-3 px-4">Head / In-charge</th>}
-                {visibleColumns.access && <th className="py-3 px-3">Operational Access</th>}
-                {visibleColumns.doctors && <th className="py-3 px-3 text-center">Doctors</th>}
-                {visibleColumns.staff && <th className="py-3 px-3 text-center">Staff</th>}
-                {visibleColumns.status && <th className="py-3 px-3 text-center">Status</th>}
-                {visibleColumns.updatedBy && <th className="py-3 px-3">Updated By</th>}
-                {visibleColumns.updatedDate && <th className="py-3 px-3">Updated Date</th>}
-                {visibleColumns.actions && <th className="py-3 px-4 text-right">Actions</th>}
+                <th className="py-2.5 px-3 text-center border-r border-slate-300 w-12">#</th>
+                {visibleColumns.code && <th className="py-2.5 px-3.5 border-r border-slate-300">Code</th>}
+                {visibleColumns.name && <th className="py-2.5 px-3.5 border-r border-slate-300">Department Name</th>}
+                {visibleColumns.type && <th className="py-2.5 px-3 border-r border-slate-300">Type</th>}
+                {visibleColumns.floor && <th className="py-2.5 px-3 border-r border-slate-300">Location / Floor</th>}
+                {visibleColumns.fixedPrice && <th className="py-2.5 px-3 border-r border-slate-300">Fixed Price (PKR)</th>}
+                {visibleColumns.head && <th className="py-2.5 px-3.5 border-r border-slate-300">Head / In-charge</th>}
+                {visibleColumns.access && <th className="py-2.5 px-3 border-r border-slate-300">Operational Access</th>}
+                {visibleColumns.doctors && <th className="py-2.5 px-3 text-center border-r border-slate-300">Doctors</th>}
+                {visibleColumns.staff && <th className="py-2.5 px-3 text-center border-r border-slate-300">Staff</th>}
+                {visibleColumns.status && <th className="py-2.5 px-3 text-center border-r border-slate-300">Status</th>}
+                {visibleColumns.updatedBy && <th className="py-2.5 px-3 border-r border-slate-300">Updated By</th>}
+                {visibleColumns.updatedDate && <th className="py-2.5 px-3 border-r border-slate-300">Updated Date</th>}
+                {visibleColumns.actions && <th className="py-2.5 px-3.5 text-right">Actions</th>}
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 text-[11px]">
-              {paginatedDepartments.map((dept) => (
+            <tbody className="divide-y divide-slate-200 text-xs">
+              {paginatedDepartments.map((dept, idx) => (
                 <tr
                   key={dept.id}
-                  className="hover:bg-slate-50/70 transition-colors group"
+                  className="hover:bg-slate-50/90 transition-colors group border-b border-slate-200"
                 >
+                  {/* Sequence # */}
+                  <td className="py-2.5 px-3 text-center border-r border-slate-200 text-slate-500 font-mono text-[11px] bg-slate-50/60 whitespace-nowrap">
+                    {(currentPage - 1) * pageSize + idx + 1}
+                  </td>
+
                   {/* Code */}
                   {visibleColumns.code && (
-                    <td className="py-3 px-4 font-mono font-bold text-[#08775A]">
+                    <td className="py-2.5 px-3.5 font-mono font-bold text-[#08775A] border-r border-slate-200 whitespace-nowrap">
                       {dept.code}
                     </td>
                   )}
 
                   {/* Name */}
                   {visibleColumns.name && (
-                    <td className="py-3 px-4">
-                      <div className="font-semibold text-slate-900">{dept.name}</div>
-                      <div className="text-[10px] text-slate-500 line-clamp-1 max-w-xs">
-                        {dept.location}
-                      </div>
+                    <td className="py-2.5 px-3.5 border-r border-slate-200 whitespace-nowrap">
+                      <span className="font-semibold text-slate-900">{dept.name}</span>
                     </td>
                   )}
 
-                  {/* Type badge (Mint/Neutral badge - strictly NO rainbow styling) */}
+                  {/* Type badge */}
                   {visibleColumns.type && (
-                    <td className="py-3 px-3">
+                    <td className="py-2.5 px-3 border-r border-slate-200 whitespace-nowrap">
                       <span className="inline-block px-2 py-0.5 rounded text-[10px] font-semibold bg-[#effaf5] text-[#08775A] border border-[#c2e7db]">
                         {dept.type}
                       </span>
@@ -780,10 +783,10 @@ export const SuperAdminDepartmentsView: React.FC = () => {
 
                   {/* Floor / Location */}
                   {visibleColumns.floor && (
-                    <td className="py-3 px-3 text-slate-700">
-                      {dept.floor ? (
+                    <td className="py-2.5 px-3 text-slate-700 border-r border-slate-200 whitespace-nowrap">
+                      {dept.floor || dept.location ? (
                         <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
-                          {dept.floor}
+                          {dept.floor ? `${dept.floor}${dept.location ? ` - ${dept.location}` : ''}` : dept.location}
                         </span>
                       ) : (
                         <span className="text-slate-400 text-[10px] italic">Not Set</span>
@@ -793,7 +796,7 @@ export const SuperAdminDepartmentsView: React.FC = () => {
 
                   {/* Fixed Price (PKR) */}
                   {visibleColumns.fixedPrice && (
-                    <td className="py-3 px-3 font-semibold text-slate-800">
+                    <td className="py-2.5 px-3 font-semibold text-slate-800 border-r border-slate-200 whitespace-nowrap">
                       {dept.fixedPrice !== undefined && dept.fixedPrice !== null ? (
                         <span className="text-emerald-700 font-mono font-bold">
                           PKR {Number(dept.fixedPrice).toLocaleString()}
@@ -808,7 +811,7 @@ export const SuperAdminDepartmentsView: React.FC = () => {
 
                   {/* Head / In-charge */}
                   {visibleColumns.head && (
-                    <td className="py-3 px-4">
+                    <td className="py-2.5 px-3.5 border-r border-slate-200 whitespace-nowrap">
                       {dept.headName === 'Not Assigned' ? (
                         <span className="text-slate-400 italic">Not Assigned</span>
                       ) : (
@@ -819,8 +822,8 @@ export const SuperAdminDepartmentsView: React.FC = () => {
 
                   {/* Operational Access compact tags */}
                   {visibleColumns.access && (
-                    <td className="py-3 px-3">
-                      <div className="flex items-center gap-1 flex-wrap max-w-xs">
+                    <td className="py-2.5 px-3 border-r border-slate-200 whitespace-nowrap">
+                      <div className="flex items-center gap-1 flex-nowrap">
                         {dept.opdEnabled && (
                           <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-[#effaf5] text-[#08775A] border border-[#c2e7db]">
                             OPD
@@ -859,21 +862,21 @@ export const SuperAdminDepartmentsView: React.FC = () => {
 
                   {/* Doctors */}
                   {visibleColumns.doctors && (
-                    <td className="py-3 px-3 text-center font-bold text-slate-800">
+                    <td className="py-2.5 px-3 text-center font-bold text-slate-800 border-r border-slate-200 whitespace-nowrap">
                       {dept.doctorCount} <span className="font-normal text-slate-400 text-[10px]">Doctors</span>
                     </td>
                   )}
 
                   {/* Staff */}
                   {visibleColumns.staff && (
-                    <td className="py-3 px-3 text-center font-bold text-slate-800">
+                    <td className="py-2.5 px-3 text-center font-bold text-slate-800 border-r border-slate-200 whitespace-nowrap">
                       {dept.staffCount} <span className="font-normal text-slate-400 text-[10px]">Staff</span>
                     </td>
                   )}
 
                   {/* Status */}
                   {visibleColumns.status && (
-                    <td className="py-3 px-3 text-center">
+                    <td className="py-2.5 px-3 text-center border-r border-slate-200 whitespace-nowrap">
                       <span
                         className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
                           dept.status === 'Active'
@@ -886,16 +889,16 @@ export const SuperAdminDepartmentsView: React.FC = () => {
                     </td>
                   )}
 
-                  {/* Updated By (Actual logged-in user name/role) */}
+                  {/* Updated By */}
                   {visibleColumns.updatedBy && (
-                    <td className="py-3 px-3 text-slate-700 font-medium max-w-[150px] truncate" title={dept.updatedBy}>
+                    <td className="py-2.5 px-3 text-slate-700 font-medium whitespace-nowrap border-r border-slate-200" title={dept.updatedBy}>
                       {dept.updatedBy}
                     </td>
                   )}
 
                   {/* Updated Date */}
                   {visibleColumns.updatedDate && (
-                    <td className="py-3 px-3 text-slate-500 whitespace-nowrap">
+                    <td className="py-2.5 px-3 text-slate-500 whitespace-nowrap border-r border-slate-200">
                       {dept.updatedAt.split(',')[0]}
                     </td>
                   )}
@@ -976,7 +979,7 @@ export const SuperAdminDepartmentsView: React.FC = () => {
 
               {paginatedDepartments.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="py-12 text-center text-slate-500">
+                  <td colSpan={14} className="py-12 text-center text-slate-500">
                     <Building2 className="h-8 w-8 text-slate-300 mx-auto mb-2" />
                     <span className="font-semibold text-xs text-slate-700 block">
                       No departments match your current search and filter criteria.

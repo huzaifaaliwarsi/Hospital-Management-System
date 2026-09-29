@@ -142,19 +142,87 @@ describe('payroll salary — MONTHLY across 24 / 28 / 30 / 31 scheduled days', (
   }
 });
 
-describe('payroll salary — other bases are unchanged', () => {
-  it('MONTHLY_COMMISSION still divides by the month’s scheduled days', () => {
-    const r = run(profile({ salaryBasis: 'MONTHLY_COMMISSION', baseAmount: d(26000) }), '2026-09-01', '2026-09-30',
-      records('2026-09-01', '2026-09-30', sundayOff, 2));
-    expect(r.earnedBase.toNumber()).toBe(24000); // 26000/26 × 24
-    expect(r.attendanceDeductions.toNumber()).toBe(2000);
+describe('payroll salary — MONTHLY_COMMISSION uses the exact same fixed 30-day basis as MONTHLY', () => {
+  it('never divides by the scheduled/calendar day count — Base/30 per day, same as plain MONTHLY', () => {
+    // Reported bug case: PKR 30,000 base, 26 scheduled, 1 present, 25 absent.
+    // Daily rate = 30,000/30 = 1,000. Deduction = 25 × 1,000 = 25,000. Earned = 5,000.
+    const r = run(
+      profile({ salaryBasis: 'MONTHLY_COMMISSION', baseAmount: d(30000) }),
+      '2026-09-01', '2026-09-30',
+      records('2026-09-01', '2026-09-30', sundayOff, 25),
+    );
+    expect(r.scheduledPayableDays).toBe(26);
+    expect(r.attendanceEquivalentDays).toBe(1);
+    expect(r.periodBaseAmount.toNumber()).toBe(30000);
+    expect(r.attendanceDeductions.toNumber()).toBe(25000);
+    expect(r.earnedBase.toNumber()).toBe(5000);
   });
 
+  it('produces identical earnedBase/attendanceDeductions to plain MONTHLY for the same inputs', () => {
+    const recs = records('2026-09-01', '2026-09-30', sundayOff, 2);
+    const monthly = run(profile({ salaryBasis: 'MONTHLY', baseAmount: d(30000) }), '2026-09-01', '2026-09-30', recs);
+    const monthlyCommission = run(profile({ salaryBasis: 'MONTHLY_COMMISSION', baseAmount: d(30000) }), '2026-09-01', '2026-09-30', recs);
+    expect(monthlyCommission.earnedBase.toNumber()).toBe(monthly.earnedBase.toNumber());
+    expect(monthlyCommission.attendanceDeductions.toNumber()).toBe(monthly.attendanceDeductions.toNumber());
+    expect(monthlyCommission.periodBaseAmount.toNumber()).toBe(monthly.periodBaseAmount.toNumber());
+  });
+
+  it('full attendance still pays the full monthly base, whatever the scheduled day count', () => {
+    const r = run(profile({ salaryBasis: 'MONTHLY_COMMISSION', baseAmount: d(30000) }), '2026-09-01', '2026-09-30');
+    expect(r.attendanceDeductions.toNumber()).toBe(0);
+    expect(r.earnedBase.toNumber()).toBe(30000);
+    expect(r.netAmount.toNumber()).toBe(30000);
+  });
+});
+
+describe('payroll salary — other bases are unchanged', () => {
   it('PER_DAY pays the daily rate × attendance equivalent', () => {
     const r = run(profile({ salaryBasis: 'PER_DAY', baseAmount: d(1000), fixedAllowance: d(500) }), '2026-09-01', '2026-09-30',
       records('2026-09-01', '2026-09-30', sundayOff, 2));
     expect(r.periodBaseAmount.toNumber()).toBe(26000);
     expect(r.earnedBase.toNumber()).toBe(24000);
     expect(r.allowances.toNumber()).toBe(500);
+  });
+});
+
+describe('payroll salary — Late-In / Early-Out cutting (deductionRules, staff.md §11)', () => {
+  it('cuts nothing when no deductionRules are configured on the profile', () => {
+    const r = run(profile(), '2026-09-01', '2026-09-30');
+    expect(r.lateMinutes).toBe(0);
+    expect(r.earlyExitMinutes).toBe(0);
+    expect(r.lateDeduction.toNumber()).toBe(0);
+    expect(r.earlyExitDeduction.toNumber()).toBe(0);
+    expect(r.netAmount.toNumber()).toBe(30000);
+  });
+
+  it('cuts PKR per late minute — dynamically from the staff profile, never a hardcoded rate', () => {
+    const recs = records('2026-09-01', '2026-09-30', sundayOff).map((r, i) => (i < 3 ? { ...r, lateMinutes: 10 } : r));
+    const p = profile({ deductionRules: { late: { mode: 'PER_MINUTE', amount: 20 } } });
+    const r = run(p, '2026-09-01', '2026-09-30', recs);
+    expect(r.lateMinutes).toBe(30);
+    expect(r.lateDeduction.toNumber()).toBe(600); // 30 min × PKR 20
+    expect(r.netAmount.toNumber()).toBe(30000 - 600);
+  });
+
+  it('cuts a flat amount per late occurrence when the mode is FIXED_PER_OCCURRENCE, not per minute', () => {
+    const recs = records('2026-09-01', '2026-09-30', sundayOff).map((r, i) => (i < 3 ? { ...r, lateMinutes: 45 } : r));
+    const p = profile({ deductionRules: { late: { mode: 'FIXED_PER_OCCURRENCE', amount: 100 } } });
+    const r = run(p, '2026-09-01', '2026-09-30', recs);
+    expect(r.lateDeduction.toNumber()).toBe(300); // 3 late days × PKR 100
+  });
+
+  it('cuts Early-Out independently of Late-In, using its own configured rate', () => {
+    const recs = records('2026-09-01', '2026-09-30', sundayOff).map((r, i) => (i < 2 ? { ...r, earlyExitMinutes: 15 } : r));
+    const p = profile({ deductionRules: { early_exit: { mode: 'PER_MINUTE', amount: 10 } } });
+    const r = run(p, '2026-09-01', '2026-09-30', recs);
+    expect(r.earlyExitMinutes).toBe(30);
+    expect(r.earlyExitDeduction.toNumber()).toBe(300);
+    expect(r.lateDeduction.toNumber()).toBe(0);
+  });
+
+  it('ignores a malformed/unknown deductionRules shape instead of throwing', () => {
+    const p = profile({ deductionRules: { late: { mode: 'SOMETHING_ELSE', amount: 999 } } });
+    const r = run(p, '2026-09-01', '2026-09-30');
+    expect(r.lateDeduction.toNumber()).toBe(0);
   });
 });

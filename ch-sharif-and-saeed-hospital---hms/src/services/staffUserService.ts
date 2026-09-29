@@ -64,6 +64,12 @@ function toSalaryPayload(v: StaffUserFormValues) {
     salaryTaxValue: v.salaryTaxMethod ? num(v.salaryTaxValue) : null,
     fixedAllowance: num(v.salaryAllowance),
     fixedDeduction: num(v.salaryDeduction),
+    // Late-In / Early-Out cutting — read dynamically by payroll from this
+    // staff member's own profile, never a hardcoded rate (see payroll.calc.ts).
+    deductionRules: {
+      late: { mode: v.lateInDeduction.mode, amount: num(v.lateInDeduction.amount) },
+      early_exit: { mode: v.earlyOutDeduction.mode, amount: num(v.earlyOutDeduction.amount) },
+    },
     paymentMethod: v.bankEnabled ? v.bank.paymentMethod : null,
     effectiveFrom: v.salaryEffectiveFrom || todayISO(),
   };

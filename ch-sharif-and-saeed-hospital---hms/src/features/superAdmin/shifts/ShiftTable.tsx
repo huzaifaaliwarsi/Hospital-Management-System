@@ -138,89 +138,94 @@ export const ShiftTable: React.FC<ShiftTableProps> = ({
 
   // 3. Regular Table View
   return (
-    <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+    <div className="bg-white rounded-lg border border-slate-300 shadow-xs overflow-hidden flex flex-col">
       <div className="overflow-x-auto">
         <table className="w-full text-left text-xs border-collapse">
           <thead>
-            <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600 uppercase tracking-wider">
-              <th className="py-2.5 px-3.5">Shift Code</th>
-              <th className="py-2.5 px-3.5">Shift Name</th>
-              <th className="py-2.5 px-3.5">Department</th>
-              <th className="py-2.5 px-3">Type</th>
-              <th className="py-2.5 px-3.5">Timing</th>
-              <th className="py-2.5 px-3">Net Hours</th>
-              <th className="py-2.5 px-2.5">Break</th>
-              <th className="py-2.5 px-3">Default Grace</th>
-              <th className="py-2.5 px-3">Weekly Off</th>
-              <th className="py-2.5 px-3">Status</th>
-              <th className="py-2.5 px-3.5">Updated By</th>
+            <tr className="bg-[#f1f5f9] border-b border-slate-300 text-[11px] font-bold text-slate-800 uppercase tracking-wider select-none sticky top-0 z-10">
+              <th className="py-2.5 px-3 text-center border-r border-slate-300 w-12">#</th>
+              <th className="py-2.5 px-3.5 border-r border-slate-300">Shift Code</th>
+              <th className="py-2.5 px-3.5 border-r border-slate-300">Shift Name</th>
+              <th className="py-2.5 px-3.5 border-r border-slate-300">Department</th>
+              <th className="py-2.5 px-3 border-r border-slate-300">Type</th>
+              <th className="py-2.5 px-3.5 border-r border-slate-300">Timing</th>
+              <th className="py-2.5 px-3 border-r border-slate-300">Net Hours</th>
+              <th className="py-2.5 px-2.5 border-r border-slate-300">Break</th>
+              <th className="py-2.5 px-3 border-r border-slate-300">Default Grace</th>
+              <th className="py-2.5 px-3 border-r border-slate-300">Weekly Off</th>
+              <th className="py-2.5 px-3 border-r border-slate-300">Status</th>
+              <th className="py-2.5 px-3.5 border-r border-slate-300">Updated By</th>
+              <th className="py-2.5 px-3.5 border-r border-slate-300">Updated Date</th>
               <th className="py-2.5 px-3.5 text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 text-slate-700">
-            {shifts.map((shift) => (
+          <tbody className="divide-y divide-slate-200 text-slate-700">
+            {shifts.map((shift, idx) => (
               <tr
                 key={shift.id}
-                className="hover:bg-slate-50/80 transition-colors group"
+                className="hover:bg-slate-50/90 transition-colors group border-b border-slate-200"
               >
+                {/* 0. Index # */}
+                <td className="py-2.5 px-3 text-center border-r border-slate-200 text-slate-500 font-mono text-[11px] bg-slate-50/60 whitespace-nowrap">
+                  {idx + 1}
+                </td>
+
                 {/* 1. Shift Code */}
-                <td className="py-2.5 px-3.5 font-mono font-bold text-slate-900 whitespace-nowrap">
+                <td className="py-2.5 px-3.5 font-mono font-bold text-slate-900 whitespace-nowrap border-r border-slate-200">
                   {shift.code}
                 </td>
 
                 {/* 2. Shift Name */}
-                <td className="py-2.5 px-3.5 font-semibold text-slate-900 whitespace-nowrap">
+                <td className="py-2.5 px-3.5 font-semibold text-slate-900 whitespace-nowrap border-r border-slate-200">
                   {shift.name}
                 </td>
 
                 {/* 3. Department */}
-                <td className="py-2.5 px-3.5 text-slate-700 whitespace-nowrap">
+                <td className="py-2.5 px-3.5 text-slate-700 whitespace-nowrap border-r border-slate-200">
                   <span className="font-medium">{shift.departmentName}</span>
                 </td>
 
                 {/* 4. Type */}
-                <td className="py-2.5 px-3 whitespace-nowrap">
+                <td className="py-2.5 px-3 whitespace-nowrap border-r border-slate-200">
                   {renderShiftTypeBadge(shift.shiftType)}
                 </td>
 
                 {/* 5. Timing */}
-                <td className="py-2.5 px-3.5 whitespace-nowrap">
-                  <div className="font-medium text-slate-900 flex items-center gap-1.5">
+                <td className="py-2.5 px-3.5 whitespace-nowrap border-r border-slate-200">
+                  <div className="font-medium text-slate-900 flex items-center gap-1.5 whitespace-nowrap">
                     <span>{format12HourTime(shift.startTime)}</span>
                     <span className="text-slate-400">–</span>
                     <span>{format12HourTime(shift.endTime)}</span>
+                    {shift.isOvernight && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                        <Moon className="h-2.5 w-2.5" />
+                        Overnight
+                      </span>
+                    )}
                   </div>
-                  {shift.isOvernight && (
-                    <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 mt-0.5">
-                      <Moon className="h-2.5 w-2.5" />
-                      +1 Day / Overnight
-                    </span>
-                  )}
                 </td>
 
                 {/* 6. Net Working Hours */}
-                <td className="py-2.5 px-3 whitespace-nowrap font-bold text-[#08775A]">
+                <td className="py-2.5 px-3 whitespace-nowrap font-bold text-[#08775A] border-r border-slate-200 font-mono">
                   {formatMinutesToHours(shift.netWorkingMinutes)}
                 </td>
 
                 {/* 7. Break */}
-                <td className="py-2.5 px-2.5 whitespace-nowrap text-slate-600">
+                <td className="py-2.5 px-2.5 whitespace-nowrap text-slate-600 border-r border-slate-200 font-mono">
                   {shift.breakMinutes > 0 ? `${shift.breakMinutes}m` : '0m'}
                 </td>
 
                 {/* 8. Default Grace */}
-                <td className="py-2.5 px-3 whitespace-nowrap text-slate-600 text-[11px]">
-                  <span>{shift.defaultArrivalGraceMinutes}m in</span>
-                  <span className="text-slate-300 mx-1">/</span>
-                  <span>{shift.defaultEarlyExitToleranceMinutes}m out</span>
+                <td className="py-2.5 px-3 whitespace-nowrap text-slate-600 text-[11px] border-r border-slate-200">
+                  <span>{shift.defaultArrivalGraceMinutes}m in / {shift.defaultEarlyExitToleranceMinutes}m out</span>
                 </td>
 
                 {/* 9. Weekly Off */}
-                <td className="py-2.5 px-3 whitespace-nowrap text-[11px] text-slate-600">
+                <td className="py-2.5 px-3 whitespace-nowrap text-[11px] text-slate-600 border-r border-slate-200">
                   {shift.defaultWeeklyOffDays && shift.defaultWeeklyOffDays.length > 0 ? (
                     <span
                       title={shift.defaultWeeklyOffDays.join(', ')}
-                      className="inline-block max-w-[110px] truncate"
+                      className="inline-block max-w-[130px] truncate"
                     >
                       {shift.defaultWeeklyOffDays.join(', ')}
                     </span>
@@ -230,7 +235,7 @@ export const ShiftTable: React.FC<ShiftTableProps> = ({
                 </td>
 
                 {/* 10. Status */}
-                <td className="py-2.5 px-3 whitespace-nowrap">
+                <td className="py-2.5 px-3 whitespace-nowrap border-r border-slate-200">
                   <span
                     className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
                       shift.status === 'ACTIVE'
@@ -243,16 +248,16 @@ export const ShiftTable: React.FC<ShiftTableProps> = ({
                 </td>
 
                 {/* 11. Updated By */}
-                <td className="py-2.5 px-3.5 whitespace-nowrap text-[11px] text-slate-500">
-                  <div className="font-medium text-slate-700 truncate max-w-[130px]" title={shift.updatedByName}>
-                    {shift.updatedByName}
-                  </div>
-                  <div className="text-[10px] text-slate-400">
-                    {shift.updatedAt}
-                  </div>
+                <td className="py-2.5 px-3.5 whitespace-nowrap text-slate-700 font-medium border-r border-slate-200 max-w-[130px] truncate" title={shift.updatedByName}>
+                  {shift.updatedByName || '—'}
                 </td>
 
-                {/* 12. Actions */}
+                {/* 12. Updated Date */}
+                <td className="py-2.5 px-3.5 whitespace-nowrap text-[11px] text-slate-500 border-r border-slate-200">
+                  {shift.updatedAt || '—'}
+                </td>
+
+                {/* 13. Actions */}
                 <td className="py-2.5 px-3.5 text-right whitespace-nowrap">
                   <div className="flex items-center justify-end gap-1">
                     {/* View Details */}

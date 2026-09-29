@@ -27,6 +27,73 @@ function workedMinutesOf(actualIn?: Date, actualOut?: Date): number {
   return diff > 0 ? diff : 0;
 }
 
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function minutesFromHHMM(hhmm: string): number {
+  const parts = hhmm.split(':');
+  return Number(parts[0] ?? 0) * 60 + Number(parts[1] ?? 0);
+}
+
+/** Minutes-since-midnight of a timestamp, read as UTC — the same convention
+ * `payroll.calc.ts` (`utcDay`) already uses for every date-only field here. */
+function minutesOfDay(d: Date): number {
+  return d.getUTCHours() * 60 + d.getUTCMinutes();
+}
+
+interface ShiftWindow {
+  startMinutes: number;
+  endMinutes: number;
+  graceMinutes: number;
+  toleranceMinutes: number;
+}
+
+/**
+ * The staff member's applicable shift start/end and Late-In grace / Early-Out
+ * tolerance for one attendance day (staff.md §8/§11) — their own Weekly
+ * Timing override when set, otherwise their assigned Shift's defaults (Shift
+ * Management "Attendance Timing Defaults"). Never hardcoded: always read live
+ * from `StaffWeeklySchedule`/`Shift`. Returns null when no window is
+ * configured, the day is OFF, or the shift is overnight (end < start — out of
+ * scope for this same-day minute comparison).
+ */
+async function resolveShiftWindow(staffId: string, attendanceDate: Date): Promise<ShiftWindow | null> {
+  const dayOfWeek = WEEKDAY_NAMES[attendanceDate.getUTCDay()];
+  const staff = await prisma.staff.findUnique({
+    where: { id: staffId },
+    select: {
+      assignedShift: { select: { startTime: true, endTime: true, defaultArrivalGraceMinutes: true, defaultEarlyExitToleranceMinutes: true } },
+      weeklySchedule: { where: { dayOfWeek }, select: { startTime: true, endTime: true, useShiftDefault: true, isWorking: true } },
+    },
+  });
+  if (!staff) return null;
+  const day = staff.weeklySchedule[0];
+  if (day && !day.isWorking) return null;
+
+  const useShiftTiming = !day || day.useShiftDefault;
+  const startTime = useShiftTiming ? staff.assignedShift?.startTime : day?.startTime ?? undefined;
+  const endTime = useShiftTiming ? staff.assignedShift?.endTime : day?.endTime ?? undefined;
+  if (!startTime || !endTime) return null;
+
+  const startMinutes = minutesFromHHMM(startTime);
+  const endMinutes = minutesFromHHMM(endTime);
+  if (endMinutes <= startMinutes) return null;
+
+  return {
+    startMinutes,
+    endMinutes,
+    graceMinutes: staff.assignedShift?.defaultArrivalGraceMinutes ?? 0,
+    toleranceMinutes: staff.assignedShift?.defaultEarlyExitToleranceMinutes ?? 0,
+  };
+}
+
+/** Late-In / Early-Out minutes beyond the shift's own grace/tolerance — the input `computeSalaryAmounts` turns into an actual cut using each staff member's configured rate. */
+function computeLateEarly(window: ShiftWindow | null, actualIn?: Date, actualOut?: Date): { lateMinutes: number; earlyExitMinutes: number } {
+  if (!window) return { lateMinutes: 0, earlyExitMinutes: 0 };
+  const lateMinutes = actualIn ? Math.max(0, minutesOfDay(actualIn) - window.startMinutes - window.graceMinutes) : 0;
+  const earlyExitMinutes = actualOut ? Math.max(0, window.endMinutes - minutesOfDay(actualOut) - window.toleranceMinutes) : 0;
+  return { lateMinutes, earlyExitMinutes };
+}
+
 const attendanceInclude = {
   staff: {
     select: {
@@ -84,6 +151,8 @@ export const attendanceService = {
     }
 
     const workedMinutes = workedMinutesOf(body.actualIn, body.actualOut);
+    const window = await resolveShiftWindow(body.staffId, body.attendanceDate);
+    const { lateMinutes, earlyExitMinutes } = computeLateEarly(window, body.actualIn, body.actualOut);
     const data: Prisma.AttendanceRecordUpsertArgs['create'] = {
       staffId: body.staffId,
       attendanceDate: body.attendanceDate,
@@ -91,6 +160,8 @@ export const attendanceService = {
       actualIn: body.actualIn ?? null,
       actualOut: body.actualOut ?? null,
       workedMinutes,
+      lateMinutes,
+      earlyExitMinutes,
       notes: body.notes ?? null,
       source: 'MANUAL',
       markedById: actorId,
@@ -104,6 +175,8 @@ export const attendanceService = {
         actualIn: body.actualIn ?? null,
         actualOut: body.actualOut ?? null,
         workedMinutes,
+        lateMinutes,
+        earlyExitMinutes,
         notes: body.notes ?? null,
         markedById: actorId,
       },
@@ -135,9 +208,14 @@ export const attendanceService = {
       return true;
     });
 
+    const windows = new Map(
+      await Promise.all(toWrite.map(async (r) => [r.staffId, await resolveShiftWindow(r.staffId, body.attendanceDate)] as const)),
+    );
+
     const result = await prisma.$transaction(
-      toWrite.map((r) =>
-        prisma.attendanceRecord.upsert({
+      toWrite.map((r) => {
+        const { lateMinutes, earlyExitMinutes } = computeLateEarly(windows.get(r.staffId) ?? null, r.actualIn, r.actualOut);
+        return prisma.attendanceRecord.upsert({
           where: { staffId_attendanceDate: { staffId: r.staffId, attendanceDate: body.attendanceDate } },
           create: {
             staffId: r.staffId,
@@ -146,6 +224,8 @@ export const attendanceService = {
             actualIn: r.actualIn ?? null,
             actualOut: r.actualOut ?? null,
             workedMinutes: workedMinutesOf(r.actualIn, r.actualOut),
+            lateMinutes,
+            earlyExitMinutes,
             notes: r.notes ?? null,
             source: 'MANUAL',
             markedById: actorId,
@@ -155,11 +235,13 @@ export const attendanceService = {
             actualIn: r.actualIn ?? null,
             actualOut: r.actualOut ?? null,
             workedMinutes: workedMinutesOf(r.actualIn, r.actualOut),
+            lateMinutes,
+            earlyExitMinutes,
             notes: r.notes ?? null,
             markedById: actorId,
           },
-        }),
-      ),
+        });
+      }),
     );
 
     return { marked: result.length, skipped };
@@ -242,15 +324,21 @@ export const attendanceService = {
       actualIn: record.actualIn,
       actualOut: record.actualOut,
       workedMinutes: record.workedMinutes,
+      lateMinutes: record.lateMinutes,
+      earlyExitMinutes: record.earlyExitMinutes,
       notes: record.notes,
     };
     const nextActualIn = body.actualIn ?? record.actualIn ?? undefined;
     const nextActualOut = body.actualOut ?? record.actualOut ?? undefined;
+    const window = await resolveShiftWindow(record.staffId, record.attendanceDate);
+    const { lateMinutes, earlyExitMinutes } = computeLateEarly(window, nextActualIn, nextActualOut);
     const correctedValue = {
       status: body.status ?? record.status,
       actualIn: body.actualIn ?? record.actualIn,
       actualOut: body.actualOut ?? record.actualOut,
       workedMinutes: workedMinutesOf(nextActualIn, nextActualOut),
+      lateMinutes,
+      earlyExitMinutes,
       notes: body.notes ?? record.notes,
     };
 

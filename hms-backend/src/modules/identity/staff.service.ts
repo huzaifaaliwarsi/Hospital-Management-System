@@ -101,6 +101,7 @@ async function writeSalaryProfile(tx: Tx, staffId: string, body: CreateSalaryPro
       salaryTaxEffectiveFrom: body.salaryTaxMethod ? body.effectiveFrom : null,
       fixedAllowance: body.fixedAllowance ?? 0,
       fixedDeduction: body.fixedDeduction ?? 0,
+      deductionRules: (body.deductionRules ?? {}) as Prisma.InputJsonValue,
       paymentMethod: body.paymentMethod ?? null,
       effectiveFrom: body.effectiveFrom,
       createdById: actorId,

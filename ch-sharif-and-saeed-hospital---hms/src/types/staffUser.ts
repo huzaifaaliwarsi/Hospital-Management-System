@@ -187,6 +187,12 @@ export interface StaffUserFormValues {
   joiningDate: string;
   scheduleEnabled: boolean;
   weeklySchedule: WeeklyDayForm[];
+  // Late-In / Early-Out cutting policy — read dynamically by payroll from
+  // this staff member's own profile (StaffSalaryProfile.deductionRules),
+  // together with their actual AttendanceRecord.lateMinutes/earlyExitMinutes.
+  // Never a hardcoded platform-wide rate.
+  lateInDeduction: DeductionRuleForm;
+  earlyOutDeduction: DeductionRuleForm;
   commissionRules: CommissionRuleForm[];
   commissionTaxMethod: 'PERCENTAGE' | 'FIXED' | '';
   commissionTaxValue: number | '';
@@ -231,6 +237,21 @@ export interface CommissionRuleForm {
   rate: number | '';
   basis: 'NET' | 'GROSS';
 }
+
+export type DeductionMode = 'NONE' | 'PER_MINUTE' | 'FIXED_PER_OCCURRENCE';
+export const DEDUCTION_MODE_OPTIONS: { value: DeductionMode; label: string }[] = [
+  { value: 'NONE', label: 'No cutting' },
+  { value: 'PER_MINUTE', label: 'PKR per minute' },
+  { value: 'FIXED_PER_OCCURRENCE', label: 'Fixed PKR per day' },
+];
+
+/** Late-In / Early-Out cutting rule — amount is PKR per minute or a flat PKR per late/early day, beyond the shift's own grace/tolerance. */
+export interface DeductionRuleForm {
+  mode: DeductionMode;
+  amount: number | '';
+}
+
+export const emptyDeductionRule = (): DeductionRuleForm => ({ mode: 'NONE', amount: '' });
 
 /** PDF §4 — payment account. */
 export interface BankAccountForm {
@@ -279,6 +300,8 @@ export const defaultWizardExtras = () => {
     joiningDate: today,
     scheduleEnabled: false,
     weeklySchedule: defaultWeeklySchedule(),
+    lateInDeduction: emptyDeductionRule(),
+    earlyOutDeduction: emptyDeductionRule(),
     commissionRules: [] as CommissionRuleForm[],
     commissionTaxMethod: '' as const,
     commissionTaxValue: '' as const,

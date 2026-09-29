@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { StaffUser } from '../../../types/staffUser';
 import { StaffUserService } from '../../../services/staffUserService';
+import { formatDateTimeDDMMYYYY } from '../../../utils/formatters';
 
 interface StaffUsersTableProps {
   staffList: StaffUser[];
@@ -141,127 +142,168 @@ export const StaffUsersTable: React.FC<StaffUsersTableProps> = ({
   };
 
   return (
-    <div className="bg-white border border-[#e2eae5] rounded-xl shadow-sm overflow-hidden flex flex-col">
+    <div className="bg-white border border-slate-300 rounded-lg shadow-xs overflow-hidden flex flex-col">
       <div className="overflow-x-auto min-h-[380px]">
         <table className="w-full text-left border-collapse text-xs">
           <thead>
-            <tr className="bg-[#f6f8f7] border-b border-[#e2eae5] text-[#52665e] font-semibold select-none">
+            <tr className="bg-[#f1f5f9] border-b border-slate-300 text-slate-800 font-bold uppercase text-[11px] tracking-wider select-none sticky top-0 z-10">
+              <th className="w-12 py-3 px-3 text-center border-r border-slate-300 font-bold text-slate-700">
+                #
+              </th>
               <th
                 onClick={() => handleSort('id')}
-                className="py-3 px-3.5 cursor-pointer hover:text-[#111827] transition-colors whitespace-nowrap"
+                className="py-3 px-3.5 border-r border-slate-300 cursor-pointer hover:bg-slate-200/70 transition-colors whitespace-nowrap"
               >
                 <div className="flex items-center gap-1">
                   <span>Staff ID</span>
-                  <ArrowUpDown className="h-3 w-3 text-[#8b9e95]" />
+                  <ArrowUpDown className="h-3 w-3 text-slate-400" />
                 </div>
               </th>
               <th
                 onClick={() => handleSort('fullName')}
-                className="py-3 px-3.5 cursor-pointer hover:text-[#111827] transition-colors whitespace-nowrap"
+                className="py-3 px-3.5 border-r border-slate-300 cursor-pointer hover:bg-slate-200/70 transition-colors whitespace-nowrap"
               >
                 <div className="flex items-center gap-1">
                   <span>Staff Name</span>
-                  <ArrowUpDown className="h-3 w-3 text-[#8b9e95]" />
+                  <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                </div>
+              </th>
+              <th
+                onClick={() => handleSort('phone')}
+                className="py-3 px-3.5 border-r border-slate-300 cursor-pointer hover:bg-slate-200/70 transition-colors whitespace-nowrap"
+              >
+                <div className="flex items-center gap-1">
+                  <span>Contact</span>
+                  <ArrowUpDown className="h-3 w-3 text-slate-400" />
                 </div>
               </th>
               <th
                 onClick={() => handleSort('cnic')}
-                className="py-3 px-3 cursor-pointer hover:text-[#111827] transition-colors whitespace-nowrap"
+                className="py-3 px-3.5 border-r border-slate-300 cursor-pointer hover:bg-slate-200/70 transition-colors whitespace-nowrap"
               >
                 <div className="flex items-center gap-1">
                   <span>CNIC</span>
-                  <ArrowUpDown className="h-3 w-3 text-[#8b9e95]" />
+                  <ArrowUpDown className="h-3 w-3 text-slate-400" />
                 </div>
               </th>
-              <th className="py-3 px-3 whitespace-nowrap">Designation</th>
-              <th className="py-3 px-3 whitespace-nowrap">Department</th>
-              <th className="py-3 px-3 whitespace-nowrap">Portal / Access</th>
-              <th className="py-3 px-3 whitespace-nowrap">Username</th>
-              <th className="py-3 px-3 text-center whitespace-nowrap">Status</th>
-              <th className="py-3 px-3 whitespace-nowrap">Last Login</th>
-              <th className="py-3 px-3 whitespace-nowrap">Updated By</th>
-              <th className="py-3 px-3 text-right whitespace-nowrap">Actions</th>
+              <th
+                onClick={() => handleSort('designation')}
+                className="py-3 px-3.5 border-r border-slate-300 cursor-pointer hover:bg-slate-200/70 transition-colors whitespace-nowrap"
+              >
+                <div className="flex items-center gap-1">
+                  <span>Designation</span>
+                  <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                </div>
+              </th>
+              <th
+                onClick={() => handleSort('departmentName')}
+                className="py-3 px-3.5 border-r border-slate-300 cursor-pointer hover:bg-slate-200/70 transition-colors whitespace-nowrap"
+              >
+                <div className="flex items-center gap-1">
+                  <span>Department</span>
+                  <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                </div>
+              </th>
+              <th className="py-3 px-3.5 border-r border-slate-300 whitespace-nowrap">Portal / Access</th>
+              <th className="py-3 px-3.5 border-r border-slate-300 whitespace-nowrap">Username</th>
+              <th className="py-3 px-3 text-center border-r border-slate-300 whitespace-nowrap">Status</th>
+              <th className="py-3 px-3.5 border-r border-slate-300 whitespace-nowrap">Last Login</th>
+              <th className="py-3 px-3.5 border-r border-slate-300 whitespace-nowrap">Updated By</th>
+              <th className="py-3 px-3.5 text-right whitespace-nowrap">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-[#e2eae5] text-[#111827]">
+          <tbody className="divide-y divide-slate-200 text-slate-800">
             {paginatedList.length === 0 ? (
               <tr>
-                <td colSpan={11} className="py-12 text-center text-[#8b9e95]">
+                <td colSpan={13} className="py-12 text-center text-slate-400 border-b border-slate-200">
                   <div className="flex flex-col items-center justify-center gap-2">
-                    <ShieldAlert className="h-8 w-8 text-[#8b9e95]" />
-                    <span className="font-medium text-sm text-[#52665e]">No staff records found</span>
-                    <span className="text-xs text-[#8b9e95]">Try adjusting your search or filters</span>
+                    <ShieldAlert className="h-8 w-8 text-slate-300" />
+                    <span className="font-semibold text-sm text-slate-600">No staff records found</span>
+                    <span className="text-xs text-slate-400">Try adjusting your search or filters</span>
                   </div>
                 </td>
               </tr>
             ) : (
-              paginatedList.map((staff) => {
+              paginatedList.map((staff, idx) => {
                 const isPortalUser = staff.accessType === 'PORTAL_USER';
 
                 return (
                   <tr
                     key={staff.id}
-                    className="hover:bg-[#fbfcfb] transition-colors group"
+                    className="hover:bg-slate-50/90 transition-colors border-b border-slate-200 last:border-b-0"
                   >
-                    {/* 1. Employee Code */}
-                    <td className="py-3 px-3.5 whitespace-nowrap">
-                      <span className="font-mono text-[11px] font-bold text-[#08775A] bg-[#effaf5] px-2 py-0.5 rounded border border-[#c2e7db]">
+                    {/* 0. Row Index */}
+                    <td className="py-2.5 px-3 text-center border-r border-slate-200 text-slate-500 font-mono text-[11px] bg-slate-50/60 whitespace-nowrap">
+                      {startIndex + idx + 1}
+                    </td>
+
+                    {/* 1. Employee Code / Staff ID */}
+                    <td className="py-2.5 px-3.5 border-r border-slate-200 whitespace-nowrap">
+                      <span className="font-mono text-[11px] font-bold text-[#08775A] bg-[#effaf5] px-2.5 py-0.5 rounded border border-[#c2e7db]">
                         {staff.employeeCode || `STF-${staff.id.slice(0, 8).toUpperCase()}`}
                       </span>
                     </td>
 
                     {/* 2. Staff Name */}
-                    <td className="py-3 px-3.5">
-                      <div className="font-semibold text-[#111827]">{staff.fullName}</div>
-                      <div className="text-[11px] text-[#8b9e95]">{staff.phone}</div>
+                    <td className="py-2.5 px-3.5 border-r border-slate-200 whitespace-nowrap font-semibold text-slate-900">
+                      {staff.fullName}
                     </td>
 
-                    {/* 3. CNIC */}
-                    <td className="py-3 px-3 font-mono text-slate-700 whitespace-nowrap">
+                    {/* 3. Contact / Phone */}
+                    <td className="py-2.5 px-3.5 border-r border-slate-200 font-mono text-xs text-slate-700 whitespace-nowrap">
+                      {staff.phone || '—'}
+                    </td>
+
+                    {/* 4. CNIC */}
+                    <td className="py-2.5 px-3.5 border-r border-slate-200 font-mono text-xs text-slate-700 whitespace-nowrap">
                       {staff.cnic || '—'}
                     </td>
 
-                    {/* 4. Designation */}
-                    <td className="py-3 px-3">
-                      <div className="font-medium text-[#111827]">{staff.designation}</div>
-                      <div className="text-[10px] text-[#8b9e95]">{staff.staffCategory}</div>
+                    {/* 5. Designation */}
+                    <td className="py-2.5 px-3.5 border-r border-slate-200 whitespace-nowrap font-medium text-slate-800">
+                      {staff.designation || staff.staffCategory || '—'}
                     </td>
 
-                    {/* 5. Department */}
-                    <td className="py-3 px-3 text-[#52665e] max-w-[150px] truncate" title={staff.departmentName}>
-                      {staff.departmentName}
+                    {/* 6. Department */}
+                    <td className="py-2.5 px-3.5 border-r border-slate-200 whitespace-nowrap text-slate-700">
+                      {staff.departmentName ||
+                        (staff.departmentNames && staff.departmentNames.length > 0
+                          ? staff.departmentNames.join(', ')
+                          : '—')}
                     </td>
 
-                    {/* 6. Portal / Access */}
-                    <td className="py-3 px-3 whitespace-nowrap">{getPortalBadge(staff)}</td>
+                    {/* 7. Portal / Access */}
+                    <td className="py-2.5 px-3.5 border-r border-slate-200 whitespace-nowrap">
+                      {getPortalBadge(staff)}
+                    </td>
 
-                    {/* 7. Username */}
-                    <td className="py-3 px-3 font-mono text-[11px] text-[#111827] whitespace-nowrap">
+                    {/* 8. Username */}
+                    <td className="py-2.5 px-3.5 border-r border-slate-200 font-mono text-xs text-slate-800 whitespace-nowrap">
                       {isPortalUser && staff.username ? staff.username : '—'}
                     </td>
 
                     {/* 9. Status */}
-                    <td className="py-3 px-3 text-center whitespace-nowrap">
+                    <td className="py-2.5 px-3 text-center border-r border-slate-200 whitespace-nowrap">
                       {getStatusBadge(staff.status)}
                     </td>
 
                     {/* 10. Last Login */}
-                    <td className="py-3 px-3 text-[11px] text-[#8b9e95] whitespace-nowrap">
-                      {staff.lastLoginAt || 'Never'}
+                    <td className="py-2.5 px-3.5 border-r border-slate-200 text-xs text-slate-500 font-mono whitespace-nowrap">
+                      {staff.lastLoginAt ? formatDateTimeDDMMYYYY(staff.lastLoginAt) : 'Never'}
                     </td>
 
                     {/* 11. Updated By */}
-                    <td className="py-3 px-3 text-[11px] text-[#52665e] max-w-[140px] truncate" title={staff.updatedBy}>
-                      {staff.updatedBy}
+                    <td className="py-2.5 px-3.5 border-r border-slate-200 text-xs text-slate-600 max-w-[150px] truncate whitespace-nowrap" title={staff.updatedBy}>
+                      {staff.updatedBy || '—'}
                     </td>
 
                     {/* 12. Actions */}
-                    <td className="py-3 px-3 text-right whitespace-nowrap">
+                    <td className="py-2.5 px-3.5 text-right whitespace-nowrap">
                       <div className="inline-flex items-center gap-1">
                         {/* View */}
                         <button
                           onClick={() => onView(staff)}
-                          className="p-1.5 rounded-md text-[#52665e] hover:text-[#0e7d5a] hover:bg-[#e7f6f1] transition-colors cursor-pointer"
+                          className="p-1.5 rounded-md text-slate-500 hover:text-[#0e7d5a] hover:bg-[#e7f6f1] transition-colors cursor-pointer"
                           title="View Staff Profile & Governance"
                         >
                           <Eye className="h-3.5 w-3.5" />
@@ -270,7 +312,7 @@ export const StaffUsersTable: React.FC<StaffUsersTableProps> = ({
                         {/* Edit */}
                         <button
                           onClick={() => onEdit(staff)}
-                          className="p-1.5 rounded-md text-[#52665e] hover:text-[#129b70] hover:bg-[#e7f6f1] transition-colors cursor-pointer"
+                          className="p-1.5 rounded-md text-slate-500 hover:text-[#129b70] hover:bg-[#e7f6f1] transition-colors cursor-pointer"
                           title="Edit Staff Record"
                         >
                           <Edit2 className="h-3.5 w-3.5" />
@@ -280,32 +322,33 @@ export const StaffUsersTable: React.FC<StaffUsersTableProps> = ({
                         {isPortalUser && (
                           <button
                             onClick={() => onResetPassword(staff)}
-                            className="p-1.5 rounded-md text-[#52665e] hover:text-amber-600 hover:bg-amber-50 transition-colors cursor-pointer"
+                            className="p-1.5 rounded-md text-slate-500 hover:text-amber-600 hover:bg-amber-50 transition-colors cursor-pointer"
                             title="Reset Portal Password"
                           >
                             <KeyRound className="h-3.5 w-3.5" />
                           </button>
                         )}
 
-                        {/* Portal Access — separate workflow from Staff Master (staff.md §5) */}
+                        {/* Portal Access */}
                         <button
                           onClick={() => onPortalAccess(staff)}
                           className={`p-1.5 rounded-md transition-colors cursor-pointer ${
-                            isPortalUser ? 'text-[#08775A] hover:bg-[#e7f6f1]' : 'text-[#52665e] hover:text-[#129b70] hover:bg-[#e7f6f1]'
+                            isPortalUser ? 'text-[#08775A] hover:bg-[#e7f6f1]' : 'text-slate-500 hover:text-[#129b70] hover:bg-[#e7f6f1]'
                           }`}
                           title={isPortalUser ? 'Manage Portal Access' : 'Grant Portal Access'}
                         >
                           <ShieldPlus className="h-3.5 w-3.5" />
                         </button>
 
-                        {/* v7.2 Clinical Discharge Authorization (doctors only) */}
+                        {/* Clinical Discharge Authorization (doctors only) */}
                         {staff.staffCategory === 'Doctor' && (
                           <button
                             onClick={() => onClinicalAuth(staff)}
-                            className={`p-1.5 rounded-md transition-colors cursor-pointer ${staff.clinicalAuthActive
+                            className={`p-1.5 rounded-md transition-colors cursor-pointer ${
+                              staff.clinicalAuthActive
                                 ? 'text-[#08775A] hover:bg-[#e7f6f1]'
-                                : 'text-[#52665e] hover:text-[#08775A] hover:bg-[#e7f6f1]'
-                              }`}
+                                : 'text-slate-500 hover:text-[#08775A] hover:bg-[#e7f6f1]'
+                            }`}
                             title={
                               staff.clinicalAuthUsername
                                 ? `Clinical Discharge Authorization — ${staff.clinicalAuthActive ? 'Active' : 'Inactive'}`
@@ -316,10 +359,10 @@ export const StaffUsersTable: React.FC<StaffUsersTableProps> = ({
                           </button>
                         )}
 
-                        {/* v7.2 Salary Profile */}
+                        {/* Salary Profile */}
                         <button
                           onClick={() => onSalaryProfile(staff)}
-                          className="p-1.5 rounded-md text-[#52665e] hover:text-teal-700 hover:bg-teal-50 transition-colors cursor-pointer"
+                          className="p-1.5 rounded-md text-slate-500 hover:text-teal-700 hover:bg-teal-50 transition-colors cursor-pointer"
                           title="Salary Profile"
                         >
                           <Wallet className="h-3.5 w-3.5" />
@@ -330,14 +373,14 @@ export const StaffUsersTable: React.FC<StaffUsersTableProps> = ({
                           <>
                             <button
                               onClick={() => onOpenStatusModal(staff, 'INACTIVE')}
-                              className="p-1.5 rounded-md text-[#52665e] hover:text-gray-700 hover:bg-gray-100 transition-colors cursor-pointer"
+                              className="p-1.5 rounded-md text-slate-500 hover:text-gray-700 hover:bg-gray-100 transition-colors cursor-pointer"
                               title="Deactivate Account"
                             >
                               <XCircle className="h-3.5 w-3.5" />
                             </button>
                             <button
                               onClick={() => onOpenStatusModal(staff, 'SUSPENDED')}
-                              className="p-1.5 rounded-md text-[#52665e] hover:text-amber-600 hover:bg-amber-50 transition-colors cursor-pointer"
+                              className="p-1.5 rounded-md text-slate-500 hover:text-amber-600 hover:bg-amber-50 transition-colors cursor-pointer"
                               title="Suspend Account"
                             >
                               <AlertTriangle className="h-3.5 w-3.5" />
@@ -346,7 +389,7 @@ export const StaffUsersTable: React.FC<StaffUsersTableProps> = ({
                         ) : (
                           <button
                             onClick={() => onOpenStatusModal(staff, 'ACTIVE')}
-                            className="p-1.5 rounded-md text-[#52665e] hover:text-[#0e7d5a] hover:bg-[#e7f6f1] transition-colors cursor-pointer"
+                            className="p-1.5 rounded-md text-slate-500 hover:text-[#0e7d5a] hover:bg-[#e7f6f1] transition-colors cursor-pointer"
                             title="Reactivate Account"
                           >
                             <CheckCircle className="h-3.5 w-3.5" />
@@ -356,7 +399,7 @@ export const StaffUsersTable: React.FC<StaffUsersTableProps> = ({
                         {/* Delete */}
                         <button
                           onClick={() => onDelete(staff)}
-                          className="p-1.5 rounded-md text-[#52665e] hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
+                          className="p-1.5 rounded-md text-slate-500 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
                           title="Delete Staff Record (Checks Activity)"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
@@ -370,6 +413,7 @@ export const StaffUsersTable: React.FC<StaffUsersTableProps> = ({
           </tbody>
         </table>
       </div>
+
 
       {/* Pagination Footer */}
       <div className="py-3 px-4 bg-[#f6f8f7] border-t border-[#e2eae5] flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-[#52665e]">

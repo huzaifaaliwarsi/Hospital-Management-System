@@ -162,20 +162,22 @@ export const AdminUsersTable: React.FC<AdminUsersTableProps> = ({
         ) : (
           <table id="admin-users-table" className="w-full text-left text-xs border-collapse">
             <thead>
-              <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600 uppercase tracking-wider">
-                <th className="py-2.5 px-3.5">User ID</th>
-                <th className="py-2.5 px-3.5">Administrator</th>
-                <th className="py-2.5 px-3.5">Username</th>
-                <th className="py-2.5 px-3.5">Contact</th>
-                <th className="py-2.5 px-3.5">Role</th>
-                <th className="py-2.5 px-3.5">Status</th>
-                <th className="py-2.5 px-3.5">Last Login</th>
-                <th className="py-2.5 px-3.5">Created Date</th>
+              <tr className="bg-[#f1f5f9] border-b border-slate-300 text-[11px] font-bold text-slate-800 uppercase tracking-wider select-none">
+                <th className="py-2.5 px-3 text-center border-r border-slate-300 w-12">#</th>
+                <th className="py-2.5 px-3.5 border-r border-slate-300">User ID</th>
+                <th className="py-2.5 px-3.5 border-r border-slate-300">Administrator</th>
+                <th className="py-2.5 px-3.5 border-r border-slate-300">Username</th>
+                <th className="py-2.5 px-3.5 border-r border-slate-300">Email</th>
+                <th className="py-2.5 px-3.5 border-r border-slate-300">Phone</th>
+                <th className="py-2.5 px-3.5 border-r border-slate-300">Role</th>
+                <th className="py-2.5 px-3.5 border-r border-slate-300">Status</th>
+                <th className="py-2.5 px-3.5 border-r border-slate-300">Last Login</th>
+                <th className="py-2.5 px-3.5 border-r border-slate-300">Created Date</th>
                 <th className="py-2.5 px-3.5 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 text-slate-700">
-              {paginatedUsers.map((u) => {
+            <tbody className="divide-y divide-slate-200 text-slate-700">
+              {paginatedUsers.map((u, idx) => {
                 const isSuperAdmin = u.role === 'SUPER_ADMIN';
                 const canModify = AdminUserService.canActorModifyTarget(currentUser, u).allowed;
                 const isSelf =
@@ -187,56 +189,63 @@ export const AdminUsersTable: React.FC<AdminUsersTableProps> = ({
                   <tr
                     key={u.id}
                     id={`admin-row-${u.id}`}
-                    className="hover:bg-slate-50/80 transition-colors group"
+                    className="hover:bg-slate-50/90 transition-colors group border-b border-slate-200"
                   >
+                    {/* Index Sequence */}
+                    <td className="py-2.5 px-3 text-center border-r border-slate-200 text-slate-500 font-mono text-[11px] bg-slate-50/60 whitespace-nowrap">
+                      {startIndex + idx + 1}
+                    </td>
+
                     {/* User ID */}
-                    <td className="py-2.5 px-3.5 whitespace-nowrap">
+                    <td className="py-2.5 px-3.5 whitespace-nowrap border-r border-slate-200">
                       <span className="font-mono font-bold text-xs text-[#08775A] bg-[#effaf5] px-2.5 py-1 rounded-md border border-[#c2e7db]">
                         {u.employeeCode || `ADM-${u.id.slice(0, 8).toUpperCase()}`}
                       </span>
                     </td>
 
                     {/* Admin Name */}
-                    <td className="py-2.5 px-3.5 whitespace-nowrap">
+                    <td className="py-2.5 px-3.5 whitespace-nowrap border-r border-slate-200">
                       <div className="flex items-center gap-2">
                         <div className="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center font-bold text-[10px] text-slate-700 shrink-0 border border-slate-200">
                           {u.fullName.charAt(0).toUpperCase()}
                         </div>
-                        <div>
-                          <div className="font-bold text-slate-900 flex items-center gap-1.5">
-                            <span>{u.fullName}</span>
-                            {isSuperAdmin && (
-                              <span
-                                className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-[#effaf5] text-[#08775A] border border-[#c2e7db]"
-                                title="Super Admin Account - Institutional Root"
-                              >
-                                <Lock className="h-2.5 w-2.5" />
-                                Protected
-                              </span>
-                            )}
-                            {isSelf && (
-                              <span className="text-[9.5px] px-1 py-0.2 rounded bg-amber-50 text-amber-700 border border-amber-200 font-semibold">
-                                You
-                              </span>
-                            )}
-                          </div>
+                        <div className="font-bold text-slate-900 flex items-center gap-1.5 whitespace-nowrap">
+                          <span>{u.fullName}</span>
+                          {isSuperAdmin && (
+                            <span
+                              className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-[#effaf5] text-[#08775A] border border-[#c2e7db]"
+                              title="Super Admin Account - Institutional Root"
+                            >
+                              <Lock className="h-2.5 w-2.5" />
+                              Protected
+                            </span>
+                          )}
+                          {isSelf && (
+                            <span className="text-[9.5px] px-1 py-0.2 rounded bg-amber-50 text-amber-700 border border-amber-200 font-semibold">
+                              You
+                            </span>
+                          )}
                         </div>
                       </div>
                     </td>
 
                     {/* Username */}
-                    <td className="py-2.5 px-3.5 font-mono text-slate-700 whitespace-nowrap">
+                    <td className="py-2.5 px-3.5 font-mono text-slate-700 whitespace-nowrap border-r border-slate-200">
                       @{u.username}
                     </td>
 
-                    {/* Contact */}
-                    <td className="py-2.5 px-3.5 whitespace-nowrap">
-                      <div className="text-slate-800 font-medium">{u.email}</div>
-                      <div className="text-[10px] text-slate-400">{u.phone || '—'}</div>
+                    {/* Email */}
+                    <td className="py-2.5 px-3.5 whitespace-nowrap border-r border-slate-200 text-slate-800 font-medium">
+                      {u.email || '—'}
+                    </td>
+
+                    {/* Phone */}
+                    <td className="py-2.5 px-3.5 whitespace-nowrap border-r border-slate-200 text-slate-600 font-mono text-xs">
+                      {u.phone || '—'}
                     </td>
 
                     {/* Role */}
-                    <td className="py-2.5 px-3.5 whitespace-nowrap">
+                    <td className="py-2.5 px-3.5 whitespace-nowrap border-r border-slate-200">
                       <span
                         className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold ${
                           isSuperAdmin
@@ -254,7 +263,7 @@ export const AdminUsersTable: React.FC<AdminUsersTableProps> = ({
                     </td>
 
                     {/* Status */}
-                    <td className="py-2.5 px-3.5 whitespace-nowrap">
+                    <td className="py-2.5 px-3.5 whitespace-nowrap border-r border-slate-200">
                       <span
                         className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-bold ${
                           u.status === 'ACTIVE'
@@ -269,12 +278,12 @@ export const AdminUsersTable: React.FC<AdminUsersTableProps> = ({
                     </td>
 
                     {/* Last Login */}
-                    <td className="py-2.5 px-3.5 text-slate-600 whitespace-nowrap">
+                    <td className="py-2.5 px-3.5 text-slate-600 whitespace-nowrap border-r border-slate-200">
                       {u.lastLoginAt || 'Never'}
                     </td>
 
                     {/* Created Date */}
-                    <td className="py-2.5 px-3.5 text-slate-500 whitespace-nowrap text-[11px]">
+                    <td className="py-2.5 px-3.5 text-slate-500 whitespace-nowrap text-[11px] border-r border-slate-200">
                       {u.createdAt}
                     </td>
 

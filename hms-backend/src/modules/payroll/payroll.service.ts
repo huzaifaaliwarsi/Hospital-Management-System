@@ -23,6 +23,10 @@ interface EligibleRow {
   grossAmount: Decimal;
   tax: Decimal;
   otherDeductions: Decimal;
+  lateDeduction: Decimal;
+  earlyExitDeduction: Decimal;
+  lateMinutes: number;
+  earlyExitMinutes: number;
   netAmount: Decimal;
   taxMethod: string | null;
   taxValue: Decimal | null;
@@ -84,9 +88,9 @@ async function computeEligibility(filters: PayrollRunFilters): Promise<{ eligibl
       attendanceDate: { gte: filters.periodStart, lte: filters.periodEnd },
       isApproved: true,
     },
-    select: { staffId: true, status: true, attendanceDate: true },
+    select: { staffId: true, status: true, attendanceDate: true, lateMinutes: true, earlyExitMinutes: true },
   });
-  const attendanceByStaff = new Map<string, { status: string; attendanceDate: Date }[]>();
+  const attendanceByStaff = new Map<string, { status: string; attendanceDate: Date; lateMinutes: number; earlyExitMinutes: number }[]>();
   for (const a of attendance) {
     const list = attendanceByStaff.get(a.staffId) ?? [];
     list.push(a);
@@ -200,6 +204,13 @@ export const payrollService = {
               grossAmount: row.grossAmount.toNumber(),
               tax: row.tax.toNumber(),
               otherDeductions: row.otherDeductions.toNumber(),
+              // Late-In / Early-Out cutting — dynamically computed from this
+              // staff member's own Salary Profile deductionRules + the
+              // period's actual AttendanceRecord.lateMinutes/earlyExitMinutes.
+              lateMinutes: row.lateMinutes,
+              lateDeduction: row.lateDeduction.toNumber(),
+              earlyExitMinutes: row.earlyExitMinutes,
+              earlyExitDeduction: row.earlyExitDeduction.toNumber(),
               netAmount: row.netAmount.toNumber(),
             },
             calculationSnapshot: {

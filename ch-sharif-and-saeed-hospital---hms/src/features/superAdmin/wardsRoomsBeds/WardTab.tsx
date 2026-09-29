@@ -168,26 +168,27 @@ export const WardTab: React.FC<WardTabProps> = ({
           </button>
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-slate-200/80 shadow-xs overflow-hidden">
+        <div className="bg-white rounded-lg border border-slate-300 shadow-xs overflow-hidden flex flex-col">
           <div className="overflow-x-auto">
             <table id="wards-master-table" className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-slate-50/80 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                  <th className="py-3 px-4">Ward Code</th>
-                  <th className="py-3 px-4">Ward Name</th>
-                  <th className="py-3 px-3">Head / In-charge</th>
-                  <th className="py-3 px-3">Fixed Fee (PKR)</th>
-                  <th className="py-3 px-3">Ward Type</th>
-                  <th className="py-3 px-4">Floor / Location</th>
-                  <th className="py-3 px-3 text-center">Rooms</th>
-                  <th className="py-3 px-3 text-center">Total Beds</th>
-                  <th className="py-3 px-3 text-center">Available Beds</th>
-                  <th className="py-3 px-3 text-center">Status</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
+                <tr className="bg-[#f1f5f9] border-b border-slate-300 text-[11px] font-bold text-slate-800 uppercase tracking-wider select-none sticky top-0 z-10">
+                  <th className="py-2.5 px-3 text-center border-r border-slate-300 w-12">#</th>
+                  <th className="py-2.5 px-3.5 border-r border-slate-300">Ward Code</th>
+                  <th className="py-2.5 px-3.5 border-r border-slate-300">Ward Name</th>
+                  <th className="py-2.5 px-3.5 border-r border-slate-300">Head / In-charge</th>
+                  <th className="py-2.5 px-3.5 border-r border-slate-300">Fixed Fee (PKR)</th>
+                  <th className="py-2.5 px-3.5 border-r border-slate-300">Ward Type</th>
+                  <th className="py-2.5 px-3.5 border-r border-slate-300">Floor / Location</th>
+                  <th className="py-2.5 px-3 text-center border-r border-slate-300">Rooms</th>
+                  <th className="py-2.5 px-3 text-center border-r border-slate-300">Total Beds</th>
+                  <th className="py-2.5 px-3 text-center border-r border-slate-300">Available Beds</th>
+                  <th className="py-2.5 px-3 text-center border-r border-slate-300">Status</th>
+                  <th className="py-2.5 px-3.5 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 text-xs">
-                {filteredWards.map((w) => {
+              <tbody className="divide-y divide-slate-200 text-xs">
+                {filteredWards.map((w, idx) => {
                   const hasLinkedRoomsOrBeds =
                     (w.roomCount ?? 0) > 0 ||
                     (w.bedCount ?? 0) > 0 ||
@@ -197,68 +198,94 @@ export const WardTab: React.FC<WardTabProps> = ({
                     <tr
                       key={w.id}
                       id={`ward-row-${w.id}`}
-                      className="hover:bg-slate-50/60 transition-colors"
+                      className="hover:bg-slate-50/90 transition-colors group border-b border-slate-200"
                     >
-                      <td className="py-3 px-4 font-mono font-bold text-slate-900 whitespace-nowrap">
+                      {/* Sequence # */}
+                      <td className="py-2.5 px-3 text-center border-r border-slate-200 text-slate-500 font-mono text-[11px] bg-slate-50/60 whitespace-nowrap">
+                        {idx + 1}
+                      </td>
+
+                      {/* Ward Code */}
+                      <td className="py-2.5 px-3.5 font-mono font-bold text-slate-900 whitespace-nowrap border-r border-slate-200">
                         {w.code}
                       </td>
-                      <td className="py-3 px-4 font-semibold text-slate-800">
+
+                      {/* Ward Name */}
+                      <td className="py-2.5 px-3.5 font-semibold text-slate-900 whitespace-nowrap border-r border-slate-200">
                         {w.name}
                         {w.genderPolicy && (
-                          <span className="ml-2 text-[10px] text-slate-500 font-normal">
+                          <span className="ml-1.5 text-[10px] text-slate-500 font-normal">
                             ({w.genderPolicy})
                           </span>
                         )}
                       </td>
-                      <td className="py-3 px-3 text-slate-700 whitespace-nowrap">
+
+                      {/* Head / In-charge */}
+                      <td className="py-2.5 px-3.5 text-slate-700 whitespace-nowrap border-r border-slate-200">
                         {w.headStaffName ? (
                           <span className="font-medium text-slate-800">{w.headStaffName}</span>
                         ) : (
                           <span className="text-slate-400 italic text-[11px]">Not Assigned</span>
                         )}
                       </td>
-                      <td className="py-3 px-3 whitespace-nowrap">
+
+                      {/* Fixed Fee */}
+                      <td className="py-2.5 px-3.5 whitespace-nowrap border-r border-slate-200 font-mono">
                         {w.fixedPrice != null && w.fixedPrice > 0 ? (
-                          <span className="font-mono font-bold text-emerald-700">
+                          <span className="font-bold text-emerald-700">
                             PKR {w.fixedPrice.toLocaleString('en-PK')}
                           </span>
                         ) : (
                           <span className="text-slate-400 text-[11px] italic">Free</span>
                         )}
                       </td>
-                      <td className="py-3 px-3 whitespace-nowrap">
+
+                      {/* Ward Type */}
+                      <td className="py-2.5 px-3.5 whitespace-nowrap border-r border-slate-200">
                         <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
                           {w.wardType}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-slate-600 whitespace-nowrap">
+
+                      {/* Floor / Location */}
+                      <td className="py-2.5 px-3.5 text-slate-600 whitespace-nowrap border-r border-slate-200">
                         {w.location ? `${w.floor || ''} - ${w.location}` : w.floor || '—'}
                       </td>
-                      <td className="py-3 px-3 text-center font-semibold text-slate-700">
+
+                      {/* Rooms */}
+                      <td className="py-2.5 px-3 text-center font-semibold text-slate-700 border-r border-slate-200 whitespace-nowrap">
                         {w.roomCount}
                       </td>
-                      <td className="py-3 px-3 text-center font-bold text-slate-800">
+
+                      {/* Total Beds */}
+                      <td className="py-2.5 px-3 text-center font-bold text-slate-800 border-r border-slate-200 whitespace-nowrap">
                         {w.bedCount}
                       </td>
-                      <td className="py-3 px-4 text-center">
-                        <span className="inline-block px-2 py-0.5 rounded-full font-bold text-emerald-700 bg-emerald-50 border border-emerald-200">
+
+                      {/* Available Beds */}
+                      <td className="py-2.5 px-3 text-center border-r border-slate-200 whitespace-nowrap">
+                        <span className="inline-block px-2 py-0.5 rounded-full font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 text-xs">
                           {w.availableBeds ?? 0}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-center whitespace-nowrap">
+
+                      {/* Status */}
+                      <td className="py-2.5 px-3 text-center whitespace-nowrap border-r border-slate-200">
                         {w.status === 'Active' ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-[#effaf5] px-2 py-0.5 rounded-full border border-[#c2e7db]">
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-[#effaf5] px-2.5 py-0.5 rounded-full border border-[#c2e7db]">
                             <CheckCircle2 className="w-3 h-3 text-[#08775A]" />
                             Active
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 bg-slate-100 px-2.5 py-0.5 rounded-full border border-slate-200">
                             <XCircle className="w-3 h-3 text-slate-400" />
                             Inactive
                           </span>
                         )}
                       </td>
-                      <td className="py-3 px-4 text-right whitespace-nowrap">
+
+                      {/* Actions */}
+                      <td className="py-2.5 px-3.5 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1">
                           <button
                             id={`ward-view-btn-${w.id}`}

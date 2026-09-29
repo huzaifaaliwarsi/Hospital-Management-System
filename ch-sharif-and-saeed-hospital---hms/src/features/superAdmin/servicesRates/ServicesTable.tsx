@@ -80,25 +80,26 @@ export const ServicesTable: React.FC<ServicesTableProps> = ({
   return (
     <div
       id="services-table-container"
-      className="bg-white rounded-xl border border-slate-200/80 shadow-xs overflow-hidden"
+      className="bg-white rounded-lg border border-slate-300 shadow-xs overflow-hidden flex flex-col"
     >
       <div className="overflow-x-auto">
         <table id="services-master-table" className="w-full text-left border-collapse">
           <thead>
-            <tr className="bg-slate-50/80 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-              <th className="py-3 px-4">Service Code</th>
-              <th className="py-3 px-4">Service Name</th>
-              <th className="py-3 px-4">Department</th>
-              <th className="py-3 px-4">Category</th>
-              <th className="py-3 px-4 text-right">Standard Rate</th>
-              <th className="py-3 px-4">Billing Unit</th>
-              <th className="py-3 px-4 text-center">Panel Eligible</th>
-              <th className="py-3 px-4 text-center">Status</th>
-              <th className="py-3 px-4 text-right">Actions</th>
+            <tr className="bg-[#f1f5f9] border-b border-slate-300 text-[11px] font-bold text-slate-800 uppercase tracking-wider select-none sticky top-0 z-10">
+              <th className="py-2.5 px-3 text-center border-r border-slate-300 w-12">#</th>
+              <th className="py-2.5 px-3.5 border-r border-slate-300">Service Code</th>
+              <th className="py-2.5 px-3.5 border-r border-slate-300">Service Name</th>
+              <th className="py-2.5 px-3.5 border-r border-slate-300">Department</th>
+              <th className="py-2.5 px-3.5 border-r border-slate-300">Category</th>
+              <th className="py-2.5 px-3.5 text-right border-r border-slate-300">Standard Rate</th>
+              <th className="py-2.5 px-3.5 border-r border-slate-300">Billing Unit</th>
+              <th className="py-2.5 px-3.5 text-center border-r border-slate-300">Panel Eligible</th>
+              <th className="py-2.5 px-3.5 text-center border-r border-slate-300">Status</th>
+              <th className="py-2.5 px-3.5 text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 text-xs">
-            {services.map((service) => {
+          <tbody className="divide-y divide-slate-200 text-xs">
+            {services.map((service, idx) => {
               const isCoreEncounterService = Boolean(
                 service.isDefaultEncounterService &&
                 service.encounterType &&
@@ -110,37 +111,37 @@ export const ServicesTable: React.FC<ServicesTableProps> = ({
                 <tr
                   key={service.id}
                   id={`service-row-${service.id}`}
-                  className="hover:bg-slate-50/60 transition-colors"
+                  className="hover:bg-slate-50/90 transition-colors group border-b border-slate-200"
                 >
+                  {/* Sequence # */}
+                  <td className="py-2.5 px-3 text-center border-r border-slate-200 text-slate-500 font-mono text-[11px] bg-slate-50/60 whitespace-nowrap">
+                    {idx + 1}
+                  </td>
+
                   {/* Service Code */}
-                  <td className="py-3 px-4 font-mono font-bold text-slate-900 tracking-tight whitespace-nowrap">
+                  <td className="py-2.5 px-3.5 font-mono font-bold text-slate-900 tracking-tight whitespace-nowrap border-r border-slate-200">
                     {service.code}
                   </td>
 
                   {/* Service Name */}
-                  <td className="py-3 px-4 max-w-[260px]">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-semibold text-slate-800">{service.name}</span>
+                  <td className="py-2.5 px-3.5 whitespace-nowrap border-r border-slate-200" title={service.description || service.name}>
+                    <div className="flex items-center gap-1.5 whitespace-nowrap">
+                      <span className="font-semibold text-slate-900">{service.name}</span>
                       {isCoreEncounterService && (
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
+                        <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
                           Core {service.encounterType}
                         </span>
                       )}
                     </div>
-                    {service.description && (
-                      <div className="text-[11px] text-slate-400 line-clamp-1 mt-0.5">
-                        {service.description}
-                      </div>
-                    )}
                   </td>
 
                   {/* Department */}
-                  <td className="py-3 px-4 text-slate-700 whitespace-nowrap">
+                  <td className="py-2.5 px-3.5 text-slate-700 whitespace-nowrap border-r border-slate-200">
                     {service.departmentName}
                   </td>
 
                   {/* Category */}
-                  <td className="py-3 px-4 whitespace-nowrap">
+                  <td className="py-2.5 px-3.5 whitespace-nowrap border-r border-slate-200">
                     <span
                       className={`inline-block px-2 py-0.5 rounded text-[11px] font-medium border ${getCategoryBadgeClass(
                         service.category
@@ -151,17 +152,17 @@ export const ServicesTable: React.FC<ServicesTableProps> = ({
                   </td>
 
                   {/* Standard Rate */}
-                  <td className="py-3 px-4 text-right font-bold text-slate-900 whitespace-nowrap">
+                  <td className="py-2.5 px-3.5 text-right font-bold text-slate-900 whitespace-nowrap border-r border-slate-200 font-mono">
                     {service.currency} {(service.standardRate ?? 0).toLocaleString('en-PK')}
                   </td>
 
                   {/* Billing Unit */}
-                  <td className="py-3 px-4 text-slate-600 whitespace-nowrap">
+                  <td className="py-2.5 px-3.5 text-slate-600 whitespace-nowrap border-r border-slate-200">
                     {service.billingUnit}
                   </td>
 
                   {/* Panel Eligible */}
-                  <td className="py-3 px-4 text-center whitespace-nowrap">
+                  <td className="py-2.5 px-3.5 text-center whitespace-nowrap border-r border-slate-200">
                     {service.panelEligible ? (
                       <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
                         <ShieldCheck className="w-3 h-3" />
@@ -175,7 +176,7 @@ export const ServicesTable: React.FC<ServicesTableProps> = ({
                   </td>
 
                   {/* Status */}
-                  <td className="py-3 px-4 text-center whitespace-nowrap">
+                  <td className="py-2.5 px-3.5 text-center whitespace-nowrap border-r border-slate-200">
                     {service.status === 'Active' ? (
                       <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-[#effaf5] px-2.5 py-0.5 rounded-full border border-[#c2e7db]">
                         <CheckCircle2 className="w-3 h-3 text-[#08775A]" />
@@ -190,7 +191,7 @@ export const ServicesTable: React.FC<ServicesTableProps> = ({
                   </td>
 
                   {/* Actions */}
-                  <td className="py-3 px-4 text-right whitespace-nowrap">
+                  <td className="py-2.5 px-3.5 text-right whitespace-nowrap">
                     <div className="flex items-center justify-end gap-1">
                       {/* View Details */}
                       <button

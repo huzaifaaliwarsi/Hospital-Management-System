@@ -188,26 +188,27 @@ export const RoomTab: React.FC<RoomTabProps> = ({
           </button>
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-slate-200/80 shadow-xs overflow-hidden">
+        <div className="bg-white rounded-lg border border-slate-300 shadow-xs overflow-hidden flex flex-col">
           <div className="overflow-x-auto">
             <table id="rooms-master-table" className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-slate-50/80 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                  <th className="py-3 px-4">Room Code</th>
-                  <th className="py-3 px-4">Room Number</th>
-                  <th className="py-3 px-4">Room Name</th>
-                  <th className="py-3 px-4">Ward</th>
-                  <th className="py-3 px-4">Department</th>
-                  <th className="py-3 px-4">Type</th>
-                  <th className="py-3 px-4 text-center">Capacity</th>
-                  <th className="py-3 px-4 text-center">Beds Configured</th>
-                  <th className="py-3 px-4 text-right">Daily Rate</th>
-                  <th className="py-3 px-4 text-center">Status</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
+                <tr className="bg-[#f1f5f9] border-b border-slate-300 text-[11px] font-bold text-slate-800 uppercase tracking-wider select-none sticky top-0 z-10">
+                  <th className="py-2.5 px-3 text-center border-r border-slate-300 w-12">#</th>
+                  <th className="py-2.5 px-3.5 border-r border-slate-300">Room Code</th>
+                  <th className="py-2.5 px-3.5 border-r border-slate-300">Room Number</th>
+                  <th className="py-2.5 px-3.5 border-r border-slate-300">Room Name</th>
+                  <th className="py-2.5 px-3.5 border-r border-slate-300">Ward</th>
+                  <th className="py-2.5 px-3.5 border-r border-slate-300">Department</th>
+                  <th className="py-2.5 px-3.5 border-r border-slate-300">Type</th>
+                  <th className="py-2.5 px-3 text-center border-r border-slate-300">Capacity</th>
+                  <th className="py-2.5 px-3 text-center border-r border-slate-300">Beds Configured</th>
+                  <th className="py-2.5 px-3.5 text-right border-r border-slate-300">Daily Rate</th>
+                  <th className="py-2.5 px-3 text-center border-r border-slate-300">Status</th>
+                  <th className="py-2.5 px-3.5 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 text-xs">
-                {filteredRooms.map((r) => {
+              <tbody className="divide-y divide-slate-200 text-xs">
+                {filteredRooms.map((r, idx) => {
                   const hasBedsOrAdmissions =
                     (r.bedsConfigured ?? 0) > 0 || (r.admissionLinkageCount ?? 0) > 0;
 
@@ -215,28 +216,52 @@ export const RoomTab: React.FC<RoomTabProps> = ({
                     <tr
                       key={r.id}
                       id={`room-row-${r.id}`}
-                      className="hover:bg-slate-50/60 transition-colors"
+                      className="hover:bg-slate-50/90 transition-colors group border-b border-slate-200"
                     >
-                      <td className="py-3 px-4 font-mono font-bold text-slate-900 whitespace-nowrap">
+                      {/* Sequence # */}
+                      <td className="py-2.5 px-3 text-center border-r border-slate-200 text-slate-500 font-mono text-[11px] bg-slate-50/60 whitespace-nowrap">
+                        {idx + 1}
+                      </td>
+
+                      {/* Room Code */}
+                      <td className="py-2.5 px-3.5 font-mono font-bold text-slate-900 whitespace-nowrap border-r border-slate-200">
                         {r.code}
                       </td>
-                      <td className="py-3 px-4 font-semibold text-slate-800 whitespace-nowrap">
+
+                      {/* Room Number */}
+                      <td className="py-2.5 px-3.5 font-semibold text-slate-800 whitespace-nowrap border-r border-slate-200">
                         {r.roomNumber}
                       </td>
-                      <td className="py-3 px-4 font-medium text-slate-800">{r.name}</td>
-                      <td className="py-3 px-4 text-slate-700 whitespace-nowrap">
+
+                      {/* Room Name */}
+                      <td className="py-2.5 px-3.5 font-medium text-slate-800 whitespace-nowrap border-r border-slate-200">
+                        {r.name}
+                      </td>
+
+                      {/* Ward */}
+                      <td className="py-2.5 px-3.5 text-slate-700 whitespace-nowrap border-r border-slate-200">
                         {r.wardName || <span className="text-slate-400 italic">Standalone</span>}
                       </td>
-                      <td className="py-3 px-4 text-slate-600 whitespace-nowrap">
+
+                      {/* Department */}
+                      <td className="py-2.5 px-3.5 text-slate-600 whitespace-nowrap border-r border-slate-200">
                         {r.departmentName || '—'}
                       </td>
-                      <td className="py-3 px-4 whitespace-nowrap">
+
+                      {/* Type */}
+                      <td className="py-2.5 px-3.5 whitespace-nowrap border-r border-slate-200">
                         <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
                           {r.roomType}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-center text-slate-700">{r.capacity}</td>
-                      <td className="py-3 px-4 text-center">
+
+                      {/* Capacity */}
+                      <td className="py-2.5 px-3 text-center text-slate-700 border-r border-slate-200 whitespace-nowrap">
+                        {r.capacity}
+                      </td>
+
+                      {/* Beds Configured */}
+                      <td className="py-2.5 px-3 text-center border-r border-slate-200 whitespace-nowrap">
                         <span
                           className={`inline-block px-2 py-0.5 rounded-full font-bold ${
                             r.bedsConfigured > r.capacity
@@ -247,10 +272,14 @@ export const RoomTab: React.FC<RoomTabProps> = ({
                           {r.bedsConfigured}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-right font-bold text-slate-900 whitespace-nowrap">
+
+                      {/* Daily Rate */}
+                      <td className="py-2.5 px-3.5 text-right font-bold text-slate-900 whitespace-nowrap border-r border-slate-200 font-mono">
                         PKR {(r.dailyRoomRate ?? 0).toLocaleString('en-PK')}
                       </td>
-                      <td className="py-3 px-4 text-center whitespace-nowrap">
+
+                      {/* Status */}
+                      <td className="py-2.5 px-3 text-center whitespace-nowrap border-r border-slate-200">
                         {r.status === 'Active' ? (
                           <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-[#effaf5] px-2 py-0.5 rounded-full border border-[#c2e7db]">
                             <CheckCircle2 className="w-3 h-3 text-[#08775A]" />
@@ -263,7 +292,9 @@ export const RoomTab: React.FC<RoomTabProps> = ({
                           </span>
                         )}
                       </td>
-                      <td className="py-3 px-4 text-right whitespace-nowrap">
+
+                      {/* Actions */}
+                      <td className="py-2.5 px-3.5 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1">
                           <button
                             id={`room-view-btn-${r.id}`}

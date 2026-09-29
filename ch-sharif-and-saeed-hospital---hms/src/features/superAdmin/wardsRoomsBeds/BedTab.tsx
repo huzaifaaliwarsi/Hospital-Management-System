@@ -281,24 +281,25 @@ export const BedTab: React.FC<BedTabProps> = ({
           </button>
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-slate-200/80 shadow-xs overflow-hidden">
+        <div className="bg-white rounded-lg border border-slate-300 shadow-xs overflow-hidden flex flex-col">
           <div className="overflow-x-auto">
             <table id="beds-master-table" className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-slate-50/80 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                  <th className="py-3 px-4">Bed Code</th>
-                  <th className="py-3 px-4">Bed Number</th>
-                  <th className="py-3 px-4">Room</th>
-                  <th className="py-3 px-4">Ward</th>
-                  <th className="py-3 px-4">Bed Type</th>
-                  <th className="py-3 px-4 text-center">Occupancy Status</th>
-                  <th className="py-3 px-4 text-center">Operational Status</th>
-                  <th className="py-3 px-4">Current Admitted Patient</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
+                <tr className="bg-[#f1f5f9] border-b border-slate-300 text-[11px] font-bold text-slate-800 uppercase tracking-wider select-none sticky top-0 z-10">
+                  <th className="py-2.5 px-3 text-center border-r border-slate-300 w-12">#</th>
+                  <th className="py-2.5 px-3.5 border-r border-slate-300">Bed Code</th>
+                  <th className="py-2.5 px-3.5 border-r border-slate-300">Bed Number</th>
+                  <th className="py-2.5 px-3.5 border-r border-slate-300">Room</th>
+                  <th className="py-2.5 px-3.5 border-r border-slate-300">Ward</th>
+                  <th className="py-2.5 px-3.5 border-r border-slate-300">Bed Type</th>
+                  <th className="py-2.5 px-3.5 text-center border-r border-slate-300">Occupancy Status</th>
+                  <th className="py-2.5 px-3.5 text-center border-r border-slate-300">Operational Status</th>
+                  <th className="py-2.5 px-3.5 border-r border-slate-300">Current Admitted Patient</th>
+                  <th className="py-2.5 px-3.5 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 text-xs">
-                {filteredBeds.map((b) => {
+              <tbody className="divide-y divide-slate-200 text-xs">
+                {filteredBeds.map((b, idx) => {
                   const isOccupied = b.occupancyStatus === 'Occupied';
                   const hasHistory = (b.historicalAdmissionCount ?? 0) > 0;
 
@@ -306,31 +307,49 @@ export const BedTab: React.FC<BedTabProps> = ({
                     <tr
                       key={b.id}
                       id={`bed-row-${b.id}`}
-                      className="hover:bg-slate-50/60 transition-colors"
+                      className="hover:bg-slate-50/90 transition-colors group border-b border-slate-200"
                     >
-                      <td className="py-3 px-4 font-mono font-bold text-slate-900 whitespace-nowrap">
+                      {/* Sequence # */}
+                      <td className="py-2.5 px-3 text-center border-r border-slate-200 text-slate-500 font-mono text-[11px] bg-slate-50/60 whitespace-nowrap">
+                        {idx + 1}
+                      </td>
+
+                      {/* Bed Code */}
+                      <td className="py-2.5 px-3.5 font-mono font-bold text-slate-900 whitespace-nowrap border-r border-slate-200">
                         {b.code}
                       </td>
-                      <td className="py-3 px-4 font-semibold text-slate-800 whitespace-nowrap">
+
+                      {/* Bed Number */}
+                      <td className="py-2.5 px-3.5 font-semibold text-slate-800 whitespace-nowrap border-r border-slate-200">
                         {b.bedNumber}
                       </td>
-                      <td className="py-3 px-4 text-slate-700 whitespace-nowrap">
+
+                      {/* Room */}
+                      <td className="py-2.5 px-3.5 text-slate-700 whitespace-nowrap border-r border-slate-200">
                         {b.roomId ? `${b.roomNumber} - ${b.roomName}` : <span className="text-slate-400 italic">Direct Ward Bed</span>}
                       </td>
-                      <td className="py-3 px-4 text-slate-600 whitespace-nowrap">
+
+                      {/* Ward */}
+                      <td className="py-2.5 px-3.5 text-slate-600 whitespace-nowrap border-r border-slate-200">
                         {b.wardName || <span className="text-slate-400 italic">Standalone</span>}
                       </td>
-                      <td className="py-3 px-4 whitespace-nowrap">
+
+                      {/* Bed Type */}
+                      <td className="py-2.5 px-3.5 whitespace-nowrap border-r border-slate-200">
                         <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
                           {b.bedType}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-center whitespace-nowrap">
+
+                      {/* Occupancy Status */}
+                      <td className="py-2.5 px-3.5 text-center whitespace-nowrap border-r border-slate-200">
                         {getOccupancyBadge(b.occupancyStatus)}
                       </td>
-                      <td className="py-3 px-4 text-center whitespace-nowrap">
+
+                      {/* Operational Status */}
+                      <td className="py-2.5 px-3.5 text-center whitespace-nowrap border-r border-slate-200">
                         {b.operationalStatus === 'Active' ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-[#effaf5] px-2 py-0.5 rounded-full border border-[#c2e7db]">
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-[#effaf5] px-2.5 py-0.5 rounded-full border border-[#c2e7db]">
                             <CheckCircle2 className="w-3 h-3 text-[#08775A]" />
                             In Service
                           </span>
@@ -341,21 +360,20 @@ export const BedTab: React.FC<BedTabProps> = ({
                           </span>
                         )}
                       </td>
-                      <td className="py-3 px-4 max-w-[200px]">
+
+                      {/* Current Admitted Patient */}
+                      <td className="py-2.5 px-3.5 whitespace-nowrap border-r border-slate-200">
                         {isOccupied && b.currentPatientName ? (
-                          <div>
-                            <div className="font-semibold text-indigo-900">
-                              {b.currentPatientName}
-                            </div>
-                            <div className="text-[10px] text-indigo-600 font-mono">
-                              MRN: {b.currentPatientMrn || 'N/A'} • Adm: {b.admissionDate || 'N/A'}
-                            </div>
-                          </div>
+                          <span className="font-semibold text-indigo-900 whitespace-nowrap" title={`MRN: ${b.currentPatientMrn || 'N/A'} • Adm: ${b.admissionDate || 'N/A'}`}>
+                            {b.currentPatientName} <span className="text-[10px] text-indigo-600 font-mono font-normal">({b.currentPatientMrn || 'N/A'})</span>
+                          </span>
                         ) : (
                           <span className="text-slate-400">—</span>
                         )}
                       </td>
-                      <td className="py-3 px-4 text-right whitespace-nowrap">
+
+                      {/* Actions */}
+                      <td className="py-2.5 px-3.5 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1">
                           <button
                             id={`bed-view-btn-${b.id}`}

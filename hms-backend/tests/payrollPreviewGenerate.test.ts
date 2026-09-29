@@ -187,6 +187,10 @@ describe('payroll — Preview and Generate produce identical MONTHLY figures', (
           grossAmount: row.grossAmount.toNumber(),
           tax: row.tax.toNumber(),
           otherDeductions: row.otherDeductions.toNumber(),
+          lateMinutes: row.lateMinutes,
+          lateDeduction: row.lateDeduction.toNumber(),
+          earlyExitMinutes: row.earlyExitMinutes,
+          earlyExitDeduction: row.earlyExitDeduction.toNumber(),
           netAmount: row.netAmount.toNumber(),
         });
 
@@ -197,4 +201,60 @@ describe('payroll — Preview and Generate produce identical MONTHLY figures', (
       });
     });
   }
+});
+
+describe('payroll — MONTHLY_COMMISSION uses the exact same fixed 30-day basis as MONTHLY (real Preview/Generate HTTP path)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    tx.payrollRun.create.mockResolvedValue({ id: 'run-1' });
+    tx.payrollRun.findUniqueOrThrow.mockResolvedValue({ id: 'run-1' });
+  });
+
+  it('reported bug: PKR 30,000 base, 26 scheduled, 1 present/25 absent — Daily Rate 1,000, Deduction 25,000, Earned 5,000; Doctor commission stays a separate ledger (untouched here)', async () => {
+    const fixture = staffCase('doc-commission', ['Sunday'], 25, '2026-09-01', '2026-09-30');
+    fixture.profile.salaryBasis = 'MONTHLY_COMMISSION';
+    fixture.profile.fixedAllowance = d(0);
+    fixture.profile.fixedDeduction = d(0);
+    fixture.profile.salaryTaxMethod = null;
+    fixture.profile.salaryTaxValue = null;
+    load([fixture]);
+    tx.payrollRun.findUniqueOrThrow.mockImplementation(async () => ({
+      ...tx.payrollRun.create.mock.calls[0][0].data,
+      lines: tx.salarySlip.create.mock.calls.map(([{ data }]: any) => ({
+        ...data, baseAmount: data.baseAmount.toFixed(2),
+        attendanceDeductions: data.attendanceDeductions.toFixed(2),
+        generatedAmount: data.generatedAmount.toFixed(2),
+      })),
+    }));
+    const payload = { periodType: 'MONTHLY', periodStart: '2026-09-01', periodEnd: '2026-09-30' };
+
+    const preview = await post('/preview', payload, 200);
+    const row = preview.eligible[0];
+    expect(row.scheduledPayableDays).toBe(26);
+    expect(row.attendanceEquivalentDays).toBe(1);
+    expect(Number(row.periodBaseAmount)).toBe(30000);
+    expect(Number(row.attendanceDeductions)).toBe(25000);
+    expect(Number(row.earnedBase)).toBe(5000);
+    expect(Number(row.netAmount)).toBe(5000);
+
+    const generated = await post('/runs', payload, 201);
+    const slip = generated.lines[0];
+    expect(Number(slip.baseAmount)).toBe(Number(row.periodBaseAmount));
+    expect(Number(slip.attendanceDeductions)).toBe(Number(row.attendanceDeductions));
+    expect(Number(slip.generatedAmount)).toBe(Number(row.netAmount));
+    expect(generated.totalAmount).toBe(preview.totalAmount);
+  });
+
+  it('MONTHLY and MONTHLY_COMMISSION Preview rows are identical for the same attendance', async () => {
+    const monthly = staffCase('m', ['Sunday'], 3, '2026-09-01', '2026-09-30');
+    const commission = staffCase('mc', ['Sunday'], 3, '2026-09-01', '2026-09-30');
+    commission.profile.salaryBasis = 'MONTHLY_COMMISSION';
+    load([monthly, commission]);
+    const preview = await post('/preview', { periodType: 'MONTHLY', periodStart: '2026-09-01', periodEnd: '2026-09-30' }, 200);
+    const [m, mc] = preview.eligible;
+    expect(mc.periodBaseAmount).toBe(m.periodBaseAmount);
+    expect(mc.attendanceDeductions).toBe(m.attendanceDeductions);
+    expect(mc.earnedBase).toBe(m.earnedBase);
+    expect(mc.netAmount).toBe(m.netAmount);
+  });
 });
