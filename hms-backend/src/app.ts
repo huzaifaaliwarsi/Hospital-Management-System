@@ -32,12 +32,11 @@ import reportsRoutes from '@/modules/reports/reports.routes';
 import expensesRoutes from '@/modules/expenses/expenses.routes';
 import notificationsRoutes from '@/modules/notifications/notifications.routes';
 
-/**
- * Express app assembly — no `listen()` here (§7.16), so it can be imported
- * directly by tests. Middleware order follows §7.6.
- */
+
 export function createApp() {
   const app = express();
+
+  app.set('trust proxy', 1);
 
   app.use(helmet());
   app.use(

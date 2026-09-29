@@ -11,6 +11,7 @@ export const globalRateLimiter = rateLimit({
   limit: env.RATE_LIMIT_MAX,
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: { error: { code: 'RATE_LIMITED', message: 'Too many requests, please try again later.' } },
 });
 
@@ -20,6 +21,7 @@ export const authRateLimiter = rateLimit({
   limit: env.AUTH_RATE_LIMIT_MAX,
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: {
     error: { code: 'RATE_LIMITED', message: 'Too many login attempts, please try again later.' },
   },
@@ -34,6 +36,7 @@ export const clinicalAuthRateLimiter = rateLimit({
   limit: env.AUTH_RATE_LIMIT_MAX,
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: {
     error: { code: 'RATE_LIMITED', message: 'Too many doctor credential attempts, please try again later.' },
   },
