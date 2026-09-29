@@ -100,6 +100,20 @@ export const dataResetService = {
       // 11. Main Cash Fund ledger (hospital's central physical cash reserve)
       const deletedMainCashFundEntries = await tx.mainCashFundEntry.deleteMany();
 
+      // 1b. Newer expense, commission, and payroll runs
+      await tx.expense.deleteMany();
+      await tx.inventoryExpense.deleteMany();
+      await tx.commissionAdjustment.deleteMany();
+      await tx.commissionRun.deleteMany();
+      await tx.payrollRun.deleteMany();
+
+      // 1c. Inventory stock & purchase orders
+      await tx.stockAdjustment.deleteMany();
+      await tx.stockLedger.deleteMany();
+      await tx.purchaseOrderLine.deleteMany();
+      await tx.purchaseOrder.deleteMany();
+      await tx.stockItem.deleteMany();
+
       // 12. Staff HR data — attendance, payroll, and commission rows that
       // RESTRICT-block deleting the Staff row itself. Portal User login
       // accounts are deliberately left untouched (§16 Q-02: a login need not
@@ -113,11 +127,23 @@ export const dataResetService = {
       await tx.staffSalaryProfile.deleteMany();
       await tx.biometricRawPunch.deleteMany();
       await tx.doctorCommissionRule.deleteMany();
+
+      // Disconnect all references to Staff before deleting Staff rows
+      await tx.department.updateMany({ where: { headStaffId: { not: null } }, data: { headStaffId: null } });
+      await tx.ward.updateMany({ where: { headStaffId: { not: null } }, data: { headStaffId: null } });
+      await tx.portalUser.updateMany({ where: { staffId: { not: null } }, data: { staffId: null } });
+      await tx.staff.updateMany({ where: { clinicalAuthUpdatedById: { not: null } }, data: { clinicalAuthUpdatedById: null } });
+
       // staffDepartments / staffServices / staffWeeklySchedule /
       // staffBankAccounts all CASCADE from Staff — no explicit delete needed.
       const deletedStaff = await tx.staff.deleteMany();
 
-      // 13. Department — unlink Services & Rates (kept, not deleted) then
+      // 13. Ward / Room / Bed hierarchy (must be deleted BEFORE Department because Ward references Department)
+      const deletedBeds = await tx.bed.deleteMany();
+      const deletedRooms = await tx.room.deleteMany();
+      const deletedWards = await tx.ward.deleteMany();
+
+      // 14. Department — unlink Services & Rates (kept, not deleted) then
       // clear the requisitions/shifts that RESTRICT-block the department row.
       await tx.serviceRate.updateMany({ where: { departmentId: { not: null } }, data: { departmentId: null } });
       await tx.departmentRequisitionLine.deleteMany();
@@ -125,37 +151,34 @@ export const dataResetService = {
       const deletedShifts = await tx.shift.deleteMany();
       const deletedDepartments = await tx.department.deleteMany();
 
-      // 14. Ward / Room / Bed hierarchy (children first, though FKs are
-      // ON DELETE SET NULL so order is not strictly required).
-      const deletedBeds = await tx.bed.deleteMany();
-      const deletedRooms = await tx.room.deleteMany();
-      const deletedWards = await tx.ward.deleteMany();
-
-      // 15. Record Audit Log entry
-      await tx.auditLog.create({
-        data: {
-          actorId,
-          action: 'RESET_TRANSACTIONAL_DATA',
-          entityType: 'SYSTEM',
-          entityId: 'ALL',
-          afterState: {
-            deletedAppointments: deletedAppointments.count,
-            deletedInvoices: deletedInvoices.count,
-            deletedPaymentReceipts: deletedPaymentReceipts.count,
-            deletedAdmissions: deletedAdmissions.count,
-            deletedSelfPayEncounters: deletedSelfPayEncounters.count,
-            deletedPanelPatients: deletedPanelPatients.count,
-            deletedCorporatePanels: deletedCorporatePanels.count,
-            deletedMainCashFundEntries: deletedMainCashFundEntries.count,
-            deletedStaff: deletedStaff.count,
-            deletedDepartments: deletedDepartments.count,
-            deletedShifts: deletedShifts.count,
-            deletedWards: deletedWards.count,
-            deletedRooms: deletedRooms.count,
-            deletedBeds: deletedBeds.count,
+      // 15. Record Audit Log entry (if actor exists as a PortalUser)
+      const actorUser = actorId ? await tx.portalUser.findUnique({ where: { id: actorId } }) : null;
+      if (actorUser) {
+        await tx.auditLog.create({
+          data: {
+            actorId: actorUser.id,
+            action: 'RESET_TRANSACTIONAL_DATA',
+            entityType: 'SYSTEM',
+            entityId: 'ALL',
+            afterState: {
+              deletedAppointments: deletedAppointments.count,
+              deletedInvoices: deletedInvoices.count,
+              deletedPaymentReceipts: deletedPaymentReceipts.count,
+              deletedAdmissions: deletedAdmissions.count,
+              deletedSelfPayEncounters: deletedSelfPayEncounters.count,
+              deletedPanelPatients: deletedPanelPatients.count,
+              deletedCorporatePanels: deletedCorporatePanels.count,
+              deletedMainCashFundEntries: deletedMainCashFundEntries.count,
+              deletedStaff: deletedStaff.count,
+              deletedDepartments: deletedDepartments.count,
+              deletedShifts: deletedShifts.count,
+              deletedWards: deletedWards.count,
+              deletedRooms: deletedRooms.count,
+              deletedBeds: deletedBeds.count,
+            },
           },
-        },
-      });
+        });
+      }
 
       return {
         success: true,
@@ -183,6 +206,9 @@ export const dataResetService = {
           rooms: deletedRooms.count,
         },
       };
+    }, {
+      maxWait: 30_000,
+      timeout: 120_000,
     });
   },
 };
