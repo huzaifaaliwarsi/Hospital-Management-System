@@ -16,7 +16,12 @@ import type {
   SalesReturnBody,
 } from './pharmacy.schemas';
 
-const NEAR_EXPIRY_DAYS = 90;
+/** pharmacy.md §3 Settings screen — configured, not hardcoded; one singleton row, auto-created on first read. */
+async function getSettings() {
+  const existing = await prisma.pharmacySettings.findFirst();
+  if (existing) return existing;
+  return prisma.pharmacySettings.create({ data: {} });
+}
 
 export interface BatchAllocation {
   batchId: string | null;
@@ -77,7 +82,9 @@ export const pharmacyService = {
   async createMedicine(body: CreateMedicineBody, actorId: string) {
     const dup = await prisma.medicineMaster.findFirst({ where: { OR: [{ code: body.code }, ...(body.barcode ? [{ barcode: body.barcode }] : [])] } });
     if (dup) throw new ConflictError('Medicine code or barcode already exists');
-    return prisma.medicineMaster.create({ data: { ...body, createdById: actorId } });
+    // pharmacy.md §3 Settings "Tax/discount" policy — falls back to the configured default when the form leaves tax at 0.
+    const taxPercent = body.taxPercent || (await getSettings()).defaultTaxPercent;
+    return prisma.medicineMaster.create({ data: { ...body, taxPercent, createdById: actorId } });
   },
 
   async updateMedicine(id: string, body: UpdateMedicineBody) {
@@ -87,16 +94,19 @@ export const pharmacyService = {
   },
 
   async listMedicines(query: ListMedicinesQuery) {
-    const medicines = await prisma.medicineMaster.findMany({
-      where: query.search
-        ? { OR: [{ name: { contains: query.search, mode: 'insensitive' } }, { code: { contains: query.search, mode: 'insensitive' } }, { barcode: { contains: query.search, mode: 'insensitive' } }] }
-        : undefined,
-      include: { batches: true, stockEntries: { select: { quantityDelta: true } } },
-      orderBy: { name: 'asc' },
-    });
+    const [medicines, settings] = await Promise.all([
+      prisma.medicineMaster.findMany({
+        where: query.search
+          ? { OR: [{ name: { contains: query.search, mode: 'insensitive' } }, { code: { contains: query.search, mode: 'insensitive' } }, { barcode: { contains: query.search, mode: 'insensitive' } }] }
+          : undefined,
+        include: { batches: true, stockEntries: { select: { quantityDelta: true } } },
+        orderBy: { name: 'asc' },
+      }),
+      getSettings(),
+    ]);
 
     const now = new Date();
-    const nearExpiryCutoff = new Date(now.getTime() + NEAR_EXPIRY_DAYS * 86_400_000);
+    const nearExpiryCutoff = new Date(now.getTime() + settings.nearExpiryWindowDays * 86_400_000);
 
     const rows = medicines.map((m) => {
       const stock = m.stockEntries.reduce((s, e) => s.plus(e.quantityDelta), new Decimal(0));
@@ -250,6 +260,17 @@ export const pharmacyService = {
       }
 
       const invoiceDiscount = new Decimal(body.invoiceDiscount || 0);
+
+      // pharmacy.md §3 Settings "Tax/discount" policy — 0 means no cap configured.
+      const settings = await tx.pharmacySettings.findFirst();
+      const maxDiscountPercent = settings?.maxDiscountPercent ?? new Decimal(0);
+      if (maxDiscountPercent.greaterThan(0) && subtotal.greaterThan(0)) {
+        const discountPercent = discountTotal.plus(invoiceDiscount).div(subtotal).mul(100);
+        if (discountPercent.greaterThan(maxDiscountPercent)) {
+          throw new ValidationError(`Total discount (${discountPercent.toFixed(2)}%) exceeds the configured policy cap of ${maxDiscountPercent}%`);
+        }
+      }
+
       const total = subtotal.minus(discountTotal).plus(taxTotal).minus(invoiceDiscount);
       if (total.lessThan(0)) throw new ValidationError('Invoice discount exceeds the invoice total');
 

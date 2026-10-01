@@ -190,47 +190,57 @@ export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
     {
       key: 'code',
       header: 'Vendor Code',
-      width: '120px',
-      render: (v) => <span className="font-mono text-xs font-bold text-slate-800">{v.code}</span>,
+      width: '140px',
+      render: (v) => (
+        <span className="font-bold text-slate-900 text-xs tracking-wider whitespace-nowrap">
+          {v.code}
+        </span>
+      ),
     },
     {
       key: 'name',
-      header: 'Vendor Name & Details',
+      header: 'Vendor Name',
       render: (v) => (
-        <div>
-          <div className="font-bold text-slate-900 text-xs">{v.name}</div>
-          {v.contactPerson && (
-            <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
-              <User className="h-3 w-3 text-slate-400" />
-              <span>{v.contactPerson}</span>
-            </div>
-          )}
-        </div>
+        <span className="font-bold text-slate-900 text-xs whitespace-nowrap">{v.name}</span>
+      ),
+    },
+    {
+      key: 'contactPerson',
+      header: 'Contact Person',
+      width: '160px',
+      render: (v) => (
+        <span className="text-xs text-slate-700 whitespace-nowrap">
+          {v.contactPerson || <span className="text-slate-400 font-sans">—</span>}
+        </span>
       ),
     },
     {
       key: 'contact',
       header: 'Phone / Email',
       render: (v) => (
-        <div className="text-xs text-slate-600">
+        <div className="flex items-center gap-2 whitespace-nowrap text-xs text-slate-700">
           {v.phone ? (
-            <div className="flex items-center gap-1 font-mono text-[11px]">
-              <Phone className="h-3 w-3 text-slate-400" />
+            <div className="flex items-center gap-1">
+              <Phone className="h-3.5 w-3.5 text-slate-400 shrink-0" />
               <span>{v.phone}</span>
             </div>
           ) : (
-            <span className="text-slate-400">—</span>
+            <span className="text-slate-400 font-sans">—</span>
           )}
-          {v.email && <div className="text-[10px] text-slate-400 truncate">{v.email}</div>}
+          {v.email && (
+            <span className="text-slate-500 font-sans">
+              ({v.email})
+            </span>
+          )}
         </div>
       ),
     },
     {
       key: 'paymentTermsDays',
       header: 'Credit Terms',
-      width: '130px',
+      width: '140px',
       render: (v) => (
-        <span className="text-xs text-slate-700 bg-slate-100 px-2 py-0.5 rounded font-medium">
+        <span className="text-xs text-slate-700 font-medium whitespace-nowrap">
           {v.paymentTermsDays > 0 ? `Net ${v.paymentTermsDays} Days` : 'Immediate / COD'}
         </span>
       ),
@@ -243,8 +253,8 @@ export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
         const amt = Number(v.currentPayable || 0);
         return (
           <span
-            className={`font-bold tabular-nums text-xs ${
-              amt > 0 ? 'text-rose-700' : 'text-emerald-700'
+            className={`font-bold text-xs whitespace-nowrap ${
+              amt > 0 ? 'text-rose-600' : 'text-slate-900'
             }`}
           >
             {formatPKR(amt)}
@@ -256,16 +266,16 @@ export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
       key: 'status',
       header: 'Status',
       align: 'center',
-      width: '120px',
+      width: '130px',
       render: (v) => {
         const amt = Number(v.currentPayable || 0);
         return amt > 0 ? (
-          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200">
-            Payable Due
+          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-700 whitespace-nowrap">
+            <span className="h-2 w-2 rounded-full bg-rose-600 shrink-0" /> Payable Due
           </span>
         ) : (
-          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-            Settled
+          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#0e7d5a] whitespace-nowrap">
+            <span className="h-2 w-2 rounded-full bg-[#0e7d5a] shrink-0" /> Settled
           </span>
         );
       },
@@ -274,25 +284,25 @@ export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
       key: 'actions',
       header: 'Actions',
       align: 'center',
-      width: '130px',
+      width: '140px',
       render: (v) => (
-        <div className="flex items-center justify-center gap-1.5">
+        <div className="flex items-center justify-center gap-1 whitespace-nowrap">
           <button
             type="button"
             onClick={() => openLedger(v)}
             title="Inspect Vendor Ledger Statement"
-            className="px-2.5 py-1 text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-md transition-colors flex items-center gap-1"
+            className="px-2 py-0.5 text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
           >
-            <BookOpen className="h-3.5 w-3.5" /> Ledger
+            <BookOpen className="h-3 w-3" /> Ledger
           </button>
           {canEdit && (
             <button
               type="button"
               onClick={() => openPayModal(v)}
               title="Record Disbursement Payment"
-              className="px-2.5 py-1 text-[11px] font-semibold text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 rounded-md transition-colors flex items-center gap-1"
+              className="px-2 py-0.5 text-[11px] font-semibold text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
             >
-              <Banknote className="h-3.5 w-3.5 text-emerald-600" /> Pay
+              <Banknote className="h-3 w-3 text-emerald-600" /> Pay
             </button>
           )}
         </div>
@@ -338,19 +348,19 @@ export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
   const ledgerNetClosing = Number(ledgerVendor?.currentPayable ?? running);
 
   return (
-    <div className="p-5 sm:p-6 space-y-5 max-w-7xl mx-auto">
+    <div className="p-6 sm:p-8 space-y-6 max-w-[1700px] mx-auto">
       {/* Page Title & Add Button */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
               Vendor Directory &amp; Ledger
             </h1>
-            <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
+            <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200/80">
               Pharmacy Store
             </span>
           </div>
-          <p className="text-xs text-slate-500 mt-0.5">
+          <p className="text-xs text-slate-500 mt-1">
             Complete vendor master, double-entry statement ledger, disbursements, and credit terms.
           </p>
         </div>
@@ -359,7 +369,7 @@ export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
           <button
             type="button"
             onClick={() => setShowAdd(true)}
-            className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] rounded-xl shadow-xs transition-colors"
+            className="flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-white bg-[#0e7d5a] hover:bg-[#0c6b50] rounded-xl shadow-xs transition-colors cursor-pointer"
           >
             <Plus className="h-4 w-4" /> Add New Vendor
           </button>
@@ -374,6 +384,9 @@ export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
         columns={columns}
         data={filteredVendors}
         loading={loading}
+        title="Vendor Accounts & Payables Register"
+        badge="Active Vendors"
+        exportFileName="vendor_accounts"
         searchPlaceholder="Search vendor by code, name, phone, or contact…"
         searchFilter={(v, q) =>
           v.code.toLowerCase().includes(q) ||
@@ -382,12 +395,17 @@ export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
           (v.phone && v.phone.toLowerCase().includes(q))
         }
         onRefresh={load}
+        onApplyFilters={load}
+        onResetFilters={() => {
+          setStatusFilter('ALL');
+          load();
+        }}
         filterControls={
           <div className="w-44">
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as any)}
-              className="w-full h-9 px-3 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#08775A]"
+              className="w-full h-8.5 px-2.5 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a] cursor-pointer"
             >
               <option value="ALL">All Vendor Accounts</option>
               <option value="DUE">With Due Balance</option>

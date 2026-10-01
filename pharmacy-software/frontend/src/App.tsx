@@ -19,6 +19,7 @@ import { UsersPage } from './pages/UsersPage';
 import { StockMovementsPage } from './pages/StockMovementsPage';
 import { HmsRequestQueuePage } from './pages/HmsRequestQueuePage';
 import { ReportsPage } from './pages/ReportsPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { ComingSoonPage } from './pages/ComingSoonPage';
 
 function findLabel(groups: NavGroup[], id: string): string {
@@ -44,7 +45,7 @@ const App: React.FC = () => {
   const renderPage = () => {
     switch (page) {
       case 'dashboard':
-        return isSales ? <SalesDashboardPage /> : <ManagementDashboardPage />;
+        return isSales ? <SalesDashboardPage /> : <ManagementDashboardPage onNavigate={setPage} />;
       case 'medicines':
         return <MedicinesPage canEdit={!isSales} />;
       case 'pos':
@@ -69,6 +70,8 @@ const App: React.FC = () => {
         return <UsersPage />;
       case 'reports':
         return <ReportsPage />;
+      case 'settings':
+        return <SettingsPage />;
       default:
         return <ComingSoonPage title="Not found" step="—" />;
     }

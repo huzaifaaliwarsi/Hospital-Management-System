@@ -560,6 +560,14 @@ model PharmacySettings {
   highValueApprovalEnabled Boolean  @default(false) @map("high_value_approval_enabled")
   /// PKR — request/invoice total at or above this needs approval before dispense.
   highValueThreshold       Decimal  @default(0) @db.Decimal(14, 2) @map("high_value_threshold")
+  /// Pre-filled as the tax rate for newly created medicines when not specified (pharmacy.md §3 "Tax/discount" policy).
+  defaultTaxPercent        Decimal  @default(0) @db.Decimal(5, 2) @map("default_tax_percent")
+  /// 0 = no cap. POS line/invoice discount percent above this is rejected.
+  maxDiscountPercent       Decimal  @default(0) @db.Decimal(5, 2) @map("max_discount_percent")
+  /// Replaces the hardcoded 90-day window for "Near Expiry" everywhere it is computed.
+  nearExpiryWindowDays     Int      @default(90) @map("near_expiry_window_days")
+  receiptHeaderText        String?  @map("receipt_header_text")
+  receiptFooterText        String?  @map("receipt_footer_text")
   updatedAt                DateTime @updatedAt @map("updated_at")
   updatedById              String?  @map("updated_by")
 

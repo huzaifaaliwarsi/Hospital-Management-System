@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Loader2, FileBarChart } from 'lucide-react';
+import React, { useEffect, useState, useRef } from 'react';
+import { Loader2, FileBarChart, Filter, RotateCcw, FileSpreadsheet, Download, FileText, Printer, ArrowUpDown } from 'lucide-react';
 import apiClient from '../services/apiClient';
 import { formatPKR, formatNumber } from '../utils/format';
 
@@ -16,103 +16,123 @@ type ReportType =
 const REPORT_OPTIONS: { value: ReportType; label: string }[] = [
   { value: 'SALES_COLLECTION', label: 'Sales & Collection' },
   { value: 'HMS_DISPENSE', label: 'HMS Request / Dispense' },
-  { value: 'PURCHASE', label: 'Purchase' },
-  { value: 'STOCK_MOVEMENT', label: 'Stock Movement' },
-  { value: 'VENDOR_LEDGER', label: 'Vendor Ledger' },
-  { value: 'EXPENSE', label: 'Expense' },
-  { value: 'RETURN_REFUND', label: 'Return / Refund' },
-  { value: 'BALANCE_SETTLEMENT', label: 'Balance / Settlement' },
+  { value: 'PURCHASE', label: 'Purchase Inward' },
+  { value: 'STOCK_MOVEMENT', label: 'Stock Movement Audit' },
+  { value: 'VENDOR_LEDGER', label: 'Vendor Payables Ledger' },
+  { value: 'EXPENSE', label: 'Operational Expense' },
+  { value: 'RETURN_REFUND', label: 'Sales & Purchase Returns' },
+  { value: 'BALANCE_SETTLEMENT', label: 'Balance & Drawer Settlement' },
 ];
 
 const COLUMNS: Record<ReportType, { key: string; label: string; align?: 'right'; money?: boolean; date?: boolean; datetime?: boolean }[]> = {
   SALES_COLLECTION: [
-    { key: 'invoiceNumber', label: 'Invoice' },
+    { key: 'invoiceNumber', label: 'Invoice #' },
     { key: 'channel', label: 'Channel' },
-    { key: 'customerName', label: 'Customer' },
-    { key: 'total', label: 'Net', align: 'right', money: true },
-    { key: 'paidTotal', label: 'Paid', align: 'right', money: true },
+    { key: 'customerName', label: 'Customer / Patient' },
+    { key: 'total', label: 'Net Total', align: 'right', money: true },
+    { key: 'paidTotal', label: 'Paid Amount', align: 'right', money: true },
     { key: 'outstanding', label: 'Outstanding', align: 'right', money: true },
     { key: 'status', label: 'Status' },
     { key: 'soldBy', label: 'Sold By' },
     { key: 'collectedBy', label: 'Collected By' },
-    { key: 'createdAt', label: 'Date', datetime: true },
+    { key: 'createdAt', label: 'Date & Time', datetime: true },
   ],
   HMS_DISPENSE: [
-    { key: 'requestNumber', label: 'Request' },
-    { key: 'admissionRef', label: 'Admission' },
-    { key: 'patientName', label: 'Patient' },
+    { key: 'requestNumber', label: 'Request #' },
+    { key: 'admissionRef', label: 'Admission Ref' },
+    { key: 'patientName', label: 'Patient Name' },
     { key: 'medicines', label: 'Medicines' },
     { key: 'status', label: 'Status' },
     { key: 'requestedByExternal', label: 'Requested By' },
     { key: 'dispensedBy', label: 'Dispensed By' },
-    { key: 'invoiceNumber', label: 'Invoice' },
+    { key: 'invoiceNumber', label: 'Invoice #' },
     { key: 'outstanding', label: 'Outstanding', align: 'right', money: true },
     { key: 'clearanceStatus', label: 'Clearance' },
-    { key: 'requestedAt', label: 'Date', datetime: true },
+    { key: 'requestedAt', label: 'Request Date', datetime: true },
   ],
   PURCHASE: [
-    { key: 'purchaseNumber', label: 'GRN' },
+    { key: 'purchaseNumber', label: 'GRN Number' },
     { key: 'vendor', label: 'Vendor' },
     { key: 'purchaseDate', label: 'Date', date: true },
     { key: 'paymentType', label: 'Payment' },
-    { key: 'total', label: 'Total', align: 'right', money: true },
-    { key: 'paidNow', label: 'Paid', align: 'right', money: true },
-    { key: 'vendorDue', label: 'Due', align: 'right', money: true },
-    { key: 'receivedBy', label: 'Received By' },
+    { key: 'total', label: 'Total Value', align: 'right', money: true },
+    { key: 'paidNow', label: 'Paid Now', align: 'right', money: true },
+    { key: 'vendorDue', label: 'Vendor Due', align: 'right', money: true },
+    { key: 'enteredBy', label: 'Received By' },
+    { key: 'createdAt', label: 'Created At', datetime: true },
   ],
   STOCK_MOVEMENT: [
+    { key: 'movementType', label: 'Movement Type' },
+    { key: 'itemCode', label: 'Item Code' },
     { key: 'medicine', label: 'Medicine' },
-    { key: 'batch', label: 'Batch' },
-    { key: 'movementType', label: 'Type' },
-    { key: 'quantityDelta', label: 'Qty', align: 'right' },
-    { key: 'performedBy', label: 'Performed By' },
-    { key: 'createdAt', label: 'Date', datetime: true },
+    { key: 'batchNumber', label: 'Batch No' },
+    { key: 'quantityDelta', label: 'Quantity Delta', align: 'right' },
+    { key: 'unitCost', label: 'Unit Cost', align: 'right', money: true },
+    { key: 'lineValuation', label: 'Valuation', align: 'right', money: true },
+    { key: 'reference', label: 'Reference Ref' },
+    { key: 'actor', label: 'Logged By' },
+    { key: 'createdAt', label: 'Date & Time', datetime: true },
   ],
   VENDOR_LEDGER: [
     { key: 'vendor', label: 'Vendor' },
-    { key: 'entryType', label: 'Type' },
+    { key: 'entryType', label: 'Entry Type' },
     { key: 'amount', label: 'Amount', align: 'right', money: true },
-    { key: 'description', label: 'Description' },
-    { key: 'actor', label: 'Actor' },
-    { key: 'createdAt', label: 'Date', datetime: true },
+    { key: 'referenceId', label: 'Reference' },
+    { key: 'enteredBy', label: 'Entered By' },
+    { key: 'occurredAt', label: 'Date & Time', datetime: true },
   ],
   EXPENSE: [
+    { key: 'date', label: 'Expense Date', date: true },
     { key: 'category', label: 'Category' },
-    { key: 'date', label: 'Date', date: true },
-    { key: 'amount', label: 'Amount', align: 'right', money: true },
-    { key: 'paymentMethod', label: 'Method' },
-    { key: 'payeeOrVendor', label: 'Payee' },
     { key: 'description', label: 'Description' },
+    { key: 'amount', label: 'Amount', align: 'right', money: true },
+    { key: 'paymentMethod', label: 'Payment Method' },
+    { key: 'payeeOrVendor', label: 'Payee / Vendor' },
     { key: 'enteredBy', label: 'Entered By' },
     { key: 'approvedBy', label: 'Approved By' },
   ],
   RETURN_REFUND: [
-    { key: 'referenceTable', label: 'Reference' },
-    { key: 'amount', label: 'Amount', align: 'right', money: true },
-    { key: 'isPhysicalCash', label: 'Cash?' },
+    { key: 'type', label: 'Return Type' },
+    { key: 'returnNumber', label: 'Return #' },
+    { key: 'originalRef', label: 'Original Ref' },
+    { key: 'party', label: 'Customer / Vendor' },
+    { key: 'refundAmount', label: 'Refund Amount', align: 'right', money: true },
     { key: 'reason', label: 'Reason' },
     { key: 'processedBy', label: 'Processed By' },
-    { key: 'occurredAt', label: 'Date', datetime: true },
+    { key: 'createdAt', label: 'Date & Time', datetime: true },
   ],
   BALANCE_SETTLEMENT: [
-    { key: 'submittedBy', label: 'Submitted By' },
-    { key: 'periodFrom', label: 'From', date: true },
-    { key: 'periodTo', label: 'To', date: true },
-    { key: 'expectedCash', label: 'Expected', align: 'right', money: true },
-    { key: 'physicalCash', label: 'Physical', align: 'right', money: true },
+    { key: 'submittedBy', label: 'Cashier' },
+    { key: 'periodFrom', label: 'From Date', date: true },
+    { key: 'periodTo', label: 'To Date', date: true },
+    { key: 'expectedCash', label: 'Expected Cash', align: 'right', money: true },
+    { key: 'physicalCash', label: 'Physical Cash', align: 'right', money: true },
     { key: 'variance', label: 'Variance', align: 'right', money: true },
+    { key: 'varianceReason', label: 'Variance Reason' },
     { key: 'status', label: 'Status' },
     { key: 'reviewedBy', label: 'Reviewed By' },
+    { key: 'submittedAt', label: 'Submitted At', datetime: true },
   ],
 };
 
-function fmtCell(value: any, col: { money?: boolean; date?: boolean; datetime?: boolean }): string {
-  if (value === null || value === undefined) return '—';
-  if (col.money) return formatPKR(value);
-  if (col.date) return new Date(value).toLocaleDateString('en-GB');
-  if (col.datetime) return new Date(value).toLocaleString('en-GB');
-  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-  return String(value);
+function fmtCell(val: any, col: { money?: boolean; date?: boolean; datetime?: boolean }): string {
+  if (val == null || val === '') return '—';
+  if (col.money) return formatPKR(val);
+  if (col.date) {
+    try {
+      return new Date(val).toLocaleDateString('en-GB');
+    } catch {
+      return String(val);
+    }
+  }
+  if (col.datetime) {
+    try {
+      return new Date(val).toLocaleString('en-GB');
+    } catch {
+      return String(val);
+    }
+  }
+  return String(val);
 }
 
 export const ReportsPage: React.FC = () => {
@@ -121,8 +141,35 @@ export const ReportsPage: React.FC = () => {
   const [to, setTo] = useState('');
   const [rows, setRows] = useState<any[]>([]);
   const [totals, setTotals] = useState<Record<string, number> | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Dual Synchronized Scrollbars
+  const topScrollRef = useRef<HTMLDivElement>(null);
+  const bottomScrollRef = useRef<HTMLDivElement>(null);
+  const isSyncingScroll = useRef(false);
+
+  const syncTopToBottom = () => {
+    if (isSyncingScroll.current) return;
+    isSyncingScroll.current = true;
+    if (topScrollRef.current && bottomScrollRef.current) {
+      bottomScrollRef.current.scrollLeft = topScrollRef.current.scrollLeft;
+    }
+    requestAnimationFrame(() => {
+      isSyncingScroll.current = false;
+    });
+  };
+
+  const syncBottomToTop = () => {
+    if (isSyncingScroll.current) return;
+    isSyncingScroll.current = true;
+    if (topScrollRef.current && bottomScrollRef.current) {
+      topScrollRef.current.scrollLeft = bottomScrollRef.current.scrollLeft;
+    }
+    requestAnimationFrame(() => {
+      isSyncingScroll.current = false;
+    });
+  };
 
   const load = () => {
     setLoading(true);
@@ -130,10 +177,10 @@ export const ReportsPage: React.FC = () => {
     apiClient
       .get('/reports', { params: { type, from: from || undefined, to: to || undefined } })
       .then((r) => {
-        setRows(r.data.data.rows);
-        setTotals(r.data.data.totals);
+        setRows(r.data.data.rows || []);
+        setTotals(r.data.data.totals || null);
       })
-      .catch(() => setError('Failed to load report.'))
+      .catch(() => setError('Failed to load report data.'))
       .finally(() => setLoading(false));
   };
 
@@ -141,86 +188,307 @@ export const ReportsPage: React.FC = () => {
 
   const columns = COLUMNS[type];
 
+  // CSV Export
+  const handleExportCsv = () => {
+    if (rows.length === 0) return;
+    const headerRow = columns.map((c) => `"${c.label}"`).join(',');
+    const dataRows = rows.map((r) =>
+      columns.map((c) => `"${fmtCell(r[c.key], c).replace(/"/g, '""')}"`).join(',')
+    );
+    const csvContent = [headerRow, ...dataRows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `${type.toLowerCase()}_report_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Excel Export
+  const handleExportExcel = () => {
+    if (rows.length === 0) return;
+    const headerHtml = columns.map((c) => `<th>${c.label}</th>`).join('');
+    const rowsHtml = rows
+      .map(
+        (r) => `
+        <tr>
+          ${columns.map((c) => `<td>${fmtCell(r[c.key], c)}</td>`).join('')}
+        </tr>
+      `
+      )
+      .join('');
+
+    const html = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head><meta charset="utf-8"/></head>
+      <body>
+        <h2>${REPORT_OPTIONS.find((o) => o.value === type)?.label} Report</h2>
+        <table border="1">
+          <tr style="background:#0e5944;color:#ffffff;font-weight:bold;">${headerHtml}</tr>
+          ${rowsHtml}
+        </table>
+      </body>
+      </html>
+    `;
+
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `${type.toLowerCase()}_report_${new Date().toISOString().slice(0, 10)}.xls`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
-    <div className="p-6 space-y-4">
+    <div className="p-6 sm:p-8 space-y-6 max-w-[1700px] mx-auto">
+      {/* Title */}
       <div>
-        <h2 className="text-lg font-bold text-[#111827]">Pharmacy Reports</h2>
-        <p className="text-xs text-[#52665e]">pharmacy.md §14 — one consolidated reporting center, actual actors on every row.</p>
+        <div className="flex items-center gap-2.5">
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
+            Pharmacy Reports &amp; Analytics
+          </h1>
+          <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200/80">
+            Consolidated Center
+          </span>
+        </div>
+        <p className="text-xs text-slate-500 mt-1">
+          Complete multi-period financial statements, stock ledger movements, inpatient requisitions, and vendor audits.
+        </p>
       </div>
 
-      <div className="bg-white rounded-xl border border-[#e2eae5] p-4 flex flex-wrap items-end gap-3">
-        <div>
-          <label className="block text-[11px] font-semibold text-[#52665e] mb-1">Report</label>
-          <select value={type} onChange={(e) => setType(e.target.value as ReportType)} className="input min-w-[220px]">
-            {REPORT_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-[11px] font-semibold text-[#52665e] mb-1">From</label>
-          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="input" />
-        </div>
-        <div>
-          <label className="block text-[11px] font-semibold text-[#52665e] mb-1">To</label>
-          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="input" />
-        </div>
-        <button onClick={load} className="px-4 py-2 text-xs font-semibold text-white bg-[#129b70] hover:bg-[#0e7d5a] rounded-lg shadow-xs h-9">
-          Apply Filters
-        </button>
-        <div className="ml-auto text-xs text-[#94a3b8] flex items-center gap-1.5">
-          <FileBarChart className="h-3.5 w-3.5" /> {rows.length} row{rows.length === 1 ? '' : 's'}
-        </div>
-      </div>
-
-      <div className="bg-white rounded-xl border border-[#e2eae5] overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-[#f6faf8]">
-            <tr className="text-[11px] font-bold uppercase tracking-wide text-[#52665e]">
-              {columns.map((col) => (
-                <th key={col.key} className={`py-2.5 px-3 whitespace-nowrap ${col.align === 'right' ? 'text-right' : 'text-left'}`}>{col.label}</th>
+      {/* Filter Toolbar */}
+      <div className="bg-white p-3 rounded-xl border border-slate-300/80 shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-wrap items-center justify-between gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-[280px]">
+          {/* Report Type Select */}
+          <div className="w-56">
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value as ReportType)}
+              className="w-full h-8.5 px-2.5 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-slate-700 font-semibold focus:outline-none focus:ring-1 focus:ring-[#0e7d5a] cursor-pointer"
+            >
+              {REPORT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
               ))}
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr><td colSpan={columns.length} className="py-10 text-center text-[#52665e]"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Loading…</td></tr>
-            ) : error ? (
-              <tr><td colSpan={columns.length} className="py-10 text-center text-rose-600">{error}</td></tr>
-            ) : rows.length === 0 ? (
-              <tr><td colSpan={columns.length} className="py-10 text-center text-[#94a3b8]">No records for this filter.</td></tr>
-            ) : (
-              rows.map((row, i) => (
-                <tr key={i} className="border-t border-[#f0f4f2]">
+            </select>
+          </div>
+
+          {/* Date From */}
+          <div className="w-36">
+            <input
+              type="date"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+              className="w-full h-8.5 px-2.5 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
+            />
+          </div>
+
+          {/* Date To */}
+          <div className="w-36">
+            <input
+              type="date"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              className="w-full h-8.5 px-2.5 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
+            />
+          </div>
+
+          {/* Apply & Reset Buttons */}
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={load}
+              className="px-3.5 py-1.5 bg-[#0e7d5a] hover:bg-[#0c6b50] text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer whitespace-nowrap"
+            >
+              <Filter className="h-3.5 w-3.5" /> Filter
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setFrom('');
+                setTo('');
+                load();
+              }}
+              className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap"
+              title="Reset Date Range"
+            >
+              <RotateCcw className="h-3.5 w-3.5 text-slate-500" /> Reset
+            </button>
+          </div>
+        </div>
+
+        <div className="text-xs text-slate-500 font-medium flex items-center gap-1.5">
+          <FileBarChart className="h-3.5 w-3.5 text-emerald-600" />
+          <span>
+            <strong className="text-slate-800">{rows.length}</strong> records generated
+          </span>
+        </div>
+      </div>
+
+      {/* Main Table Container */}
+      <div className="bg-white rounded-2xl border border-slate-300/80 shadow-[0_1px_4px_rgba(0,0,0,0.04)] overflow-hidden">
+        {/* Dark Emerald Header Strip */}
+        <div className="bg-[#0e5944] text-white px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2">
+            <FileSpreadsheet className="h-4 w-4 text-emerald-300" />
+            <span className="font-bold text-xs sm:text-sm tracking-tight text-white whitespace-nowrap">
+              {REPORT_OPTIONS.find((o) => o.value === type)?.label} Statement
+            </span>
+            <span className="text-[10px] font-semibold bg-emerald-700/60 text-emerald-200 px-2 py-0.5 rounded-full border border-emerald-500/30 whitespace-nowrap">
+              Formal Statement
+            </span>
+          </div>
+
+          {/* Export Action Buttons */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              type="button"
+              onClick={handleExportExcel}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#16a34a] hover:bg-[#15803d] text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer whitespace-nowrap"
+              title="Download Excel Worksheet"
+            >
+              <FileSpreadsheet className="h-3.5 w-3.5" /> Excel
+            </button>
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#0284c7] hover:bg-[#0369a1] text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer whitespace-nowrap"
+              title="Download CSV"
+            >
+              <Download className="h-3.5 w-3.5" /> CSV
+            </button>
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#dc2626] hover:bg-[#b91c1c] text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer whitespace-nowrap"
+              title="Export as PDF via Print"
+            >
+              <FileText className="h-3.5 w-3.5" /> PDF
+            </button>
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer whitespace-nowrap"
+              title="Print Table"
+            >
+              <Printer className="h-3.5 w-3.5" /> Print
+            </button>
+          </div>
+        </div>
+
+        {/* ── TOP HORIZONTAL SCROLLER ── */}
+        <div
+          ref={topScrollRef}
+          onScroll={syncTopToBottom}
+          className="overflow-x-auto overflow-y-hidden h-2 bg-slate-100 border-b border-slate-200 scrollbar-thin"
+        >
+          <div style={{ width: '1400px', height: '1px' }} />
+        </div>
+
+        {/* ── MAIN TABLE CONTAINER ── */}
+        <div
+          ref={bottomScrollRef}
+          onScroll={syncBottomToTop}
+          className="overflow-x-auto max-h-[calc(100vh-380px)] scrollbar-thin"
+        >
+          <table className="w-full min-w-[1400px] border-collapse text-left text-xs">
+            <thead className="bg-[#f8fafc] text-slate-700 font-bold sticky top-0 z-10 border-b border-slate-200 uppercase tracking-wider select-none text-xs">
+              <tr>
+                <th className="py-3 px-3.5 text-center border-r border-slate-200 w-14 whitespace-nowrap">#</th>
+                {columns.map((col) => (
+                  <th
+                    key={col.key}
+                    className={`py-3 px-4 border-r border-slate-200 last:border-r-0 whitespace-nowrap ${
+                      col.align === 'right' ? 'text-right' : 'text-left'
+                    }`}
+                  >
+                    {col.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {loading ? (
+                <tr>
+                  <td colSpan={columns.length + 1} className="py-12 text-center text-slate-400">
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <Loader2 className="h-5 w-5 animate-spin text-[#0e7d5a]" />
+                      <span className="text-xs">Generating report data…</span>
+                    </div>
+                  </td>
+                </tr>
+              ) : error ? (
+                <tr>
+                  <td colSpan={columns.length + 1} className="py-12 text-center text-rose-600 font-semibold text-xs">
+                    {error}
+                  </td>
+                </tr>
+              ) : rows.length === 0 ? (
+                <tr>
+                  <td colSpan={columns.length + 1} className="py-12 text-center text-slate-400 text-xs">
+                    No records found for the selected report filters.
+                  </td>
+                </tr>
+              ) : (
+                rows.map((row, i) => (
+                  <tr key={i} className="hover:bg-slate-50/80 transition-colors">
+                    <td className="py-3.5 px-3.5 text-center border-r border-slate-100 text-slate-500 font-semibold text-xs whitespace-nowrap">
+                      {i + 1}
+                    </td>
+                    {columns.map((col) => (
+                      <td
+                        key={col.key}
+                        className={`py-3.5 px-4 border-r border-slate-100 last:border-r-0 whitespace-nowrap text-xs ${
+                          col.align === 'right' ? 'text-right font-bold text-slate-900' : 'text-slate-900'
+                        }`}
+                      >
+                        {col.key === 'quantityDelta' ? (
+                          <span
+                            className={`font-bold ${
+                              Number(row[col.key]) >= 0 ? 'text-emerald-700' : 'text-rose-700'
+                            }`}
+                          >
+                            {Number(row[col.key]) >= 0 ? '+' : ''}
+                            {formatNumber(row[col.key])}
+                          </span>
+                        ) : (
+                          fmtCell(row[col.key], col)
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                ))
+              )}
+            </tbody>
+            {totals && !loading && !error && rows.length > 0 && (
+              <tfoot className="bg-[#f8fafc] font-bold border-t-2 border-b border-slate-300 text-slate-900 text-xs">
+                <tr>
+                  <td className="py-4 px-3.5 text-center border-r border-slate-200 whitespace-nowrap">
+                    <span className="bg-slate-800 text-white text-[10.5px] font-black px-2.5 py-1 rounded tracking-wider uppercase inline-block">
+                      TOTAL
+                    </span>
+                  </td>
                   {columns.map((col) => (
-                    <td key={col.key} className={`py-2 px-3 whitespace-nowrap ${col.align === 'right' ? 'text-right tabular-nums' : ''}`}>
-                      {col.key === 'quantityDelta' ? (
-                        <span className={Number(row[col.key]) >= 0 ? 'text-[#0e7d5a] font-semibold' : 'text-rose-600 font-semibold'}>
-                          {Number(row[col.key]) >= 0 ? '+' : ''}{formatNumber(row[col.key])}
-                        </span>
-                      ) : (
-                        fmtCell(row[col.key], col)
-                      )}
+                    <td
+                      key={col.key}
+                      className={`py-4 px-4 border-r border-slate-200 last:border-r-0 whitespace-nowrap ${
+                        col.align === 'right' ? 'text-right font-bold text-slate-900' : ''
+                      }`}
+                    >
+                      {totals[col.key] != null ? formatPKR(totals[col.key]) : '—'}
                     </td>
                   ))}
                 </tr>
-              ))
+              </tfoot>
             )}
-          </tbody>
-          {totals && !loading && !error && rows.length > 0 && (
-            <tfoot>
-              <tr className="border-t-2 border-[#e2eae5] bg-[#f6faf8] font-bold text-[#111827]">
-                {columns.map((col, i) => (
-                  <td key={col.key} className={`py-2.5 px-3 ${col.align === 'right' ? 'text-right tabular-nums' : ''}`}>
-                    {i === 0 ? 'Total' : col.key in totals ? formatPKR(totals[col.key]) : ''}
-                  </td>
-                ))}
-              </tr>
-            </tfoot>
-          )}
-        </table>
+          </table>
+        </div>
       </div>
-      <style>{`.input { height: 2.25rem; padding: 0 0.75rem; font-size: 0.875rem; background: white; border: 1px solid #e2eae5; border-radius: 0.5rem; } .input:focus { outline: none; box-shadow: 0 0 0 2px rgba(18,155,112,0.2); border-color: #129b70; }`}</style>
     </div>
   );
 };

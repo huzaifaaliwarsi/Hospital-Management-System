@@ -140,6 +140,7 @@ async function stockMovement(range?: { gte?: Date; lte?: Date }) {
     take: ROW_LIMIT,
   });
   const rows = entries.map((e) => ({
+    itemCode: e.medicine.code,
     medicine: e.medicine.name,
     batch: e.batch?.batchNumber ?? null,
     movementType: e.movementType,

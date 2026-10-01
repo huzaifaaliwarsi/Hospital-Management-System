@@ -95,18 +95,17 @@ export const InvoicesPage: React.FC = () => {
     {
       key: 'invoiceNumber',
       header: 'Invoice #',
-      width: '150px',
+      width: '160px',
       render: (inv) => (
-        <div className="font-mono text-xs font-bold text-slate-900 flex items-center gap-1.5">
-          <Receipt className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
-          <span>{inv.invoiceNumber}</span>
-        </div>
+        <span className="font-bold text-slate-900 text-xs tracking-wider whitespace-nowrap">
+          {inv.invoiceNumber}
+        </span>
       ),
     },
     {
       key: 'createdAt',
       header: 'Date & Time',
-      width: '150px',
+      width: '160px',
       render: (inv) => (
         <span className="text-xs text-slate-700 whitespace-nowrap">
           {formatDateTime(inv.createdAt)}
@@ -116,15 +115,9 @@ export const InvoicesPage: React.FC = () => {
     {
       key: 'channel',
       header: 'Channel',
-      width: '110px',
+      width: '130px',
       render: (inv) => (
-        <span
-          className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-            inv.channel === 'HMS_LINKED'
-              ? 'bg-blue-50 text-blue-700 border-blue-200'
-              : 'bg-emerald-50 text-emerald-700 border-emerald-200'
-          }`}
-        >
+        <span className="text-slate-800 font-medium text-xs whitespace-nowrap">
           {inv.channel === 'HMS_LINKED' ? 'HMS Dispense' : 'Retail POS'}
         </span>
       ),
@@ -133,7 +126,7 @@ export const InvoicesPage: React.FC = () => {
       key: 'customerName',
       header: 'Customer / Patient',
       render: (inv) => (
-        <div className="font-semibold text-slate-900 text-xs">
+        <div className="font-semibold text-slate-900 text-xs whitespace-nowrap">
           {inv.customerName || <span className="text-slate-400 font-normal">Walk-In Customer</span>}
         </div>
       ),
@@ -142,8 +135,8 @@ export const InvoicesPage: React.FC = () => {
       key: 'dispensedBy',
       header: 'Dispensed By',
       render: (inv) => (
-        <div className="text-xs text-slate-700 flex items-center gap-1">
-          <User className="h-3.5 w-3.5 text-slate-400" />
+        <div className="text-xs text-slate-700 flex items-center gap-1.5 whitespace-nowrap">
+          <User className="h-3.5 w-3.5 text-slate-400 shrink-0" />
           <span>{inv.dispensedByUser?.fullName || inv.dispensedByUser?.username || 'Staff'}</span>
         </div>
       ),
@@ -153,7 +146,7 @@ export const InvoicesPage: React.FC = () => {
       header: 'Net Total (PKR)',
       align: 'right',
       render: (inv) => (
-        <span className="font-bold tabular-nums text-xs text-slate-900">
+        <span className="font-bold text-xs text-slate-900 whitespace-nowrap">
           {formatPKR(inv.total)}
         </span>
       ),
@@ -163,7 +156,7 @@ export const InvoicesPage: React.FC = () => {
       header: 'Paid (PKR)',
       align: 'right',
       render: (inv) => (
-        <span className="font-semibold tabular-nums text-xs text-emerald-700">
+        <span className="font-bold text-xs text-slate-900 whitespace-nowrap">
           {formatPKR(inv.paidTotal)}
         </span>
       ),
@@ -176,8 +169,8 @@ export const InvoicesPage: React.FC = () => {
         const out = Number(inv.outstanding || 0);
         return (
           <span
-            className={`font-bold tabular-nums text-xs ${
-              out > 0 ? 'text-rose-700' : 'text-slate-400 font-normal'
+            className={`font-bold text-xs whitespace-nowrap ${
+              out > 0 ? 'text-rose-600' : 'text-slate-400 font-normal'
             }`}
           >
             {out > 0 ? formatPKR(out) : 'PKR 0'}
@@ -189,35 +182,46 @@ export const InvoicesPage: React.FC = () => {
       key: 'status',
       header: 'Status',
       align: 'center',
-      width: '110px',
-      render: (inv) => {
-        const style =
-          inv.status === 'PAID'
-            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-            : inv.status === 'PARTIALLY_PAID'
-            ? 'bg-amber-50 text-amber-700 border-amber-200'
-            : 'bg-rose-50 text-rose-700 border-rose-200';
-        return (
-          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wider ${style}`}>
+      width: '130px',
+      render: (inv) => (
+        <span className="inline-flex items-center gap-1.5 text-xs font-semibold whitespace-nowrap">
+          <span
+            className={`h-2 w-2 rounded-full shrink-0 ${
+              inv.status === 'PAID'
+                ? 'bg-[#0e7d5a]'
+                : inv.status === 'PARTIALLY_PAID'
+                ? 'bg-amber-500'
+                : 'bg-rose-500'
+            }`}
+          />
+          <span
+            className={
+              inv.status === 'PAID'
+                ? 'text-[#0e7d5a]'
+                : inv.status === 'PARTIALLY_PAID'
+                ? 'text-amber-700'
+                : 'text-rose-700'
+            }
+          >
             {inv.status.replace('_', ' ')}
           </span>
-        );
-      },
+        </span>
+      ),
     },
     {
       key: 'actions',
       header: 'Actions',
       align: 'center',
-      width: '120px',
+      width: '110px',
       render: (inv) => (
-        <div className="flex items-center justify-center gap-1.5">
+        <div className="flex items-center justify-center gap-1 whitespace-nowrap">
           <button
             type="button"
             onClick={() => setSelectedInvoice(inv)}
             title="View & Print Pharmacy Invoice"
-            className="px-2.5 py-1 text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-md transition-colors flex items-center gap-1"
+            className="px-2 py-0.5 text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
           >
-            <Printer className="h-3.5 w-3.5" /> View / Print
+            <Printer className="h-3 w-3" /> Print
           </button>
         </div>
       ),
@@ -225,18 +229,18 @@ export const InvoicesPage: React.FC = () => {
   ];
 
   return (
-    <div className="p-5 sm:p-6 space-y-5 max-w-7xl mx-auto">
+    <div className="p-6 sm:p-8 space-y-6 max-w-[1700px] mx-auto">
       {/* Title */}
       <div>
-        <div className="flex items-center gap-2">
-          <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">
+        <div className="flex items-center gap-2.5">
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
             Sales &amp; Dispensing Invoices
           </h1>
-          <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
+          <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200/80">
             Billing Registry
           </span>
         </div>
-        <p className="text-xs text-slate-500 mt-0.5">
+        <p className="text-xs text-slate-500 mt-1">
           Every POS retail bill, HMS inpatient dispense, payment settlement, and thermal slip printout.
         </p>
       </div>
@@ -249,6 +253,9 @@ export const InvoicesPage: React.FC = () => {
         columns={columns}
         data={filteredInvoices}
         loading={loading}
+        title="Sales Invoices Register"
+        badge="Active Invoices"
+        exportFileName="pharmacy_sales_invoices"
         searchPlaceholder="Search by invoice #, patient/customer name, or pharmacist…"
         searchFilter={(inv, q) =>
           inv.invoiceNumber.toLowerCase().includes(q) ||
@@ -257,13 +264,19 @@ export const InvoicesPage: React.FC = () => {
           (inv.dispensedByUser?.username && inv.dispensedByUser.username.toLowerCase().includes(q))
         }
         onRefresh={load}
+        onApplyFilters={load}
+        onResetFilters={() => {
+          setChannelFilter('ALL');
+          setStatusFilter('ALL');
+          load();
+        }}
         filterControls={
           <>
             <div className="w-36">
               <select
                 value={channelFilter}
                 onChange={(e) => setChannelFilter(e.target.value)}
-                className="w-full h-9 px-2.5 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#08775A]"
+                className="w-full h-8.5 px-2.5 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a] cursor-pointer"
               >
                 <option value="ALL">All Channels</option>
                 <option value="RETAIL">Retail POS</option>
@@ -275,7 +288,7 @@ export const InvoicesPage: React.FC = () => {
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                className="w-full h-9 px-2.5 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#08775A]"
+                className="w-full h-8.5 px-2.5 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a] cursor-pointer"
               >
                 <option value="ALL">All Statuses</option>
                 <option value="PAID">Fully Paid</option>

@@ -1,11 +1,13 @@
 @import "tailwindcss";
 
 @theme {
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-inter: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-montserrat: 'Montserrat', system-ui, sans-serif;
 }
 
 :root {
-  --font-sans: 'Poppins', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --primary: #129b70;
   --primary-hover: #0e7d5a;
   --primary-soft: #e7f6f1;
@@ -26,33 +28,29 @@
   --info: #2563eb;
 }
 
-html, body, input, button, select, textarea {
-  font-family: var(--font-sans);
+html, body, input, button, select, textarea, table, th, td {
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
-/* Front Desk / Super Admin / Admin / Inventory portals: Montserrat everywhere, including
-   amounts that use `font-mono` (the mono face is too thin to read figures).
-   Class is set on <html> by App.tsx. */
+/* Inter font across all portals and tables */
 html.portal-montserrat {
-  --font-sans: 'Montserrat', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  /* Montserrat renders lighter than the default face, so the light grey text
-     shades (helper text, card descriptions, secondary labels, placeholders)
-     read as washed out. Shift each one a step darker for these portals. */
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --color-slate-400: #64748b;
   --color-slate-500: #475569;
   --color-slate-600: #334155;
 }
-/* Montserrat at 400 looks thin at the 10–12px sizes the forms use; default
-   body text is medium (500). Explicit font-* classes still win. Placeholders
-   stay at 400 so an empty field's hint never looks like a filled value. */
-html.portal-montserrat body {
+
+html.portal-montserrat body, body {
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-weight: 500;
 }
-html.portal-montserrat ::placeholder {
+
+html.portal-montserrat ::placeholder, ::placeholder {
   font-weight: 400;
 }
-html.portal-montserrat .font-mono {
-  font-family: var(--font-sans);
+
+.font-mono, html.portal-montserrat .font-mono {
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
   font-variant-numeric: tabular-nums;
 }
 
@@ -272,3 +270,4 @@ body {
 .Toastify__progress-bar--info {
   background: rgba(255, 255, 255, 0.42) !important;
 }
+

@@ -24,6 +24,10 @@ export interface ManagementDashboard {
   salesCountToday: number;
   purchasesToday: string | number;
   purchasesCountToday: number;
+  totalRevenueAllTime?: string | number;
+  totalSalesCountAllTime?: number;
+  totalMedicines?: number;
+  totalStockUnits?: number;
   currentStockValue: string | number;
   lowStockCount: number;
   outOfStockCount: number;
@@ -33,6 +37,64 @@ export interface ManagementDashboard {
   pendingSettlements: number;
   pendingHmsRequests: number;
   expectedCash: string | number;
+  monthlyTrend?: Array<{
+    month: string;
+    revenue: number;
+    purchases: number;
+    expenses: number;
+    profit: number;
+    orders: number;
+  }>;
+  dailyTrend?: Array<{
+    date: string;
+    revenue: number;
+    purchases: number;
+    expenses: number;
+    profit: number;
+    orders: number;
+  }>;
+  categoryDistribution?: Array<{
+    category: string;
+    count: number;
+    stock: number;
+    percentage: number;
+  }>;
+  inventoryOverview?: Array<{
+    id: string;
+    code: string;
+    name: string;
+    category: string;
+    currentStock: number;
+    reorderLevel: number;
+    expiryDate: string | null;
+    status: 'Healthy' | 'Low Stock' | 'Critical';
+    batchNumber: string | null;
+  }>;
+  lowStockList?: Array<{
+    id: string;
+    name: string;
+    currentStock: number;
+    reorderLevel: number;
+  }>;
+  nearExpiryList?: Array<{
+    id: string;
+    name: string;
+    batchNumber: string;
+    expiryDate: string;
+    daysLeft: number;
+  }>;
+  supplierUpdates?: Array<{
+    id: string;
+    name: string;
+    status: string;
+    phone: string;
+  }>;
+  smartInsights?: Array<{
+    id: string;
+    title: string;
+    message: string;
+    type: string;
+  }>;
 }
 
 export interface SalesDashboard {
@@ -44,12 +106,26 @@ export interface SalesDashboard {
   expectedCash: string | number;
 }
 
+export interface PharmacySettings {
+  id: string;
+  highValueApprovalEnabled: boolean;
+  highValueThreshold: string | number;
+  defaultTaxPercent: string | number;
+  maxDiscountPercent: string | number;
+  nearExpiryWindowDays: number;
+  receiptHeaderText: string | null;
+  receiptFooterText: string | null;
+  updatedAt: string;
+}
+
 export const pharmacyApi = {
   getManagementDashboard: () => apiClient.get<{ data: ManagementDashboard }>('/dashboard/management').then((r) => r.data.data),
   getSalesDashboard: () => apiClient.get<{ data: SalesDashboard }>('/dashboard/sales').then((r) => r.data.data),
 
   listMedicines: (search?: string) => apiClient.get<{ data: MedicineRow[] }>('/pharmacy/medicines', { params: { search } }).then((r) => r.data.data),
   createMedicine: (body: Record<string, unknown>) => apiClient.post('/pharmacy/medicines', body).then((r) => r.data.data),
+  updateMedicine: (id: string, body: Record<string, unknown>) => apiClient.patch(`/pharmacy/medicines/${id}`, body).then((r) => r.data.data),
+  getMedicineBatches: (id: string) => apiClient.get<{ data: any[] }>(`/pharmacy/medicines/${id}/batches`).then((r) => r.data.data),
 
   listVendors: (search?: string) => apiClient.get('/vendors', { params: { search } }).then((r) => r.data.data),
   createVendor: (body: Record<string, unknown>) => apiClient.post('/vendors', body).then((r) => r.data.data),
@@ -78,4 +154,8 @@ export const pharmacyApi = {
   rejectHmsRequest: (id: string, reason: string) => apiClient.post(`/hms-requests/${id}/reject`, { reason }).then((r) => r.data.data),
   fulfillHmsRequest: (id: string, lines: { requestLineId: string; dispenseQuantity: number }[]) =>
     apiClient.post(`/hms-requests/${id}/fulfill`, { lines }).then((r) => r.data.data),
+
+  // Settings (pharmacy.md §3)
+  getPharmacySettings: () => apiClient.get<{ data: PharmacySettings }>('/settings').then((r) => r.data.data),
+  updatePharmacySettings: (body: Partial<PharmacySettings>) => apiClient.put<{ data: PharmacySettings }>('/settings', body).then((r) => r.data.data),
 };

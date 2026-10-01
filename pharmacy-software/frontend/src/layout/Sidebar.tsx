@@ -1,5 +1,5 @@
 import React from 'react';
-import { LogOut } from 'lucide-react';
+import { LogOut, Activity, Pill } from 'lucide-react';
 import type { NavGroup } from './navigation';
 
 interface SidebarProps {
@@ -12,32 +12,41 @@ interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = ({ groups, portalLabel, currentPage, onSelectPage, onLogout }) => {
   return (
-    <aside className="fixed top-0 bottom-0 left-0 z-40 w-64 bg-white text-[#1f2937] flex flex-col border-r border-[#e2eae5]">
+    <aside className="fixed top-0 bottom-0 left-0 z-40 w-64 bg-white text-slate-800 flex flex-col border-r border-slate-200/80 shadow-[1px_0_10px_rgba(0,0,0,0.02)]">
       {/* Brand Header */}
-      <div className="h-14 flex items-center gap-3 px-4 border-b border-[#e2eae5] bg-white shrink-0">
-        <div className="w-8 h-8 bg-[#129b70] rounded-lg flex items-center justify-center font-bold text-white text-xs shrink-0 shadow-xs">RX</div>
+      <div className="h-16 flex items-center gap-3 px-5 border-b border-slate-100 bg-white shrink-0">
+        <div className="w-9 h-9 bg-gradient-to-br from-[#0c6b50] to-[#0e7d5a] rounded-xl flex items-center justify-center text-white shadow-sm ring-2 ring-emerald-500/20 shrink-0">
+          <Pill className="h-5 w-5 transform -rotate-45" />
+        </div>
         <div className="leading-tight truncate">
-          <div className="text-xs font-bold text-[#111827] uppercase tracking-wider truncate">Pharmacy Software</div>
-          <div className="text-[10px] text-[#52665e] font-medium truncate">Management System</div>
-        </div>
-      </div>
-
-      {/* Portal badge */}
-      <div className="px-3 pt-3 pb-1 shrink-0">
-        <div className="px-2.5 py-1.5 rounded-lg border border-[#c2e7db] bg-[#effaf5] text-center flex items-center justify-between">
-          <div className="flex items-center gap-2 truncate">
-            <span className="h-2 w-2 rounded-full bg-[#10b981] shrink-0 animate-pulse" />
-            <span className="text-[10px] font-bold tracking-wider uppercase text-[#0e7d5a] truncate">{portalLabel}</span>
+          <div className="text-sm font-bold text-slate-900 tracking-tight flex items-center gap-1.5">
+            <span>PharmaCare ERP</span>
           </div>
-          <span className="text-[9px] text-[#52665e] uppercase font-mono shrink-0 ml-1 font-semibold">Portal</span>
+          <div className="text-[11px] text-slate-400 font-medium truncate">Smart Pharmacy Management</div>
         </div>
       </div>
 
-      {/* Nav groups */}
-      <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-4">
+      {/* Portal Role Badge */}
+      <div className="px-4 pt-3.5 pb-1 shrink-0">
+        <div className="px-3 py-1.5 rounded-lg bg-emerald-50/70 border border-emerald-100/80 flex items-center justify-between">
+          <div className="flex items-center gap-2 truncate">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+            </span>
+            <span className="text-[10.5px] font-semibold text-emerald-800 tracking-wide uppercase truncate">{portalLabel}</span>
+          </div>
+          <Activity className="h-3 w-3 text-emerald-600 shrink-0" />
+        </div>
+      </div>
+
+      {/* Navigation Groups */}
+      <nav className="flex-1 overflow-y-auto py-3 px-3 space-y-4">
         {groups.map((group) => (
           <div key={group.id} className="space-y-1">
-            <div className="px-3 text-[10px] font-bold text-[#8b9e95] uppercase tracking-widest mb-1">{group.title}</div>
+            <div className="px-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+              {group.title}
+            </div>
             <div className="space-y-0.5">
               {group.items.map((item) => {
                 const Icon = item.icon;
@@ -47,12 +56,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ groups, portalLabel, currentPa
                     key={item.id}
                     type="button"
                     onClick={() => onSelectPage(item.id)}
-                    className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-lg text-sm transition-colors cursor-pointer ${
-                      isActive ? 'bg-[#dff5ea] text-[#0e7d5a] font-semibold border-l-2 border-[#129b70]' : 'text-[#2d3748] hover:bg-[#f0faf6] hover:text-[#111827]'
+                    className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-medium transition-all duration-150 cursor-pointer ${
+                      isActive
+                        ? 'bg-[#0e7d5a] text-white font-semibold shadow-sm shadow-emerald-900/10'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
                     }`}
                   >
-                    <Icon className={`h-4 w-4 shrink-0 ${isActive ? 'text-[#129b70]' : 'text-[#52665e]'}`} />
-                    <span className="truncate text-left flex-1 text-xs">{item.label}</span>
+                    <Icon className={`h-4 w-4 shrink-0 transition-colors ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                    <span className="truncate text-left flex-1">{item.label}</span>
                   </button>
                 );
               })}
@@ -61,17 +72,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ groups, portalLabel, currentPa
         ))}
       </nav>
 
-      {/* Footer */}
-      <div className="p-3 border-t border-[#e2eae5] shrink-0 space-y-2">
+      {/* Footer without Upgrade to Pro (as requested) */}
+      <div className="p-3 border-t border-slate-100 shrink-0 space-y-2 bg-white">
         <button
           type="button"
           onClick={onLogout}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 cursor-pointer"
+          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 bg-rose-50/70 hover:bg-rose-100/70 border border-rose-100 transition-colors cursor-pointer"
         >
-          <LogOut className="h-3.5 w-3.5" /> Logout
+          <LogOut className="h-3.5 w-3.5" /> Logout Session
         </button>
-        <p className="text-[9px] text-center text-[#94a3b8]">Powered by iSysware Software Solutions</p>
+        <p className="text-[10px] text-center text-slate-400">CH Hospital Pharmacy &copy; 2026</p>
       </div>
     </aside>
   );
 };
+

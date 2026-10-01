@@ -322,7 +322,7 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
                     const medicineName = line.medicine?.name || 'Medicine Item';
                     const batchNo = line.batch?.batchNumber;
                     const qty = Number(line.quantity || 0);
-                    const rate = Number(line.unitRate || 0);
+                    const rate = Number(line.rateSnapshot || 0);
                     const net = Number(line.lineNet || 0);
 
                     return (
@@ -332,7 +332,7 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
                             {medicineName}
                           </div>
                           <div className="col-span-2 text-center tabular-nums">{qty}</div>
-                          <div className="col-span-2 text-right tabular-nums text-slate-700">{rate}</div>
+                          <div className="col-span-2 text-right tabular-nums text-slate-700">{formatNumber(rate)}</div>
                           <div className="col-span-2 text-right font-bold tabular-nums text-slate-950">
                             {formatNumber(net)}
                           </div>
@@ -520,7 +520,7 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
                           ? new Date(line.batch.expiryDate).toLocaleDateString('en-GB')
                           : '—';
                         const qty = Number(line.quantity || 0);
-                        const rate = Number(line.unitRate || 0);
+                        const rate = Number(line.rateSnapshot || 0);
                         const disc = Number(line.discountAmount || 0);
                         const net = Number(line.lineNet || 0);
 
@@ -687,7 +687,7 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
                   <div className="min-w-0 flex-1 pr-2">
                     <span className="font-semibold text-slate-900">{line.medicine?.name}</span>
                     <span className="text-slate-500 ml-2">
-                      (Billed: {Number(line.quantity)} @ PKR {Number(line.unitRate)})
+                      (Billed: {Number(line.quantity)} @ PKR {Number(line.rateSnapshot)})
                     </span>
                   </div>
 

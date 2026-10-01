@@ -94,82 +94,219 @@ export const HmsRequestQueuePage: React.FC<{ canApprove: boolean }> = ({ canAppr
     }
   };
 
+  const columns: Column<RequestRow>[] = [
+    {
+      key: 'requestNumber',
+      header: 'Request #',
+      width: '160px',
+      render: (r) => (
+        <span className="font-bold text-slate-900 text-xs tracking-wider whitespace-nowrap">
+          {r.requestNumber}
+        </span>
+      ),
+    },
+    {
+      key: 'externalAdmissionRef',
+      header: 'Admission Ref',
+      width: '150px',
+      render: (r) => (
+        <span className="font-semibold text-slate-800 text-xs whitespace-nowrap">
+          {r.externalAdmissionRef}
+        </span>
+      ),
+    },
+    {
+      key: 'patientNameSnapshot',
+      header: 'Patient Name',
+      render: (r) => (
+        <span className="font-bold text-slate-900 text-xs whitespace-nowrap">
+          {r.patientNameSnapshot || '—'}
+        </span>
+      ),
+    },
+    {
+      key: 'urgency',
+      header: 'Urgency',
+      width: '120px',
+      render: (r) => (
+        <span className="inline-flex items-center gap-1.5 text-xs font-semibold whitespace-nowrap">
+          <span
+            className={`h-2 w-2 rounded-full shrink-0 ${
+              r.urgency === 'STAT' || r.urgency === 'URGENT' ? 'bg-rose-500' : 'bg-slate-400'
+            }`}
+          />
+          <span
+            className={
+              r.urgency === 'STAT' || r.urgency === 'URGENT' ? 'text-rose-700' : 'text-slate-700'
+            }
+          >
+            {r.urgency || 'Normal'}
+          </span>
+        </span>
+      ),
+    },
+    {
+      key: 'estValue',
+      header: 'Est. Value (PKR)',
+      align: 'right',
+      width: '150px',
+      render: (r) => (
+        <span className="font-bold text-xs text-slate-900 whitespace-nowrap">
+          {formatPKR(estimatedValue(r))}
+        </span>
+      ),
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      align: 'center',
+      width: '140px',
+      render: (r) => {
+        const needsApproval =
+          settings?.highValueApprovalEnabled &&
+          r.status === 'REQUESTED' &&
+          !r.approvedById &&
+          estimatedValue(r) >= Number(settings.highValueThreshold);
+        return (
+          <div className="flex items-center justify-center gap-1.5 whitespace-nowrap">
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold whitespace-nowrap text-slate-800">
+              <span
+                className={`h-2 w-2 rounded-full shrink-0 ${
+                  r.status === 'DISPENSED'
+                    ? 'bg-[#0e7d5a]'
+                    : r.status === 'CANCELLED'
+                    ? 'bg-rose-500'
+                    : 'bg-amber-500'
+                }`}
+              />
+              {r.status.replace('_', ' ')}
+            </span>
+            {needsApproval && (
+              <span title="High-value approval required">
+                <ShieldAlert className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+              </span>
+            )}
+          </div>
+        );
+      },
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      align: 'center',
+      width: '100px',
+      render: (r) => (
+        <div className="flex items-center justify-center gap-1 whitespace-nowrap">
+          <button
+            type="button"
+            onClick={() => setDetail(r)}
+            className="px-2 py-0.5 text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
+          >
+            <Eye className="h-3 w-3" /> View
+          </button>
+        </div>
+      ),
+    },
+  ];
+
   return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-center justify-between">
+    <div className="p-6 sm:p-8 space-y-6 max-w-[1700px] mx-auto">
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-bold text-[#111827]">Hospital Request Queue</h2>
-          <p className="text-xs text-[#52665e]">pharmacy.md §7 — Accept & Dispense / Partial Fulfill / Reject, real FEFO, separate Pharmacy Invoice.</p>
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
+              Hospital Request Queue
+            </h1>
+            <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200/80">
+              HMS Ward Requisitions
+            </span>
+          </div>
+          <p className="text-xs text-slate-500 mt-1">
+            Accept &amp; dispense, partial fulfillment, FEFO batch assignment, and dedicated billing invoice creation.
+          </p>
         </div>
         <div className="flex items-center gap-2">
           {canApprove && (
-            <button onClick={() => setShowSettings(true)} className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-[#52665e] border border-[#e2eae5] hover:bg-[#f0faf6] rounded-lg">
-              <Settings2 className="h-3.5 w-3.5" /> High-Value Settings
+            <button
+              onClick={() => setShowSettings(true)}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl transition-colors cursor-pointer"
+            >
+              <Settings2 className="h-3.5 w-3.5 text-slate-500" /> High-Value Policy
             </button>
           )}
-          <button onClick={() => setShowCreate(true)} className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-[#129b70] hover:bg-[#0e7d5a] rounded-lg shadow-xs">
-            <Plus className="h-3.5 w-3.5" /> Log Request
+          <button
+            onClick={() => setShowCreate(true)}
+            className="flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-white bg-[#0e7d5a] hover:bg-[#0c6b50] rounded-xl shadow-xs transition-colors cursor-pointer"
+          >
+            <Plus className="h-4 w-4" /> Log Ward Request
           </button>
         </div>
       </div>
 
+      {/* KPI Cards / Status Bar */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         {[
-          { label: 'Pending', value: summary.pending, filter: 'REQUESTED' },
-          { label: 'Partial', value: summary.partial, filter: 'PARTIALLY_ACCEPTED' },
-          { label: 'Fulfilled', value: summary.dispensed, filter: 'DISPENSED' },
-          { label: 'Rejected', value: summary.rejected, filter: 'REJECTED' },
-          { label: 'Needs Approval', value: summary.needsApproval, filter: '' },
+          { label: 'Pending Queue', value: summary.pending, filter: 'REQUESTED' },
+          { label: 'Partially Fulfilled', value: summary.partial, filter: 'PARTIALLY_ACCEPTED' },
+          { label: 'Dispensed Out', value: summary.dispensed, filter: 'DISPENSED' },
+          { label: 'Rejected Orders', value: summary.rejected, filter: 'REJECTED' },
+          { label: 'High Value Approval', value: summary.needsApproval, filter: '' },
         ].map((c) => (
-          <button key={c.label} onClick={() => setStatusFilter(c.filter)} className={`bg-white rounded-lg border p-3 text-left hover:border-[#c2e7db] ${statusFilter === c.filter && c.filter ? 'border-[#129b70] ring-1 ring-[#129b70]' : 'border-[#e2eae5]'}`}>
-            <div className="text-[10px] font-semibold text-[#52665e] uppercase">{c.label}</div>
-            <div className="text-lg font-bold text-[#111827]">{c.value}</div>
+          <button
+            key={c.label}
+            type="button"
+            onClick={() => setStatusFilter(c.filter)}
+            className={`bg-white rounded-xl border-t-[3.5px] p-3 text-left shadow-2xs hover:shadow-sm transition-all cursor-pointer ${
+              statusFilter === c.filter && c.filter
+                ? 'border-t-[#0e7d5a] ring-1 ring-[#0e7d5a]'
+                : 'border-t-slate-300 border-x border-b border-slate-200'
+            }`}
+          >
+            <div className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wider">{c.label}</div>
+            <div className="text-xl font-bold text-slate-900 mt-0.5">{c.value}</div>
           </button>
         ))}
       </div>
 
-      <div className="bg-white rounded-xl border border-[#e2eae5] overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-[#f6faf8]">
-            <tr className="text-[11px] font-bold uppercase tracking-wide text-[#52665e]">
-              <th className="py-2.5 px-3 text-left">Request</th>
-              <th className="py-2.5 px-3 text-left">Admission Ref</th>
-              <th className="py-2.5 px-3 text-left">Patient</th>
-              <th className="py-2.5 px-3 text-left">Urgency</th>
-              <th className="py-2.5 px-3 text-right">Est. Value</th>
-              <th className="py-2.5 px-3 text-center">Status</th>
-              <th className="py-2.5 px-3 text-center">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr><td colSpan={7} className="py-10 text-center text-[#52665e]"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Loading…</td></tr>
-            ) : rows.length === 0 ? (
-              <tr><td colSpan={7} className="py-10 text-center text-[#94a3b8]">No requests yet.</td></tr>
-            ) : (
-              rows.map((r) => {
-                const needsApproval = settings?.highValueApprovalEnabled && r.status === 'REQUESTED' && !r.approvedById && estimatedValue(r) >= Number(settings.highValueThreshold);
-                return (
-                  <tr key={r.id} className="border-t border-[#f0f4f2]">
-                    <td className="py-2 px-3 font-mono text-xs">{r.requestNumber}</td>
-                    <td className="py-2 px-3 text-[#52665e]">{r.externalAdmissionRef}</td>
-                    <td className="py-2 px-3">{r.patientNameSnapshot || '—'}</td>
-                    <td className="py-2 px-3 text-xs">{r.urgency || '—'}</td>
-                    <td className="py-2 px-3 text-right tabular-nums">{formatPKR(estimatedValue(r))}</td>
-                    <td className="py-2 px-3 text-center">
-                      <div className="flex items-center justify-center gap-1">
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${STATUS_STYLE[r.status]}`}>{r.status.replace('_', ' ')}</span>
-                        {needsApproval && <span title="High-value approval required"><ShieldAlert className="h-3.5 w-3.5 text-amber-600" /></span>}
-                      </div>
-                    </td>
-                    <td className="py-2 px-3 text-center"><button onClick={() => setDetail(r)} className="text-[#52665e] hover:text-[#129b70]"><Eye className="h-4 w-4" /></button></td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
+      {/* Main Table using unified PharmacyDataTable */}
+      <PharmacyDataTable
+        columns={columns}
+        data={rows}
+        loading={loading}
+        title="Hospital Prescription & Dispense Queue"
+        badge="Live Inpatient Orders"
+        exportFileName="hospital_inpatient_requests"
+        searchPlaceholder="Search request #, admission ref, or patient name…"
+        searchFilter={(r, q) =>
+          r.requestNumber.toLowerCase().includes(q) ||
+          r.externalAdmissionRef.toLowerCase().includes(q) ||
+          (r.patientNameSnapshot && r.patientNameSnapshot.toLowerCase().includes(q))
+        }
+        onRefresh={load}
+        onApplyFilters={load}
+        onResetFilters={() => {
+          setStatusFilter('');
+          load();
+        }}
+        filterControls={
+          <div className="w-44">
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="w-full h-8.5 px-2.5 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a] cursor-pointer"
+            >
+              <option value="">All Statuses</option>
+              <option value="REQUESTED">Pending Only</option>
+              <option value="PARTIALLY_ACCEPTED">Partially Accepted</option>
+              <option value="DISPENSED">Fully Dispensed</option>
+              <option value="REJECTED">Rejected</option>
+            </select>
+          </div>
+        }
+        emptyTitle="No Hospital Requests Found"
+        emptyDescription="No inpatient prescriptions match your selected filters."
+      />
 
       {showSettings && settings && (
         <SettingsModal settings={settings} onClose={() => setShowSettings(false)} onSaved={(s) => { setSettings(s); setShowSettings(false); }} />

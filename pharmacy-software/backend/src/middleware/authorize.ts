@@ -20,6 +20,7 @@ const POLICY: Record<PortalRole, Partial<Record<ModuleKey, Set<Action>>>> = {
     expenses: new Set(fullAccess),
     reports: new Set<Action>(['view']),
     dashboard: new Set<Action>(['view']),
+    settings: new Set<Action>(['view', 'edit']),
   },
   ADMIN: {
     identity: new Set(fullAccess),
@@ -29,6 +30,7 @@ const POLICY: Record<PortalRole, Partial<Record<ModuleKey, Set<Action>>>> = {
     expenses: new Set(fullAccess),
     reports: new Set<Action>(['view']),
     dashboard: new Set<Action>(['view']),
+    settings: new Set<Action>(['view', 'edit']),
   },
   SALES_DISPENSING: {
     // pharmacy.md §4 Sales User Restriction — no users/vendors/medicine

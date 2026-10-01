@@ -1,19 +1,21 @@
-import React, { useEffect, useState } from 'react';
-import { Loader2, Wallet } from 'lucide-react';
+import React, { useEffect, useState, useMemo } from 'react';
+import { Loader2, Wallet, ArrowDownRight, ArrowUpRight, Scale, CheckCircle2 } from 'lucide-react';
 import apiClient from '../services/apiClient';
 import { formatPKR } from '../utils/format';
 import { useToast } from '../context/ToastContext';
+import { PharmacyKpiHeader, KpiItem } from '../components/PharmacyKpiHeader';
+import { PharmacyDataTable, Column } from '../components/PharmacyDataTable';
 
 const CATEGORY_LABEL: Record<string, string> = {
   PETTY_CASH_ISSUED: 'Petty Cash Issued',
   PETTY_CASH_RECEIVED: 'Petty Cash Received',
-  POS_COLLECTION: 'POS Collection',
-  HMS_COLLECTION: 'HMS Collection',
-  REFUND: 'Refund',
-  VENDOR_PAYMENT: 'Vendor Payment',
-  EXPENSE_PAYMENT: 'Expense Payment',
-  SETTLEMENT_HANDOVER: 'Settlement Handover',
-  ADJUSTMENT: 'Adjustment',
+  POS_COLLECTION: 'POS Sales Collection',
+  HMS_COLLECTION: 'HMS Ward Collection',
+  REFUND: 'Customer Refund',
+  VENDOR_PAYMENT: 'Vendor Payment Out',
+  EXPENSE_PAYMENT: 'Expense Payment Out',
+  SETTLEMENT_HANDOVER: 'Supervisor Settlement Handover',
+  ADJUSTMENT: 'Cash Adjustment',
 };
 
 export const BalanceSheetPage: React.FC = () => {
@@ -21,68 +23,190 @@ export const BalanceSheetPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const toast = useToast();
 
+  const load = () => {
+    setLoading(true);
+    apiClient
+      .get('/cash/balance-sheet')
+      .then((r) => setData(r.data.data))
+      .catch(() => toast.error('Failed to load balance sheet.'))
+      .finally(() => setLoading(false));
+  };
+
   useEffect(() => {
-    apiClient.get('/cash/balance-sheet').then((r) => setData(r.data.data)).catch(() => toast.error('Failed to load balance sheet.')).finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    load();
   }, []);
 
-  if (loading) return <div className="p-10 flex items-center justify-center gap-2 text-[#52665e] text-sm"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>;
+  const kpis: KpiItem[] = useMemo(() => {
+    if (!data) return [];
+    return [
+      {
+        label: 'System Calculated Cash',
+        value: formatPKR(data.expectedCash),
+        icon: Wallet,
+        subtitle: 'Theoretical cash in drawer',
+        tone: 'default',
+      },
+      {
+        label: 'Total Inflow Entries',
+        value: (data.entries || []).filter((e: any) => e.direction === 'IN').length,
+        icon: ArrowDownRight,
+        subtitle: 'Collections & receipts',
+        tone: 'success',
+      },
+      {
+        label: 'Total Outflow Entries',
+        value: (data.entries || []).filter((e: any) => e.direction === 'OUT').length,
+        icon: ArrowUpRight,
+        subtitle: 'Expenses & disbursements',
+        tone: 'danger',
+      },
+      {
+        label: 'Activity Records',
+        value: (data.entries || []).length,
+        icon: Scale,
+        subtitle: 'Perpetual cash audit logs',
+        tone: 'info',
+      },
+    ];
+  }, [data]);
+
+  const columns: Column<any>[] = [
+    {
+      key: 'occurredAt',
+      header: 'Date & Time',
+      width: '160px',
+      render: (e) => (
+        <span className="text-[11.5px] text-slate-700 whitespace-nowrap">
+          {new Date(e.occurredAt).toLocaleString('en-GB')}
+        </span>
+      ),
+    },
+    {
+      key: 'category',
+      header: 'Cash Category',
+      render: (e) => (
+        <span className="font-semibold text-slate-900 text-xs whitespace-nowrap">
+          {CATEGORY_LABEL[e.category] ?? e.category}
+        </span>
+      ),
+    },
+    {
+      key: 'direction',
+      header: 'Flow Direction',
+      align: 'center',
+      width: '140px',
+      render: (e) => (
+        <span className="inline-flex items-center gap-1.5 text-xs font-semibold whitespace-nowrap">
+          <span
+            className={`h-2 w-2 rounded-full shrink-0 ${
+              e.direction === 'IN' ? 'bg-[#0e7d5a]' : 'bg-rose-500'
+            }`}
+          />
+          <span className={e.direction === 'IN' ? 'text-[#0e7d5a]' : 'text-rose-700'}>
+            {e.direction === 'IN' ? '↓ Cash IN' : '↑ Cash OUT'}
+          </span>
+        </span>
+      ),
+    },
+    {
+      key: 'amount',
+      header: 'Amount (PKR)',
+      align: 'right',
+      width: '150px',
+      render: (e) => (
+        <span className="font-bold text-xs text-slate-900 whitespace-nowrap">
+          {e.direction === 'IN' ? '+' : '-'} {formatPKR(e.amount)}
+        </span>
+      ),
+    },
+    {
+      key: 'isSettled',
+      header: 'Settlement Status',
+      align: 'center',
+      width: '140px',
+      render: (e) => (
+        <span className="inline-flex items-center gap-1.5 text-xs font-semibold whitespace-nowrap">
+          <span
+            className={`h-2 w-2 rounded-full shrink-0 ${
+              e.isSettled ? 'bg-[#0e7d5a]' : 'bg-slate-400'
+            }`}
+          />
+          <span className={e.isSettled ? 'text-[#0e7d5a]' : 'text-slate-700'}>
+            {e.isSettled ? 'Handed Over' : 'In Till'}
+          </span>
+        </span>
+      ),
+    },
+  ];
+
+  if (loading) {
+    return (
+      <div className="p-12 flex items-center justify-center gap-2 text-slate-500 text-xs">
+        <Loader2 className="h-5 w-5 animate-spin text-[#0e7d5a]" /> Loading cash balance sheet…
+      </div>
+    );
+  }
+
   if (!data) return null;
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="p-6 sm:p-8 space-y-6 max-w-[1700px] mx-auto">
+      {/* Title */}
       <div>
-        <h2 className="text-lg font-bold text-[#111827]">My Balance Sheet</h2>
-        <p className="text-xs text-[#52665e]">pharmacy.md §11.2 — Expected Cash is always system-calculated, never entered manually.</p>
+        <div className="flex items-center gap-2.5">
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
+            Till Balance Sheet &amp; Cash Flow
+          </h1>
+          <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200/80">
+            Perpetual Drawer
+          </span>
+        </div>
+        <p className="text-xs text-slate-500 mt-1">
+          Automated double-entry audit of all register inflows, sales collections, disbursements, and cash drawer handovers.
+        </p>
       </div>
 
-      <div className="bg-white rounded-xl border border-[#e2eae5] p-5 flex items-center gap-4 max-w-sm">
-        <div className="h-12 w-12 rounded-lg bg-[#effaf5] border border-[#c2e7db] flex items-center justify-center"><Wallet className="h-6 w-6 text-[#129b70]" /></div>
-        <div>
-          <div className="text-[11px] font-semibold text-[#52665e] uppercase">Expected Cash</div>
-          <div className="text-2xl font-bold text-[#111827]">{formatPKR(data.expectedCash)}</div>
+      {/* KPI Cards */}
+      <PharmacyKpiHeader items={kpis} />
+
+      {/* Category Breakdown Badges */}
+      <div className="bg-white rounded-2xl border border-slate-300/80 p-4 shadow-[0_1px_4px_rgba(0,0,0,0.04)]">
+        <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-3">
+          Category Summary Breakdown
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          {Object.entries(data.breakdown || {}).map(([cat, amount]) => (
+            <div
+              key={cat}
+              className="bg-slate-50 rounded-xl border border-slate-200 p-2.5 flex flex-col justify-between"
+            >
+              <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate">
+                {CATEGORY_LABEL[cat] ?? cat}
+              </div>
+              <div className="text-sm font-bold font-mono text-slate-900 mt-1">
+                {formatPKR(amount as number)}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {Object.entries(data.breakdown).map(([cat, amount]) => (
-          <div key={cat} className="bg-white rounded-lg border border-[#e2eae5] p-3">
-            <div className="text-[10px] font-semibold text-[#52665e] uppercase truncate">{CATEGORY_LABEL[cat] ?? cat}</div>
-            <div className="text-sm font-bold text-[#111827] tabular-nums">{formatPKR(amount as number)}</div>
-          </div>
-        ))}
-      </div>
-
-      <div className="bg-white rounded-xl border border-[#e2eae5] overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-[#f6faf8]">
-            <tr className="text-[11px] font-bold uppercase tracking-wide text-[#52665e]">
-              <th className="py-2.5 px-3 text-left">Date</th>
-              <th className="py-2.5 px-3 text-left">Category</th>
-              <th className="py-2.5 px-3 text-center">Direction</th>
-              <th className="py-2.5 px-3 text-right">Amount</th>
-              <th className="py-2.5 px-3 text-center">Settled</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.entries.length === 0 ? (
-              <tr><td colSpan={5} className="py-8 text-center text-[#94a3b8]">No cash activity yet.</td></tr>
-            ) : (
-              data.entries.map((e: any) => (
-                <tr key={e.id} className="border-t border-[#f0f4f2]">
-                  <td className="py-2 px-3 text-xs">{new Date(e.occurredAt).toLocaleString('en-GB')}</td>
-                  <td className="py-2 px-3 text-xs">{CATEGORY_LABEL[e.category] ?? e.category}</td>
-                  <td className="py-2 px-3 text-center">
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${e.direction === 'IN' ? 'bg-[#effaf5] text-[#0e7d5a] border-[#c2e7db]' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>{e.direction}</span>
-                  </td>
-                  <td className="py-2 px-3 text-right tabular-nums">{formatPKR(e.amount)}</td>
-                  <td className="py-2 px-3 text-center text-xs text-[#94a3b8]">{e.isSettled ? 'Yes' : '—'}</td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      {/* Main Table */}
+      <PharmacyDataTable
+        columns={columns}
+        data={data.entries || []}
+        loading={loading}
+        title="Cash Activity Ledger"
+        badge="Live Drawer Flow"
+        exportFileName="cash_balance_sheet"
+        searchPlaceholder="Search by category name…"
+        searchFilter={(e, q) =>
+          (CATEGORY_LABEL[e.category] ?? e.category).toLowerCase().includes(q)
+        }
+        onRefresh={load}
+        emptyTitle="No Cash Transactions"
+        emptyDescription="No register cash movements recorded for current period."
+      />
     </div>
   );
 };

@@ -164,15 +164,22 @@ export const StockMovementsPage: React.FC<{ canAdjust: boolean }> = ({ canAdjust
       },
     },
     {
+      key: 'itemCode',
+      header: 'Item Code',
+      width: '130px',
+      render: (m) => (
+        <span className="font-bold text-slate-900 text-xs tracking-wider whitespace-nowrap">
+          {m.medicine?.code || '—'}
+        </span>
+      ),
+    },
+    {
       key: 'medicine',
       header: 'Medicine & Formulation',
       render: (m) => (
-        <div>
-          <div className="font-bold text-slate-900 text-xs">{m.medicine?.name || '—'}</div>
-          {m.medicine?.code && (
-            <div className="text-[10px] text-slate-400 font-mono">{m.medicine.code}</div>
-          )}
-        </div>
+        <span className="font-bold text-slate-900 text-xs whitespace-nowrap">
+          {m.medicine?.name || '—'}
+        </span>
       ),
     },
     {
@@ -180,7 +187,7 @@ export const StockMovementsPage: React.FC<{ canAdjust: boolean }> = ({ canAdjust
       header: 'Batch No',
       width: '120px',
       render: (m) => (
-        <span className="font-mono text-xs text-slate-600">
+        <span className="font-mono text-[11px] text-slate-700 whitespace-nowrap">
           {m.batch?.batchNumber || <span className="text-slate-400 font-sans">—</span>}
         </span>
       ),
@@ -195,7 +202,7 @@ export const StockMovementsPage: React.FC<{ canAdjust: boolean }> = ({ canAdjust
         const isPos = delta >= 0;
         return (
           <span
-            className={`font-black tabular-nums text-xs ${
+            className={`font-mono font-bold text-[11.5px] whitespace-nowrap ${
               isPos ? 'text-emerald-700' : 'text-rose-700'
             }`}
           >
@@ -209,7 +216,7 @@ export const StockMovementsPage: React.FC<{ canAdjust: boolean }> = ({ canAdjust
       key: 'actor',
       header: 'Logged By',
       render: (m) => (
-        <span className="text-xs text-slate-700">
+        <span className="text-[11.5px] text-slate-700 whitespace-nowrap">
           {m.actor?.fullName || m.actor?.username || 'System'}
         </span>
       ),
@@ -217,19 +224,19 @@ export const StockMovementsPage: React.FC<{ canAdjust: boolean }> = ({ canAdjust
   ];
 
   return (
-    <div className="p-5 sm:p-6 space-y-5 max-w-7xl mx-auto">
+    <div className="p-6 sm:p-8 space-y-6 max-w-[1700px] mx-auto">
       {/* Title */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
               Stock Movement Center
             </h1>
-            <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
+            <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200/80">
               Perpetual Ledger
             </span>
           </div>
-          <p className="text-xs text-slate-500 mt-0.5">
+          <p className="text-xs text-slate-500 mt-1">
             Every inventory receipt, POS sale, inpatient fulfillment, and approved adjustment.
           </p>
         </div>
@@ -238,7 +245,7 @@ export const StockMovementsPage: React.FC<{ canAdjust: boolean }> = ({ canAdjust
           <button
             type="button"
             onClick={() => setShowAdjust(true)}
-            className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] rounded-xl shadow-xs transition-colors"
+            className="flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-white bg-[#0e7d5a] hover:bg-[#0c6b50] rounded-xl shadow-xs transition-colors cursor-pointer"
           >
             <Plus className="h-4 w-4" /> New Approved Adjustment
           </button>
@@ -253,20 +260,29 @@ export const StockMovementsPage: React.FC<{ canAdjust: boolean }> = ({ canAdjust
         columns={columns}
         data={filteredRows}
         loading={loading}
-        searchPlaceholder="Search by medicine name, batch number, or actor…"
+        title="Stock Movements & Perpetual Audit Ledger"
+        badge="Live Movement Ledger"
+        exportFileName="stock_movements_audit"
+        searchPlaceholder="Search by medicine name, item code, batch number, or actor…"
         searchFilter={(m, q) =>
           (m.medicine?.name && m.medicine.name.toLowerCase().includes(q)) ||
+          (m.medicine?.code && m.medicine.code.toLowerCase().includes(q)) ||
           (m.batch?.batchNumber && m.batch.batchNumber.toLowerCase().includes(q)) ||
           (m.actor?.fullName && m.actor.fullName.toLowerCase().includes(q)) ||
           (m.actor?.username && m.actor.username.toLowerCase().includes(q))
         }
         onRefresh={load}
+        onApplyFilters={load}
+        onResetFilters={() => {
+          setTypeFilter('ALL');
+          load();
+        }}
         filterControls={
           <div className="w-48">
             <select
               value={typeFilter}
               onChange={(e) => setTypeFilter(e.target.value)}
-              className="w-full h-9 px-2.5 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#08775A]"
+              className="w-full h-8.5 px-2.5 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a] cursor-pointer"
             >
               <option value="ALL">All Movement Types</option>
               <option value="PURCHASE_IN">Purchase Inwards</option>
