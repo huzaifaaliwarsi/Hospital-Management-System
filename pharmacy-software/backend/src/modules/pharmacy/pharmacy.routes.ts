@@ -13,11 +13,13 @@ const edit = authorize('pharmacy', 'edit');
 // Medicine Master (pharmacy.md §9) — Sales cannot create/edit (§4 restriction, `edit` not granted to SALES_DISPENSING).
 router.post('/medicines', edit, validate({ body: s.createMedicineBodySchema }), asyncHandler(c.createMedicine));
 router.get('/medicines', view, validate({ query: s.listMedicinesQuerySchema }), asyncHandler(c.listMedicines));
+router.get('/medicines/next-code', edit, asyncHandler(c.nextMedicineCode));
 router.patch('/medicines/:id', edit, validate({ params: s.idParamsSchema, body: s.updateMedicineBodySchema }), asyncHandler(c.updateMedicine));
 
 // Batches & Stock
 router.post('/medicines/:id/batches', edit, validate({ params: s.idParamsSchema, body: s.createBatchBodySchema }), asyncHandler(c.createBatch));
 router.get('/medicines/:id/batches', view, validate({ params: s.idParamsSchema }), asyncHandler(c.getMedicineBatches));
+router.get('/medicines/:id/packaging', view, validate({ params: s.idParamsSchema }), asyncHandler(c.getPackaging));
 router.post('/medicines/:id/opening-stock', edit, validate({ params: s.idParamsSchema, body: s.openingStockBodySchema }), asyncHandler(c.receiveOpeningStock));
 router.post('/medicines/:id/batches/:batchId/opening-stock', edit, validate({ params: s.batchIdParamsSchema, body: s.openingStockBodySchema }), asyncHandler(c.receiveOpeningStock));
 

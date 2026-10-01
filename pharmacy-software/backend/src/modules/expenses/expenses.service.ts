@@ -1,13 +1,15 @@
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '@/db/client';
 import { NotFoundError, ConflictError } from '@/shared/errors/AppError';
+import { nextCode, SEQUENCE } from '@/shared/sequence';
 import type { CreateExpenseBody, ListExpensesQuery } from './expenses.schemas';
 
 export const expensesService = {
   /** pharmacy.md §12 — entered by the actual logged-in user; a cash expense affects their expected physical cash. */
   async create(body: CreateExpenseBody, actorId: string) {
     return prisma.$transaction(async (tx) => {
-      const expense = await tx.expense.create({ data: { ...body, enteredById: actorId } });
+      const expenseNumber = await nextCode(tx, SEQUENCE.EXPENSE);
+      const expense = await tx.expense.create({ data: { ...body, expenseNumber, enteredById: actorId } });
       if (body.paymentMethod === 'CASH') {
         await tx.cashLedgerEntry.create({
           data: { portalUserId: actorId, direction: 'OUT', amount: new Decimal(body.amount), category: 'EXPENSE_PAYMENT', isPhysicalCash: true, referenceTable: 'expenses', referenceId: expense.id },

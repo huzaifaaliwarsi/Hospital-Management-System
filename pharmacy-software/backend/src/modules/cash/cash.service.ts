@@ -1,6 +1,7 @@
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '@/db/client';
 import { NotFoundError, ConflictError, ValidationError } from '@/shared/errors/AppError';
+import { nextCode, SEQUENCE } from '@/shared/sequence';
 import type { IssuePettyCashBody, BalanceSheetQuery, SubmitSettlementBody, ReviewSettlementBody, ListSettlementsQuery } from './cash.schemas';
 
 /**
@@ -28,12 +29,14 @@ export const cashService = {
     const amount = new Decimal(body.amount);
 
     return prisma.$transaction(async (tx) => {
-      await tx.cashLedgerEntry.create({
-        data: { portalUserId: issuerId, direction: 'OUT', amount, category: 'PETTY_CASH_ISSUED', isPhysicalCash: true, note: body.note },
+      const referenceNo = await nextCode(tx, SEQUENCE.PETTY_CASH);
+      const issued = await tx.cashLedgerEntry.create({
+        data: { portalUserId: issuerId, direction: 'OUT', amount, category: 'PETTY_CASH_ISSUED', referenceNo, isPhysicalCash: true, note: body.note },
       });
-      return tx.cashLedgerEntry.create({
+      const received = await tx.cashLedgerEntry.create({
         data: { portalUserId: body.toUserId, direction: 'IN', amount, category: 'PETTY_CASH_RECEIVED', isPhysicalCash: true, issuedById: issuerId, note: body.note },
       });
+      return { referenceNo, issued, received };
     });
   },
 
@@ -65,17 +68,21 @@ export const cashService = {
       throw new ValidationError('A non-zero variance requires a reason');
     }
 
-    return prisma.accountSettlement.create({
-      data: {
-        portalUserId: userId,
-        periodFrom: body.periodFrom,
-        periodTo: body.periodTo,
-        expectedCash: expected,
-        physicalCash: physical,
-        variance,
-        varianceReason: body.varianceReason,
-        status: 'SUBMITTED',
-      },
+    return prisma.$transaction(async (tx) => {
+      const settlementNumber = await nextCode(tx, SEQUENCE.SETTLEMENT);
+      return tx.accountSettlement.create({
+        data: {
+          settlementNumber,
+          portalUserId: userId,
+          periodFrom: body.periodFrom,
+          periodTo: body.periodTo,
+          expectedCash: expected,
+          physicalCash: physical,
+          variance,
+          varianceReason: body.varianceReason,
+          status: 'SUBMITTED',
+        },
+      });
     });
   },
 

@@ -20,12 +20,13 @@ import {
   FileSpreadsheet,
 } from 'lucide-react';
 import apiClient from '../services/apiClient';
+import { pharmacyApi, MedicineRow } from '../services/pharmacyApi';
 import { formatPKR, formatNumber, formatDateTime, formatDate } from '../utils/format';
 import { useToast } from '../context/ToastContext';
 import { PharmacyKpiHeader, KpiItem } from '../components/PharmacyKpiHeader';
 import { PharmacyDataTable, Column } from '../components/PharmacyDataTable';
 
-const emptyForm = { code: '', name: '', contactPerson: '', phone: '', paymentTermsDays: '0' };
+const emptyForm = { name: '', contactPerson: '', phone: '', paymentTermsDays: '0' };
 
 export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
   const toast = useToast();
@@ -34,6 +35,8 @@ export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [nextVendorCode, setNextVendorCode] = useState('');
+  const [loadingNextCode, setLoadingNextCode] = useState(false);
 
   // Ledger state
   const [ledgerVendor, setLedgerVendor] = useState<any | null>(null);
@@ -47,6 +50,17 @@ export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
   const [payMethod, setPayMethod] = useState<'CASH' | 'CARD' | 'ONLINE'>('CASH');
   const [payReference, setPayReference] = useState('');
   const [paying, setPaying] = useState(false);
+
+  // Purchase Return state (purchase-costing-plan — always against a specific batch, uses its frozen snapshot)
+  const [returnVendor, setReturnVendor] = useState<any | null>(null);
+  const [returnMedicines, setReturnMedicines] = useState<MedicineRow[]>([]);
+  const [returnMedicineId, setReturnMedicineId] = useState('');
+  const [returnBatches, setReturnBatches] = useState<any[]>([]);
+  const [returnBatchId, setReturnBatchId] = useState('');
+  const [returnQty, setReturnQty] = useState('');
+  const [returnReason, setReturnReason] = useState('');
+  const [loadingReturnBatches, setLoadingReturnBatches] = useState(false);
+  const [returning, setReturning] = useState(false);
 
   // Filter state for main list
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'DUE' | 'SETTLED'>('ALL');
@@ -99,14 +113,26 @@ export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
     },
   ];
 
+  const openAddVendor = () => {
+    setForm(emptyForm);
+    setShowAdd(true);
+    setLoadingNextCode(true);
+    pharmacyApi
+      .getNextVendorCode()
+      .then(setNextVendorCode)
+      .catch(() => setNextVendorCode(''))
+      .finally(() => setLoadingNextCode(false));
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.code.trim() || !form.name.trim()) {
-      toast.error('Vendor Code and Name are required.');
+    if (!form.name.trim()) {
+      toast.error('Vendor Name is required.');
       return;
     }
     setSaving(true);
     try {
+      // No `code` in the payload — Vendor Code is always decided server-side (never client-supplied).
       await apiClient.post('/vendors', {
         ...form,
         paymentTermsDays: Number(form.paymentTermsDays) || 0,
@@ -172,6 +198,61 @@ export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
       toast.error(err?.response?.data?.error?.message || 'Failed to record vendor payment.');
     } finally {
       setPaying(false);
+    }
+  };
+
+  // ── Purchase Return (purchase-costing-plan) ─────────────────────────────
+  const openReturnModal = (vendor: any) => {
+    setReturnVendor(vendor);
+    setReturnMedicineId('');
+    setReturnBatches([]);
+    setReturnBatchId('');
+    setReturnQty('');
+    setReturnReason('');
+    if (returnMedicines.length === 0) pharmacyApi.listMedicines().then(setReturnMedicines).catch(() => {});
+  };
+
+  const selectReturnMedicine = async (medicineId: string) => {
+    setReturnMedicineId(medicineId);
+    setReturnBatchId('');
+    setReturnBatches([]);
+    if (!medicineId) return;
+    setLoadingReturnBatches(true);
+    try {
+      const batches = await pharmacyApi.getMedicineBatches(medicineId);
+      setReturnBatches(batches.filter((b: any) => Number(b.currentStock) > 0));
+    } catch {
+      toast.error('Failed to load batches for this medicine.');
+    } finally {
+      setLoadingReturnBatches(false);
+    }
+  };
+
+  const selectedReturnBatch = returnBatches.find((b) => b.id === returnBatchId);
+  const returnBaseQty = selectedReturnBatch ? (Number(returnQty) || 0) * Number(selectedReturnBatch.purchaseUnitConversionToBase || 1) : 0;
+  const returnValue = selectedReturnBatch ? returnBaseQty * Number(selectedReturnBatch.costRate || 0) : 0;
+
+  const handlePurchaseReturn = async () => {
+    if (!returnVendor || !selectedReturnBatch) return;
+    const qty = Number(returnQty);
+    if (!qty || qty <= 0) return toast.error('Enter a valid return quantity.');
+    if (returnBaseQty > Number(selectedReturnBatch.currentStock)) return toast.error(`Cannot return more than currently in stock for this batch (${formatNumber(selectedReturnBatch.currentStock)}).`);
+    if (!returnReason.trim()) return toast.error('A reason is required for the vendor debit note.');
+    setReturning(true);
+    try {
+      await apiClient.post('/vendors/purchase-returns', {
+        vendorId: returnVendor.id,
+        lines: [{ medicineId: returnMedicineId, batchId: returnBatchId, returnUnitId: selectedReturnBatch.purchaseUnitId, returnUnitQuantity: qty }],
+        reason: returnReason.trim(),
+      });
+      toast.success(`Return of ${formatPKR(Math.abs(returnValue))} posted against batch "${selectedReturnBatch.batchNumber}".`);
+      setReturnVendor(null);
+      load();
+      if (ledgerVendor && ledgerVendor.vendor.id === returnVendor.id) openLedger(returnVendor);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error?.message || 'Failed to post purchase return.');
+    } finally {
+      setReturning(false);
     }
   };
 
@@ -368,7 +449,7 @@ export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
         {canEdit && (
           <button
             type="button"
-            onClick={() => setShowAdd(true)}
+            onClick={openAddVendor}
             className="flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-white bg-[#0e7d5a] hover:bg-[#0c6b50] rounded-xl shadow-xs transition-colors cursor-pointer"
           >
             <Plus className="h-4 w-4" /> Add New Vendor
@@ -423,91 +504,99 @@ export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
       {ledgerVendor && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-900/60 backdrop-blur-xs overflow-y-auto print:p-0 print:bg-white print:static">
           <div className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl border border-slate-200 flex flex-col max-h-[92vh] overflow-hidden print:max-h-none print:shadow-none print:border-none print:w-full print:max-w-none">
-            {/* Top Modal Bar (Hidden on print) */}
-            <div className="px-6 py-3.5 bg-slate-900 text-white flex items-center justify-between gap-3 shrink-0 print:hidden">
-              <div className="flex items-center gap-3">
-                <div className="h-9 w-9 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
-                  <BookOpen className="h-4.5 w-4.5" />
-                </div>
-                <div>
+            {/* Modal Body — Directly starts with clean hospital-green card (No top black box) */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3.5 bg-slate-50/50 print:p-0 print:bg-white print:overflow-visible">
+              {/* Distinctive Hospital Theme Card with Integrated Actions */}
+              <div className="bg-gradient-to-r from-[#0a4636] to-[#08775A] text-white p-4 sm:p-5 rounded-2xl shadow-xs space-y-3">
+                {/* Header Action Row */}
+                <div className="flex items-center justify-between gap-3 border-b border-white/15 pb-2.5">
                   <div className="flex items-center gap-2">
-                    <span className="font-bold text-sm text-white">
-                      {ledgerVendor.vendor?.name}
-                    </span>
-                    <span className="font-mono text-[11px] text-slate-400">
-                      [{ledgerVendor.vendor?.code}]
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-400">
-                    Vendor Ledger &amp; Running Statement · CH Sharif &amp; Saeed Hospital Pharmacy
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => window.print()}
-                  className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg shadow-xs flex items-center gap-1.5 transition-colors"
-                >
-                  <Printer className="h-3.5 w-3.5" /> Print Statement
-                </button>
-                {canEdit && (
-                  <button
-                    type="button"
-                    onClick={() => openPayModal(ledgerVendor.vendor)}
-                    className="px-3 py-1.5 text-xs font-semibold text-slate-900 bg-white hover:bg-slate-100 rounded-lg shadow-xs flex items-center gap-1.5 transition-colors"
-                  >
-                    <Banknote className="h-3.5 w-3.5 text-emerald-700" /> Pay Vendor
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setLedgerVendor(null)}
-                  className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-            </div>
-
-            {/* Modal Body */}
-            <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-4 bg-slate-50/60 print:p-0 print:bg-white print:overflow-visible">
-              {/* Distinctive Dark Green Banner (Hospital Theme) */}
-              <div className="bg-gradient-to-r from-[#0a4636] to-[#08775A] text-white p-5 rounded-2xl shadow-xs flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-center gap-4">
-                  <div className="h-12 w-12 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center text-emerald-300">
-                    <Building2 className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2.5">
-                      <h2 className="text-lg font-extrabold tracking-tight">
-                        {ledgerVendor.vendor?.name}
-                      </h2>
-                      <span className="font-mono text-xs bg-white/20 px-2 py-0.5 rounded font-bold">
-                        {ledgerVendor.vendor?.code}
-                      </span>
+                    <div className="h-7 w-7 rounded-lg bg-white/15 flex items-center justify-center text-emerald-300">
+                      <BookOpen className="h-4 w-4" />
                     </div>
-                    <div className="text-xs text-emerald-100/90 flex flex-wrap items-center gap-3 mt-1">
-                      {ledgerVendor.vendor?.contactPerson && (
-                        <span>Contact: <strong>{ledgerVendor.vendor.contactPerson}</strong></span>
-                      )}
-                      {ledgerVendor.vendor?.phone && (
-                        <span>Phone: <strong className="font-mono">{ledgerVendor.vendor.phone}</strong></span>
-                      )}
-                      <span>
-                        Terms: <strong>{ledgerVendor.vendor?.paymentTermsDays > 0 ? `Net ${ledgerVendor.vendor.paymentTermsDays} Days` : 'COD'}</strong>
+                    <div>
+                      <span className="text-xs font-bold text-white tracking-wide uppercase">
+                        Vendor Ledger &amp; Running Statement
+                      </span>
+                      <span className="text-[10px] text-emerald-200/80 hidden sm:inline ml-1.5">
+                        · CH Sharif &amp; Saeed Hospital Pharmacy
                       </span>
                     </div>
                   </div>
+
+                  <div className="flex items-center gap-1.5 print:hidden">
+                    <button
+                      type="button"
+                      onClick={() => window.print()}
+                      className="px-2.5 py-1.5 text-xs font-semibold text-white bg-white/15 hover:bg-white/25 border border-white/20 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <Printer className="h-3.5 w-3.5" /> Print Statement
+                    </button>
+                    {canEdit && (
+                      <button
+                        type="button"
+                        onClick={() => openReturnModal(ledgerVendor.vendor)}
+                        className="px-2.5 py-1.5 text-xs font-semibold text-slate-800 bg-white hover:bg-emerald-50 rounded-lg shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <ArrowDownLeft className="h-3.5 w-3.5 text-amber-600" /> Purchase Return
+                      </button>
+                    )}
+                    {canEdit && (
+                      <button
+                        type="button"
+                        onClick={() => openPayModal(ledgerVendor.vendor)}
+                        className="px-2.5 py-1.5 text-xs font-semibold text-slate-800 bg-white hover:bg-emerald-50 rounded-lg shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <Banknote className="h-3.5 w-3.5 text-[#0e7d5a]" /> Pay Vendor
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setLedgerVendor(null)}
+                      className="p-1.5 text-white/70 hover:text-white rounded-lg hover:bg-white/20 transition-colors cursor-pointer ml-1"
+                      title="Close"
+                    >
+                      <X className="h-4.5 w-4.5" />
+                    </button>
+                  </div>
                 </div>
 
-                <div className="text-right bg-white/10 px-4 py-2.5 rounded-xl border border-white/15">
-                  <div className="text-[10px] uppercase font-bold tracking-wider text-emerald-200">
-                    Net Outstanding Balance
+                {/* Vendor Details & Outstanding Balance Row */}
+                <div className="flex flex-wrap items-center justify-between gap-4 pt-0.5">
+                  <div className="flex items-center gap-3.5">
+                    <div className="h-11 w-11 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center text-emerald-300 shrink-0">
+                      <Building2 className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h2 className="text-base font-extrabold tracking-tight text-white">
+                          {ledgerVendor.vendor?.name}
+                        </h2>
+                        <span className="font-mono text-xs bg-white/20 px-2 py-0.5 rounded font-bold">
+                          {ledgerVendor.vendor?.code}
+                        </span>
+                      </div>
+                      <div className="text-xs text-emerald-100/90 flex flex-wrap items-center gap-3 mt-1">
+                        {ledgerVendor.vendor?.contactPerson && (
+                          <span>Contact: <strong>{ledgerVendor.vendor.contactPerson}</strong></span>
+                        )}
+                        {ledgerVendor.vendor?.phone && (
+                          <span>Phone: <strong className="font-mono">{ledgerVendor.vendor.phone}</strong></span>
+                        )}
+                        <span>
+                          Terms: <strong>{ledgerVendor.vendor?.paymentTermsDays > 0 ? `Net ${ledgerVendor.vendor.paymentTermsDays} Days` : 'COD'}</strong>
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-xl font-black tabular-nums mt-0.5">
-                    {formatPKR(ledgerNetClosing)}
+
+                  <div className="text-right bg-white/10 px-4 py-2 rounded-xl border border-white/15">
+                    <div className="text-[10px] uppercase font-bold tracking-wider text-emerald-200">
+                      Net Outstanding Balance
+                    </div>
+                    <div className="text-xl font-black tabular-nums mt-0.5 text-white">
+                      {formatPKR(ledgerNetClosing)}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -720,31 +809,31 @@ export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
           <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl border border-slate-200 overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-3.5 bg-slate-900 text-white">
-              <h3 className="text-sm font-bold flex items-center gap-2">
-                <Building2 className="h-4 w-4 text-emerald-400" />
+            <div className="flex items-center justify-between px-5 py-3.5 bg-white border-b border-slate-100">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <Building2 className="h-4 w-4 text-[#0e7d5a]" />
                 Add New Pharmacy Vendor
               </h3>
               <button
                 type="button"
                 onClick={() => setShowAdd(false)}
-                className="text-slate-400 hover:text-white"
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
               >
-                <X className="h-5 w-5" />
+                <X className="h-4.5 w-4.5" />
               </button>
             </div>
             <form onSubmit={handleSave} className="p-5 space-y-3.5 text-xs">
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">
-                    Vendor Code *
+                    Vendor Code
                   </label>
                   <input
-                    value={form.code}
-                    onChange={(e) => setForm({ ...form, code: e.target.value })}
-                    placeholder="e.g. VND-004"
-                    className="w-full h-9 px-3 bg-white border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-1 focus:ring-[#08775A]"
+                    disabled
+                    value={loadingNextCode ? 'Generating…' : nextVendorCode}
+                    className="w-full h-9 px-3 bg-slate-100 border border-slate-200 rounded-lg font-mono text-slate-500 cursor-not-allowed"
                   />
+                  <p className="text-[10px] text-slate-400 mt-1">Auto-generated, read-only.</p>
                 </div>
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">
@@ -825,17 +914,17 @@ export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
       {payVendor && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
           <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl border border-slate-200 overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-3.5 bg-slate-900 text-white">
-              <h3 className="text-sm font-bold flex items-center gap-2">
-                <Banknote className="h-4 w-4 text-emerald-400" />
+            <div className="flex items-center justify-between px-5 py-3.5 bg-white border-b border-slate-100">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <Banknote className="h-4 w-4 text-[#0e7d5a]" />
                 Pay Vendor — {payVendor.name}
               </h3>
               <button
                 type="button"
                 onClick={() => setPayVendor(null)}
-                className="text-slate-400 hover:text-white"
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
               >
-                <X className="h-5 w-5" />
+                <X className="h-4.5 w-4.5" />
               </button>
             </div>
 
@@ -901,6 +990,112 @@ export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
                   Confirm Vendor Payment
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═════════════════════════════════════════════════════════════
+          PURCHASE RETURN MODAL (purchase-costing-plan — always against
+          a specific batch, using ITS frozen packaging + cost snapshot)
+          ═════════════════════════════════════════════════════════════ */}
+      {returnVendor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl border border-slate-200 overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-3.5 bg-white border-b border-slate-100">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <ArrowDownLeft className="h-4 w-4 text-amber-600" />
+                Purchase Return — {returnVendor.name}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setReturnVendor(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="h-4.5 w-4.5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-3.5 text-xs">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Medicine *</label>
+                <select
+                  value={returnMedicineId}
+                  onChange={(e) => selectReturnMedicine(e.target.value)}
+                  className="w-full h-9 px-3 bg-white border border-slate-200 rounded-lg font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#08775A]"
+                >
+                  <option value="">Select medicine…</option>
+                  {returnMedicines.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.code})</option>)}
+                </select>
+              </div>
+
+              {returnMedicineId && (
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Batch *</label>
+                  {loadingReturnBatches ? (
+                    <div className="flex items-center gap-2 text-slate-400 py-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading batches…</div>
+                  ) : returnBatches.length === 0 ? (
+                    <p className="text-[11px] text-rose-600">No in-stock batches purchased from this vendor for this medicine.</p>
+                  ) : (
+                    <select
+                      value={returnBatchId}
+                      onChange={(e) => { setReturnBatchId(e.target.value); setReturnQty(''); }}
+                      className="w-full h-9 px-3 bg-white border border-slate-200 rounded-lg font-mono text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#08775A]"
+                    >
+                      <option value="">Select batch…</option>
+                      {returnBatches.map((b) => (
+                        <option key={b.id} value={b.id}>{b.batchNumber} — {formatNumber(b.currentStock)} in stock (exp {formatDate(b.expiryDate)})</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              )}
+
+              {selectedReturnBatch && (
+                <>
+                  <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-[11px] text-slate-600">
+                    This batch's purchase unit: <strong className="text-slate-800">{selectedReturnBatch.purchaseUnit?.name ?? '—'}</strong> (1 = {Number(selectedReturnBatch.purchaseUnitConversionToBase)} base units, frozen at purchase time — never today's live packaging)
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      Return Quantity ({selectedReturnBatch.purchaseUnit?.name ?? 'unit'}) *
+                    </label>
+                    <input
+                      type="number" min={1}
+                      value={returnQty}
+                      onChange={(e) => setReturnQty(e.target.value)}
+                      placeholder="0"
+                      className="w-full h-9 px-3 bg-white border border-slate-200 rounded-lg font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#08775A]"
+                    />
+                  </div>
+                  {Number(returnQty) > 0 && (
+                    <div className="flex items-center justify-between p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-[11px]">
+                      <span className="text-amber-800">= {formatNumber(returnBaseQty)} base units</span>
+                      <span className="font-bold text-amber-800">Vendor Credit: {formatPKR(returnValue)}</span>
+                    </div>
+                  )}
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Reason *</label>
+                    <input
+                      value={returnReason}
+                      onChange={(e) => setReturnReason(e.target.value)}
+                      placeholder="e.g. Damaged in transit, wrong item shipped"
+                      className="w-full h-9 px-3 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#08775A]"
+                    />
+                  </div>
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={handlePurchaseReturn}
+                      disabled={returning}
+                      className="w-full h-10 font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl shadow-xs disabled:opacity-60 transition-colors flex items-center justify-center gap-2"
+                    >
+                      {returning ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowDownLeft className="h-4 w-4" />}
+                      Post Return &amp; Vendor Credit
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

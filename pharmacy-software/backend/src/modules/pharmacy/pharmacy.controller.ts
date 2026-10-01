@@ -16,6 +16,10 @@ import type {
 } from './pharmacy.schemas';
 
 export const pharmacyController = {
+  async nextMedicineCode(_req: Request, res: Response) {
+    const code = await pharmacyService.peekNextMedicineCode();
+    res.json({ data: { code } });
+  },
   async createMedicine(req: Request, res: Response) {
     if (!req.user) throw new AuthenticationError();
     const data = await pharmacyService.createMedicine(req.body as CreateMedicineBody, req.user.sub);
@@ -36,6 +40,10 @@ export const pharmacyController = {
   },
   async getMedicineBatches(req: Request, res: Response) {
     const data = await pharmacyService.getMedicineBatches(req.params.id as string);
+    res.json({ data });
+  },
+  async getPackaging(req: Request, res: Response) {
+    const data = await pharmacyService.getPackaging(req.params.id as string);
     res.json({ data });
   },
   async receiveOpeningStock(req: Request, res: Response) {

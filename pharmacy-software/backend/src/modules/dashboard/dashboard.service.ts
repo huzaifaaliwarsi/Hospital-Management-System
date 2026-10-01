@@ -86,7 +86,7 @@ export const dashboardService = {
       totalStockUnits = totalStockUnits.plus(stock);
       stockValue = stockValue.plus(stock.mul(m.purchaseRate ?? m.saleRate));
 
-      const catName = (m.category && m.category.trim()) || 'General';
+      const catName = (m.categoryLabel && m.categoryLabel.trim()) || 'General';
       if (!categoryMap[catName]) {
         categoryMap[catName] = { count: 0, stock: new Decimal(0) };
       }

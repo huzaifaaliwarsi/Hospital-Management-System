@@ -2,6 +2,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
 import { NotFoundError, ConflictError, ValidationError } from '@/shared/errors/AppError';
+import { nextCode, SEQUENCE } from '@/shared/sequence';
 import { pharmacyService } from '../pharmacy/pharmacy.service';
 import type { CreateRequestBody, ListRequestsQuery, FulfillRequestBody, RejectRequestBody, UpdateSettingsBody } from './hms-requests.schemas';
 
@@ -39,19 +40,21 @@ export const hmsRequestsService = {
       const medicine = await prisma.medicineMaster.findUnique({ where: { id: line.medicineId } });
       if (!medicine || !medicine.isActive) throw new NotFoundError(`Medicine ${line.medicineId} not found or inactive`);
     }
-    const requestNumber = `MED-REQ-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
-    return prisma.medicineRequest.create({
-      data: {
-        requestNumber,
-        externalAdmissionRef: body.externalAdmissionRef,
-        externalRequestRef: body.externalRequestRef,
-        patientNameSnapshot: body.patientNameSnapshot,
-        urgency: body.urgency,
-        requestedByExternal: body.requestedByExternal,
-        handledById: actorId,
-        lines: { create: body.lines.map((l) => ({ medicineId: l.medicineId, requestedQuantity: new Decimal(l.requestedQuantity), notes: l.notes })) },
-      },
-      include: requestInclude,
+    return prisma.$transaction(async (tx) => {
+      const requestNumber = await nextCode(tx, SEQUENCE.MEDICINE_REQUEST);
+      return tx.medicineRequest.create({
+        data: {
+          requestNumber,
+          externalAdmissionRef: body.externalAdmissionRef,
+          externalRequestRef: body.externalRequestRef,
+          patientNameSnapshot: body.patientNameSnapshot,
+          urgency: body.urgency,
+          requestedByExternal: body.requestedByExternal,
+          handledById: actorId,
+          lines: { create: body.lines.map((l) => ({ medicineId: l.medicineId, requestedQuantity: new Decimal(l.requestedQuantity), notes: l.notes })) },
+        },
+        include: requestInclude,
+      });
     });
   },
 
@@ -166,7 +169,7 @@ export const hmsRequestsService = {
           },
         });
       } else {
-        const invoiceNumber = `HMS-MED-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+        const invoiceNumber = await nextCode(tx, SEQUENCE.INVOICE_HMS);
         await tx.pharmacyInvoice.create({
           data: {
             invoiceNumber,

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   Search,
   Plus,
@@ -11,20 +11,21 @@ import {
   Pill,
   Check,
   CreditCard,
-  Banknote,
   RotateCcw,
-  Sparkles,
   User,
   Tag,
-  AlertCircle,
+  Package,
 } from 'lucide-react';
-import { pharmacyApi, MedicineRow } from '../services/pharmacyApi';
+import { pharmacyApi, MedicineRow, Unit } from '../services/pharmacyApi';
 import { formatPKR, formatNumber } from '../utils/format';
 import { useToast } from '../context/ToastContext';
 import { PharmacyInvoiceModal } from '../components/PharmacyInvoiceModal';
 
 interface CartLine {
   medicine: MedicineRow;
+  /// Which configured unit this line is being sold as (medicine-packaging-plan) — defaults to the medicine's base unit.
+  saleUnitId: string;
+  /// Quantity in `saleUnitId` terms (e.g. 2 Strips) — NOT necessarily base units.
   quantity: number;
   discountAmount: number;
 }
@@ -32,6 +33,22 @@ interface CartLine {
 interface PaymentRow {
   method: 'CASH' | 'CARD' | 'ONLINE';
   amount: string;
+}
+
+/** Sale-allowed packaging levels for a medicine, smallest (base) first — medicine-packaging-plan. */
+function saleUnitsFor(med: MedicineRow) {
+  if (!med.packagingLevels) return [];
+  return [...med.packagingLevels].filter((l) => l.isSaleUnit).sort((a, b) => Number(a.conversionToBase) - Number(b.conversionToBase));
+}
+function conversionFor(med: MedicineRow, unitId: string): number {
+  const lvl = med.packagingLevels?.find((l) => l.unitId === unitId);
+  return lvl ? Number(lvl.conversionToBase) : 1;
+}
+/** Per-BASE-unit rate to charge — an override pack price is reduced to its base-unit equivalent so FEFO/tax math never needs to know which unit was sold. */
+function effectiveBaseRateFor(med: MedicineRow, unitId: string): number {
+  const lvl = med.packagingLevels?.find((l) => l.unitId === unitId);
+  if (lvl?.overrideSaleRate) return Number(lvl.overrideSaleRate) / Number(lvl.conversionToBase);
+  return Number(med.saleRate);
 }
 
 const PAYMENT_METHODS: { value: PaymentRow['method']; label: string }[] = [
@@ -43,8 +60,9 @@ const PAYMENT_METHODS: { value: PaymentRow['method']; label: string }[] = [
 export const PosPage: React.FC = () => {
   const toast = useToast();
 
-  // All catalog medicines
+  // All catalog medicines & units
   const [allMedicines, setAllMedicines] = useState<MedicineRow[]>([]);
+  const [unitCatalog, setUnitCatalog] = useState<Unit[]>([]);
   const [loadingMedicines, setLoadingMedicines] = useState(true);
 
   // Search & category filters
@@ -59,7 +77,22 @@ export const PosPage: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [receipt, setReceipt] = useState<any | null>(null);
 
-  // Load all medicines on mount
+  // Quick Add Medicine Modal state
+  const [showAddMedicineModal, setShowAddMedicineModal] = useState(false);
+  const [newMedForm, setNewMedForm] = useState({
+    code: '',
+    name: '',
+    category: '',
+    baseUnitId: '',
+    saleRate: '',
+    reorderLevel: '10',
+    taxPercent: '0',
+  });
+  const [addingMedicine, setAddingMedicine] = useState(false);
+
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Load medicines & units on mount
   const loadMedicines = () => {
     setLoadingMedicines(true);
     pharmacyApi
@@ -73,7 +106,26 @@ export const PosPage: React.FC = () => {
 
   useEffect(() => {
     loadMedicines();
+    pharmacyApi.listUnits().then(setUnitCatalog).catch(() => {});
   }, []);
+
+  // Keyboard shortcut: '/' to focus search, Ctrl+Enter to complete sale
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName)) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        if (cart.length > 0 && !submitting) {
+          e.preventDefault();
+          handleSubmit();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [cart, submitting]);
 
   // Unique categories for filter chips
   const categories = useMemo(() => {
@@ -88,9 +140,7 @@ export const PosPage: React.FC = () => {
   const filteredMedicines = useMemo(() => {
     const q = search.trim().toLowerCase();
     return allMedicines.filter((m) => {
-      // Category filter
       if (selectedCategory !== 'ALL' && m.category !== selectedCategory) return false;
-      // Search filter
       if (!q) return true;
       return (
         m.name.toLowerCase().includes(q) ||
@@ -119,13 +169,11 @@ export const PosPage: React.FC = () => {
     setCart((prev) => {
       const existing = prev.find((l) => l.medicine.id === m.id);
       if (existing) {
-        // Increment quantity
         return prev.map((l) =>
           l.medicine.id === m.id ? { ...l, quantity: l.quantity + 1 } : l
         );
       }
-      // Add new item to cart
-      return [...prev, { medicine: m, quantity: 1, discountAmount: 0 }];
+      return [...prev, { medicine: m, saleUnitId: m.baseUnitId || '', quantity: 1, discountAmount: 0 }];
     });
   };
 
@@ -149,7 +197,8 @@ export const PosPage: React.FC = () => {
     let lineDiscounts = 0;
     let tax = 0;
     for (const l of cart) {
-      const gross = l.quantity * Number(l.medicine.saleRate);
+      const baseQty = l.quantity * conversionFor(l.medicine, l.saleUnitId);
+      const gross = baseQty * effectiveBaseRateFor(l.medicine, l.saleUnitId);
       const disc = Math.min(l.discountAmount, gross);
       const taxable = gross - disc;
       const lineTax = (taxable * Number(l.medicine.taxPercent)) / 100;
@@ -180,7 +229,8 @@ export const PosPage: React.FC = () => {
         customerName: customerName.trim() || undefined,
         lines: cart.map((l) => ({
           medicineId: l.medicine.id,
-          quantity: l.quantity,
+          saleUnitId: l.saleUnitId || undefined,
+          saleUnitQuantity: l.quantity,
           discountAmount: l.discountAmount,
         })),
         invoiceDiscount: Number(invoiceDiscount) || 0,
@@ -189,7 +239,7 @@ export const PosPage: React.FC = () => {
       toast.success(`Sale completed successfully — Invoice ${invoice.invoiceNumber}`);
       setReceipt(invoice);
       clearCart();
-      loadMedicines(); // Refresh stock counts in product catalog
+      loadMedicines();
     } catch (err: any) {
       toast.error(err?.response?.data?.error?.message || 'Failed to complete sale.');
     } finally {
@@ -197,39 +247,110 @@ export const PosPage: React.FC = () => {
     }
   };
 
+  // Quick Add Medicine submission
+  const handleCreateQuickMedicine = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMedForm.name.trim() || !newMedForm.code.trim()) {
+      toast.error('Medicine code and name are required.');
+      return;
+    }
+    const baseUnitId = newMedForm.baseUnitId || unitCatalog[0]?.id;
+    if (!baseUnitId) {
+      toast.error('Please configure at least one unit in Settings first.');
+      return;
+    }
+    setAddingMedicine(true);
+    try {
+      const created = await pharmacyApi.createMedicine({
+        code: newMedForm.code.trim(),
+        name: newMedForm.name.trim(),
+        category: newMedForm.category.trim() || undefined,
+        baseUnitId,
+        baseIsPurchaseUnit: true,
+        baseIsSaleUnit: true,
+        packagingLevels: [],
+        batchManaged: true,
+        reorderLevel: Number(newMedForm.reorderLevel) || 10,
+        saleRate: Number(newMedForm.saleRate) || 0,
+        taxPercent: Number(newMedForm.taxPercent) || 0,
+      });
+      toast.success(`Medicine "${created.name}" added to catalogue.`);
+      setShowAddMedicineModal(false);
+      setNewMedForm({
+        code: '',
+        name: '',
+        category: '',
+        baseUnitId: unitCatalog[0]?.id || '',
+        saleRate: '',
+        reorderLevel: '10',
+        taxPercent: '0',
+      });
+      loadMedicines();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error?.message || 'Failed to add medicine.');
+    } finally {
+      setAddingMedicine(false);
+    }
+  };
+
   return (
-    <div className="p-4 sm:p-5 max-w-[1600px] mx-auto space-y-4">
-      {/* Header bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
-              <ShoppingCart className="h-5 w-5 text-emerald-600" />
-              Point of Sale (POS) — Retail Counter
-            </h1>
-            <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
-              Live Workstation
-            </span>
+    <div className="p-3 sm:p-4 max-w-[1600px] mx-auto space-y-3 font-sans">
+      {/* Top Header bar with Add Medicine button */}
+      <div className="flex flex-wrap items-center justify-between gap-2.5 bg-white px-4 py-3 rounded-xl border border-slate-200/90 shadow-2xs">
+        <div className="flex items-center gap-2.5">
+          <div className="h-8 w-8 rounded-lg bg-emerald-50 text-[#0e7d5a] flex items-center justify-center font-bold">
+            <ShoppingCart className="h-4.5 w-4.5" />
           </div>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Select products directly from the catalogue below to instantly add them to the sale card.
-          </p>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-base font-extrabold text-slate-900 tracking-tight">
+                Point of Sale (POS)
+              </h1>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 text-[#0e7d5a] border border-emerald-200/70">
+                Live Counter
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500">
+              Click any medicine card to add to card • Shortcut: <kbd className="px-1 py-0.2 bg-slate-100 border border-slate-200 rounded text-[10px] font-mono font-semibold text-slate-600">/</kbd> to search
+            </p>
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Quick Add Medicine Button */}
+          <button
+            type="button"
+            onClick={() => {
+              setNewMedForm({
+                code: `MED-${Math.floor(100 + Math.random() * 900)}`,
+                name: '',
+                category: selectedCategory !== 'ALL' ? selectedCategory : '',
+                baseUnitId: unitCatalog[0]?.id || '',
+                saleRate: '',
+                reorderLevel: '10',
+                taxPercent: '0',
+              });
+              setShowAddMedicineModal(true);
+            }}
+            className="px-3 py-1.5 text-xs font-bold text-white bg-[#0e7d5a] hover:bg-[#0c6b50] rounded-lg transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
+          >
+            <Plus className="h-3.5 w-3.5 stroke-[3]" /> Add New Item
+          </button>
+
           {cart.length > 0 && (
             <button
               type="button"
               onClick={clearCart}
-              className="px-3 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-colors flex items-center gap-1.5"
+              className="px-2.5 py-1.5 text-xs font-semibold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100/70 border border-rose-200/80 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
             >
               <Trash2 className="h-3.5 w-3.5" /> Clear Card
             </button>
           )}
+
           <button
             type="button"
             onClick={loadMedicines}
-            className="p-2 text-slate-600 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl transition-colors"
+            className="p-1.5 text-slate-500 hover:text-slate-800 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors cursor-pointer"
             title="Refresh Formulary Catalogue"
           >
             <RotateCcw className="h-4 w-4" />
@@ -238,62 +359,82 @@ export const PosPage: React.FC = () => {
       </div>
 
       {/* Main 2-Column POS Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 items-start">
         {/* ═════════════════════════════════════════════════════════════
             LEFT: ALL PRODUCTS CATALOGUE & QUICK-SELECT CARDS (7 Cols)
             ═════════════════════════════════════════════════════════════ */}
-        <div className="lg:col-span-7 space-y-3.5">
+        <div className="lg:col-span-7 space-y-3">
           {/* Search & Category Filter Toolbar */}
-          <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
+          <div className="bg-white p-3 rounded-xl border border-slate-200/90 shadow-2xs space-y-2.5">
             {/* Search Input */}
             <div className="relative">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
               <input
+                ref={searchInputRef}
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search medicine name, formulation, item code, barcode…"
-                className="w-full h-10 pl-10 pr-4 text-xs font-medium bg-slate-50 hover:bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A] transition-colors"
+                placeholder="Search medicine name, code, category, or generic… (Press '/' to focus)"
+                className="w-full h-9 pl-9 pr-8 text-xs font-medium bg-slate-50 hover:bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1.5 focus:ring-[#0e7d5a]/25 focus:border-[#0e7d5a] text-slate-900 transition-colors placeholder:text-slate-400"
               />
               {search && (
                 <button
                   type="button"
                   onClick={() => setSearch('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="h-3.5 w-3.5" />
                 </button>
               )}
             </div>
 
-            {/* Category Chips */}
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+            {/* Clean Professional Category Filter Tabs (Refined per User Request) */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs scrollbar-thin">
               <button
                 type="button"
                 onClick={() => setSelectedCategory('ALL')}
-                className={`px-3 py-1.5 rounded-lg font-bold whitespace-nowrap transition-colors ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 ${
                   selectedCategory === 'ALL'
-                    ? 'bg-[#08775A] text-white shadow-xs'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    ? 'bg-emerald-50 text-[#0e7d5a] border border-emerald-300 shadow-2xs font-bold'
+                    : 'bg-white hover:bg-slate-50 text-slate-600 border border-slate-200/80 hover:text-slate-900'
                 }`}
               >
-                All Products ({allMedicines.length})
+                <span>All Products</span>
+                <span
+                  className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold tabular-nums ${
+                    selectedCategory === 'ALL'
+                      ? 'bg-emerald-200/70 text-[#0e7d5a]'
+                      : 'bg-slate-100 text-slate-500'
+                  }`}
+                >
+                  {allMedicines.length}
+                </span>
               </button>
 
               {categories.map((cat) => {
                 const count = allMedicines.filter((m) => m.category === cat).length;
+                const isSelected = selectedCategory === cat;
                 return (
                   <button
                     key={cat}
                     type="button"
                     onClick={() => setSelectedCategory(cat)}
-                    className={`px-3 py-1.5 rounded-lg font-bold whitespace-nowrap transition-colors ${
-                      selectedCategory === cat
-                        ? 'bg-[#08775A] text-white shadow-xs'
-                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 ${
+                      isSelected
+                        ? 'bg-emerald-50 text-[#0e7d5a] border border-emerald-300 shadow-2xs font-bold'
+                        : 'bg-white hover:bg-slate-50 text-slate-600 border border-slate-200/80 hover:text-slate-900'
                     }`}
                   >
-                    {cat} ({count})
+                    <span>{cat}</span>
+                    <span
+                      className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold tabular-nums ${
+                        isSelected
+                          ? 'bg-emerald-200/70 text-[#0e7d5a]'
+                          : 'bg-slate-100 text-slate-500'
+                      }`}
+                    >
+                      {count}
+                    </span>
                   </button>
                 );
               })}
@@ -301,31 +442,38 @@ export const PosPage: React.FC = () => {
           </div>
 
           {/* Product Cards Grid */}
-          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
-            <div className="flex items-center justify-between mb-3 text-xs">
-              <span className="font-bold text-slate-700">
+          <div className="bg-white p-3.5 rounded-xl border border-slate-200/90 shadow-2xs">
+            <div className="flex items-center justify-between mb-2.5 text-xs">
+              <span className="font-bold text-slate-800">
                 Available Formulary Items ({filteredMedicines.length})
               </span>
               <span className="text-[11px] text-slate-400">
-                Click any product card to add directly to sale
+                Click card to add directly
               </span>
             </div>
 
             {loadingMedicines ? (
-              <div className="py-20 flex flex-col items-center justify-center text-slate-500 gap-2">
-                <div className="h-7 w-7 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+              <div className="py-16 flex flex-col items-center justify-center text-slate-500 gap-2">
+                <div className="h-6 w-6 border-2 border-[#0e7d5a] border-t-transparent rounded-full animate-spin" />
                 <span className="text-xs font-semibold">Loading product catalogue…</span>
               </div>
             ) : filteredMedicines.length === 0 ? (
-              <div className="py-16 text-center text-slate-400 space-y-2">
-                <Pill className="h-8 w-8 mx-auto text-slate-300" />
-                <div className="font-bold text-slate-700 text-sm">No products found</div>
-                <p className="text-xs text-slate-500">
-                  Try searching with a different keyword or selecting "All Products".
+              <div className="py-12 text-center text-slate-400 space-y-2">
+                <Pill className="h-7 w-7 mx-auto text-slate-300" />
+                <div className="font-bold text-slate-700 text-xs">No products found</div>
+                <p className="text-[11px] text-slate-500">
+                  Try searching with another keyword or click "+ Add New Item" above.
                 </p>
+                <button
+                  type="button"
+                  onClick={() => setShowAddMedicineModal(true)}
+                  className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-[#0e7d5a] rounded-lg hover:bg-[#0c6b50] transition-colors cursor-pointer"
+                >
+                  <Plus className="h-3 w-3 stroke-[3]" /> Add Item Now
+                </button>
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-[calc(100vh-320px)] overflow-y-auto pr-1">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-[calc(100vh-270px)] overflow-y-auto pr-1">
                 {filteredMedicines.map((m) => {
                   const inCartQty = cartQtyByMedicineId.get(m.id) ?? 0;
                   const stock = Number(m.currentStock || 0);
@@ -334,18 +482,18 @@ export const PosPage: React.FC = () => {
                     <div
                       key={m.id}
                       onClick={() => handleProductClick(m)}
-                      className={`relative p-3.5 rounded-xl border transition-all text-left flex flex-col justify-between select-none cursor-pointer group ${
+                      className={`relative p-3 rounded-xl border transition-all text-left flex flex-col justify-between select-none cursor-pointer group bg-white ${
                         m.isOutOfStock
-                          ? 'bg-slate-50 border-slate-200 opacity-60 cursor-not-allowed'
+                          ? 'border-slate-200 opacity-60 cursor-not-allowed bg-slate-50/70'
                           : inCartQty > 0
-                          ? 'bg-emerald-50/70 border-emerald-400 shadow-xs ring-1 ring-emerald-400'
-                          : 'bg-white border-slate-200 hover:border-emerald-400 hover:shadow-xs hover:bg-emerald-50/20'
+                          ? 'border-[#0e7d5a] shadow-xs ring-1 ring-[#0e7d5a]/30 bg-emerald-50/15'
+                          : 'border-slate-200/90 hover:border-[#0e7d5a]/60 hover:shadow-xs hover:translate-y-[-1px]'
                       }`}
                     >
                       {/* In-Cart Quantity Badge */}
                       {inCartQty > 0 && (
-                        <div className="absolute top-2 right-2 px-2 py-0.5 bg-emerald-600 text-white font-black text-[10px] rounded-full shadow-xs flex items-center gap-1 animate-in zoom-in-50">
-                          <Check className="h-3 w-3" />
+                        <div className="absolute top-2 right-2 px-1.5 py-0.5 bg-[#0e7d5a] text-white font-bold text-[10px] rounded-md shadow-xs flex items-center gap-1">
+                          <Check className="h-3 w-3 stroke-[3]" />
                           <span>{inCartQty} in card</span>
                         </div>
                       )}
@@ -358,41 +506,50 @@ export const PosPage: React.FC = () => {
                       )}
 
                       <div className="space-y-1">
-                        <div className="font-bold text-xs text-slate-900 group-hover:text-emerald-900 line-clamp-2 leading-tight">
+                        <div className="font-bold text-xs text-slate-900 group-hover:text-[#0e7d5a] line-clamp-2 leading-tight pr-6 min-h-[30px]">
                           {m.name}
                         </div>
-                        <div className="flex items-center gap-1 text-[10px] text-slate-500 font-mono">
-                          <span>{m.code}</span>
+                        <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
+                          <span className="font-mono font-medium px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">
+                            {m.code}
+                          </span>
                           {m.category && (
-                            <>
-                              <span>·</span>
-                              <span className="truncate">{m.category}</span>
-                            </>
+                            <span className="truncate max-w-[110px] text-slate-400">
+                              {m.category}
+                            </span>
                           )}
                         </div>
                       </div>
 
-                      <div className="pt-3 mt-2 border-t border-slate-100 flex items-end justify-between">
+                      <div className="pt-2 mt-2 border-t border-slate-100 flex items-center justify-between">
                         <div>
-                          <div className="text-[10px] text-slate-400">Retail Rate</div>
-                          <div className="font-extrabold text-sm text-slate-900 tabular-nums">
+                          <div className="text-[9.5px] text-slate-400 leading-tight">Retail Rate</div>
+                          <div className="font-extrabold text-xs text-slate-900 tabular-nums">
                             {formatPKR(m.saleRate)}
                           </div>
                         </div>
 
-                        <div className="text-right">
-                          <div
-                            className={`text-[10px] font-bold tabular-nums ${
-                              m.isOutOfStock
-                                ? 'text-rose-600'
-                                : m.isLowStock
-                                ? 'text-amber-600'
-                                : 'text-emerald-700'
-                            }`}
-                          >
-                            {formatNumber(stock)} {m.unit}
+                        <div className="flex items-center gap-1.5">
+                          <div className="text-right">
+                            <div className="text-[10px] font-bold text-slate-800 flex items-center justify-end gap-1">
+                              <span
+                                className={`inline-block h-1.5 w-1.5 rounded-full ${
+                                  m.isOutOfStock
+                                    ? 'bg-rose-500'
+                                    : m.isLowStock
+                                    ? 'bg-amber-500'
+                                    : 'bg-emerald-500'
+                                }`}
+                              />
+                              <span className="tabular-nums">{formatNumber(stock)}</span>{' '}
+                              <span className="font-normal text-[9.5px] text-slate-400">{m.unit}</span>
+                            </div>
+                            <div className="text-[9px] text-slate-400">in stock</div>
                           </div>
-                          <div className="text-[9px] text-slate-400">in stock</div>
+
+                          <div className="h-6 w-6 rounded-md bg-slate-100 group-hover:bg-[#0e7d5a] group-hover:text-white text-slate-500 flex items-center justify-center transition-colors">
+                            <Plus className="h-3.5 w-3.5" />
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -406,17 +563,17 @@ export const PosPage: React.FC = () => {
         {/* ═════════════════════════════════════════════════════════════
             RIGHT: ACTIVE POS CARD / CART & CHECKOUT (5 Cols)
             ═════════════════════════════════════════════════════════════ */}
-        <div className="lg:col-span-5 space-y-4">
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-3.5">
+        <div className="lg:col-span-5 sticky top-20">
+          <div className="bg-white rounded-xl border border-slate-200/90 shadow-xs p-3.5 space-y-2.5">
             {/* Cart Header */}
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
               <div className="flex items-center gap-2">
-                <div className="h-8 w-8 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold">
-                  <ShoppingCart className="h-4 w-4" />
+                <div className="h-7 w-7 rounded-lg bg-emerald-50 text-[#0e7d5a] flex items-center justify-center font-bold">
+                  <ShoppingCart className="h-3.5 w-3.5" />
                 </div>
                 <div>
-                  <h2 className="text-sm font-bold text-slate-900">Current Sale Card</h2>
-                  <span className="text-[11px] text-slate-500">
+                  <h2 className="text-xs font-bold text-slate-900 leading-tight">Current Sale</h2>
+                  <span className="text-[10px] text-slate-400 font-medium">
                     {cart.length} {cart.length === 1 ? 'item' : 'items'} in sale card
                   </span>
                 </div>
@@ -426,19 +583,19 @@ export const PosPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={clearCart}
-                  className="text-xs font-semibold text-rose-600 hover:text-rose-800 transition-colors"
+                  className="text-[11px] font-semibold text-rose-600 hover:text-rose-800 transition-colors cursor-pointer"
                 >
                   Clear All
                 </button>
               )}
             </div>
 
-            {/* Cart Items List */}
-            <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+            {/* Cart Items List — Redesigned with Green Accent & Modern Card Layout */}
+            <div className="space-y-2 max-h-[230px] overflow-y-auto pr-1 scrollbar-thin">
               {cart.length === 0 ? (
-                <div className="py-14 text-center text-slate-400 space-y-2">
-                  <div className="h-12 w-12 rounded-full bg-slate-50 border border-dashed border-slate-200 flex items-center justify-center mx-auto text-slate-300">
-                    <ShoppingCart className="h-6 w-6" />
+                <div className="py-5 text-center text-slate-400 space-y-1">
+                  <div className="h-9 w-9 rounded-full bg-slate-50 border border-slate-200 flex items-center justify-center mx-auto text-slate-400">
+                    <ShoppingCart className="h-4 w-4" />
                   </div>
                   <div className="font-bold text-slate-700 text-xs">Sale Card is Empty</div>
                   <p className="text-[11px] text-slate-400 max-w-xs mx-auto">
@@ -447,87 +604,134 @@ export const PosPage: React.FC = () => {
                 </div>
               ) : (
                 cart.map((line) => {
-                  const gross = line.quantity * Number(line.medicine.saleRate);
+                  const unitOptions = saleUnitsFor(line.medicine);
+                  const baseQty = line.quantity * conversionFor(line.medicine, line.saleUnitId);
+                  const gross = baseQty * effectiveBaseRateFor(line.medicine, line.saleUnitId);
                   const disc = Math.min(line.discountAmount, gross);
                   const taxable = gross - disc;
                   const lineTax = (taxable * Number(line.medicine.taxPercent)) / 100;
                   const lineNet = taxable + lineTax;
+                  const selectedUnitName =
+                    unitOptions.find((u) => u.unitId === line.saleUnitId)?.unit?.name ||
+                    line.medicine.baseUnit?.name ||
+                    line.medicine.unit;
 
                   return (
                     <div
                       key={line.medicine.id}
-                      className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 space-y-2"
+                      className="p-2.5 bg-white hover:bg-emerald-50/20 rounded-xl border border-slate-200/80 border-l-[3.5px] border-l-[#0e7d5a] space-y-2 shadow-2xs transition-all"
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0 flex-1">
-                          <div className="font-bold text-xs text-slate-900 truncate">
-                            {line.medicine.name}
+                          <div className="font-bold text-xs text-slate-900 truncate flex items-center gap-1.5">
+                            <span>{line.medicine.name}</span>
+                            {line.medicine.category && (
+                              <span className="text-[9.5px] font-medium px-1.5 py-0.2 rounded bg-slate-100 text-slate-500">
+                                {line.medicine.category}
+                              </span>
+                            )}
                           </div>
-                          <div className="text-[11px] text-slate-500 font-mono">
-                            {formatPKR(line.medicine.saleRate)} × {line.quantity} {line.medicine.unit}
+                          <div className="text-[10.5px] text-slate-500 font-mono mt-0.5">
+                            <span className="text-slate-700 font-semibold">
+                              {formatPKR(gross / Math.max(1, line.quantity))}
+                            </span>
+                            <span className="text-slate-400">
+                              {' '}× {line.quantity} {selectedUnitName}
+                            </span>
                           </div>
                         </div>
 
-                        <div className="text-right">
-                          <div className="font-extrabold text-xs text-slate-900 tabular-nums">
-                            {formatPKR(lineNet)}
+                        <div className="flex items-center gap-2">
+                          <div className="text-right">
+                            <div className="font-extrabold text-sm text-[#0e7d5a] tabular-nums">
+                              {formatPKR(lineNet)}
+                            </div>
                           </div>
                           <button
                             type="button"
                             onClick={() => removeLine(line.medicine.id)}
-                            className="text-rose-500 hover:text-rose-700 text-[10px] flex items-center gap-0.5 ml-auto mt-0.5"
+                            className="p-1 rounded-md text-slate-300 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                            title="Remove item"
                           >
-                            <Trash2 className="h-3 w-3" /> Remove
+                            <X className="h-3.5 w-3.5" />
                           </button>
                         </div>
                       </div>
 
-                      {/* Stepper & Line Discount */}
-                      <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200/60 text-xs">
-                        {/* Stepper */}
-                        <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg p-0.5">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              updateLine(line.medicine.id, {
-                                quantity: Math.max(1, line.quantity - 1),
-                              })
-                            }
-                            className="h-6 w-6 rounded flex items-center justify-center hover:bg-slate-100 text-slate-700 transition-colors"
-                          >
-                            <Minus className="h-3 w-3" />
-                          </button>
-                          <span className="w-8 text-center font-bold text-xs tabular-nums text-slate-900">
-                            {line.quantity}
+                      {/* Stepper, Unit selection, & Line Discount row */}
+                      <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-slate-100 text-xs">
+                        {unitOptions.length > 1 ? (
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] text-slate-400">Unit:</span>
+                            <select
+                              value={line.saleUnitId}
+                              onChange={(e) =>
+                                updateLine(line.medicine.id, {
+                                  saleUnitId: e.target.value,
+                                  quantity: 1,
+                                })
+                              }
+                              className="h-6.5 px-2 text-[10.5px] font-semibold bg-slate-50 border border-slate-200 rounded-md text-slate-800"
+                            >
+                              {unitOptions.map((o) => (
+                                <option key={o.unitId} value={o.unitId}>
+                                  {o.unit?.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        ) : (
+                          <span className="text-[10.5px] text-slate-500 font-medium bg-slate-50 px-2 py-0.5 rounded border border-slate-100">
+                            {selectedUnitName}
                           </span>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              updateLine(line.medicine.id, {
-                                quantity: line.quantity + 1,
-                              })
-                            }
-                            className="h-6 w-6 rounded flex items-center justify-center hover:bg-slate-100 text-slate-700 transition-colors"
-                          >
-                            <Plus className="h-3 w-3" />
-                          </button>
-                        </div>
+                        )}
 
-                        {/* Line Discount Input */}
-                        <div className="flex items-center gap-1">
-                          <span className="text-[10px] text-slate-500">Disc:</span>
-                          <input
-                            type="number"
-                            min={0}
-                            value={line.discountAmount || ''}
-                            onChange={(e) =>
-                              updateLine(line.medicine.id, {
-                                discountAmount: Math.max(0, Number(e.target.value) || 0),
-                              })
-                            }
-                            placeholder="0"
-                            className="w-16 h-7 text-right text-xs bg-white border border-slate-200 rounded-lg px-1.5 focus:outline-none focus:ring-1 focus:ring-[#08775A]"
-                          />
+                        <div className="flex items-center gap-2 ml-auto">
+                          {/* Line Discount Input */}
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] text-slate-400">Disc:</span>
+                            <input
+                              type="number"
+                              min={0}
+                              value={line.discountAmount || ''}
+                              onChange={(e) =>
+                                updateLine(line.medicine.id, {
+                                  discountAmount: Math.max(0, Number(e.target.value) || 0),
+                                })
+                              }
+                              placeholder="0"
+                              className="w-14 h-6.5 text-right text-[11px] bg-slate-50 hover:bg-white border border-slate-200 rounded-md px-1.5 text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
+                            />
+                          </div>
+
+                          {/* Stepper */}
+                          <div className="flex items-center bg-slate-50 border border-slate-200 rounded-lg p-0.5">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateLine(line.medicine.id, {
+                                  quantity: Math.max(1, line.quantity - 1),
+                                })
+                              }
+                              className="h-5.5 w-5.5 rounded flex items-center justify-center hover:bg-white hover:shadow-2xs text-slate-700 transition-all cursor-pointer"
+                            >
+                              <Minus className="h-2.5 w-2.5" />
+                            </button>
+                            <span className="w-7 text-center font-bold text-xs tabular-nums text-slate-900">
+                              {line.quantity}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateLine(line.medicine.id, {
+                                  quantity: line.quantity + 1,
+                                })
+                              }
+                              className="h-5.5 w-5.5 rounded flex items-center justify-center hover:bg-white hover:shadow-2xs text-slate-700 transition-all cursor-pointer"
+                            >
+                              <Plus className="h-2.5 w-2.5" />
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -536,26 +740,26 @@ export const PosPage: React.FC = () => {
               )}
             </div>
 
-            {/* Customer & Overall Discount Inputs */}
-            <div className="border-t border-slate-100 pt-3 space-y-2.5 text-xs">
+            {/* Customer & Overall Discount Inputs — Compact 2-Column Grid */}
+            <div className="border-t border-slate-100 pt-2 grid grid-cols-2 gap-2 text-xs">
               <div>
-                <label className="block font-semibold text-slate-700 mb-1 flex items-center gap-1">
+                <label className="text-[10px] font-semibold text-slate-600 mb-1 flex items-center gap-1">
                   <User className="h-3 w-3 text-slate-400" />
-                  Customer / Patient (Optional)
+                  Patient / Customer
                 </label>
                 <input
                   type="text"
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
-                  placeholder="e.g. Walk-in / Patient Name"
-                  className="w-full h-8 px-3 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#08775A]"
+                  placeholder="Walk-in Patient"
+                  className="w-full h-7.5 px-2.5 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a] focus:border-[#0e7d5a] transition-colors"
                 />
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700 mb-1 flex items-center gap-1">
+                <label className="text-[10px] font-semibold text-slate-600 mb-1 flex items-center gap-1">
                   <Tag className="h-3 w-3 text-slate-400" />
-                  Invoice-Level Extra Discount (PKR)
+                  Extra Discount (PKR)
                 </label>
                 <input
                   type="number"
@@ -563,19 +767,21 @@ export const PosPage: React.FC = () => {
                   value={invoiceDiscount}
                   onChange={(e) => setInvoiceDiscount(e.target.value)}
                   placeholder="0"
-                  className="w-full h-8 px-3 bg-slate-50 border border-slate-200 rounded-lg text-right font-semibold focus:outline-none focus:ring-1 focus:ring-[#08775A]"
+                  className="w-full h-7.5 px-2.5 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-right font-semibold text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a] focus:border-[#0e7d5a] transition-colors"
                 />
               </div>
             </div>
 
             {/* Financial Breakdown Summary */}
-            <div className="border-t border-slate-200 pt-3 space-y-1.5 text-xs">
-              <div className="flex justify-between text-slate-600">
+            <div className="border-t border-slate-100 pt-2 space-y-1 text-xs">
+              <div className="flex justify-between text-[11px] text-slate-600">
                 <span>Gross Subtotal:</span>
-                <span className="font-semibold tabular-nums">{formatPKR(totals.subtotal)}</span>
+                <span className="font-semibold text-slate-900 tabular-nums">
+                  {formatPKR(totals.subtotal)}
+                </span>
               </div>
               {(totals.lineDiscounts > 0 || totals.invDiscount > 0) && (
-                <div className="flex justify-between text-emerald-700">
+                <div className="flex justify-between text-[11px] text-emerald-700">
                   <span>Total Discounts:</span>
                   <span className="font-semibold tabular-nums">
                     - {formatPKR(totals.lineDiscounts + totals.invDiscount)}
@@ -583,30 +789,37 @@ export const PosPage: React.FC = () => {
                 </div>
               )}
               {totals.tax > 0 && (
-                <div className="flex justify-between text-slate-600">
+                <div className="flex justify-between text-[11px] text-slate-600">
                   <span>GST / Tax:</span>
                   <span className="font-semibold tabular-nums">+ {formatPKR(totals.tax)}</span>
                 </div>
               )}
-              <div className="border-t border-slate-200 pt-2 flex justify-between font-extrabold text-sm text-slate-900">
-                <span>Net Payable:</span>
-                <span className="tabular-nums text-base text-emerald-800">
-                  {formatPKR(totals.total)}
-                </span>
+
+              {/* Net Payable: Clean, High-Contrast White Theme with Emerald Accent (No Black Bar) */}
+              <div className="p-2.5 rounded-xl bg-emerald-50/70 border border-emerald-200/90 flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-bold text-emerald-950 block leading-tight">Net Payable</span>
+                  <span className="text-[9.5px] text-emerald-700/90 font-medium">Final invoice total</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-xl font-black tabular-nums text-[#0e7d5a] tracking-tight">
+                    {formatPKR(totals.total)}
+                  </span>
+                </div>
               </div>
             </div>
 
             {/* Payment Section */}
-            <div className="border-t border-slate-200 pt-3 space-y-2 text-xs">
+            <div className="border-t border-slate-100 pt-2 space-y-1.5 text-xs">
               <div className="flex items-center justify-between">
-                <span className="font-bold text-slate-700 flex items-center gap-1">
-                  <CreditCard className="h-3.5 w-3.5 text-slate-500" />
+                <span className="font-bold text-slate-800 text-[10.5px] flex items-center gap-1">
+                  <CreditCard className="h-3 w-3 text-slate-500" />
                   Payment Collection
                 </span>
                 <button
                   type="button"
                   onClick={payInFull}
-                  className="text-[11px] font-bold text-[#08775A] hover:underline"
+                  className="text-[10.5px] font-bold text-[#0e7d5a] hover:underline cursor-pointer"
                 >
                   Pay Full ({formatPKR(totals.total)})
                 </button>
@@ -625,7 +838,7 @@ export const PosPage: React.FC = () => {
                         )
                       )
                     }
-                    className="h-8 px-2 text-xs border border-slate-200 rounded-lg bg-white text-slate-800 font-medium"
+                    className="h-7.5 px-2 text-xs border border-slate-200 rounded-lg bg-white text-slate-800 font-semibold"
                   >
                     {PAYMENT_METHODS.map((m) => (
                       <option key={m.value} value={m.value}>
@@ -644,53 +857,54 @@ export const PosPage: React.FC = () => {
                       )
                     }
                     placeholder="Amount (PKR)"
-                    className="flex-1 h-8 px-2.5 text-xs border border-slate-200 rounded-lg text-right font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#08775A]"
+                    className="flex-1 h-7.5 px-2 text-xs border border-slate-200 rounded-lg text-right font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
                   />
 
                   {payments.length > 1 && (
                     <button
                       type="button"
                       onClick={() => removePaymentRow(idx)}
-                      className="p-1 text-rose-500 hover:text-rose-700"
+                      className="p-1 text-rose-500 hover:text-rose-700 cursor-pointer"
                     >
-                      <X className="h-4 w-4" />
+                      <X className="h-3.5 w-3.5" />
                     </button>
                   )}
                 </div>
               ))}
 
-              <button
-                type="button"
-                onClick={addPaymentRow}
-                className="text-[11px] font-semibold text-slate-500 hover:text-[#08775A] flex items-center gap-1"
-              >
-                <Plus className="h-3 w-3" /> Add Split Payment (Card + Cash)
-              </button>
-
-              <div className="border-t border-slate-100 pt-2 flex justify-between font-bold text-xs">
-                <span>Outstanding Balance:</span>
-                <span
-                  className={`tabular-nums ${
-                    totals.outstanding > 0 ? 'text-rose-700 font-extrabold' : 'text-slate-500'
-                  }`}
+              <div className="flex items-center justify-between text-[10.5px] pt-0.5">
+                <button
+                  type="button"
+                  onClick={addPaymentRow}
+                  className="text-slate-500 hover:text-[#0e7d5a] font-medium flex items-center gap-1 cursor-pointer"
                 >
-                  {formatPKR(totals.outstanding)}
-                </span>
+                  <Plus className="h-3 w-3" /> Add Split Payment
+                </button>
+                <div className="font-semibold text-slate-600">
+                  Balance:{' '}
+                  <span
+                    className={`tabular-nums ${
+                      totals.outstanding > 0 ? 'text-rose-600 font-bold' : 'text-slate-700'
+                    }`}
+                  >
+                    {formatPKR(totals.outstanding)}
+                  </span>
+                </div>
               </div>
             </div>
 
             {/* Complete Sale Button */}
-            <div className="pt-2">
+            <div className="pt-1">
               <button
                 type="button"
                 onClick={handleSubmit}
                 disabled={submitting || cart.length === 0}
-                className="w-full h-11 flex items-center justify-center gap-2 rounded-xl bg-[#08775A] hover:bg-[#065f46] text-white text-xs font-extrabold shadow-md disabled:opacity-50 transition-all cursor-pointer"
+                className="w-full h-9.5 flex items-center justify-center gap-2 rounded-xl bg-[#0e7d5a] hover:bg-[#0c6b50] text-white text-xs font-bold shadow-sm disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
               >
                 {submitting ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : (
-                  <Printer className="h-4 w-4" />
+                  <Printer className="h-3.5 w-3.5" />
                 )}
                 Complete Sale &amp; Print Receipt
               </button>
@@ -698,6 +912,168 @@ export const PosPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Quick Add Medicine Modal */}
+      {showAddMedicineModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100 bg-slate-50/50">
+              <div className="flex items-center gap-2">
+                <div className="h-7 w-7 rounded-lg bg-emerald-100 text-[#0e7d5a] flex items-center justify-center font-bold">
+                  <Package className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Quick Add Item to Formulary</h3>
+                  <p className="text-[10.5px] text-slate-500">Register new medicine on the fly for POS counter</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddMedicineModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Modal Form */}
+            <form onSubmit={handleCreateQuickMedicine} className="p-5 space-y-3.5 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Item Code <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={newMedForm.code}
+                    onChange={(e) => setNewMedForm({ ...newMedForm, code: e.target.value })}
+                    placeholder="e.g. MED-105"
+                    className="w-full h-8 px-2.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1.5 focus:ring-[#0e7d5a]/25 focus:border-[#0e7d5a] text-slate-900 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Category
+                  </label>
+                  <input
+                    type="text"
+                    list="category-suggestions"
+                    value={newMedForm.category}
+                    onChange={(e) => setNewMedForm({ ...newMedForm, category: e.target.value })}
+                    placeholder="e.g. Antibiotic"
+                    className="w-full h-8 px-2.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1.5 focus:ring-[#0e7d5a]/25 focus:border-[#0e7d5a] text-slate-900"
+                  />
+                  <datalist id="category-suggestions">
+                    {categories.map((c) => (
+                      <option key={c} value={c} />
+                    ))}
+                  </datalist>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Medicine Name <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={newMedForm.name}
+                  onChange={(e) => setNewMedForm({ ...newMedForm, name: e.target.value })}
+                  placeholder="e.g. Amoxicillin 500mg Capsule"
+                  className="w-full h-8 px-2.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1.5 focus:ring-[#0e7d5a]/25 focus:border-[#0e7d5a] text-slate-900 font-semibold"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Base Unit <span className="text-rose-500">*</span>
+                  </label>
+                  <select
+                    value={newMedForm.baseUnitId}
+                    onChange={(e) => setNewMedForm({ ...newMedForm, baseUnitId: e.target.value })}
+                    className="w-full h-8 px-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1.5 focus:ring-[#0e7d5a]/25 focus:border-[#0e7d5a] text-slate-900 font-medium"
+                  >
+                    {unitCatalog.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.name} {u.shortCode ? `(${u.shortCode})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Retail Rate (PKR) <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min={0}
+                    step="0.01"
+                    value={newMedForm.saleRate}
+                    onChange={(e) => setNewMedForm({ ...newMedForm, saleRate: e.target.value })}
+                    placeholder="0.00"
+                    className="w-full h-8 px-2.5 text-xs bg-slate-50 border border-slate-200 rounded-lg text-right font-bold text-slate-900 focus:outline-none focus:ring-1.5 focus:ring-[#0e7d5a]/25 focus:border-[#0e7d5a]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Reorder Alert Level
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={newMedForm.reorderLevel}
+                    onChange={(e) => setNewMedForm({ ...newMedForm, reorderLevel: e.target.value })}
+                    placeholder="10"
+                    className="w-full h-8 px-2.5 text-xs bg-slate-50 border border-slate-200 rounded-lg text-right font-semibold text-slate-900 focus:outline-none focus:ring-1.5 focus:ring-[#0e7d5a]/25 focus:border-[#0e7d5a]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    GST / Tax %
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={newMedForm.taxPercent}
+                    onChange={(e) => setNewMedForm({ ...newMedForm, taxPercent: e.target.value })}
+                    placeholder="0"
+                    className="w-full h-8 px-2.5 text-xs bg-slate-50 border border-slate-200 rounded-lg text-right font-semibold text-slate-900 focus:outline-none focus:ring-1.5 focus:ring-[#0e7d5a]/25 focus:border-[#0e7d5a]"
+                  />
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowAddMedicineModal(false)}
+                  className="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={addingMedicine}
+                  className="px-4 py-1.5 rounded-lg text-xs font-bold text-white bg-[#0e7d5a] hover:bg-[#0c6b50] transition-colors flex items-center gap-1.5 shadow-xs disabled:opacity-50 cursor-pointer"
+                >
+                  {addingMedicine && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Save &amp; Add to Catalogue
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Invoice & Thermal Slip Print Modal */}
       {receipt && (

@@ -3,6 +3,7 @@ import { Loader2, Plus, X, KeyRound, Ban, CheckCircle } from 'lucide-react';
 import apiClient from '../services/apiClient';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import { PharmacyDataTable, Column } from '../components/PharmacyDataTable';
 
 const emptyForm = { username: '', email: '', fullName: '', phone: '', password: '' };
 

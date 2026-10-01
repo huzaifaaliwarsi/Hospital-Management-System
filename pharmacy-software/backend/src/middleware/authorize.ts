@@ -21,6 +21,7 @@ const POLICY: Record<PortalRole, Partial<Record<ModuleKey, Set<Action>>>> = {
     reports: new Set<Action>(['view']),
     dashboard: new Set<Action>(['view']),
     settings: new Set<Action>(['view', 'edit']),
+    units: new Set<Action>(['view', 'create', 'edit']),
   },
   ADMIN: {
     identity: new Set(fullAccess),
@@ -31,6 +32,7 @@ const POLICY: Record<PortalRole, Partial<Record<ModuleKey, Set<Action>>>> = {
     reports: new Set<Action>(['view']),
     dashboard: new Set<Action>(['view']),
     settings: new Set<Action>(['view', 'edit']),
+    units: new Set<Action>(['view', 'create', 'edit']),
   },
   SALES_DISPENSING: {
     // pharmacy.md §4 Sales User Restriction — no users/vendors/medicine
@@ -40,6 +42,7 @@ const POLICY: Record<PortalRole, Partial<Record<ModuleKey, Set<Action>>>> = {
     cash: new Set<Action>(['view', 'create']),
     reports: new Set<Action>(['view']),
     dashboard: new Set<Action>(['view']),
+    units: new Set<Action>(['view']), // POS needs the unit list read-only
   },
 };
 

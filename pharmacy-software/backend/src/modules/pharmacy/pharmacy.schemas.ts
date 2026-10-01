@@ -4,13 +4,36 @@ export const idParamsSchema = z.object({ id: z.string().uuid() });
 export const batchIdParamsSchema = z.object({ id: z.string().uuid(), batchId: z.string().uuid() });
 export const invoiceIdParamsSchema = z.object({ id: z.string().uuid() });
 
+/**
+ * medicine-packaging-plan Phase 4 — one additional pack level ABOVE the base
+ * unit (e.g. "Strip = 10 Tablet", "Box = 100 Tablet"). The base unit itself
+ * (level 0, conversionToBase = 1) is implicit from `baseUnitId` and never
+ * sent as one of these.
+ */
+const packagingLevelInputSchema = z.object({
+  unitId: z.string().uuid(),
+  conversionToBase: z.coerce.number().positive(),
+  isPurchaseUnit: z.boolean().default(false),
+  isSaleUnit: z.boolean().default(true),
+  overrideSaleRate: z.coerce.number().nonnegative().optional(),
+});
+export type PackagingLevelInput = z.infer<typeof packagingLevelInputSchema>;
+
 export const createMedicineBodySchema = z.object({
-  code: z.string().min(1).max(40),
+  /// System-generated (MED-0001…) when omitted. Accepted as an explicit override ONLY because an earlier requirement kept Medicine Code editable by an authorized user — unlike every other business code in this app, which is never client-supplied.
+  code: z.string().min(1).max(40).optional(),
   barcode: z.string().max(64).optional(),
   name: z.string().min(1).max(150),
   genericName: z.string().max(150).optional(),
-  category: z.string().max(80).optional(),
-  unit: z.string().min(1).max(30),
+  strength: z.string().max(40).optional(),
+  dosageForm: z.string().max(40).optional(),
+  /// Database-driven Therapeutic Category master (Settings -> Medicine Categories) — optional. Pass null to explicitly clear it on update.
+  categoryId: z.string().uuid().nullable().optional(),
+  /// Configurable packaging (medicine-packaging-plan) — every medicine has one base stock unit.
+  baseUnitId: z.string().uuid(),
+  baseIsPurchaseUnit: z.boolean().default(true),
+  baseIsSaleUnit: z.boolean().default(true),
+  packagingLevels: z.array(packagingLevelInputSchema).max(10).default([]),
   batchManaged: z.boolean().default(true),
   reorderLevel: z.coerce.number().nonnegative().default(0),
   purchaseRate: z.coerce.number().nonnegative().optional(),
@@ -47,7 +70,10 @@ export type OpeningStockBody = z.infer<typeof openingStockBodySchema>;
 
 const dispenseLineSchema = z.object({
   medicineId: z.string().uuid(),
-  quantity: z.coerce.number().positive(),
+  /// Which configured unit this line was sold as (medicine-packaging-plan) — e.g. "Strip". Omit to sell in the medicine's base unit.
+  saleUnitId: z.string().uuid().optional(),
+  /// Quantity in `saleUnitId` terms (e.g. 2 Strips) — server converts to base units before FEFO allocation.
+  saleUnitQuantity: z.coerce.number().positive(),
   discountAmount: z.coerce.number().nonnegative().default(0),
 });
 

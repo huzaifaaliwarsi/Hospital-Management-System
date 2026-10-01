@@ -28,20 +28,33 @@ import {
   Building2,
   BadgeCheck,
 } from 'lucide-react';
-import { pharmacyApi, MedicineRow } from '../services/pharmacyApi';
+import { pharmacyApi, MedicineRow, Unit, MedicineCategory } from '../services/pharmacyApi';
 import { formatPKR, formatNumber } from '../utils/format';
 import { useToast } from '../context/ToastContext';
 import { PharmacyKpiHeader, KpiItem } from '../components/PharmacyKpiHeader';
+import { MedicinePackagingFields, PackagingLevelForm, computeFlatConversions, flatToRelativeLevels } from '../components/MedicinePackagingFields';
+
+const DOSAGE_FORM_OPTIONS = ['Tablet', 'Capsule', 'Syrup', 'Injection', 'Cream', 'Ointment', 'Drops', 'Suspension', 'Inhaler', 'Sachet'];
 
 const emptyForm = {
   code: '',
+  barcode: '',
   name: '',
-  category: '',
-  unit: 'Tablet',
+  genericName: '',
+  strength: '',
+  dosageForm: '',
+  categoryId: '',
   batchManaged: true,
   reorderLevel: '10',
-  saleRate: '0',
+  saleRate: '',
   taxPercent: '0',
+};
+
+const emptyPackaging = {
+  baseUnitId: '',
+  defaultPurchaseUnitId: '',
+  baseIsSaleUnit: true,
+  levels: [] as PackagingLevelForm[],
 };
 
 type SortField = 'code' | 'name' | 'category' | 'unit' | 'saleRate' | 'currentStock' | 'reorderLevel' | 'stockValue' | 'status';
@@ -86,7 +99,11 @@ export const MedicinesPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
   const [loadingBatches, setLoadingBatches] = useState(false);
 
   const [form, setForm] = useState(emptyForm);
+  const [packaging, setPackaging] = useState(emptyPackaging);
+  const [unitCatalog, setUnitCatalog] = useState<Unit[]>([]);
+  const [loadingPackaging, setLoadingPackaging] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [loadingNextCode, setLoadingNextCode] = useState(false);
 
   // Dual Synchronized Scrollbars Refs
   const topScrollRef = useRef<HTMLDivElement>(null);
@@ -137,6 +154,11 @@ export const MedicinesPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appliedFilters.search]);
+
+  useEffect(() => {
+    pharmacyApi.listUnits().then(setUnitCatalog).catch(() => toast.error('Failed to load unit catalog.'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Distinct categories and units from data
   const categories = useMemo(() => {
@@ -313,43 +335,117 @@ export const MedicinesPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
   };
 
   // Edit Medicine Modal handler
-  const handleOpenEdit = (med: MedicineRow) => {
+  const handleOpenEdit = async (med: MedicineRow) => {
     setSelectedMedicine(med);
     setForm({
       code: med.code,
+      barcode: med.barcode || '',
       name: med.name,
+      genericName: med.genericName || '',
+      strength: med.strength || '',
+      dosageForm: med.dosageForm || '',
       category: med.category || '',
-      unit: med.unit,
       batchManaged: med.batchManaged,
       reorderLevel: String(med.reorderLevel),
       saleRate: String(med.saleRate),
       taxPercent: String(med.taxPercent),
     });
+    setPackaging(emptyPackaging);
     setShowEditModal(true);
+    setLoadingPackaging(true);
+    try {
+      const { baseUnitId, levels } = await pharmacyApi.getMedicinePackaging(med.id);
+      const baseLevel = levels.find((l) => l.level === 0);
+      const extraLevels = levels.filter((l) => l.level > 0);
+      const purchaseLevel = levels.find((l) => l.isPurchaseUnit);
+      // Reverse the stored flat conversions back into the "1 Box = 10 Strip" relative chain the builder edits.
+      const relativeLevels = flatToRelativeLevels(extraLevels.map((l) => ({ unitId: l.unitId, conversionToBase: Number(l.conversionToBase) })));
+      const saleByUnitId = new Map(extraLevels.map((l) => [l.unitId, l.isSaleUnit]));
+      setPackaging({
+        baseUnitId,
+        defaultPurchaseUnitId: purchaseLevel?.unitId ?? baseUnitId,
+        baseIsSaleUnit: baseLevel?.isSaleUnit ?? true,
+        levels: relativeLevels.map((l) => ({ ...l, isSaleUnit: saleByUnitId.get(l.unitId) ?? true })),
+      });
+    } catch {
+      toast.error('Failed to load packaging details for this medicine.');
+    } finally {
+      setLoadingPackaging(false);
+    }
+  };
+
+  // Validates the packaging-levels builder state before either save (medicine-packaging-plan).
+  const validatePackaging = (): string | null => {
+    if (!packaging.baseUnitId) return 'Base Stock Unit is required.';
+    if (!packaging.defaultPurchaseUnitId) return 'Default Purchase Unit is required.';
+    const seen = new Set<string>();
+    for (const lvl of packaging.levels) {
+      if (!lvl.unitId) return 'Every packaging level needs a unit selected.';
+      if (seen.has(lvl.unitId)) return 'The same unit cannot appear twice in the packaging breakdown.';
+      seen.add(lvl.unitId);
+      if (!lvl.relativeQty || Number(lvl.relativeQty) <= 0) return 'Each packaging level\'s quantity must be greater than 0.';
+    }
+    if (!packaging.baseIsSaleUnit && !packaging.levels.some((l) => l.isSaleUnit)) return 'At least one unit must be marked sellable.';
+    return null;
+  };
+
+  const packagingPayload = () => {
+    const flat = computeFlatConversions(packaging.levels);
+    return {
+      baseUnitId: packaging.baseUnitId,
+      baseIsPurchaseUnit: packaging.defaultPurchaseUnitId === packaging.baseUnitId,
+      baseIsSaleUnit: packaging.baseIsSaleUnit,
+      packagingLevels: packaging.levels.map((l) => ({
+        unitId: l.unitId,
+        conversionToBase: flat.get(l.unitId) ?? 0,
+        isPurchaseUnit: l.unitId === packaging.defaultPurchaseUnitId,
+        isSaleUnit: l.isSaleUnit,
+      })),
+    };
+  };
+
+  // Medicine Code auto-generate — backend-safe sequence (MED-0001…), still editable by an authorized user per the Medicine Master's explicit override exception.
+  const handleAutoGenerateCode = () => {
+    setLoadingNextCode(true);
+    pharmacyApi
+      .getNextMedicineCode()
+      .then((code) => setForm((f) => ({ ...f, code })))
+      .catch(() => toast.error('Failed to fetch next medicine code.'))
+      .finally(() => setLoadingNextCode(false));
   };
 
   // Save new medicine
   const handleSaveNew = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.code.trim() || !form.name.trim() || !form.unit.trim()) {
-      toast.error('Code, Name, and Unit are required.');
+    if (!form.code.trim() || !form.name.trim()) {
+      toast.error('Code and Name are required.');
+      return;
+    }
+    const packagingError = validatePackaging();
+    if (packagingError) {
+      toast.error(packagingError);
       return;
     }
     setSaving(true);
     try {
       await pharmacyApi.createMedicine({
         code: form.code.trim(),
+        barcode: form.barcode.trim() || undefined,
         name: form.name.trim(),
+        genericName: form.genericName.trim() || undefined,
+        strength: form.strength.trim() || undefined,
+        dosageForm: form.dosageForm.trim() || undefined,
         category: form.category.trim() || undefined,
-        unit: form.unit.trim(),
         batchManaged: form.batchManaged,
         reorderLevel: Number(form.reorderLevel) || 0,
-        saleRate: Number(form.saleRate) || 0,
+        saleRate: form.saleRate.trim() ? Number(form.saleRate) : 0,
         taxPercent: Number(form.taxPercent) || 0,
+        ...packagingPayload(),
       });
       toast.success(`Medicine "${form.name}" added to formulary.`);
       setShowAddModal(false);
       setForm(emptyForm);
+      setPackaging(emptyPackaging);
       load();
     } catch (err: any) {
       toast.error(err?.response?.data?.error?.message || 'Failed to create medicine.');
@@ -362,20 +458,29 @@ export const MedicinesPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedMedicine) return;
-    if (!form.name.trim() || !form.unit.trim()) {
-      toast.error('Name and Unit are required.');
+    if (!form.name.trim()) {
+      toast.error('Name is required.');
+      return;
+    }
+    const packagingError = validatePackaging();
+    if (packagingError) {
+      toast.error(packagingError);
       return;
     }
     setSaving(true);
     try {
       await pharmacyApi.updateMedicine(selectedMedicine.id, {
         name: form.name.trim(),
+        barcode: form.barcode.trim() || undefined,
+        genericName: form.genericName.trim() || undefined,
+        strength: form.strength.trim() || undefined,
+        dosageForm: form.dosageForm.trim() || undefined,
         category: form.category.trim() || undefined,
-        unit: form.unit.trim(),
         batchManaged: form.batchManaged,
         reorderLevel: Number(form.reorderLevel) || 0,
-        saleRate: Number(form.saleRate) || 0,
+        saleRate: form.saleRate.trim() ? Number(form.saleRate) : 0,
         taxPercent: Number(form.taxPercent) || 0,
+        ...packagingPayload(),
       });
       toast.success(`Medicine "${form.name}" updated successfully.`);
       setShowEditModal(false);
@@ -503,7 +608,9 @@ export const MedicinesPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
             type="button"
             onClick={() => {
               setForm(emptyForm);
+              setPackaging(emptyPackaging);
               setShowAddModal(true);
+              handleAutoGenerateCode();
             }}
             className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-white bg-[#0e7d5a] hover:bg-[#0c6b50] rounded-xl shadow-xs transition-all cursor-pointer"
           >
@@ -1186,70 +1293,137 @@ export const MedicinesPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
       {showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
           <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl border border-slate-200 overflow-hidden">
-            <div className="flex items-center justify-between px-6 py-4 bg-[#0e5944] text-white">
-              <h3 className="text-sm font-bold flex items-center gap-2">
-                <Pill className="h-4 w-4 text-emerald-300" />
-                Add Medicine to Formulary
-              </h3>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-white">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-emerald-50 text-[#08775A] flex items-center justify-center">
+                  <Pill className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Add Medicine to Formulary</h3>
+                  <p className="text-[11px] text-slate-400">Register new item in pharmacy catalog</p>
+                </div>
+              </div>
               <button
                 type="button"
                 onClick={() => setShowAddModal(false)}
-                className="text-white/70 hover:text-white transition-colors cursor-pointer"
+                className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg p-1.5 transition-colors cursor-pointer"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveNew} className="p-6 space-y-4 text-xs">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Medicine Code *</label>
+            <form onSubmit={handleSaveNew} className="p-6 space-y-4 text-xs max-h-[80vh] overflow-y-auto">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Medicine Code *</label>
+                <div className="flex items-center gap-1.5">
                   <input
                     value={form.code}
                     onChange={(e) => setForm({ ...form, code: e.target.value })}
                     placeholder="e.g. MED-010"
-                    className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl font-mono focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
+                    className="flex-1 h-9 px-3 bg-white border border-slate-200 rounded-xl font-mono focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAutoGenerateCode}
+                    className="h-9 px-3 shrink-0 text-[11px] font-semibold text-[#0e7d5a] border border-dashed border-[#0e7d5a]/50 hover:bg-emerald-50 rounded-xl transition-colors cursor-pointer whitespace-nowrap"
+                  >
+                    Auto-generate
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Medicine Name *</label>
+                  <input
+                    value={form.name}
+                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    placeholder="e.g. Augmentin"
+                    className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl font-semibold focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
                   />
                 </div>
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Unit / Form *</label>
+                  <label className="block font-semibold text-slate-700 mb-1">Strength</label>
                   <input
-                    value={form.unit}
-                    onChange={(e) => setForm({ ...form, unit: e.target.value })}
-                    placeholder="e.g. Tablet, Syrup, Ampoule"
+                    value={form.strength}
+                    onChange={(e) => setForm({ ...form, strength: e.target.value })}
+                    placeholder="e.g. 625mg"
                     className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
                   />
                 </div>
               </div>
 
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Medicine Name &amp; Strength *</label>
-                <input
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  placeholder="e.g. Augmentin 625mg Tablet"
-                  className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl font-semibold focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
-                />
-              </div>
-
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Therapeutic Category</label>
-                <input
-                  value={form.category}
-                  onChange={(e) => setForm({ ...form, category: e.target.value })}
-                  placeholder="e.g. Antibiotics, Analgesics, Cardiac"
-                  className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
-                />
-              </div>
-
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Sale Rate (PKR) *</label>
+                  <label className="block font-semibold text-slate-700 mb-1">Generic Name</label>
+                  <input
+                    value={form.genericName}
+                    onChange={(e) => setForm({ ...form, genericName: e.target.value })}
+                    placeholder="e.g. Amoxicillin + Clavulanate"
+                    className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Dosage Form</label>
+                  <input
+                    list="dosage-form-options"
+                    value={form.dosageForm}
+                    onChange={(e) => setForm({ ...form, dosageForm: e.target.value })}
+                    placeholder="e.g. Tablet"
+                    className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
+                  />
+                  <datalist id="dosage-form-options">
+                    {DOSAGE_FORM_OPTIONS.map((d) => <option key={d} value={d} />)}
+                  </datalist>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Therapeutic Category</label>
+                  <input
+                    value={form.category}
+                    onChange={(e) => setForm({ ...form, category: e.target.value })}
+                    placeholder="e.g. Antibiotics, Analgesics, Cardiac"
+                    className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Barcode (Optional)</label>
+                  <input
+                    value={form.barcode}
+                    onChange={(e) => setForm({ ...form, barcode: e.target.value })}
+                    placeholder="Scan or enter barcode"
+                    className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl font-mono focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
+                  />
+                </div>
+              </div>
+
+              <div className="border-t border-slate-100 pt-3">
+                <h4 className="font-bold text-slate-800 mb-2 flex items-center gap-1.5"><Package className="h-3.5 w-3.5 text-[#0e7d5a]" /> Packaging &amp; Units</h4>
+                <MedicinePackagingFields
+                  units={unitCatalog}
+                  onUnitCreated={(u) => setUnitCatalog((prev) => [...prev, u])}
+                  baseUnitId={packaging.baseUnitId}
+                  onBaseUnitIdChange={(id) => setPackaging({ ...packaging, baseUnitId: id })}
+                  baseIsSaleUnit={packaging.baseIsSaleUnit}
+                  onBaseIsSaleUnitChange={(s) => setPackaging({ ...packaging, baseIsSaleUnit: s })}
+                  defaultPurchaseUnitId={packaging.defaultPurchaseUnitId}
+                  onDefaultPurchaseUnitIdChange={(id) => setPackaging({ ...packaging, defaultPurchaseUnitId: id })}
+                  levels={packaging.levels}
+                  onLevelsChange={(levels) => setPackaging({ ...packaging, levels })}
+                />
+              </div>
+
+              <div className="grid grid-cols-3 gap-3 border-t border-slate-100 pt-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Default Sale Price (Optional)</label>
                   <input
                     type="number"
                     min={0}
                     value={form.saleRate}
                     onChange={(e) => setForm({ ...form, saleRate: e.target.value })}
+                    placeholder="0.00"
                     className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl font-bold font-mono focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
                   />
                 </div>
@@ -1264,7 +1438,9 @@ export const MedicinesPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
                   />
                 </div>
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Reorder Alert Qty</label>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    Reorder Alert Qty {packaging.baseUnitId && <span className="font-normal text-slate-400">({unitCatalog.find((u) => u.id === packaging.baseUnitId)?.name || '...'})</span>}
+                  </label>
                   <input
                     type="number"
                     min={0}
@@ -1272,6 +1448,11 @@ export const MedicinesPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
                     onChange={(e) => setForm({ ...form, reorderLevel: e.target.value })}
                     className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
                   />
+                  {packaging.baseUnitId && (
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      = {formatNumber(Number(form.reorderLevel) || 0)} {unitCatalog.find((u) => u.id === packaging.baseUnitId)?.name || ''}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -1282,7 +1463,7 @@ export const MedicinesPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
                   onChange={(e) => setForm({ ...form, batchManaged: e.target.checked })}
                   className="rounded text-emerald-600 focus:ring-emerald-500"
                 />
-                <span>Batch-managed inventory (FEFO First-Expiry-First-Out tracking)</span>
+                <span>Track batch numbers &amp; expiry dates (FEFO)</span>
               </label>
 
               <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
@@ -1313,61 +1494,121 @@ export const MedicinesPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
       {showEditModal && selectedMedicine && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
           <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl border border-slate-200 overflow-hidden">
-            <div className="flex items-center justify-between px-6 py-4 bg-[#0e5944] text-white">
-              <h3 className="text-sm font-bold flex items-center gap-2">
-                <Pencil className="h-4 w-4 text-emerald-300" />
-                Edit Medicine: {selectedMedicine.code}
-              </h3>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-white">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-emerald-50 text-[#08775A] flex items-center justify-center">
+                  <Pencil className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Edit Medicine: {selectedMedicine.code}</h3>
+                  <p className="text-[11px] text-slate-400">{selectedMedicine.name}</p>
+                </div>
+              </div>
               <button
                 type="button"
                 onClick={() => setShowEditModal(false)}
-                className="text-white/70 hover:text-white transition-colors cursor-pointer"
+                className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg p-1.5 transition-colors cursor-pointer"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveEdit} className="p-6 space-y-4 text-xs">
+            <form onSubmit={handleSaveEdit} className="p-6 space-y-4 text-xs max-h-[80vh] overflow-y-auto">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Medicine Code</label>
+                <input
+                  disabled
+                  value={selectedMedicine.code}
+                  className="w-full h-9 px-3 bg-slate-100 border border-slate-200 rounded-xl font-mono text-slate-500 cursor-not-allowed"
+                />
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Medicine Code</label>
+                  <label className="block font-semibold text-slate-700 mb-1">Medicine Name *</label>
                   <input
-                    disabled
-                    value={selectedMedicine.code}
-                    className="w-full h-9 px-3 bg-slate-100 border border-slate-200 rounded-xl font-mono text-slate-500 cursor-not-allowed"
+                    value={form.name}
+                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl font-semibold focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
                   />
                 </div>
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Unit / Form *</label>
+                  <label className="block font-semibold text-slate-700 mb-1">Strength</label>
                   <input
-                    value={form.unit}
-                    onChange={(e) => setForm({ ...form, unit: e.target.value })}
+                    value={form.strength}
+                    onChange={(e) => setForm({ ...form, strength: e.target.value })}
+                    placeholder="e.g. 625mg"
                     className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
                   />
                 </div>
               </div>
 
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Medicine Name &amp; Strength *</label>
-                <input
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl font-semibold focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
-                />
-              </div>
-
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Therapeutic Category</label>
-                <input
-                  value={form.category}
-                  onChange={(e) => setForm({ ...form, category: e.target.value })}
-                  className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
-                />
-              </div>
-
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Sale Rate (PKR) *</label>
+                  <label className="block font-semibold text-slate-700 mb-1">Generic Name</label>
+                  <input
+                    value={form.genericName}
+                    onChange={(e) => setForm({ ...form, genericName: e.target.value })}
+                    className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Dosage Form</label>
+                  <input
+                    list="dosage-form-options-edit"
+                    value={form.dosageForm}
+                    onChange={(e) => setForm({ ...form, dosageForm: e.target.value })}
+                    placeholder="e.g. Tablet"
+                    className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
+                  />
+                  <datalist id="dosage-form-options-edit">
+                    {DOSAGE_FORM_OPTIONS.map((d) => <option key={d} value={d} />)}
+                  </datalist>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Therapeutic Category</label>
+                  <input
+                    value={form.category}
+                    onChange={(e) => setForm({ ...form, category: e.target.value })}
+                    className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Barcode (Optional)</label>
+                  <input
+                    value={form.barcode}
+                    onChange={(e) => setForm({ ...form, barcode: e.target.value })}
+                    className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl font-mono focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
+                  />
+                </div>
+              </div>
+
+              <div className="border-t border-slate-100 pt-3">
+                <h4 className="font-bold text-slate-800 mb-2 flex items-center gap-1.5"><Package className="h-3.5 w-3.5 text-[#0e7d5a]" /> Packaging &amp; Units</h4>
+                {loadingPackaging ? (
+                  <div className="flex items-center gap-2 text-slate-400 py-3"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading packaging…</div>
+                ) : (
+                  <MedicinePackagingFields
+                    units={unitCatalog}
+                    onUnitCreated={(u) => setUnitCatalog((prev) => [...prev, u])}
+                    baseUnitId={packaging.baseUnitId}
+                    onBaseUnitIdChange={(id) => setPackaging({ ...packaging, baseUnitId: id })}
+                    baseIsSaleUnit={packaging.baseIsSaleUnit}
+                    onBaseIsSaleUnitChange={(s) => setPackaging({ ...packaging, baseIsSaleUnit: s })}
+                    defaultPurchaseUnitId={packaging.defaultPurchaseUnitId}
+                    onDefaultPurchaseUnitIdChange={(id) => setPackaging({ ...packaging, defaultPurchaseUnitId: id })}
+                    levels={packaging.levels}
+                    onLevelsChange={(levels) => setPackaging({ ...packaging, levels })}
+                  />
+                )}
+              </div>
+
+              <div className="grid grid-cols-3 gap-3 border-t border-slate-100 pt-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Default Sale Price (Optional)</label>
                   <input
                     type="number"
                     min={0}
@@ -1387,7 +1628,9 @@ export const MedicinesPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
                   />
                 </div>
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Reorder Alert Qty</label>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    Reorder Alert Qty {packaging.baseUnitId && <span className="font-normal text-slate-400">({unitCatalog.find((u) => u.id === packaging.baseUnitId)?.name || '...'})</span>}
+                  </label>
                   <input
                     type="number"
                     min={0}
@@ -1395,6 +1638,11 @@ export const MedicinesPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
                     onChange={(e) => setForm({ ...form, reorderLevel: e.target.value })}
                     className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
                   />
+                  {packaging.baseUnitId && (
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      = {formatNumber(Number(form.reorderLevel) || 0)} {unitCatalog.find((u) => u.id === packaging.baseUnitId)?.name || ''}
+                    </p>
+                  )}
                 </div>
               </div>
 

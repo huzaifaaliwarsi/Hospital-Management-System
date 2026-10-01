@@ -1,11 +1,43 @@
 import apiClient from './apiClient';
 
+/** medicine-packaging-plan — global reusable unit catalog (Box, Strip, Tablet, Vial, custom...). */
+export interface Unit {
+  id: string;
+  name: string;
+  shortCode: string | null;
+  isSystem: boolean;
+  isActive: boolean;
+}
+
+/** One packaging level for a medicine — level 0 is always the base unit (conversionToBase = 1). */
+export interface PackagingLevel {
+  id?: string;
+  unitId: string;
+  unit?: Unit;
+  level: number;
+  conversionToBase: string | number;
+  isPurchaseUnit: boolean;
+  isSaleUnit: boolean;
+  overrideSaleRate?: string | number | null;
+}
+
 export interface MedicineRow {
   id: string;
   code: string;
+  barcode?: string | null;
   name: string;
+  genericName?: string | null;
+  strength?: string | null;
+  dosageForm?: string | null;
+  /// Flat display name, sourced server-side from the category relation (falls back to the legacy label if the relation is somehow missing).
   category?: string | null;
+  categoryId?: string | null;
+  /// null when the medicine has no category at all; false when it has one that's since been deactivated (still displays, just not reselectable).
+  categoryActive?: boolean | null;
   unit: string;
+  baseUnitId?: string;
+  baseUnit?: Unit | null;
+  packagingLevels?: PackagingLevel[];
   batchManaged: boolean;
   reorderLevel: string | number;
   saleRate: string | number;
@@ -115,6 +147,26 @@ export interface PharmacySettings {
   nearExpiryWindowDays: number;
   receiptHeaderText: string | null;
   receiptFooterText: string | null;
+  /// purchase-costing-plan — global fallback markup when a medicine's category has no MarkupRule.
+  defaultMarkupPercent: string | number;
+  updatedAt: string;
+}
+
+/** purchase-costing-plan — category-wise markup override (falls back to PharmacySettings.defaultMarkupPercent). */
+export interface MarkupRule {
+  id: string;
+  category: string;
+  markupPercent: string | number;
+  isActive: boolean;
+}
+
+/** Add-Medicine-form fix — database-driven Therapeutic Category master (Settings -> Medicine Categories). */
+export interface MedicineCategory {
+  id: string;
+  name: string;
+  description?: string | null;
+  isActive: boolean;
+  createdAt: string;
   updatedAt: string;
 }
 
@@ -123,11 +175,20 @@ export const pharmacyApi = {
   getSalesDashboard: () => apiClient.get<{ data: SalesDashboard }>('/dashboard/sales').then((r) => r.data.data),
 
   listMedicines: (search?: string) => apiClient.get<{ data: MedicineRow[] }>('/pharmacy/medicines', { params: { search } }).then((r) => r.data.data),
+  /** Preview only (not reserved) — the actual code is decided server-side at create time. */
+  getNextMedicineCode: () => apiClient.get<{ data: { code: string } }>('/pharmacy/medicines/next-code').then((r) => r.data.data.code),
   createMedicine: (body: Record<string, unknown>) => apiClient.post('/pharmacy/medicines', body).then((r) => r.data.data),
   updateMedicine: (id: string, body: Record<string, unknown>) => apiClient.patch(`/pharmacy/medicines/${id}`, body).then((r) => r.data.data),
   getMedicineBatches: (id: string) => apiClient.get<{ data: any[] }>(`/pharmacy/medicines/${id}/batches`).then((r) => r.data.data),
+  getMedicinePackaging: (id: string) => apiClient.get<{ data: { medicineId: string; baseUnitId: string; levels: PackagingLevel[] } }>(`/pharmacy/medicines/${id}/packaging`).then((r) => r.data.data),
+
+  // Units (medicine-packaging-plan)
+  listUnits: () => apiClient.get<{ data: Unit[] }>('/units').then((r) => r.data.data),
+  createUnit: (body: { name: string; shortCode?: string }) => apiClient.post<{ data: Unit }>('/units', body).then((r) => r.data.data),
 
   listVendors: (search?: string) => apiClient.get('/vendors', { params: { search } }).then((r) => r.data.data),
+  /** Preview only (not reserved) — the actual code is decided server-side at create time. */
+  getNextVendorCode: () => apiClient.get<{ data: { code: string } }>('/vendors/next-code').then((r) => r.data.data.code),
   createVendor: (body: Record<string, unknown>) => apiClient.post('/vendors', body).then((r) => r.data.data),
 
   listInvoices: () => apiClient.get('/pharmacy/invoices').then((r) => r.data.data),
@@ -158,4 +219,24 @@ export const pharmacyApi = {
   // Settings (pharmacy.md §3)
   getPharmacySettings: () => apiClient.get<{ data: PharmacySettings }>('/settings').then((r) => r.data.data),
   updatePharmacySettings: (body: Partial<PharmacySettings>) => apiClient.put<{ data: PharmacySettings }>('/settings', body).then((r) => r.data.data),
+
+  // Markup Rules (purchase-costing-plan)
+  listMarkupRules: () => apiClient.get<{ data: MarkupRule[] }>('/settings/markup-rules').then((r) => r.data.data),
+  upsertMarkupRule: (body: { category: string; markupPercent: number; isActive?: boolean }) =>
+    apiClient.put<{ data: MarkupRule }>('/settings/markup-rules', body).then((r) => r.data.data),
+  deleteMarkupRule: (category: string) => apiClient.delete(`/settings/markup-rules/${encodeURIComponent(category)}`),
+
+  // Medicine Categories (Add-Medicine-form fix) — database-driven Therapeutic Category master.
+  listMedicineCategories: () => apiClient.get<{ data: MedicineCategory[] }>('/settings/medicine-categories').then((r) => r.data.data),
+  createMedicineCategory: (body: { name: string; description?: string }) =>
+    apiClient.post<{ data: MedicineCategory }>('/settings/medicine-categories', body).then((r) => r.data.data),
+  updateMedicineCategory: (id: string, body: { name?: string; description?: string; isActive?: boolean }) =>
+    apiClient.patch<{ data: MedicineCategory }>(`/settings/medicine-categories/${id}`, body).then((r) => r.data.data),
+
+  // Purchases (purchase-costing-plan)
+  postDraftPurchase: (id: string) => apiClient.post(`/vendors/purchases/${id}/post`).then((r) => r.data.data),
+
+  // Testing Reset
+  resetTestingData: (body: { scope: 'transactions_only' | 'complete'; confirmPhrase: 'RESET' }) =>
+    apiClient.post<{ data: { scope: string; cleared: Record<string, number> } }>('/settings/reset-data', body).then((r) => r.data.data),
 };

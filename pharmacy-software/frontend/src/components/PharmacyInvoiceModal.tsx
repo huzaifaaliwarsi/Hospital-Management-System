@@ -127,15 +127,15 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-900/60 backdrop-blur-xs overflow-y-auto print:p-0 print:bg-white print:static">
       <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl border border-slate-200 flex flex-col max-h-[92vh] overflow-hidden print:max-h-none print:shadow-none print:border-none print:w-full print:max-w-none">
-        {/* Top Control Bar (Hidden when printing) */}
-        <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between gap-3 shrink-0 print:hidden">
+        {/* Top Control Bar (Clean White Theme — Hidden when printing) */}
+        <div className="px-5 py-3.5 bg-white border-b border-slate-200/90 flex items-center justify-between gap-3 shrink-0 print:hidden">
           <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
-              <Receipt className="h-4.5 w-4.5" />
+            <div className="h-8 w-8 rounded-lg bg-emerald-50 text-[#0e7d5a] flex items-center justify-center font-bold">
+              <Receipt className="h-4 w-4" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-mono text-sm font-bold tracking-tight text-white">
+                <span className="font-mono text-sm font-extrabold tracking-tight text-slate-900">
                   {invoice.invoiceNumber}
                 </span>
                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wider ${statusColor}`}>
@@ -143,21 +143,21 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
                 </span>
               </div>
               <p className="text-[11px] text-slate-400">
-                CH Sharif & Saeed Hospital — Pharmacy Cash & Sales Desk
+                CH Sharif &amp; Saeed Hospital · Central Pharmacy POS Slip
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            {/* View Mode Toggle */}
-            <div className="bg-slate-800 p-0.5 rounded-lg flex items-center border border-slate-700">
+            {/* View Mode Toggle (Clean Slate Pill) */}
+            <div className="bg-slate-100 p-0.5 rounded-lg flex items-center border border-slate-200">
               <button
                 type="button"
                 onClick={() => setViewMode('thermal')}
-                className={`px-2.5 py-1 text-xs font-semibold rounded-md flex items-center gap-1.5 transition-colors ${
+                className={`px-2.5 py-1 text-xs font-semibold rounded-md flex items-center gap-1.5 transition-colors cursor-pointer ${
                   viewMode === 'thermal'
-                    ? 'bg-emerald-600 text-white shadow-xs'
-                    : 'text-slate-400 hover:text-white'
+                    ? 'bg-white text-slate-900 shadow-2xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <Receipt className="h-3.5 w-3.5" /> Thermal (80mm)
@@ -165,10 +165,10 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
               <button
                 type="button"
                 onClick={() => setViewMode('tax_invoice')}
-                className={`px-2.5 py-1 text-xs font-semibold rounded-md flex items-center gap-1.5 transition-colors ${
+                className={`px-2.5 py-1 text-xs font-semibold rounded-md flex items-center gap-1.5 transition-colors cursor-pointer ${
                   viewMode === 'tax_invoice'
-                    ? 'bg-emerald-600 text-white shadow-xs'
-                    : 'text-slate-400 hover:text-white'
+                    ? 'bg-white text-slate-900 shadow-2xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <FileText className="h-3.5 w-3.5" /> A4 Invoice
@@ -179,7 +179,7 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
             <button
               type="button"
               onClick={handlePrint}
-              className="px-3.5 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg shadow-xs flex items-center gap-1.5 transition-colors"
+              className="px-3.5 py-1.5 text-xs font-bold text-white bg-[#0e7d5a] hover:bg-[#0c6b50] rounded-lg shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
             >
               <Printer className="h-3.5 w-3.5" /> Print
             </button>
@@ -188,9 +188,10 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+              className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+              title="Close invoice"
             >
-              <X className="h-5 w-5" />
+              <X className="h-4.5 w-4.5" />
             </button>
           </div>
         </div>
@@ -321,7 +322,9 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
                   {invoice.lines?.map((line: any, idx: number) => {
                     const medicineName = line.medicine?.name || 'Medicine Item';
                     const batchNo = line.batch?.batchNumber;
-                    const qty = Number(line.quantity || 0);
+                    // medicine-packaging-plan — show what was actually sold (e.g. "2 Strip") when recorded, else the base quantity.
+                    const displayQty = line.saleUnitQuantity != null ? Number(line.saleUnitQuantity) : Number(line.quantity || 0);
+                    const displayUnit = line.saleUnit?.name || '';
                     const rate = Number(line.rateSnapshot || 0);
                     const net = Number(line.lineNet || 0);
 
@@ -331,7 +334,7 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
                           <div className="col-span-6 font-semibold text-slate-950 truncate pr-1">
                             {medicineName}
                           </div>
-                          <div className="col-span-2 text-center tabular-nums">{qty}</div>
+                          <div className="col-span-2 text-center tabular-nums">{formatNumber(displayQty)}{displayUnit ? ` ${displayUnit}` : ''}</div>
                           <div className="col-span-2 text-right tabular-nums text-slate-700">{formatNumber(rate)}</div>
                           <div className="col-span-2 text-right font-bold tabular-nums text-slate-950">
                             {formatNumber(net)}

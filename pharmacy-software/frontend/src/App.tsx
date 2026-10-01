@@ -33,6 +33,7 @@ function findLabel(groups: NavGroup[], id: string): string {
 const App: React.FC = () => {
   const { isAuthenticated, isLoading, currentUser, logout } = useAuth();
   const [page, setPage] = useState('dashboard');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center text-sm text-[#52665e]">Loading…</div>;
   if (!isAuthenticated || !currentUser) return <LoginPage />;
@@ -79,9 +80,25 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#f6f8f7]">
-      <Sidebar groups={navGroups} portalLabel={portalLabel} currentPage={page} onSelectPage={setPage} onLogout={logout} />
-      <div className="ml-64 min-h-screen flex flex-col">
-        <TopBar user={currentUser} pageTitle={findLabel(navGroups, page)} />
+      <Sidebar
+        groups={navGroups}
+        portalLabel={portalLabel}
+        currentPage={page}
+        onSelectPage={setPage}
+        onLogout={logout}
+        isOpen={sidebarOpen}
+        onToggle={() => setSidebarOpen((v) => !v)}
+      />
+      <div
+        className="min-h-screen flex flex-col transition-all duration-300 ease-in-out"
+        style={{ marginLeft: sidebarOpen ? '256px' : '0px' }}
+      >
+        <TopBar
+          user={currentUser}
+          pageTitle={findLabel(navGroups, page)}
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={() => setSidebarOpen((v) => !v)}
+        />
         <main className="flex-1">{renderPage()}</main>
       </div>
     </div>

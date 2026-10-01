@@ -19,6 +19,7 @@ import expensesRoutes from '@/modules/expenses/expenses.routes';
 import dashboardRoutes from '@/modules/dashboard/dashboard.routes';
 import reportsRoutes from '@/modules/reports/reports.routes';
 import settingsRoutes from '@/modules/settings/settings.routes';
+import unitsRoutes from '@/modules/units/units.routes';
 
 export function createApp() {
   const app = express();
@@ -63,6 +64,7 @@ export function createApp() {
   app.use('/api/v1/dashboard', dashboardRoutes);
   app.use('/api/v1/reports', reportsRoutes);
   app.use('/api/v1/settings', settingsRoutes);
+  app.use('/api/v1/units', unitsRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

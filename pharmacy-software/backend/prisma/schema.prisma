@@ -107,6 +107,12 @@ enum PurchaseStatus {
   POSTED
 }
 
+/// purchase-costing-plan — how a PurchaseLine's discount was entered.
+enum DiscountType {
+  PERCENTAGE
+  FLAT
+}
+
 /// pharmacy.md §11 petty-cash flow direction, from each user's own point of view.
 enum CashDirection {
   IN
@@ -136,43 +142,44 @@ enum SettlementStatus {
 // ═══════════════════════════════════════════════════════════════════════
 
 model PortalUser {
-  id                String            @id @default(uuid())
-  username          String            @unique
-  email             String?           @unique
-  fullName          String            @map("full_name")
+  id                String           @id @default(uuid())
+  username          String           @unique
+  email             String?          @unique
+  fullName          String           @map("full_name")
   phone             String?
-  passwordHash      String            @map("password_hash")
+  passwordHash      String           @map("password_hash")
   role              PortalRole
-  status            PortalUserStatus  @default(ACTIVE)
+  status            PortalUserStatus @default(ACTIVE)
   /// true only for the bootstrap SUPER_ADMIN — mirrors hms-backend's
   /// isProtected pattern (pharmacy.md §2.1 "Protected Super Admin").
-  isProtected       Boolean           @default(false) @map("is_protected")
-  mustResetPassword Boolean           @default(true) @map("must_reset_password")
-  lastLoginAt       DateTime?         @map("last_login_at")
+  isProtected       Boolean          @default(false) @map("is_protected")
+  mustResetPassword Boolean          @default(true) @map("must_reset_password")
+  lastLoginAt       DateTime?        @map("last_login_at")
 
-  createdById   String?     @map("created_by")
-  createdByUser PortalUser? @relation("PortalUserCreatedBy", fields: [createdById], references: [id])
+  createdById   String?      @map("created_by")
+  createdByUser PortalUser?  @relation("PortalUserCreatedBy", fields: [createdById], references: [id])
   createdUsers  PortalUser[] @relation("PortalUserCreatedBy")
-  createdAt     DateTime    @default(now()) @map("created_at")
-  updatedAt     DateTime    @updatedAt @map("updated_at")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
 
-  refreshTokens         RefreshToken[]
-  createdMedicines       MedicineMaster[]       @relation("MedicineCreatedBy")
-  createdBatches         MedicineBatch[]        @relation("BatchCreatedBy")
-  stockMovements         StockLedgerEntry[]     @relation("StockMovementActor")
-  createdVendors         Vendor[]               @relation("VendorCreatedBy")
-  vendorLedgerEntries    VendorLedgerEntry[]    @relation("VendorLedgerActor")
-  createdPurchases       Purchase[]             @relation("PurchaseCreatedBy")
-  dispensedInvoices      PharmacyInvoice[]      @relation("InvoiceDispensedBy")
-  collectedPayments      PharmacyPayment[]      @relation("PaymentCollectedBy")
-  handledRequests        MedicineRequest[]      @relation("RequestHandledBy")
-  approvedRequests       MedicineRequest[]      @relation("RequestApprovedBy")
-  enteredExpenses         Expense[]              @relation("ExpenseEnteredBy")
-  approvedExpenses        Expense[]              @relation("ExpenseApprovedBy")
-  cashEntriesOwned        CashLedgerEntry[]      @relation("CashEntryOwner")
-  cashEntriesIssued        CashLedgerEntry[]      @relation("CashEntryIssuedBy")
-  settlementsSubmitted     AccountSettlement[]    @relation("SettlementSubmittedBy")
-  settlementsReviewed      AccountSettlement[]    @relation("SettlementReviewedBy")
+  refreshTokens        RefreshToken[]
+  createdMedicines     MedicineMaster[]    @relation("MedicineCreatedBy")
+  createdMedicineCategories MedicineCategory[] @relation("MedicineCategoryCreatedBy")
+  createdBatches       MedicineBatch[]     @relation("BatchCreatedBy")
+  stockMovements       StockLedgerEntry[]  @relation("StockMovementActor")
+  createdVendors       Vendor[]            @relation("VendorCreatedBy")
+  vendorLedgerEntries  VendorLedgerEntry[] @relation("VendorLedgerActor")
+  createdPurchases     Purchase[]          @relation("PurchaseCreatedBy")
+  dispensedInvoices    PharmacyInvoice[]   @relation("InvoiceDispensedBy")
+  collectedPayments    PharmacyPayment[]   @relation("PaymentCollectedBy")
+  handledRequests      MedicineRequest[]   @relation("RequestHandledBy")
+  approvedRequests     MedicineRequest[]   @relation("RequestApprovedBy")
+  enteredExpenses      Expense[]           @relation("ExpenseEnteredBy")
+  approvedExpenses     Expense[]           @relation("ExpenseApprovedBy")
+  cashEntriesOwned     CashLedgerEntry[]   @relation("CashEntryOwner")
+  cashEntriesIssued    CashLedgerEntry[]   @relation("CashEntryIssuedBy")
+  settlementsSubmitted AccountSettlement[] @relation("SettlementSubmittedBy")
+  settlementsReviewed  AccountSettlement[] @relation("SettlementReviewedBy")
 
   @@map("portal_users")
 }
@@ -199,29 +206,101 @@ model MedicineMaster {
   barcode      String?  @unique
   name         String
   genericName  String?  @map("generic_name")
-  category     String?
+  /// e.g. "500mg" — kept separate from `name` so the name field stays clean (Add-Medicine-form fix).
+  strength     String?
+  /// Clinical form e.g. Tablet/Capsule/Syrup/Injection — independent of baseUnit (inventory counting unit).
+  dosageForm   String?  @map("dosage_form")
+  /// Database-driven category master (Settings -> Medicine Categories). Nullable — a medicine may have no category.
+  categoryId   String?  @map("category_id")
+  category     MedicineCategory? @relation(fields: [categoryId], references: [id])
+  /// Legacy free-text cache of the category NAME, kept in sync with `category.name` on every write — @map points at the
+  /// original "category" column so no migration/data-loss on this rename. Exists only for old code paths (CSV export,
+  /// table filters, purchase-costing's MarkupRule lookup) that read a flat string; categoryId/category is the source of truth.
+  categoryLabel String? @map("category")
+  /// Legacy free-text label (e.g. "Tablet"). Superseded by `baseUnitId` —
+  /// kept untouched for backward compat until the Phase 4 frontend migration;
+  /// not read by any new packaging logic.
   unit         String
+  /// Packaging system (configurable units) — every medicine has exactly one
+  /// base stock unit; StockLedgerEntry/FEFO/valuation all operate in this
+  /// unit. Required — Phase 2 backfill covers every pre-existing medicine.
+  baseUnitId   String   @map("base_unit_id")
+  baseUnit     Unit     @relation("MedicineBaseUnit", fields: [baseUnitId], references: [id])
   batchManaged Boolean  @default(true) @map("batch_managed")
   reorderLevel Decimal  @default(0) @map("reorder_level") @db.Decimal(14, 3)
   purchaseRate Decimal? @map("purchase_rate") @db.Decimal(14, 2)
+  /// Per BASE unit — unchanged meaning, still what Dashboard/valuation/POS multiply against.
   saleRate     Decimal  @default(0) @map("sale_rate") @db.Decimal(14, 2)
   /// Percentage, e.g. 17 = 17%. pharmacy.md §19.2 flags this as entirely
   /// absent in hms-backend's pharmacy module — present from day one here.
   taxPercent   Decimal  @default(0) @map("tax_percent") @db.Decimal(5, 2)
   isActive     Boolean  @default(true) @map("is_active")
 
-  batches       MedicineBatch[]
-  stockEntries  StockLedgerEntry[]
-  purchaseLines PurchaseLine[]
-  invoiceLines  PharmacyInvoiceLine[]
-  requestLines  MedicineRequestLine[]
+  batches         MedicineBatch[]
+  stockEntries    StockLedgerEntry[]
+  purchaseLines   PurchaseLine[]
+  invoiceLines    PharmacyInvoiceLine[]
+  requestLines    MedicineRequestLine[]
+  packagingLevels MedicinePackagingLevel[]
 
-  createdById   String?      @map("created_by")
-  createdByUser PortalUser?  @relation("MedicineCreatedBy", fields: [createdById], references: [id])
-  createdAt     DateTime     @default(now()) @map("created_at")
-  updatedAt     DateTime     @updatedAt @map("updated_at")
+  createdById   String?     @map("created_by")
+  createdByUser PortalUser? @relation("MedicineCreatedBy", fields: [createdById], references: [id])
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
 
   @@map("medicine_masters")
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Configurable Packaging / Units (medicine-packaging-plan — Phase 1 schema)
+// Stock ledger always stays in BASE units; packaging is a conversion layer
+// on top, with purchase/batch-level snapshots so later Medicine Master
+// edits never corrupt historical purchases, batch quantities or costs.
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Global reusable unit catalog (Box, Strip, Tablet, Vial, ...). Never
+/// hard-deleted — historical batches/lines hold FK references.
+model Unit {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  shortCode   String?  @map("short_code")
+  /// Seeded standard units vs user-added custom units.
+  isSystem    Boolean  @default(false) @map("is_system")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdById String?  @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  medicinesWithThisBaseUnit   MedicineMaster[]         @relation("MedicineBaseUnit")
+  packagingLevels             MedicinePackagingLevel[]
+  batchesWithThisPurchaseUnit MedicineBatch[]          @relation("BatchPurchaseUnit")
+  purchaseLinesWithThisUnit   PurchaseLine[]           @relation("PurchaseLineUnit")
+  invoiceLinesWithThisUnit    PharmacyInvoiceLine[]    @relation("InvoiceLineSaleUnit")
+  requestLinesWithThisUnit    MedicineRequestLine[]    @relation("RequestLineSaleUnit")
+
+  @@map("units")
+}
+
+/// The packaging "template" per medicine — an ordered list of levels from
+/// base (level 0, conversionToBase = 1) up to the largest pack. Each level
+/// stores its FULL conversion to base units directly (not just to its
+/// immediate parent) so POS/Purchase/Reports never need to walk the chain.
+model MedicinePackagingLevel {
+  id               String         @id @default(uuid())
+  medicineId       String         @map("medicine_id")
+  medicine         MedicineMaster @relation(fields: [medicineId], references: [id])
+  unitId           String         @map("unit_id")
+  unit             Unit           @relation(fields: [unitId], references: [id])
+  level            Int
+  conversionToBase Decimal        @map("conversion_to_base") @db.Decimal(14, 4)
+  isPurchaseUnit   Boolean        @default(false) @map("is_purchase_unit")
+  isSaleUnit       Boolean        @default(false) @map("is_sale_unit")
+  /// Optional — e.g. a whole Box sold at a bulk discount instead of exactly
+  /// conversionToBase x per-base saleRate.
+  overrideSaleRate Decimal?       @map("override_sale_rate") @db.Decimal(14, 2)
+  isActive         Boolean        @default(true) @map("is_active")
+
+  @@unique([medicineId, level])
+  @@map("medicine_packaging_levels")
 }
 
 /// FEFO enforced in the service layer (earliest expiryDate with stock wins) —
@@ -233,8 +312,19 @@ model MedicineBatch {
   medicine    MedicineMaster @relation(fields: [medicineId], references: [id])
   batchNumber String         @map("batch_number")
   expiryDate  DateTime       @map("expiry_date") @db.Date
+  /// Per BASE unit — unchanged meaning (derived from purchaseUnitConversionToBase when purchased in a larger pack).
   costRate    Decimal        @map("cost_rate") @db.Decimal(14, 2)
   saleRate    Decimal?       @map("sale_rate") @db.Decimal(14, 2)
+
+  /// Packaging snapshot frozen at first purchase of this batch — later
+  /// Medicine Master packaging edits must never retroactively change these
+  /// (medicine-packaging-plan). Null for batches created before this feature
+  /// (backfilled to conversionToBase=1, i.e. "purchased 1:1 in its base unit").
+  purchaseUnitId               String?  @map("purchase_unit_id")
+  purchaseUnit                 Unit?    @relation("BatchPurchaseUnit", fields: [purchaseUnitId], references: [id])
+  purchaseUnitConversionToBase Decimal? @map("purchase_unit_conversion_to_base") @db.Decimal(14, 4)
+  /// Full chain at purchase time, e.g. [{"unit":"Box","conversionToBase":100},{"unit":"Strip","conversionToBase":10},{"unit":"Tablet","conversionToBase":1}] — preserves intermediate levels for historical receipts even if Medicine Master's packaging later changes.
+  packagingSnapshotJson        Json?    @map("packaging_snapshot_json")
 
   stockEntries  StockLedgerEntry[]
   purchaseLines PurchaseLine[]
@@ -272,15 +362,17 @@ model StockLedgerEntry {
 }
 
 model StockAdjustment {
-  id         String         @id @default(uuid())
-  medicineId String         @map("medicine_id")
-  batchId    String?        @map("batch_id")
-  type       AdjustmentType
-  quantity   Decimal        @db.Decimal(14, 3)
-  reason     String
-  approvedById String?      @map("approved_by")
-  createdById  String       @map("created_by")
-  createdAt    DateTime     @default(now()) @map("created_at")
+  id               String         @id @default(uuid())
+  /// System-generated (ADJ-0001…) — never manually typed, see DocumentSequence.
+  adjustmentNumber String         @unique @map("adjustment_number")
+  medicineId       String         @map("medicine_id")
+  batchId      String?        @map("batch_id")
+  type         AdjustmentType
+  quantity     Decimal        @db.Decimal(14, 3)
+  reason       String
+  approvedById String?        @map("approved_by")
+  createdById  String         @map("created_by")
+  createdAt    DateTime       @default(now()) @map("created_at")
 
   @@map("stock_adjustments")
 }
@@ -291,14 +383,15 @@ model StockAdjustment {
 // ═══════════════════════════════════════════════════════════════════════
 
 model Vendor {
-  id               String   @id @default(uuid())
-  code             String   @unique
+  id               String  @id @default(uuid())
+  /// System-generated (VND-0001…) — never manually typed, see DocumentSequence.
+  code             String  @unique
   name             String
-  contactPerson    String?  @map("contact_person")
+  contactPerson    String? @map("contact_person")
   phone            String?
   email            String?
-  paymentTermsDays Int      @default(0) @map("payment_terms_days")
-  isActive         Boolean  @default(true) @map("is_active")
+  paymentTermsDays Int     @default(0) @map("payment_terms_days")
+  isActive         Boolean @default(true) @map("is_active")
 
   purchases     Purchase[]
   ledgerEntries VendorLedgerEntry[]
@@ -314,17 +407,19 @@ model Vendor {
 /// +/- Adjustments = Closing. `amount` is the signed payable delta — positive
 /// for PURCHASE_CREDIT (vendor owed more), negative for PAYMENT/RETURN_CREDIT.
 model VendorLedgerEntry {
-  id             String                 @id @default(uuid())
-  vendorId       String                 @map("vendor_id")
-  vendor         Vendor                 @relation(fields: [vendorId], references: [id])
-  entryType      VendorLedgerEntryType  @map("entry_type")
-  amount         Decimal                @db.Decimal(14, 2)
+  id             String                @id @default(uuid())
+  vendorId       String                @map("vendor_id")
+  vendor         Vendor                @relation(fields: [vendorId], references: [id])
+  entryType      VendorLedgerEntryType @map("entry_type")
+  amount         Decimal               @db.Decimal(14, 2)
+  /// System-generated business reference for the ONE entry that is the primary record of a standalone transaction — RET-0001… for a Purchase Return, VPAY-0001… for a standalone vendor payment. Null for entries that are just a side-effect of another document (e.g. the PURCHASE_CREDIT posted when a Purchase itself is created/posted — that transaction's reference is the Purchase's own purchaseNumber).
+  referenceNo    String?               @unique @map("reference_no")
   description    String?
-  referenceTable String?                @map("reference_table")
-  referenceId    String?                @map("reference_id")
-  actorId        String                 @map("actor_id")
-  actor          PortalUser             @relation("VendorLedgerActor", fields: [actorId], references: [id])
-  createdAt      DateTime               @default(now()) @map("created_at")
+  referenceTable String?               @map("reference_table")
+  referenceId    String?               @map("reference_id")
+  actorId        String                @map("actor_id")
+  actor          PortalUser            @relation("VendorLedgerActor", fields: [actorId], references: [id])
+  createdAt      DateTime              @default(now()) @map("created_at")
 
   @@index([vendorId, createdAt])
   @@map("vendor_ledger_entries")
@@ -332,27 +427,30 @@ model VendorLedgerEntry {
 
 model Purchase {
   id              String         @id @default(uuid())
+  /// System-generated (PO-0001…) — never manually typed, see DocumentSequence. Covers this record's whole lifecycle (Draft = PO stage, Posted = GRN stage); never renamed on posting.
   purchaseNumber  String         @unique @map("purchase_number")
   vendorId        String         @map("vendor_id")
   vendor          Vendor         @relation(fields: [vendorId], references: [id])
   purchaseDate    DateTime       @map("purchase_date") @db.Date
   vendorInvoiceNo String?        @map("vendor_invoice_no")
-  paymentType     PaymentMethod?  @map("payment_type")
+  paymentType     PaymentMethod? @map("payment_type")
   notes           String?
   status          PurchaseStatus @default(DRAFT)
 
   subtotal      Decimal @default(0) @db.Decimal(14, 2)
   discountTotal Decimal @default(0) @map("discount_total") @db.Decimal(14, 2)
   taxTotal      Decimal @default(0) @map("tax_total") @db.Decimal(14, 2)
+  /// purchase-costing-plan — landed-cost component (freight/other charges), rolled into `total` and into each batch's effective cost-per-base-unit.
+  freightTotal  Decimal @default(0) @map("freight_total") @db.Decimal(14, 2)
   total         Decimal @default(0) @db.Decimal(14, 2)
   paidNow       Decimal @default(0) @map("paid_now") @db.Decimal(14, 2)
   vendorDue     Decimal @default(0) @map("vendor_due") @db.Decimal(14, 2)
 
   lines PurchaseLine[]
 
-  createdById   String      @map("created_by")
-  createdByUser PortalUser  @relation("PurchaseCreatedBy", fields: [createdById], references: [id])
-  createdAt     DateTime    @default(now()) @map("created_at")
+  createdById   String     @map("created_by")
+  createdByUser PortalUser @relation("PurchaseCreatedBy", fields: [createdById], references: [id])
+  createdAt     DateTime   @default(now()) @map("created_at")
 
   @@map("purchases")
 }
@@ -365,11 +463,30 @@ model PurchaseLine {
   medicine       MedicineMaster @relation(fields: [medicineId], references: [id])
   batchId        String?        @map("batch_id")
   batch          MedicineBatch? @relation(fields: [batchId], references: [id])
+  /// Always the BASE-unit total (= purchaseUnitQuantity x conversionToBaseSnapshot, server-derived). Unchanged meaning — still what posts to StockLedgerEntry.
   quantity       Decimal        @db.Decimal(14, 3)
+  /// Per BASE unit — purchase-costing-plan: this is the LANDED cost (net of discount, +tax, +freight) divided by total base qty, never the raw vendor rate. Still what MedicineBatch.costRate derives from.
   unitCost       Decimal        @map("unit_cost") @db.Decimal(14, 2)
+  /// purchase-costing-plan — how `discountAmount` below was entered; PERCENTAGE means discountAmount was computed from discountValue% x grossAmount at save time.
+  discountType   DiscountType   @default(FLAT) @map("discount_type")
+  /// Always the final FLAT PKR amount, regardless of discountType — unchanged meaning for totals math.
   discountAmount Decimal        @default(0) @map("discount_amount") @db.Decimal(14, 2)
   taxAmount      Decimal        @default(0) @map("tax_amount") @db.Decimal(14, 2)
+  /// purchase-costing-plan — freight/other landed cost apportioned to this line, folded into unitCost (landed cost per base unit) and lineTotal.
+  freightAmount  Decimal        @default(0) @map("freight_amount") @db.Decimal(14, 2)
   lineTotal      Decimal        @map("line_total") @db.Decimal(14, 2)
+
+  /// What the user actually entered this line as (medicine-packaging-plan) — e.g. "5 Box" at "Rs 1200/Box". Null for pre-feature lines (backfilled to the medicine's base unit, qty = quantity, conversion = 1).
+  purchaseUnitId           String?  @map("purchase_unit_id")
+  purchaseUnit             Unit?    @relation("PurchaseLineUnit", fields: [purchaseUnitId], references: [id])
+  purchaseUnitQuantity     Decimal? @map("purchase_unit_quantity") @db.Decimal(14, 3)
+  conversionToBaseSnapshot Decimal? @map("conversion_to_base_snapshot") @db.Decimal(14, 4)
+  /// True when this purchase used a one-off packaging conversion different from the medicine's current default (purchase-costing-plan "Override packaging for this purchase").
+  packagingOverridden      Boolean  @default(false) @map("packaging_overridden")
+
+  /// purchase-costing-plan selling-price suggestion — per BASE unit. `suggestedSaleRate` is the system's markup-rule recommendation (audit trail); `finalSaleRate` is what the Admin actually confirmed and is what gets written to MedicineBatch.saleRate / MedicineMaster.saleRate on post.
+  suggestedSaleRate Decimal? @map("suggested_sale_rate") @db.Decimal(14, 2)
+  finalSaleRate     Decimal? @map("final_sale_rate") @db.Decimal(14, 2)
 
   @@map("purchase_lines")
 }
@@ -384,20 +501,22 @@ model PurchaseLine {
 /// `externalAdmissionRef`/`externalRequestRef` are plain strings, never a
 /// cross-database FK — see the file header note on integration boundary.
 model MedicineRequest {
-  id                    String                @id @default(uuid())
-  requestNumber         String                @unique @map("request_number")
-  externalAdmissionRef  String                @map("external_admission_ref")
-  externalRequestRef    String?               @unique @map("external_request_ref")
-  patientNameSnapshot   String?               @map("patient_name_snapshot")
-  urgency               String?
-  requestedByExternal   String?               @map("requested_by_external")
-  status                MedicineRequestStatus @default(REQUESTED)
-  rejectionReason       String?               @map("rejection_reason")
+  id                   String                @id @default(uuid())
+  /// System-generated (REQ-0001…) — our INTERNAL processing reference, never manually typed. Distinct from externalRequestRef below.
+  requestNumber        String                @unique @map("request_number")
+  externalAdmissionRef String                @map("external_admission_ref")
+  /// EXTERNAL — the HMS side's own reference, received as-is. Never replaced with an internally generated code.
+  externalRequestRef   String?               @unique @map("external_request_ref")
+  patientNameSnapshot  String?               @map("patient_name_snapshot")
+  urgency              String?
+  requestedByExternal  String?               @map("requested_by_external")
+  status               MedicineRequestStatus @default(REQUESTED)
+  rejectionReason      String?               @map("rejection_reason")
   /// pharmacy.md §7.3 — set only when a line/request crosses the configured
   /// high-value threshold; dispense is blocked until this is non-null.
-  approvedById          String?               @map("approved_by")
-  approvedByUser        PortalUser?           @relation("RequestApprovedBy", fields: [approvedById], references: [id])
-  approvedAt            DateTime?             @map("approved_at")
+  approvedById         String?               @map("approved_by")
+  approvedByUser       PortalUser?           @relation("RequestApprovedBy", fields: [approvedById], references: [id])
+  approvedAt           DateTime?             @map("approved_at")
 
   lines   MedicineRequestLine[]
   invoice PharmacyInvoice?
@@ -417,28 +536,35 @@ model MedicineRequestLine {
   medicine          MedicineMaster  @relation(fields: [medicineId], references: [id])
   batchId           String?         @map("batch_id")
   batch             MedicineBatch?  @relation(fields: [batchId], references: [id])
+  /// Always BASE-unit quantities — unchanged meaning, still what FEFO/dispense uses.
   requestedQuantity Decimal         @map("requested_quantity") @db.Decimal(14, 3)
   dispensedQuantity Decimal         @default(0) @map("dispensed_quantity") @db.Decimal(14, 3)
   notes             String?
+
+  /// What unit the request/dispense was actually expressed in (medicine-packaging-plan). Null = base unit (backward-compatible default).
+  saleUnitId       String?  @map("sale_unit_id")
+  saleUnit         Unit?    @relation("RequestLineSaleUnit", fields: [saleUnitId], references: [id])
+  saleUnitQuantity Decimal? @map("sale_unit_quantity") @db.Decimal(14, 3)
 
   @@map("medicine_request_lines")
 }
 
 model PharmacyInvoice {
   id                String           @id @default(uuid())
+  /// System-generated — never manually typed, see DocumentSequence. INV-0001… for channel=RETAIL (POS Sale Invoice), PHI-0001… for channel=HMS_LINKED (Pharmacy Invoice) — two counters sharing this one column/table.
   invoiceNumber     String           @unique @map("invoice_number")
   channel           SaleChannel
   medicineRequestId String?          @unique @map("medicine_request_id")
   medicineRequest   MedicineRequest? @relation(fields: [medicineRequestId], references: [id])
   customerName      String?          @map("customer_name")
 
-  subtotal        Decimal         @default(0) @db.Decimal(14, 2)
-  discountTotal   Decimal         @default(0) @map("discount_total") @db.Decimal(14, 2)
-  taxTotal        Decimal         @default(0) @map("tax_total") @db.Decimal(14, 2)
-  total           Decimal         @default(0) @db.Decimal(14, 2)
-  paidTotal       Decimal         @default(0) @map("paid_total") @db.Decimal(14, 2)
-  outstanding     Decimal         @default(0) @db.Decimal(14, 2)
-  status          InvoiceStatus   @default(UNPAID)
+  subtotal        Decimal          @default(0) @db.Decimal(14, 2)
+  discountTotal   Decimal          @default(0) @map("discount_total") @db.Decimal(14, 2)
+  taxTotal        Decimal          @default(0) @map("tax_total") @db.Decimal(14, 2)
+  total           Decimal          @default(0) @db.Decimal(14, 2)
+  paidTotal       Decimal          @default(0) @map("paid_total") @db.Decimal(14, 2)
+  outstanding     Decimal          @default(0) @db.Decimal(14, 2)
+  status          InvoiceStatus    @default(UNPAID)
   /// Only set for channel = HMS_LINKED (pharmacy.md §8).
   clearanceStatus ClearanceStatus? @map("clearance_status")
 
@@ -460,11 +586,17 @@ model PharmacyInvoiceLine {
   medicine       MedicineMaster  @relation(fields: [medicineId], references: [id])
   batchId        String?         @map("batch_id")
   batch          MedicineBatch?  @relation(fields: [batchId], references: [id])
+  /// Always the BASE-unit quantity sold — unchanged meaning, still what FEFO allocation/stock deduction uses.
   quantity       Decimal         @db.Decimal(14, 3)
   rateSnapshot   Decimal         @map("rate_snapshot") @db.Decimal(14, 2)
   discountAmount Decimal         @default(0) @map("discount_amount") @db.Decimal(14, 2)
   taxAmount      Decimal         @default(0) @map("tax_amount") @db.Decimal(14, 2)
   lineNet        Decimal         @map("line_net") @db.Decimal(14, 2)
+
+  /// What the cashier actually sold this line as (medicine-packaging-plan) — e.g. "2 Strip". Null = base unit (backward-compatible default).
+  saleUnitId       String?  @map("sale_unit_id")
+  saleUnit         Unit?    @relation("InvoiceLineSaleUnit", fields: [saleUnitId], references: [id])
+  saleUnitQuantity Decimal? @map("sale_unit_quantity") @db.Decimal(14, 3)
 
   @@map("pharmacy_invoice_lines")
 }
@@ -472,15 +604,15 @@ model PharmacyInvoiceLine {
 /// One row per payment against an invoice — supports split and partial
 /// payment (pharmacy.md §6.1/§8, entirely absent in hms-backend today).
 model PharmacyPayment {
-  id            String          @id @default(uuid())
-  invoiceId     String          @map("invoice_id")
-  invoice       PharmacyInvoice @relation(fields: [invoiceId], references: [id])
-  amount        Decimal         @db.Decimal(14, 2)
-  method        PaymentMethod
-  reference     String?
-  collectedById String          @map("collected_by")
-  collectedByUser PortalUser    @relation("PaymentCollectedBy", fields: [collectedById], references: [id])
-  paidAt        DateTime        @default(now()) @map("paid_at")
+  id              String          @id @default(uuid())
+  invoiceId       String          @map("invoice_id")
+  invoice         PharmacyInvoice @relation(fields: [invoiceId], references: [id])
+  amount          Decimal         @db.Decimal(14, 2)
+  method          PaymentMethod
+  reference       String?
+  collectedById   String          @map("collected_by")
+  collectedByUser PortalUser      @relation("PaymentCollectedBy", fields: [collectedById], references: [id])
+  paidAt          DateTime        @default(now()) @map("paid_at")
 
   @@map("pharmacy_payments")
 }
@@ -493,62 +625,69 @@ model PharmacyPayment {
 // ═══════════════════════════════════════════════════════════════════════
 
 model CashLedgerEntry {
-  id             String       @id @default(uuid())
-  portalUserId   String       @map("portal_user_id")
-  portalUser     PortalUser   @relation("CashEntryOwner", fields: [portalUserId], references: [id])
+  id             String        @id @default(uuid())
+  portalUserId   String        @map("portal_user_id")
+  portalUser     PortalUser    @relation("CashEntryOwner", fields: [portalUserId], references: [id])
   direction      CashDirection
-  amount         Decimal      @db.Decimal(14, 2)
+  amount         Decimal       @db.Decimal(14, 2)
   category       CashCategory
-  isPhysicalCash Boolean      @default(true) @map("is_physical_cash")
-  referenceTable String?      @map("reference_table")
-  referenceId    String?      @map("reference_id")
+  /// System-generated business reference for the entry that is the primary record of a standalone transaction — PCA-0001… for Petty Cash issuance, RET-0001… for a Sales Return refund. Null for entries that are a side-effect of another document already carrying its own reference (purchase payment, POS sale collection, etc).
+  referenceNo    String?       @unique @map("reference_no")
+  isPhysicalCash Boolean       @default(true) @map("is_physical_cash")
+  referenceTable String?       @map("reference_table")
+  referenceId    String?       @map("reference_id")
   note           String?
-  issuedById     String?      @map("issued_by")
-  issuedByUser   PortalUser?  @relation("CashEntryIssuedBy", fields: [issuedById], references: [id])
-  isSettled      Boolean      @default(false) @map("is_settled")
-  occurredAt     DateTime     @default(now()) @map("occurred_at")
+  issuedById     String?       @map("issued_by")
+  issuedByUser   PortalUser?   @relation("CashEntryIssuedBy", fields: [issuedById], references: [id])
+  isSettled      Boolean       @default(false) @map("is_settled")
+  occurredAt     DateTime      @default(now()) @map("occurred_at")
 
   @@index([portalUserId, occurredAt])
   @@map("cash_ledger_entries")
 }
 
 model AccountSettlement {
-  id             String           @id @default(uuid())
-  portalUserId   String           @map("portal_user_id")
-  submittedByUser PortalUser      @relation("SettlementSubmittedBy", fields: [portalUserId], references: [id])
-  periodFrom     DateTime         @map("period_from") @db.Date
-  periodTo       DateTime         @map("period_to") @db.Date
-  expectedCash   Decimal          @map("expected_cash") @db.Decimal(14, 2)
-  physicalCash   Decimal          @map("physical_cash") @db.Decimal(14, 2)
-  variance       Decimal          @db.Decimal(14, 2)
-  varianceReason String?          @map("variance_reason")
-  settlementAmount Decimal        @default(0) @map("settlement_amount") @db.Decimal(14, 2)
-  status         SettlementStatus @default(SUBMITTED)
-  submittedAt    DateTime         @default(now()) @map("submitted_at")
-  reviewedById   String?          @map("reviewed_by")
-  reviewedByUser PortalUser?      @relation("SettlementReviewedBy", fields: [reviewedById], references: [id])
-  reviewedAt     DateTime?        @map("reviewed_at")
+  id               String           @id @default(uuid())
+  /// System-generated (SET-0001…) — never manually typed, see DocumentSequence.
+  settlementNumber String           @unique @map("settlement_number")
+  portalUserId     String           @map("portal_user_id")
+  submittedByUser  PortalUser       @relation("SettlementSubmittedBy", fields: [portalUserId], references: [id])
+  periodFrom       DateTime         @map("period_from") @db.Date
+  periodTo         DateTime         @map("period_to") @db.Date
+  expectedCash     Decimal          @map("expected_cash") @db.Decimal(14, 2)
+  physicalCash     Decimal          @map("physical_cash") @db.Decimal(14, 2)
+  variance         Decimal          @db.Decimal(14, 2)
+  varianceReason   String?          @map("variance_reason")
+  settlementAmount Decimal          @default(0) @map("settlement_amount") @db.Decimal(14, 2)
+  status           SettlementStatus @default(SUBMITTED)
+  submittedAt      DateTime         @default(now()) @map("submitted_at")
+  reviewedById     String?          @map("reviewed_by")
+  reviewedByUser   PortalUser?      @relation("SettlementReviewedBy", fields: [reviewedById], references: [id])
+  reviewedAt       DateTime?        @map("reviewed_at")
 
   @@map("account_settlements")
 }
 
 model Expense {
-  id              String     @id @default(uuid())
-  category        String
-  date            DateTime   @db.Date
-  amount          Decimal    @db.Decimal(14, 2)
-  paymentMethod   PaymentMethod @map("payment_method")
-  payeeOrVendor   String?    @map("payee_or_vendor")
-  description     String
-  referenceNo     String?    @map("reference_no")
-  attachmentUrl   String?    @map("attachment_url")
+  id            String        @id @default(uuid())
+  /// System-generated (EXP-0001…) — never manually typed, see DocumentSequence.
+  expenseNumber String        @unique @map("expense_number")
+  category      String
+  date          DateTime      @db.Date
+  amount        Decimal       @db.Decimal(14, 2)
+  paymentMethod PaymentMethod @map("payment_method")
+  payeeOrVendor String?       @map("payee_or_vendor")
+  description   String
+  /// EXTERNAL reference — the payee's own receipt/bill/cheque number. Manually entered by design; never system-generated. Distinct from `expenseNumber` above.
+  referenceNo   String?       @map("reference_no")
+  attachmentUrl String?       @map("attachment_url")
 
-  enteredById   String      @map("entered_by")
-  enteredByUser PortalUser  @relation("ExpenseEnteredBy", fields: [enteredById], references: [id])
-  approvedById  String?     @map("approved_by")
+  enteredById    String      @map("entered_by")
+  enteredByUser  PortalUser  @relation("ExpenseEnteredBy", fields: [enteredById], references: [id])
+  approvedById   String?     @map("approved_by")
   approvedByUser PortalUser? @relation("ExpenseApprovedBy", fields: [approvedById], references: [id])
-  approvedAt    DateTime?   @map("approved_at")
-  createdAt     DateTime    @default(now()) @map("created_at")
+  approvedAt     DateTime?   @map("approved_at")
+  createdAt      DateTime    @default(now()) @map("created_at")
 
   @@map("expenses")
 }
@@ -559,17 +698,65 @@ model PharmacySettings {
   id                       String   @id @default(uuid())
   highValueApprovalEnabled Boolean  @default(false) @map("high_value_approval_enabled")
   /// PKR — request/invoice total at or above this needs approval before dispense.
-  highValueThreshold       Decimal  @default(0) @db.Decimal(14, 2) @map("high_value_threshold")
+  highValueThreshold       Decimal  @default(0) @map("high_value_threshold") @db.Decimal(14, 2)
   /// Pre-filled as the tax rate for newly created medicines when not specified (pharmacy.md §3 "Tax/discount" policy).
-  defaultTaxPercent        Decimal  @default(0) @db.Decimal(5, 2) @map("default_tax_percent")
+  defaultTaxPercent        Decimal  @default(0) @map("default_tax_percent") @db.Decimal(5, 2)
   /// 0 = no cap. POS line/invoice discount percent above this is rejected.
-  maxDiscountPercent       Decimal  @default(0) @db.Decimal(5, 2) @map("max_discount_percent")
+  maxDiscountPercent       Decimal  @default(0) @map("max_discount_percent") @db.Decimal(5, 2)
   /// Replaces the hardcoded 90-day window for "Near Expiry" everywhere it is computed.
   nearExpiryWindowDays     Int      @default(90) @map("near_expiry_window_days")
   receiptHeaderText        String?  @map("receipt_header_text")
   receiptFooterText        String?  @map("receipt_footer_text")
+  /// purchase-costing-plan — global fallback markup when a medicine's category has no MarkupRule row. Suggested Sale Price = Effective Cost/Base Unit x (1 + this/100).
+  defaultMarkupPercent     Decimal  @default(20) @map("default_markup_percent") @db.Decimal(6, 2)
   updatedAt                DateTime @updatedAt @map("updated_at")
   updatedById              String?  @map("updated_by")
 
   @@map("pharmacy_settings")
+}
+
+/// purchase-costing-plan — category-wise markup override (e.g. Injection=15%, Syrup=18%).
+/// A medicine whose category has no row here falls back to PharmacySettings.defaultMarkupPercent.
+model MarkupRule {
+  id            String   @id @default(uuid())
+  category      String   @unique
+  markupPercent Decimal  @map("markup_percent") @db.Decimal(6, 2)
+  isActive      Boolean  @default(true) @map("is_active")
+  updatedById   String?  @map("updated_by")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("markup_rules")
+}
+
+/// Database-driven Therapeutic Category master (Settings -> Medicine Categories). Deactivate, never delete —
+/// a medicine whose category is later deactivated keeps its categoryId/relation untouched and still displays
+/// correctly; the dropdown on Add/Edit Medicine just stops OFFERING an inactive category for NEW selections.
+model MedicineCategory {
+  id            String   @id @default(uuid())
+  name          String   @unique
+  description   String?
+  isActive      Boolean  @default(true) @map("is_active")
+  medicines     MedicineMaster[]
+  createdById   String?     @map("created_by")
+  createdByUser PortalUser? @relation("MedicineCategoryCreatedBy", fields: [createdById], references: [id])
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  @@map("medicine_categories")
+}
+
+/// System-generated-identifiers audit — one monotonically-increasing counter
+/// per business-code prefix (vendor/medicine/purchase/invoice/…). Incremented
+/// via an atomic `INSERT … ON CONFLICT DO UPDATE … RETURNING` inside the same
+/// transaction as the record it numbers, so Postgres's row lock makes
+/// concurrent creates serialize safely — no two callers can ever receive the
+/// same number, and a rolled-back transaction un-reserves its number instead
+/// of leaving a gap-free guarantee it can't keep. Never decremented, so a
+/// cancelled/deleted record's code is never handed out again.
+model DocumentSequence {
+  key       String   @id
+  lastValue Int      @default(0) @map("last_value")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("document_sequences")
 }

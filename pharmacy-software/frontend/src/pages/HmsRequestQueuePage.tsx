@@ -3,6 +3,7 @@ import { Loader2, Plus, X, Check, Ban, ShieldAlert, Eye, Settings2 } from 'lucid
 import { pharmacyApi, MedicineRow } from '../services/pharmacyApi';
 import { formatPKR, formatNumber } from '../utils/format';
 import { useToast } from '../context/ToastContext';
+import { PharmacyDataTable, Column } from '../components/PharmacyDataTable';
 
 const STATUS_STYLE: Record<string, string> = {
   REQUESTED: 'bg-amber-50 text-amber-700 border-amber-200',

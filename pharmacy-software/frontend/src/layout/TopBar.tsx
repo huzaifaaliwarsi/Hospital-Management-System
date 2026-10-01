@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, Bell, MessageSquare, Moon, Sun, ChevronDown } from 'lucide-react';
+import { Search, Bell, MessageSquare, Moon, Sun, ChevronDown, PanelLeftOpen } from 'lucide-react';
 import type { CurrentUser } from '../types';
 
 const ROLE_LABEL: Record<CurrentUser['role'], string> = {
@@ -12,9 +12,17 @@ interface TopBarProps {
   user: CurrentUser;
   pageTitle: string;
   onSearch?: (query: string) => void;
+  sidebarOpen?: boolean;
+  onToggleSidebar?: () => void;
 }
 
-export const TopBar: React.FC<TopBarProps> = ({ user, pageTitle, onSearch }) => {
+export const TopBar: React.FC<TopBarProps> = ({
+  user,
+  pageTitle,
+  onSearch,
+  sidebarOpen,
+  onToggleSidebar,
+}) => {
   const [searchVal, setSearchVal] = useState('');
   const [darkMode, setDarkMode] = useState(false);
 
@@ -24,10 +32,20 @@ export const TopBar: React.FC<TopBarProps> = ({ user, pageTitle, onSearch }) => 
   };
 
   return (
-    <header className="h-16 bg-white border-b border-slate-200/80 flex items-center justify-between px-8 sticky top-0 z-30 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
-      {/* Page Title */}
-      <div className="flex items-center gap-3">
-        <h1 className="text-xl font-bold text-slate-900 tracking-tight">{pageTitle}</h1>
+    <header className="h-16 bg-white border-b border-slate-200/80 flex items-center justify-between px-6 sticky top-0 z-30 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
+      {/* Page Title & ChatGPT Sidebar Open Toggle */}
+      <div className="flex items-center gap-2.5">
+        {!sidebarOpen && onToggleSidebar && (
+          <button
+            type="button"
+            onClick={onToggleSidebar}
+            title="Open sidebar"
+            className="p-2 -ml-2 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
+          >
+            <PanelLeftOpen className="h-5 w-5 text-slate-600" />
+          </button>
+        )}
+        <h1 className="text-lg font-bold text-slate-900 tracking-tight">{pageTitle}</h1>
       </div>
 
       {/* Middle & Right Section */}

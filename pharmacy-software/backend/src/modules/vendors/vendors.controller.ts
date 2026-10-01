@@ -4,6 +4,10 @@ import { vendorsService } from './vendors.service';
 import type { CreateVendorBody, UpdateVendorBody, PayVendorBody, CreatePurchaseBody, PurchaseReturnBody } from './vendors.schemas';
 
 export const vendorsController = {
+  async nextCode(_req: Request, res: Response) {
+    const code = await vendorsService.peekNextVendorCode();
+    res.json({ data: { code } });
+  },
   async create(req: Request, res: Response) {
     if (!req.user) throw new AuthenticationError();
     const data = await vendorsService.create(req.body as CreateVendorBody, req.user.sub);
@@ -25,6 +29,11 @@ export const vendorsController = {
     if (!req.user) throw new AuthenticationError();
     const data = await vendorsService.createPurchase(req.body as CreatePurchaseBody, req.user.sub);
     res.status(201).json({ data });
+  },
+  async postPurchase(req: Request, res: Response) {
+    if (!req.user) throw new AuthenticationError();
+    const data = await vendorsService.postPurchase(req.params.id as string, req.user.sub);
+    res.json({ data });
   },
   async payVendor(req: Request, res: Response) {
     if (!req.user) throw new AuthenticationError();
