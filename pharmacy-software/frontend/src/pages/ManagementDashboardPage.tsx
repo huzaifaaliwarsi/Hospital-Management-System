@@ -960,24 +960,45 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
               </div>
               <div>
                 <h4 className="text-sm font-bold text-slate-900">Low Stock Medicines</h4>
-                <p className="text-[11px] text-slate-400">{data.lowStockCount} items below threshold</p>
+                <p className="text-[11px] text-slate-400">
+                  {data.lowStockCount || 0} {data.lowStockCount === 1 ? 'item' : 'items'} below threshold
+                </p>
               </div>
             </div>
 
-            <div className="space-y-2.5 my-3">
-              {(data.lowStockList && data.lowStockList.length > 0 ? data.lowStockList : [
-                { id: '1', name: 'Amoxicillin 250mg', currentStock: 14, reorderLevel: 50 },
-                { id: '2', name: 'Insulin Injection', currentStock: 4, reorderLevel: 20 },
-                { id: '3', name: 'Metformin 850mg', currentStock: 8, reorderLevel: 30 },
-              ]).slice(0, 4).map((m) => (
-                <div key={m.id} className="flex items-center justify-between text-xs py-1 border-b border-slate-50 last:border-none">
-                  <span className="font-medium text-slate-700 truncate pr-2">{m.name}</span>
-                  <span className="font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md shrink-0">
-                    {m.currentStock} left
-                  </span>
+            {data.lowStockList && data.lowStockList.length > 0 ? (
+              <div className="space-y-2.5 my-3">
+                {data.lowStockList.slice(0, 4).map((m) => (
+                  <div key={m.id} className="flex items-center justify-between text-xs py-1.5 border-b border-slate-100 last:border-none">
+                    <div className="min-w-0 pr-2">
+                      <span className="font-medium text-slate-800 truncate block">{m.name}</span>
+                      <span className="text-[10px] text-slate-400">
+                        Reorder at {m.reorderLevel} {m.unit || ''}
+                      </span>
+                    </div>
+                    <span
+                      className={`font-semibold px-2 py-0.5 rounded-md shrink-0 text-[11px] ${
+                        m.currentStock <= 0 || m.isOutOfStock
+                          ? 'text-rose-700 bg-rose-50 border border-rose-100'
+                          : 'text-amber-700 bg-amber-50 border border-amber-100'
+                      }`}
+                    >
+                      {m.currentStock <= 0 || m.isOutOfStock ? 'Out of stock' : `${m.currentStock} left`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="my-6 py-4 px-3 rounded-xl bg-slate-50/70 border border-dashed border-slate-200 text-center flex flex-col items-center justify-center">
+                <div className="h-9 w-9 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mb-2">
+                  <CheckCircle2 className="h-5 w-5" />
                 </div>
-              ))}
-            </div>
+                <span className="text-xs font-semibold text-slate-700">Stock Levels Healthy</span>
+                <span className="text-[11px] text-slate-400 mt-0.5">
+                  All active medicines meet or exceed reorder levels
+                </span>
+              </div>
+            )}
           </div>
 
           <button
@@ -1003,20 +1024,49 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
             </div>
 
             <div className="my-3">
-              <div className="text-3xl font-extrabold text-slate-900">{data.nearExpiryCount}</div>
-              <div className="text-xs text-slate-400 mt-0.5">products expiring soon</div>
+              <div className="text-3xl font-extrabold text-slate-900">{data.nearExpiryCount || 0}</div>
+              <div className="text-xs text-slate-400 mt-0.5">
+                {data.nearExpiryCount === 1 ? 'batch' : 'batches'} expiring soon
+              </div>
 
               {/* Visual batch blocks indicator */}
               <div className="flex gap-1.5 mt-4">
                 {Array.from({ length: 12 }).map((_, i) => (
                   <span
                     key={i}
-                    className={`h-4 flex-1 rounded-sm ${
-                      i < Math.min(12, data.nearExpiryCount || 3) ? 'bg-rose-400' : 'bg-slate-100'
+                    className={`h-3.5 flex-1 rounded-xs transition-colors ${
+                      i < Math.min(12, data.nearExpiryCount || 0)
+                        ? 'bg-rose-500'
+                        : 'bg-slate-100'
                     }`}
                   />
                 ))}
               </div>
+
+              {data.nearExpiryList && data.nearExpiryList.length > 0 ? (
+                <div className="mt-3.5 space-y-1.5 pt-2.5 border-t border-slate-100">
+                  {data.nearExpiryList.slice(0, 2).map((item) => (
+                    <div key={item.id} className="flex items-center justify-between text-xs py-1">
+                      <div className="min-w-0 pr-2">
+                        <span className="font-medium text-slate-800 truncate block">{item.name}</span>
+                        <span className="text-[10px] text-slate-400">
+                          Batch: {item.batchNumber} • Qty: {item.quantityRemaining ?? '—'}
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-100 px-2 py-0.5 rounded-md shrink-0">
+                        {item.daysLeft}d left
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-4 py-2.5 px-3 rounded-xl bg-slate-50/70 border border-dashed border-slate-200 text-center flex items-center justify-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                  <span className="text-[11px] font-medium text-slate-600">
+                    No active batches expiring within 90 days
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1025,7 +1075,7 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
             onClick={() => onNavigate && onNavigate('stock-movements')}
             className="w-full mt-4 py-2.5 px-4 rounded-xl bg-rose-500 hover:bg-rose-600 text-white font-semibold text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
           >
-            View Details <ArrowRight className="h-3.5 w-3.5" />
+            View Expiry Details <ArrowRight className="h-3.5 w-3.5" />
           </button>
         </div>
 
@@ -1038,22 +1088,49 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
               </div>
               <div>
                 <h4 className="text-sm font-bold text-slate-900">Supplier Updates</h4>
-                <p className="text-[11px] text-slate-400">Action & orders required</p>
+                <p className="text-[11px] text-slate-400">
+                  {data.openPurchaseOrdersCount && data.openPurchaseOrdersCount > 0
+                    ? `${data.openPurchaseOrdersCount} open orders pending`
+                    : `${data.supplierUpdates?.length || 0} active suppliers registered`}
+                </p>
               </div>
             </div>
 
-            <div className="space-y-2.5 my-3">
-              {(data.supplierUpdates && data.supplierUpdates.length > 0 ? data.supplierUpdates : [
-                { id: '1', name: 'MediSupply Ltd', status: 'Awaiting confirmation' },
-                { id: '2', name: 'HealthCare Pharma', status: 'Active supplier' },
-                { id: '3', name: 'Global Medical', status: 'Invoice ready' },
-              ]).slice(0, 4).map((sup) => (
-                <div key={sup.id} className="flex items-center justify-between text-xs py-1 border-b border-slate-50 last:border-none">
-                  <span className="font-medium text-slate-700 truncate pr-2">{sup.name}</span>
-                  <span className="text-[11px] text-slate-400 shrink-0">{sup.status}</span>
+            {data.supplierUpdates && data.supplierUpdates.length > 0 ? (
+              <div className="space-y-2.5 my-3">
+                {data.supplierUpdates.slice(0, 4).map((sup) => (
+                  <div key={sup.id} className="flex items-center justify-between text-xs py-1.5 border-b border-slate-100 last:border-none">
+                    <div className="min-w-0 pr-2">
+                      <span className="font-medium text-slate-800 truncate block">{sup.name}</span>
+                      <span className="text-[10px] text-slate-400">
+                        {sup.code ? `${sup.code} • ` : ''}{sup.paymentTerms || sup.phone || 'Active'}
+                      </span>
+                    </div>
+                    <span
+                      className={`font-semibold px-2 py-0.5 rounded-md shrink-0 text-[11px] ${
+                        sup.openOrdersCount && sup.openOrdersCount > 0
+                          ? 'text-blue-700 bg-blue-50 border border-blue-100'
+                          : sup.balance && sup.balance > 0
+                          ? 'text-amber-700 bg-amber-50 border border-amber-100'
+                          : 'text-slate-600 bg-slate-50 border border-slate-200'
+                      }`}
+                    >
+                      {sup.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="my-6 py-4 px-3 rounded-xl bg-slate-50/70 border border-dashed border-slate-200 text-center flex flex-col items-center justify-center">
+                <div className="h-9 w-9 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mb-2">
+                  <Truck className="h-5 w-5" />
                 </div>
-              ))}
-            </div>
+                <span className="text-xs font-semibold text-slate-700">No Suppliers Added</span>
+                <span className="text-[11px] text-slate-400 mt-0.5">
+                  Register vendors to manage procurement & terms
+                </span>
+              </div>
+            )}
           </div>
 
           <button
@@ -1061,7 +1138,7 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
             onClick={() => onNavigate && onNavigate('vendors')}
             className="w-full mt-4 py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
           >
-            Review Orders <ArrowRight className="h-3.5 w-3.5" />
+            Review Suppliers & Orders <ArrowRight className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>

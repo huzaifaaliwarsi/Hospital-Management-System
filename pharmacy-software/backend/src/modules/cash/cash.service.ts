@@ -93,9 +93,13 @@ export const cashService = {
 
     return prisma.$transaction(async (tx) => {
       if (body.decision === 'ACCEPTED') {
-        // Fold every physical-cash entry up to this settlement's period into it — Expected Cash resets to 0 going forward.
+        // Fold every physical-cash entry that existed as of submission into it — Expected Cash resets to 0 going
+        // forward. Must use `submittedAt` (a precise timestamp), not `periodTo` (a date-only audit-period label):
+        // `periodTo` parses to midnight UTC of that date, which would exclude every entry from later that same day —
+        // exactly the entries `submitSettlement`'s `expectedCash()` total already included with no date filter at
+        // all. Using periodTo here left same-day cash permanently unsettled even after approval.
         await tx.cashLedgerEntry.updateMany({
-          where: { portalUserId: settlement.portalUserId, isPhysicalCash: true, isSettled: false, occurredAt: { lte: settlement.periodTo } },
+          where: { portalUserId: settlement.portalUserId, isPhysicalCash: true, isSettled: false, occurredAt: { lte: settlement.submittedAt } },
           data: { isSettled: true },
         });
         await tx.cashLedgerEntry.create({

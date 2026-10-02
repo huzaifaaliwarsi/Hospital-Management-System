@@ -16,8 +16,12 @@ export const UsersPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const toast = useToast();
 
-  const targetRole = currentUser?.role === 'SUPER_ADMIN' ? 'ADMIN' : 'SALES_DISPENSING';
-  const targetLabel = targetRole === 'ADMIN' ? 'Admin' : 'Sales';
+  const [roleInput, setRoleInput] = useState<'ADMIN' | 'SALES_DISPENSING'>(
+    currentUser?.role === 'SUPER_ADMIN' ? 'ADMIN' : 'SALES_DISPENSING'
+  );
+
+  const targetRole = currentUser?.role === 'SUPER_ADMIN' ? roleInput : 'SALES_DISPENSING';
+  const targetLabel = targetRole === 'ADMIN' ? 'Admin' : 'Sales & Dispensing';
 
   const load = () => {
     setLoading(true);
@@ -71,7 +75,7 @@ export const UsersPage: React.FC = () => {
     {
       key: 'username',
       header: 'Username',
-      width: '150px',
+      width: '140px',
       render: (u) => (
         <span className="font-bold text-slate-900 text-xs tracking-wider whitespace-nowrap">
           {u.username}
@@ -86,6 +90,34 @@ export const UsersPage: React.FC = () => {
           {u.fullName}
         </span>
       ),
+    },
+    {
+      key: 'role',
+      header: 'Staff Role',
+      align: 'center',
+      width: '160px',
+      render: (u) => {
+        const role = u.role || 'SALES_DISPENSING';
+        if (role === 'SUPER_ADMIN') {
+          return (
+            <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+              Super Admin
+            </span>
+          );
+        }
+        if (role === 'ADMIN') {
+          return (
+            <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+              Admin
+            </span>
+          );
+        }
+        return (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-emerald-50 text-[#0e7d5a] border border-emerald-200">
+            Sales &amp; Dispensing
+          </span>
+        );
+      },
     },
     {
       key: 'email',
@@ -211,6 +243,18 @@ export const UsersPage: React.FC = () => {
               <button onClick={() => setShowAdd(false)}><X className="h-4 w-4 text-[#94a3b8]" /></button>
             </div>
             <form onSubmit={handleSave} className="p-5 space-y-3">
+              {currentUser?.role === 'SUPER_ADMIN' && (
+                <Field label="Staff Role *">
+                  <select
+                    value={roleInput}
+                    onChange={(e) => setRoleInput(e.target.value as 'ADMIN' | 'SALES_DISPENSING')}
+                    className="input font-semibold text-slate-800"
+                  >
+                    <option value="ADMIN">Admin (Full Branch Operations &amp; Management)</option>
+                    <option value="SALES_DISPENSING">Sales &amp; Dispensing (POS Counter &amp; Sales Desk)</option>
+                  </select>
+                </Field>
+              )}
               <Field label="Full Name *"><input value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} className="input" /></Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Username *"><input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} className="input" /></Field>

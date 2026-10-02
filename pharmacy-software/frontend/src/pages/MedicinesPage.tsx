@@ -52,6 +52,7 @@ const emptyForm = {
   genericName: '',
   strength: '',
   dosageForm: '',
+  category: '',
   categoryId: '',
   batchManaged: true,
   reorderLevel: '10',
@@ -1341,13 +1342,13 @@ export const MedicinesPage: React.FC<{ canEdit: boolean; onNavigate?: (page: str
                     units={unitCatalog}
                     onUnitCreated={(u) => setUnitCatalog((prev) => [...prev, u])}
                     baseUnitId={packaging.baseUnitId}
-                    onBaseUnitIdChange={(id) => setPackaging({ ...packaging, baseUnitId: id })}
+                    onBaseUnitIdChange={(id) => setPackaging((prev) => ({ ...prev, baseUnitId: id }))}
                     baseIsSaleUnit={packaging.baseIsSaleUnit}
-                    onBaseIsSaleUnitChange={(s) => setPackaging({ ...packaging, baseIsSaleUnit: s })}
+                    onBaseIsSaleUnitChange={(s) => setPackaging((prev) => ({ ...prev, baseIsSaleUnit: s }))}
                     defaultPurchaseUnitId={packaging.defaultPurchaseUnitId}
-                    onDefaultPurchaseUnitIdChange={(id) => setPackaging({ ...packaging, defaultPurchaseUnitId: id })}
+                    onDefaultPurchaseUnitIdChange={(id) => setPackaging((prev) => ({ ...prev, defaultPurchaseUnitId: id }))}
                     levels={packaging.levels}
-                    onLevelsChange={(levels) => setPackaging({ ...packaging, levels })}
+                    onLevelsChange={(levels) => setPackaging((prev) => ({ ...prev, levels }))}
                   />
                 )}
               </div>

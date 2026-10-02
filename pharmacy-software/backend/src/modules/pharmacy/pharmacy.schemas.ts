@@ -21,12 +21,13 @@ export type PackagingLevelInput = z.infer<typeof packagingLevelInputSchema>;
 
 export const createMedicineBodySchema = z.object({
   /// System-generated (MED-0001…) when omitted. Accepted as an explicit override ONLY because an earlier requirement kept Medicine Code editable by an authorized user — unlike every other business code in this app, which is never client-supplied.
-  code: z.string().min(1).max(40).optional(),
-  barcode: z.string().max(64).optional(),
+  code: z.string().max(40).nullable().optional(),
+  barcode: z.string().max(64).nullable().optional(),
   name: z.string().min(1).max(150),
-  genericName: z.string().max(150).optional(),
-  strength: z.string().max(40).optional(),
-  dosageForm: z.string().max(40).optional(),
+  genericName: z.string().max(150).nullable().optional(),
+  strength: z.string().max(40).nullable().optional(),
+  dosageForm: z.string().max(40).nullable().optional(),
+  category: z.string().max(150).nullable().optional(),
   /// Database-driven Therapeutic Category master (Settings -> Medicine Categories) — optional. Pass null to explicitly clear it on update.
   categoryId: z.string().uuid().nullable().optional(),
   /// Configurable packaging (medicine-packaging-plan) — every medicine has one base stock unit.

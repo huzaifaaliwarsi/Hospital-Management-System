@@ -12,10 +12,10 @@ const BCRYPT_ROUNDS = 12;
  * per-module `authorize` policy) — this is exactly the governance step
  * hms-backend's Pharmacy roles are missing today (pharmacy.md §19.1).
  */
-const WHO_CAN_CREATE: Record<PortalRole, PortalRole | null> = {
-  SUPER_ADMIN: 'ADMIN',
-  ADMIN: 'SALES_DISPENSING',
-  SALES_DISPENSING: null,
+const WHO_CAN_CREATE: Record<PortalRole, PortalRole[]> = {
+  SUPER_ADMIN: ['ADMIN', 'SALES_DISPENSING'],
+  ADMIN: ['SALES_DISPENSING'],
+  SALES_DISPENSING: [],
 };
 
 const SAFE_SELECT = {
@@ -34,17 +34,23 @@ const SAFE_SELECT = {
 } as const;
 
 export const usersService = {
-  /** Every account the requesting role is allowed to manage — Super Admin sees Admins, Admin sees Sales. */
+  /** Every account the requesting role is allowed to manage — Super Admin sees Admins & Sales, Admin sees Sales. */
   async listManaged(actorRole: PortalRole) {
-    const targetRole = WHO_CAN_CREATE[actorRole];
-    if (!targetRole) throw new AuthorizationError('This role does not manage any accounts');
-    return prisma.portalUser.findMany({ where: { role: targetRole }, select: SAFE_SELECT, orderBy: { createdAt: 'desc' } });
+    const allowedRoles = WHO_CAN_CREATE[actorRole];
+    if (!allowedRoles || allowedRoles.length === 0) {
+      throw new AuthorizationError('This role does not manage any accounts');
+    }
+    return prisma.portalUser.findMany({
+      where: { role: { in: allowedRoles } },
+      select: SAFE_SELECT,
+      orderBy: { createdAt: 'desc' },
+    });
   },
 
   async create(body: CreateUserBody, actorId: string, actorRole: PortalRole) {
-    const allowedTarget = WHO_CAN_CREATE[actorRole];
-    if (!allowedTarget || body.role !== allowedTarget) {
-      throw new AuthorizationError(`${actorRole} may only create ${allowedTarget ?? 'no'} accounts`);
+    const allowedRoles = WHO_CAN_CREATE[actorRole];
+    if (!allowedRoles || !allowedRoles.includes(body.role)) {
+      throw new AuthorizationError(`${actorRole} may only create ${allowedRoles.join(', ') || 'no'} accounts`);
     }
 
     const existing = await prisma.portalUser.findFirst({
@@ -72,7 +78,7 @@ export const usersService = {
     const target = await prisma.portalUser.findUnique({ where: { id } });
     if (!target) throw new NotFoundError('User not found');
     if (target.isProtected) throw new AuthorizationError('The protected Super Admin account cannot be changed');
-    if (WHO_CAN_CREATE[actorRole] !== target.role) {
+    if (!WHO_CAN_CREATE[actorRole].includes(target.role as any)) {
       throw new AuthorizationError(`${actorRole} may not manage a ${target.role} account`);
     }
     return prisma.portalUser.update({ where: { id }, data: { status: body.status }, select: SAFE_SELECT });
@@ -82,7 +88,7 @@ export const usersService = {
     const target = await prisma.portalUser.findUnique({ where: { id } });
     if (!target) throw new NotFoundError('User not found');
     if (target.isProtected) throw new AuthorizationError('The protected Super Admin account cannot be changed');
-    if (WHO_CAN_CREATE[actorRole] !== target.role) {
+    if (!WHO_CAN_CREATE[actorRole].includes(target.role as any)) {
       throw new AuthorizationError(`${actorRole} may not manage a ${target.role} account`);
     }
     if (body.newPassword.length < 8) throw new ValidationError('Password must be at least 8 characters');

@@ -271,6 +271,20 @@ export const MedicinePackagingFields: React.FC<Props> = ({
     return list;
   }, [baseUnitId, baseUnitName, calculation.calculatedLevels]);
 
+  // Dynamic chain summary (e.g. 1 Box = 10 Strip • 1 Strip = 10 Tablet ➔ 1 Box = 100 Tablets)
+  const chainSummary = useMemo(() => {
+    if (!baseUnitId || calculation.calculatedLevels.length === 0) return null;
+    const parts = calculation.calculatedLevels.map(
+      (lvl) => `1 ${lvl.unitName} = ${lvl.relativeQty} ${lvl.toUnitName}`
+    );
+    const highest = calculation.calculatedLevels[0];
+    if (!highest) return null;
+    return {
+      chainText: parts.join('  •  '),
+      totalText: `1 ${highest.unitName} = ${highest.conversionToBase} ${baseUnitName || 'base unit'}s`,
+    };
+  }, [baseUnitId, baseUnitName, calculation.calculatedLevels]);
+
   // Keep Default Purchase Unit valid, and smartly auto-select highest pack when a new pack is created
   useEffect(() => {
     if (!baseUnitId) return;
@@ -337,114 +351,101 @@ export const MedicinePackagingFields: React.FC<Props> = ({
   };
 
   return (
-    <div className="space-y-3 text-xs">
+    <div className="space-y-3.5 text-xs">
       {/* ─────────────────────────────────────────────────────────────
-          ROW 1: BASE UNIT & DEFAULT PURCHASE UNIT (Side-by-Side)
+          STEP 1: BASE STOCK UNIT (Full Width, Crisp & Aligned)
           ───────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {/* Base Unit */}
-        <div>
-          <label className="block font-bold text-slate-800 mb-1">
-            Base Stock Unit *
-            <span className="ml-1.5 font-normal text-[11px] text-slate-400">(Smallest dispensed unit)</span>
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+            <span className="h-5 w-5 rounded-full bg-emerald-100 text-[#08775A] font-extrabold flex items-center justify-center text-[10px]">
+              1
+            </span>
+            <span>Base Stock Unit *</span>
           </label>
-          {quickAddFor === 'base' ? (
-            <div className="flex items-center gap-1.5">
-              <input
-                autoFocus
-                value={quickAddName}
-                onChange={(e) => setQuickAddName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleQuickAddUnit('base'))}
-                placeholder="e.g. Tablet"
-                className="flex-1 h-9 px-3 bg-white border border-[#0e7d5a] rounded-xl focus:outline-none text-xs"
-              />
-              <button
-                type="button"
-                disabled={creatingUnit}
-                onClick={() => handleQuickAddUnit('base')}
-                className="h-9 px-3 bg-[#0e7d5a] text-white rounded-xl font-semibold disabled:opacity-60 cursor-pointer"
-              >
-                {creatingUnit ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save'}
-              </button>
-              <button
-                type="button"
-                onClick={() => { setQuickAddFor(null); setQuickAddName(''); }}
-                className="h-9 w-9 flex items-center justify-center border border-slate-200 rounded-xl text-slate-400 hover:bg-slate-50 cursor-pointer"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-1.5">
-              <select
-                value={baseUnitId}
-                onChange={(e) => {
-                  const newId = e.target.value;
-                  onBaseUnitIdChange(newId);
-                  if (levels.length > 0) {
-                    onLevelsChange(
-                      levels.map((l) => (!l.toUnitId || l.toUnitId === baseUnitId ? { ...l, toUnitId: newId } : l))
-                    );
-                  }
-                  if (!defaultPurchaseUnitId || defaultPurchaseUnitId === baseUnitId) {
-                    onDefaultPurchaseUnitIdChange(newId);
-                  }
-                }}
-                className="flex-1 h-9 px-3 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
-              >
-                <option value="">Select Base Unit (e.g. Tablet)…</option>
-                {units.map((u) => (
-                  <option key={u.id} value={u.id}>{u.name}</option>
-                ))}
-              </select>
-              <button
-                type="button"
-                onClick={() => { setQuickAddFor('base'); setQuickAddName(''); }}
-                title="Create a new unit"
-                className="h-9 px-2.5 flex items-center gap-1 border border-dashed border-slate-300 text-slate-600 hover:border-[#0e7d5a] hover:text-[#0e7d5a] rounded-xl text-xs font-semibold cursor-pointer shrink-0"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                <span>New</span>
-              </button>
-            </div>
-          )}
+          <span className="text-[11px] text-slate-400 font-normal">
+            Smallest loose unit counted in inventory
+          </span>
         </div>
 
-        {/* Default Purchase Unit */}
-        <div>
-          <label className="block font-bold text-slate-800 mb-1">
-            Default Purchase Unit *
-            <span className="ml-1.5 font-normal text-[11px] text-slate-400">(Vendor purchase unit)</span>
-          </label>
-          <select
-            value={defaultPurchaseUnitId}
-            onChange={(e) => onDefaultPurchaseUnitIdChange(e.target.value)}
-            disabled={purchaseUnitChoices.length === 0}
-            className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a] disabled:bg-slate-50 disabled:text-slate-400"
-          >
-            {purchaseUnitChoices.length === 0 && <option value="">Select Base Unit first…</option>}
-            {purchaseUnitChoices.map((c) => (
-              <option key={c.unitId} value={c.unitId}>{c.label}</option>
-            ))}
-          </select>
-        </div>
+        {quickAddFor === 'base' ? (
+          <div className="flex items-center gap-2">
+            <input
+              autoFocus
+              value={quickAddName}
+              onChange={(e) => setQuickAddName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleQuickAddUnit('base'))}
+              placeholder="e.g. Tablet, Capsule, Vial"
+              className="flex-1 h-9 px-3 bg-white border border-[#0e7d5a] rounded-xl font-medium focus:outline-none text-xs"
+            />
+            <button
+              type="button"
+              disabled={creatingUnit}
+              onClick={() => handleQuickAddUnit('base')}
+              className="h-9 px-4 bg-[#0e7d5a] text-white rounded-xl font-bold disabled:opacity-60 cursor-pointer shadow-2xs hover:bg-[#0c6b4d] transition-colors"
+            >
+              {creatingUnit ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save Unit'}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setQuickAddFor(null); setQuickAddName(''); }}
+              className="h-9 w-9 flex items-center justify-center border border-slate-200 rounded-xl text-slate-400 hover:bg-slate-50 cursor-pointer"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <select
+              value={baseUnitId}
+              onChange={(e) => {
+                const newId = e.target.value;
+                onBaseUnitIdChange(newId);
+                if (levels.length > 0) {
+                  onLevelsChange(
+                    levels.map((l) => (!l.toUnitId || l.toUnitId === baseUnitId ? { ...l, toUnitId: newId } : l))
+                  );
+                }
+              }}
+              className="flex-1 h-9 px-3 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
+            >
+              <option value="">Select Base Unit (e.g. Tablet, Capsule, Bottle, Vial)…</option>
+              {units.map((u) => (
+                <option key={u.id} value={u.id}>{u.name}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => { setQuickAddFor('base'); setQuickAddName(''); }}
+              title="Add a new unit to the catalog"
+              className="h-9 px-3 flex items-center gap-1.5 border border-dashed border-emerald-300 text-[#0e7d5a] bg-emerald-50/50 hover:bg-emerald-50 rounded-xl text-xs font-bold cursor-pointer shrink-0 transition-colors"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>New Unit</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ─────────────────────────────────────────────────────────────
-          ROW 2: PACKAGING BREAKDOWN (CLEAN & COMPACT)
+          STEP 2: PACKAGING HIERARCHY (Box / Strip breakdown)
           ───────────────────────────────────────────────────────────── */}
-      <div className="bg-slate-50/80 border border-slate-200/90 rounded-xl p-3 space-y-2">
+      <div className="bg-slate-50/80 border border-slate-200/90 rounded-xl p-3 space-y-2.5">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5 text-slate-700 font-bold">
-            <Layers className="h-3.5 w-3.5 text-[#0e7d5a]" />
+          <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+            <span className="h-5 w-5 rounded-full bg-emerald-100 text-[#08775A] font-extrabold flex items-center justify-center text-[10px]">
+              2
+            </span>
             <span>Packaging Hierarchy</span>
-            <span className="font-normal text-[11px] text-slate-400">(e.g. 1 Box = 10 Strip, 1 Strip = 10 Tablet)</span>
-          </div>
+            <span className="font-normal text-[11px] text-slate-400 ml-1">
+              (Optional: Box, Strip, Carton)
+            </span>
+          </label>
           <button
             type="button"
             onClick={addLevel}
             disabled={!baseUnitId}
-            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-[#0e7d5a] bg-white border border-emerald-200 rounded-lg hover:bg-emerald-50 disabled:opacity-40 transition-colors cursor-pointer shadow-2xs"
+            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-[#0e7d5a] bg-white border border-emerald-300 rounded-lg hover:bg-emerald-50 disabled:opacity-40 transition-colors cursor-pointer shadow-2xs"
           >
             <Plus className="h-3.5 w-3.5" />
             <span>Add Level</span>
@@ -452,19 +453,22 @@ export const MedicinePackagingFields: React.FC<Props> = ({
         </div>
 
         {levels.length === 0 ? (
-          <div className="py-2 px-3 bg-white border border-dashed border-slate-200 rounded-lg text-slate-500 text-[11px] flex items-center justify-between">
-            <span>Single item — no Box or Strip packaging configured.</span>
+          <div className="py-2.5 px-3 bg-white border border-dashed border-slate-200 rounded-lg text-slate-500 text-[11px] flex items-center justify-between">
+            <span>
+              Single item only — no Box or Strip configured.
+              {baseUnitName ? ` Stock will be tracked strictly in ${baseUnitName}s.` : ''}
+            </span>
             <button
               type="button"
               onClick={addLevel}
               disabled={!baseUnitId}
-              className="text-[11px] font-semibold text-[#0e7d5a] hover:underline cursor-pointer disabled:opacity-40"
+              className="text-[11px] font-bold text-[#0e7d5a] hover:underline cursor-pointer disabled:opacity-40 ml-2 shrink-0"
             >
               + Configure Box / Strip
             </button>
           </div>
         ) : (
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             {levels.map((lvl, idx) => {
               const effectiveToId = lvl.toUnitId || baseUnitId;
               const isQuickAddingThis = quickAddFor === idx;
@@ -473,9 +477,9 @@ export const MedicinePackagingFields: React.FC<Props> = ({
               return (
                 <div
                   key={idx}
-                  className="flex items-center gap-2 bg-white px-2.5 py-1.5 rounded-lg border border-slate-200"
+                  className="flex flex-wrap items-center gap-2 bg-white px-3 py-2 rounded-lg border border-slate-200 shadow-2xs"
                 >
-                  <span className="text-xs font-bold text-slate-400 shrink-0">1</span>
+                  <span className="text-xs font-extrabold text-slate-400 shrink-0">1</span>
 
                   {/* Pack Unit */}
                   <div className="w-32 shrink-0">
@@ -487,20 +491,20 @@ export const MedicinePackagingFields: React.FC<Props> = ({
                           onChange={(e) => setQuickAddName(e.target.value)}
                           onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleQuickAddUnit(idx))}
                           placeholder="Pack name"
-                          className="w-full h-7.5 px-2 bg-white border border-[#0e7d5a] rounded-md text-xs focus:outline-none"
+                          className="w-full h-8 px-2 bg-white border border-[#0e7d5a] rounded-md text-xs focus:outline-none"
                         />
                         <button
                           type="button"
                           disabled={creatingUnit}
                           onClick={() => handleQuickAddUnit(idx)}
-                          className="h-7.5 px-1.5 bg-[#0e7d5a] text-white rounded-md text-[11px] font-semibold cursor-pointer"
+                          className="h-8 px-2 bg-[#0e7d5a] text-white rounded-md text-[11px] font-bold cursor-pointer"
                         >
                           OK
                         </button>
                         <button
                           type="button"
                           onClick={() => { setQuickAddFor(null); setQuickAddName(''); }}
-                          className="h-7.5 w-6 flex items-center justify-center text-slate-400 cursor-pointer"
+                          className="h-8 w-6 flex items-center justify-center text-slate-400 cursor-pointer"
                         >
                           <X className="h-3.5 w-3.5" />
                         </button>
@@ -516,7 +520,7 @@ export const MedicinePackagingFields: React.FC<Props> = ({
                             updateLevel(idx, { unitId: e.target.value });
                           }
                         }}
-                        className="w-full h-7.5 px-2 bg-slate-50 hover:bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
+                        className="w-full h-8 px-2 bg-slate-50 hover:bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
                       >
                         <option value="">Select Pack…</option>
                         {units
@@ -529,7 +533,7 @@ export const MedicinePackagingFields: React.FC<Props> = ({
                     )}
                   </div>
 
-                  <span className="text-xs font-bold text-slate-400 shrink-0">=</span>
+                  <span className="text-xs font-extrabold text-slate-400 shrink-0">=</span>
 
                   {/* Quantity */}
                   <input
@@ -539,7 +543,7 @@ export const MedicinePackagingFields: React.FC<Props> = ({
                     value={lvl.relativeQty}
                     onChange={(e) => updateLevel(idx, { relativeQty: e.target.value })}
                     placeholder="Qty"
-                    className="w-16 h-7.5 px-2 bg-slate-50 hover:bg-white border border-slate-200 rounded-md text-xs text-center font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
+                    className="w-16 h-8 px-2 bg-slate-50 hover:bg-white border border-slate-200 rounded-md text-xs text-center font-extrabold text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
                   />
 
                   {/* Sub Unit */}
@@ -547,7 +551,7 @@ export const MedicinePackagingFields: React.FC<Props> = ({
                     <select
                       value={effectiveToId}
                       onChange={(e) => updateLevel(idx, { toUnitId: e.target.value })}
-                      className="w-full h-7.5 px-2 bg-slate-50 hover:bg-white border border-slate-200 rounded-md text-xs font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
+                      className="w-full h-8 px-2 bg-slate-50 hover:bg-white border border-slate-200 rounded-md text-xs font-semibold text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
                     >
                       {baseUnitId && (
                         <option value={baseUnitId}>{baseUnitName || 'Base Unit'}</option>
@@ -562,7 +566,7 @@ export const MedicinePackagingFields: React.FC<Props> = ({
 
                   {/* Calculated Conversion Result Pill */}
                   {flatVal && flatVal > 1 && (
-                    <span className="hidden sm:inline-flex items-center text-[11px] font-bold text-emerald-800 bg-emerald-50/90 border border-emerald-200/80 px-2 py-0.5 rounded-md ml-auto whitespace-nowrap">
+                    <span className="inline-flex items-center text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded-md whitespace-nowrap">
                       = {flatVal} {baseUnitName}s
                     </span>
                   )}
@@ -572,17 +576,34 @@ export const MedicinePackagingFields: React.FC<Props> = ({
                     type="button"
                     onClick={() => removeLevel(idx)}
                     title="Remove level"
-                    className="h-7 w-7 flex items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors cursor-pointer shrink-0 ml-auto sm:ml-0"
+                    className="h-8 w-8 flex items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors cursor-pointer shrink-0 ml-auto"
                   >
-                    <X className="h-3.5 w-3.5" />
+                    <X className="h-4 w-4" />
                   </button>
                 </div>
               );
             })}
 
-            {/* Compact Errors */}
+            {/* Chain breakdown summary badge */}
+            {chainSummary && calculation.errors.length === 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-emerald-50/80 border border-emerald-200/90 rounded-lg text-xs font-semibold text-emerald-950 mt-1">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[9.5px] uppercase tracking-wider font-extrabold px-1.5 py-0.5 rounded bg-[#08775A] text-white">
+                    Summary
+                  </span>
+                  <span className="text-emerald-900 font-medium">
+                    {chainSummary.chainText}
+                  </span>
+                </div>
+                <div className="font-extrabold text-[#08775A] bg-white px-2.5 py-0.5 rounded-md border border-emerald-200 shadow-2xs font-mono">
+                  {chainSummary.totalText}
+                </div>
+              </div>
+            )}
+
+            {/* Errors */}
             {calculation.errors.length > 0 && (
-              <div className="p-2 bg-rose-50 border border-rose-200 rounded-lg space-y-0.5">
+              <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg space-y-1">
                 {calculation.errors.map((err, i) => (
                   <div key={i} className="flex items-center gap-1.5 text-[11px] font-medium text-rose-700">
                     <AlertCircle className="h-3 w-3 shrink-0" />
@@ -596,23 +617,57 @@ export const MedicinePackagingFields: React.FC<Props> = ({
       </div>
 
       {/* ─────────────────────────────────────────────────────────────
-          ROW 3: POS SELLABLE CHECKBOXES (Compact Horizontal Bar)
+          STEP 3: DEFAULT PURCHASE UNIT (Full Width, Intuitive)
+          ───────────────────────────────────────────────────────────── */}
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+            <span className="h-5 w-5 rounded-full bg-emerald-100 text-[#08775A] font-extrabold flex items-center justify-center text-[10px]">
+              3
+            </span>
+            <span>Default Purchase Unit *</span>
+          </label>
+          <span className="text-[11px] text-slate-400 font-normal">
+            Vendor order &amp; billing unit (e.g. Box)
+          </span>
+        </div>
+
+        <select
+          value={defaultPurchaseUnitId}
+          onChange={(e) => onDefaultPurchaseUnitIdChange(e.target.value)}
+          disabled={purchaseUnitChoices.length === 0}
+          className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a] disabled:bg-slate-50 disabled:text-slate-400"
+        >
+          {purchaseUnitChoices.length === 0 && <option value="">Select Base Unit first…</option>}
+          {purchaseUnitChoices.map((c) => (
+            <option key={c.unitId} value={c.unitId}>{c.label}</option>
+          ))}
+        </select>
+        {defaultPurchaseUnitId && (
+          <p className="text-[10.5px] text-slate-500 font-medium">
+            Vendor purchases will default to this unit. Stock will automatically convert into <strong className="text-slate-700 font-bold">{baseUnitName || 'base units'}</strong>.
+          </p>
+        )}
+      </div>
+
+      {/* ─────────────────────────────────────────────────────────────
+          POS SELLABLE UNITS (Horizontal Toggle Bar)
           ───────────────────────────────────────────────────────────── */}
       {baseUnitId && (
-        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100">
+        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
           <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1 shrink-0">
             <Package className="h-3.5 w-3.5 text-[#0e7d5a]" />
-            POS Sellable:
+            POS Sellable Units:
           </span>
 
-          <label className="inline-flex items-center gap-1.5 px-2 py-1 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 cursor-pointer select-none">
+          <label className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 cursor-pointer select-none">
             <input
               type="checkbox"
               checked={baseIsSaleUnit}
               onChange={(e) => onBaseIsSaleUnitChange(e.target.checked)}
               className="rounded text-[#0e7d5a] focus:ring-[#0e7d5a]"
             />
-            <span>{baseUnitName || 'Base'}</span>
+            <span>{baseUnitName || 'Base Unit'}</span>
           </label>
 
           {calculation.calculatedLevels.map((lvl) => {
@@ -622,7 +677,7 @@ export const MedicinePackagingFields: React.FC<Props> = ({
             return (
               <label
                 key={lvl.unitId}
-                className="inline-flex items-center gap-1.5 px-2 py-1 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 cursor-pointer select-none"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 cursor-pointer select-none"
               >
                 <input
                   type="checkbox"
@@ -635,7 +690,7 @@ export const MedicinePackagingFields: React.FC<Props> = ({
                   className="rounded text-[#0e7d5a] focus:ring-[#0e7d5a]"
                 />
                 <span>{lvl.unitName}</span>
-                <span className="text-[10px] font-normal text-slate-400">({lvl.conversionToBase})</span>
+                <span className="text-[10px] font-normal text-slate-400">({lvl.conversionToBase} {baseUnitName}s)</span>
               </label>
             );
           })}

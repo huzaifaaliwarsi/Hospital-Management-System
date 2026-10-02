@@ -13,8 +13,13 @@ async function vendorBalance(vendorId: string): Promise<Decimal> {
 
 /** medicine-packaging-plan — full chain, largest pack first, frozen onto a batch at first purchase. */
 async function buildPackagingSnapshotChain(medicineId: string, tx: Prisma.TransactionClient) {
+  const medicine = await tx.medicineMaster.findUnique({ where: { id: medicineId }, include: { baseUnit: true } });
   const levels = await tx.medicinePackagingLevel.findMany({ where: { medicineId, isActive: true }, include: { unit: true }, orderBy: { level: 'desc' } });
-  return levels.map((l) => ({ unit: l.unit.name, conversionToBase: l.conversionToBase.toNumber() }));
+  const chain = levels.map((l) => ({ unit: l.unit.name, conversionToBase: l.conversionToBase.toNumber() }));
+  if (medicine?.baseUnit && !chain.some((c) => c.conversionToBase === 1)) {
+    chain.push({ unit: medicine.baseUnit.name, conversionToBase: 1 });
+  }
+  return chain;
 }
 
 /**
@@ -46,13 +51,32 @@ interface ResolvedPackaging {
  */
 async function resolvePackaging(
   line: CreatePurchaseBody['lines'][number],
-  medicine: { id: string; name: string },
+  medicine: { id: string; name: string; baseUnitId?: string },
   tx: Prisma.TransactionClient,
 ): Promise<ResolvedPackaging> {
   if (!line.packagingOverride) {
-    const packagingLevel = await tx.medicinePackagingLevel.findFirst({ where: { medicineId: line.medicineId, unitId: line.purchaseUnitId, isActive: true, isPurchaseUnit: true } });
-    if (!packagingLevel) throw new ValidationError(`Selected unit is not configured as a purchase unit for "${medicine.name}"`);
-    return { conversionToBase: packagingLevel.conversionToBase, snapshotChain: await buildPackagingSnapshotChain(line.medicineId, tx), overridden: false };
+    // 1. Check if the selected unit is directly the medicine's base unit
+    if (medicine.baseUnitId && line.purchaseUnitId === medicine.baseUnitId) {
+      return {
+        conversionToBase: new Decimal(1),
+        snapshotChain: await buildPackagingSnapshotChain(line.medicineId, tx),
+        overridden: false,
+      };
+    }
+
+    // 2. Check if the selected unit is any configured packaging level for this medicine
+    const packagingLevel = await tx.medicinePackagingLevel.findFirst({
+      where: { medicineId: line.medicineId, unitId: line.purchaseUnitId, isActive: true },
+    });
+    if (packagingLevel) {
+      return {
+        conversionToBase: packagingLevel.conversionToBase,
+        snapshotChain: await buildPackagingSnapshotChain(line.medicineId, tx),
+        overridden: false,
+      };
+    }
+
+    throw new ValidationError(`Selected unit is not configured as a purchase or packaging unit for "${medicine.name}"`);
   }
 
   const override = line.packagingOverride;
@@ -124,12 +148,52 @@ export const vendorsService = {
   async getLedger(vendorId: string) {
     const vendor = await prisma.vendor.findUnique({ where: { id: vendorId } });
     if (!vendor) throw new NotFoundError('Vendor not found');
-    const entries = await prisma.vendorLedgerEntry.findMany({ where: { vendorId }, include: { actor: { select: { id: true, fullName: true, username: true } } }, orderBy: { createdAt: 'asc' } });
+    const entries = await prisma.vendorLedgerEntry.findMany({
+      where: { vendorId },
+      include: { actor: { select: { id: true, fullName: true, username: true } } },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const purchaseIds = entries
+      .filter((e) => e.referenceTable === 'purchases' && e.referenceId)
+      .map((e) => e.referenceId as string);
+
+    const purchases = purchaseIds.length > 0
+      ? await prisma.purchase.findMany({
+          where: { id: { in: purchaseIds } },
+          select: { id: true, purchaseNumber: true, vendorInvoiceNo: true },
+        })
+      : [];
+    const purchaseMap = new Map(purchases.map((p) => [p.id, p]));
 
     let running = new Decimal(0);
     const rows = entries.map((e) => {
       running = running.plus(e.amount);
-      return { ...e, runningBalance: running };
+      const purchase = e.referenceId ? purchaseMap.get(e.referenceId) : null;
+      let voucherNo = e.referenceNo;
+      if (!voucherNo) {
+        if (purchase) {
+          voucherNo = e.entryType === 'PAYMENT' ? `${purchase.purchaseNumber}-PAY` : purchase.purchaseNumber;
+        } else if (e.description?.includes('PO-')) {
+          const match = e.description.match(/PO-\d+/);
+          voucherNo = match ? (e.entryType === 'PAYMENT' ? `${match[0]}-PAY` : match[0]) : null;
+        } else if (e.description?.includes('VPAY-')) {
+          voucherNo = e.description.match(/VPAY-\d+/)?.[0] ?? null;
+        } else if (e.description?.includes('RET-')) {
+          voucherNo = e.description.match(/RET-\d+/)?.[0] ?? null;
+        }
+      }
+      if (!voucherNo) {
+        voucherNo = `VND-${e.id.slice(0, 6).toUpperCase()}`;
+      }
+
+      return {
+        ...e,
+        referenceNo: voucherNo,
+        voucherNo,
+        vendorInvoiceNo: purchase?.vendorInvoiceNo || null,
+        runningBalance: running,
+      };
     });
     return { vendor, currentPayable: running, entries: rows };
   },
@@ -268,11 +332,11 @@ export const vendorsService = {
           await tx.medicineMaster.update({ where: { id: medicineId }, data: { saleRate } });
         }
         await tx.vendorLedgerEntry.create({
-          data: { vendorId: body.vendorId, entryType: 'PURCHASE_CREDIT', amount: total, description: `Purchase ${purchaseNumber}`, referenceTable: 'purchases', referenceId: purchase.id, actorId },
+          data: { vendorId: body.vendorId, entryType: 'PURCHASE_CREDIT', amount: total, referenceNo: purchaseNumber, description: `Purchase ${purchaseNumber}`, referenceTable: 'purchases', referenceId: purchase.id, actorId },
         });
         if (paidNow.greaterThan(0)) {
           await tx.vendorLedgerEntry.create({
-            data: { vendorId: body.vendorId, entryType: 'PAYMENT', amount: paidNow.negated(), description: `Paid on purchase ${purchaseNumber}`, referenceTable: 'purchases', referenceId: purchase.id, actorId },
+            data: { vendorId: body.vendorId, entryType: 'PAYMENT', amount: paidNow.negated(), referenceNo: `${purchaseNumber}-PAY`, description: `Paid on purchase ${purchaseNumber}`, referenceTable: 'purchases', referenceId: purchase.id, actorId },
           });
           await tx.cashLedgerEntry.create({
             data: { portalUserId: actorId, direction: 'OUT', amount: paidNow, category: 'VENDOR_PAYMENT', isPhysicalCash: body.paymentType === 'CASH', referenceTable: 'purchases', referenceId: purchase.id },
@@ -300,11 +364,11 @@ export const vendorsService = {
         }
       }
       await tx.vendorLedgerEntry.create({
-        data: { vendorId: purchase.vendorId, entryType: 'PURCHASE_CREDIT', amount: purchase.total, description: `Purchase ${purchase.purchaseNumber}`, referenceTable: 'purchases', referenceId: purchase.id, actorId },
+        data: { vendorId: purchase.vendorId, entryType: 'PURCHASE_CREDIT', amount: purchase.total, referenceNo: purchase.purchaseNumber, description: `Purchase ${purchase.purchaseNumber}`, referenceTable: 'purchases', referenceId: purchase.id, actorId },
       });
       if (purchase.paidNow.greaterThan(0)) {
         await tx.vendorLedgerEntry.create({
-          data: { vendorId: purchase.vendorId, entryType: 'PAYMENT', amount: purchase.paidNow.negated(), description: `Paid on purchase ${purchase.purchaseNumber}`, referenceTable: 'purchases', referenceId: purchase.id, actorId },
+          data: { vendorId: purchase.vendorId, entryType: 'PAYMENT', amount: purchase.paidNow.negated(), referenceNo: `${purchase.purchaseNumber}-PAY`, description: `Paid on purchase ${purchase.purchaseNumber}`, referenceTable: 'purchases', referenceId: purchase.id, actorId },
         });
         await tx.cashLedgerEntry.create({
           data: { portalUserId: actorId, direction: 'OUT', amount: purchase.paidNow, category: 'VENDOR_PAYMENT', isPhysicalCash: purchase.paymentType === 'CASH', referenceTable: 'purchases', referenceId: purchase.id },

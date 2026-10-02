@@ -84,8 +84,8 @@ export const AddMedicineModal: React.FC<Props> = ({ open, onClose, units, onUnit
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.code.trim() || !form.name.trim()) {
-      toast.error('Code and Name are required.');
+    if (!form.name.trim()) {
+      toast.error('Medicine Name is required.');
       return;
     }
     const packagingError = validatePackagingState(packaging, units);
@@ -96,7 +96,7 @@ export const AddMedicineModal: React.FC<Props> = ({ open, onClose, units, onUnit
     setSaving(true);
     try {
       const medicine = await pharmacyApi.createMedicine({
-        code: form.code.trim(),
+        code: form.code.trim() || undefined,
         barcode: form.barcode.trim() || undefined,
         name: form.name.trim(),
         genericName: form.genericName.trim() || undefined,
@@ -143,12 +143,17 @@ export const AddMedicineModal: React.FC<Props> = ({ open, onClose, units, onUnit
 
         <form onSubmit={handleSave} className="p-6 space-y-4 text-xs max-h-[80vh] overflow-y-auto">
           <div>
-            <label className="block font-semibold text-slate-700 mb-1">Medicine Code *</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="font-semibold text-slate-700">
+                Medicine Code <span className="font-normal text-slate-400">(Optional)</span>
+              </label>
+              <span className="text-[10.5px] text-slate-400">Auto-assigned if left blank</span>
+            </div>
             <div className="flex items-center gap-1.5">
               <input
                 value={form.code}
                 onChange={(e) => setForm({ ...form, code: e.target.value })}
-                placeholder="e.g. MED-010"
+                placeholder="e.g. MED-0010"
                 className="flex-1 h-9 px-3 bg-white border border-slate-200 rounded-xl font-mono focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
               />
               <button
@@ -172,11 +177,13 @@ export const AddMedicineModal: React.FC<Props> = ({ open, onClose, units, onUnit
               />
             </div>
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">Strength</label>
+              <label className="block font-semibold text-slate-700 mb-1">
+                Strength <span className="font-normal text-slate-400">(Optional)</span>
+              </label>
               <input
                 value={form.strength}
                 onChange={(e) => setForm({ ...form, strength: e.target.value })}
-                placeholder="e.g. 625mg"
+                placeholder="e.g. 625mg, 20mg"
                 className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
               />
             </div>
@@ -184,7 +191,9 @@ export const AddMedicineModal: React.FC<Props> = ({ open, onClose, units, onUnit
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">Generic Name</label>
+              <label className="block font-semibold text-slate-700 mb-1">
+                Generic Name <span className="font-normal text-slate-400">(Optional)</span>
+              </label>
               <input
                 value={form.genericName}
                 onChange={(e) => setForm({ ...form, genericName: e.target.value })}
@@ -193,12 +202,14 @@ export const AddMedicineModal: React.FC<Props> = ({ open, onClose, units, onUnit
               />
             </div>
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">Dosage Form</label>
+              <label className="block font-semibold text-slate-700 mb-1">
+                Dosage Form <span className="font-normal text-slate-400">(Optional)</span>
+              </label>
               <input
                 list="dosage-form-options-add-medicine-modal"
                 value={form.dosageForm}
                 onChange={(e) => setForm({ ...form, dosageForm: e.target.value })}
-                placeholder="e.g. Tablet"
+                placeholder="e.g. Tablet, Syrup, Capsule"
                 className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
               />
               <datalist id="dosage-form-options-add-medicine-modal">
@@ -209,7 +220,9 @@ export const AddMedicineModal: React.FC<Props> = ({ open, onClose, units, onUnit
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">Therapeutic Category</label>
+              <label className="block font-semibold text-slate-700 mb-1">
+                Therapeutic Category <span className="font-normal text-slate-400">(Optional)</span>
+              </label>
               <input
                 value={form.category}
                 onChange={(e) => setForm({ ...form, category: e.target.value })}
@@ -218,7 +231,9 @@ export const AddMedicineModal: React.FC<Props> = ({ open, onClose, units, onUnit
               />
             </div>
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">Barcode (Optional)</label>
+              <label className="block font-semibold text-slate-700 mb-1">
+                Barcode <span className="font-normal text-slate-400">(Optional)</span>
+              </label>
               <input
                 value={form.barcode}
                 onChange={(e) => setForm({ ...form, barcode: e.target.value })}
@@ -234,13 +249,13 @@ export const AddMedicineModal: React.FC<Props> = ({ open, onClose, units, onUnit
               units={units}
               onUnitCreated={onUnitCreated}
               baseUnitId={packaging.baseUnitId}
-              onBaseUnitIdChange={(id) => setPackaging({ ...packaging, baseUnitId: id })}
+              onBaseUnitIdChange={(id) => setPackaging((prev) => ({ ...prev, baseUnitId: id }))}
               baseIsSaleUnit={packaging.baseIsSaleUnit}
-              onBaseIsSaleUnitChange={(s) => setPackaging({ ...packaging, baseIsSaleUnit: s })}
+              onBaseIsSaleUnitChange={(s) => setPackaging((prev) => ({ ...prev, baseIsSaleUnit: s }))}
               defaultPurchaseUnitId={packaging.defaultPurchaseUnitId}
-              onDefaultPurchaseUnitIdChange={(id) => setPackaging({ ...packaging, defaultPurchaseUnitId: id })}
+              onDefaultPurchaseUnitIdChange={(id) => setPackaging((prev) => ({ ...prev, defaultPurchaseUnitId: id }))}
               levels={packaging.levels}
-              onLevelsChange={(levels) => setPackaging({ ...packaging, levels })}
+              onLevelsChange={(levels) => setPackaging((prev) => ({ ...prev, levels }))}
             />
           </div>
 

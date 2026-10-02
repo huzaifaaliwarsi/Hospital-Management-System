@@ -42,10 +42,45 @@ export function emptyPurchaseLine(): PurchaseLineState {
   };
 }
 
-/** Purchase-allowed packaging levels for a medicine — exactly one by design (medicine-packaging-plan "Default Purchase Unit"). */
+/** Purchase-allowed packaging levels for a medicine — includes all configured packaging levels (Box, Strip, etc.) and Base Unit (Tablet). */
 export function purchaseUnitsFor(med: MedicineRow | undefined) {
-  if (!med?.packagingLevels) return [];
-  return [...med.packagingLevels].filter((l) => l.isPurchaseUnit);
+  if (!med) return [];
+  const options: Array<{
+    unitId: string;
+    unit?: { id: string; name: string };
+    conversionToBase: number | string;
+    isPurchaseUnit?: boolean;
+    isBaseUnit?: boolean;
+  }> = [];
+
+  // 1. All configured packaging levels (Box, Strip, Pack...) sorted from highest to lowest conversion
+  if (med.packagingLevels && med.packagingLevels.length > 0) {
+    const sorted = [...med.packagingLevels]
+      .filter((l) => l.unitId)
+      .sort((a, b) => Number(b.conversionToBase) - Number(a.conversionToBase));
+    for (const lvl of sorted) {
+      options.push({
+        unitId: lvl.unitId,
+        unit: lvl.unit || { id: lvl.unitId, name: 'Unit' },
+        conversionToBase: lvl.conversionToBase,
+        isPurchaseUnit: lvl.isPurchaseUnit,
+      });
+    }
+  }
+
+  // 2. Base unit (e.g. Tablet, Piece, Bottle) with conversionToBase = 1
+  const baseUnitId = med.baseUnitId || med.baseUnit?.id;
+  const baseUnitName = med.baseUnit?.name || med.unit || 'Base Unit';
+  if (baseUnitId && !options.some((o) => o.unitId === baseUnitId)) {
+    options.push({
+      unitId: baseUnitId,
+      unit: med.baseUnit || { id: baseUnitId, name: baseUnitName },
+      conversionToBase: 1,
+      isBaseUnit: true,
+    });
+  }
+
+  return options;
 }
 
 function resolveMarkupPercent(
@@ -81,19 +116,26 @@ export const PurchaseLineCard: React.FC<Props> = ({
   onRemove,
   canRemove,
   medicines,
+  units,
   markupRules,
   defaultMarkupPercent,
   onRequestAddMedicine,
 }) => {
   const med = medicines.find((m) => m.id === line.medicineId);
   const purchaseOptions = purchaseUnitsFor(med);
-  const defaultLevel = purchaseOptions.find((o) => o.unitId === line.purchaseUnitId);
+  const selectedLevel = purchaseOptions.find((o) => o.unitId === line.purchaseUnitId) || purchaseOptions[0];
+  const selectedUnitName =
+    selectedLevel?.unit?.name || (units || []).find((u) => u.id === line.purchaseUnitId)?.name || 'Unit';
   const baseUnitName = med?.baseUnit?.name || med?.unit || 'unit';
+
+  const otherCatalogUnits = (units || []).filter(
+    (u) => u.isActive && !purchaseOptions.some((o) => o.unitId === u.id)
+  );
 
   const conversionToBase =
     line.overridePackaging && line.overrideConversion
       ? Number(line.overrideConversion)
-      : Number(defaultLevel?.conversionToBase ?? 1);
+      : Number(selectedLevel?.conversionToBase ?? 1);
 
   const { percent: markupPercent, source: markupSource } = resolveMarkupPercent(
     med,
@@ -119,12 +161,13 @@ export const PurchaseLineCard: React.FC<Props> = ({
   const marginPct = marginPercentOf(calc.effectiveCostPerBaseUnit, finalSaleRate);
 
   const innerLevels = (med?.packagingLevels ?? [])
-    .filter((l) => l.level > 0 && l.unitId !== line.purchaseUnitId)
+    .filter((l) => l.level > 0 && l.unitId !== line.purchaseUnitId && Number(l.conversionToBase) < conversionToBase && Number(l.conversionToBase) > 0)
     .sort((a, b) => Number(b.conversionToBase) - Number(a.conversionToBase));
 
   const selectMedicine = (medicineId: string) => {
     const m = medicines.find((x) => x.id === medicineId);
-    const defaultUnit = purchaseUnitsFor(m)[0];
+    const options = purchaseUnitsFor(m);
+    const defaultUnit = options.find((o) => o.isPurchaseUnit) || options[0];
     onChange({
       medicineId,
       purchaseUnitId: defaultUnit?.unitId ?? '',
@@ -216,9 +259,9 @@ export const PurchaseLineCard: React.FC<Props> = ({
         <div className="pl-9 py-1 text-[11px] text-slate-400 italic">
           Select a medicine from the dropdown above to load its packaging, cost, and pricing calculator.
         </div>
-      ) : purchaseOptions.length === 0 ? (
+      ) : purchaseOptions.length === 0 && otherCatalogUnits.length === 0 ? (
         <div className="pl-9 py-1 text-[11px] text-rose-600 font-medium">
-          This medicine has no Default Purchase Unit configured — please edit it in Inventory &amp; Catalog first.
+          This medicine has no unit configured — please edit it in Inventory &amp; Catalog first.
         </div>
       ) : (
         <div className="pl-9 space-y-2.5">
@@ -228,29 +271,45 @@ export const PurchaseLineCard: React.FC<Props> = ({
             <div>
               <div className="flex items-center justify-between mb-1">
                 <label className="text-[10.5px] font-semibold text-slate-600">Unit</label>
-                {defaultLevel?.conversionToBase && Number(defaultLevel.conversionToBase) > 1 && (
+                {selectedLevel?.conversionToBase && Number(selectedLevel.conversionToBase) > 1 && (
                   <span className="text-[9.5px] text-slate-400 font-mono">
-                    1={Number(defaultLevel.conversionToBase)}{baseUnitName}
+                    1={Number(selectedLevel.conversionToBase)}{baseUnitName}
                   </span>
                 )}
               </div>
-              {purchaseOptions.length > 1 ? (
-                <select
-                  value={line.purchaseUnitId}
-                  onChange={(e) => onChange({ purchaseUnitId: e.target.value })}
-                  className={`${inputCls} font-semibold cursor-pointer`}
-                >
-                  {purchaseOptions.map((o) => (
-                    <option key={o.unitId} value={o.unitId}>
-                      {o.unit?.name}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <div className="h-8 px-2.5 text-xs bg-slate-50 border border-slate-200 rounded-lg flex items-center font-bold text-slate-700">
-                  {defaultLevel?.unit?.name ?? '—'}
-                </div>
-              )}
+              <select
+                value={line.purchaseUnitId || selectedLevel?.unitId || ''}
+                onChange={(e) => {
+                  const newUnitId = e.target.value;
+                  const targetOpt = purchaseOptions.find((o) => o.unitId === newUnitId);
+                  const isCatalogUnit = !targetOpt;
+                  onChange({
+                    purchaseUnitId: newUnitId,
+                    overridePackaging: isCatalogUnit,
+                    overrideConversion: isCatalogUnit ? '' : '',
+                  });
+                }}
+                className={`${inputCls} font-semibold cursor-pointer`}
+              >
+                {purchaseOptions.length > 0 && (
+                  <optgroup label="Medicine Packaging">
+                    {purchaseOptions.map((o) => (
+                      <option key={o.unitId} value={o.unitId}>
+                        {o.unit?.name} {Number(o.conversionToBase) > 1 ? `(= ${o.conversionToBase} ${baseUnitName})` : `(${baseUnitName})`}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {otherCatalogUnits.length > 0 && (
+                  <optgroup label="Other Available Units">
+                    {otherCatalogUnits.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.name} (Custom conversion)
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
             </div>
 
             {/* Quantity */}
@@ -268,7 +327,7 @@ export const PurchaseLineCard: React.FC<Props> = ({
 
             {/* Unit Purchase Rate */}
             <div>
-              <label className={labelCls}>Cost / {defaultLevel?.unit?.name ?? 'Unit'} (PKR) *</label>
+              <label className={labelCls}>Cost / {selectedUnitName} (PKR) *</label>
               <input
                 type="number"
                 min={0}
@@ -340,7 +399,7 @@ export const PurchaseLineCard: React.FC<Props> = ({
                   <span className="text-slate-500">{baseUnitName}</span>
                   {innerLevels.length > 0 && (
                     <span className="text-slate-400 ml-1.5">
-                      ({innerLevels.map((l) => `${formatNumber((Number(line.quantity) * conversionToBase) / Number(l.conversionToBase))} ${l.unit?.name}`).join(', ')})
+                      ({innerLevels.map((l) => `${formatNumber((Number(line.quantity) * conversionToBase) / Number(l.conversionToBase))} ${l.unit?.name ?? ''}`).join(', ')})
                     </span>
                   )}
                 </span>
@@ -357,7 +416,7 @@ export const PurchaseLineCard: React.FC<Props> = ({
                 onChange={(e) =>
                   onChange({
                     overridePackaging: e.target.checked,
-                    overrideConversion: e.target.checked ? String(defaultLevel?.conversionToBase ?? '') : '',
+                    overrideConversion: e.target.checked ? String(selectedLevel?.conversionToBase ?? '') : '',
                   })
                 }
                 className="rounded text-emerald-600 focus:ring-emerald-500"
@@ -373,7 +432,7 @@ export const PurchaseLineCard: React.FC<Props> = ({
                 This consignment's packaging differs from formulary default
               </div>
               <div className="flex items-center gap-2 text-xs text-amber-900">
-                <span>1 {defaultLevel?.unit?.name} =</span>
+                <span>1 {selectedUnitName} =</span>
                 <input
                   type="number"
                   min={1}
@@ -383,7 +442,7 @@ export const PurchaseLineCard: React.FC<Props> = ({
                 />
                 <span className="font-semibold">{baseUnitName}</span>
                 <span className="text-[10.5px] text-slate-400">
-                  (Default: {Number(defaultLevel?.conversionToBase ?? 0)})
+                  (Default: {Number(selectedLevel?.conversionToBase ?? 1)})
                 </span>
               </div>
             </div>
@@ -398,7 +457,7 @@ export const PurchaseLineCard: React.FC<Props> = ({
                 {formatPKR(calc.netPurchaseCost)}
               </span>
               <span className="text-[9.5px] text-slate-400 block mt-0.5">
-                {formatPKR(calc.effectiveCostPerPurchaseUnit)} / {defaultLevel?.unit?.name ?? 'Unit'}
+                {formatPKR(calc.effectiveCostPerPurchaseUnit)} / {selectedUnitName}
               </span>
             </div>
 

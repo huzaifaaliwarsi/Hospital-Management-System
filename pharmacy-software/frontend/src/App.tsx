@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from './context/AuthContext';
 import { LoginPage } from './pages/LoginPage';
 import { ForceChangePasswordPage } from './pages/ForceChangePasswordPage';
@@ -23,10 +23,23 @@ import { ReportsPage } from './pages/ReportsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ComingSoonPage } from './pages/ComingSoonPage';
 
+// Every screen the app can render, keyed by its own URL path (e.g. /stock-in) —
+// no router library in this project, so this is a deliberately small, explicit
+// History API sync instead: each page gets a real, bookmarkable/shareable/
+// refreshable URL, and the browser back/forward buttons work, without
+// restructuring how any individual page renders.
+const VALID_PAGES = [
+  'dashboard', 'medicines', 'pos', 'invoices', 'hms-requests', 'stock-movements',
+  'vendors', 'purchases', 'stock-in', 'balance-sheet', 'settlements', 'expenses',
+  'users', 'reports', 'settings',
+];
+
+function pageFromPath(): string {
+  const path = window.location.pathname.replace(/^\/+/, '').replace(/\/+$/, '');
+  return path && VALID_PAGES.includes(path) ? path : 'dashboard';
+}
+
 function findLabel(groups: NavGroup[], id: string): string {
-  // 'stock-in' is deliberately not a sidebar item (reached via the Medicines page
-  // button or a Purchase Order's "Receive / Convert to Stock In") — give it its own title.
-  if (id === 'stock-in') return 'New Purchase / Stock In';
   for (const g of groups) {
     const item = g.items.find((i) => i.id === id);
     if (item) return item.label;
@@ -36,9 +49,21 @@ function findLabel(groups: NavGroup[], id: string): string {
 
 const App: React.FC = () => {
   const { isAuthenticated, isLoading, currentUser, logout } = useAuth();
-  const [page, setPage] = useState('dashboard');
+  const [page, setPageState] = useState(pageFromPath);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [stockInPrefill, setStockInPrefill] = useState<StockInPrefill | null>(null);
+
+  const navigate = (id: string) => {
+    setPageState(id);
+    const path = id === 'dashboard' ? '/' : `/${id}`;
+    if (window.location.pathname !== path) window.history.pushState({ page: id }, '', path);
+  };
+
+  useEffect(() => {
+    const onPopState = () => setPageState(pageFromPath());
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center text-sm text-[#52665e]">Loading…</div>;
   if (!isAuthenticated || !currentUser) return <LoginPage />;
@@ -51,9 +76,9 @@ const App: React.FC = () => {
   const renderPage = () => {
     switch (page) {
       case 'dashboard':
-        return isSales ? <SalesDashboardPage /> : <ManagementDashboardPage onNavigate={setPage} />;
+        return isSales ? <SalesDashboardPage /> : <ManagementDashboardPage onNavigate={navigate} />;
       case 'medicines':
-        return <MedicinesPage canEdit={!isSales} onNavigate={setPage} />;
+        return <MedicinesPage canEdit={!isSales} onNavigate={navigate} />;
       case 'pos':
         return <PosPage />;
       case 'invoices':
@@ -70,7 +95,7 @@ const App: React.FC = () => {
             canEdit={!isSales}
             onConvert={(prefill) => {
               setStockInPrefill(prefill);
-              setPage('stock-in');
+              navigate('stock-in');
             }}
           />
         );
@@ -99,7 +124,7 @@ const App: React.FC = () => {
         groups={navGroups}
         portalLabel={portalLabel}
         currentPage={page}
-        onSelectPage={setPage}
+        onSelectPage={navigate}
         onLogout={logout}
         isOpen={sidebarOpen}
         onToggle={() => setSidebarOpen((v) => !v)}

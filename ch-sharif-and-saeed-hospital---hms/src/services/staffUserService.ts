@@ -182,7 +182,28 @@ function toStaffUser(raw: Record<string, any>): StaffUser {
     staffCategory: raw.category as StaffCategory,
     accessType: pu ? 'PORTAL_USER' : 'STAFF_RECORD_ONLY',
     assignedPortal,
-    staffRole: pu ? raw.designation : null,
+    staffRole:
+      raw.staffRole ||
+      (pu?.role === 'FRONT_DESK_BILLING'
+        ? 'Front Desk & Billing'
+        : pu?.role === 'ADMISSION'
+        ? 'Admission'
+        : pu?.role === 'INVENTORY_MANAGEMENT'
+        ? 'Inventory Management'
+        : pu?.role
+        ? String(pu.role).replace(/_/g, ' ')
+        : null) ||
+      (assignedPortal === 'front-desk'
+        ? 'Front Desk & Billing'
+        : assignedPortal === 'admission'
+        ? 'Admission'
+        : assignedPortal === 'inventory'
+        ? 'Inventory Management'
+        : null) ||
+      (raw.designation && raw.designation !== raw.category ? raw.designation : null) ||
+      raw.category ||
+      raw.designation ||
+      'Staff',
     username: pu?.username || null,
     status,
     requirePasswordChange: pu?.mustResetPassword ?? false,
@@ -675,6 +696,7 @@ export class StaffUserService {
         const matches =
           u.employeeCode.toLowerCase().includes(search) ||
           u.fullName.toLowerCase().includes(search) ||
+          (u.staffRole && u.staffRole.toLowerCase().includes(search)) ||
           u.phone.toLowerCase().includes(search) ||
           u.email.toLowerCase().includes(search) ||
           (u.cnic && u.cnic.toLowerCase().includes(search)) ||

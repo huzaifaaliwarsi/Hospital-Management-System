@@ -74,6 +74,7 @@ export const PosPage: React.FC = () => {
   const [customerName, setCustomerName] = useState('');
   const [invoiceDiscount, setInvoiceDiscount] = useState('0');
   const [payments, setPayments] = useState<PaymentRow[]>([{ method: 'CASH', amount: '' }]);
+  const [paymentManuallyEdited, setPaymentManuallyEdited] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [receipt, setReceipt] = useState<any | null>(null);
 
@@ -188,6 +189,7 @@ export const PosPage: React.FC = () => {
     setCart([]);
     setCustomerName('');
     setInvoiceDiscount('0');
+    setPaymentManuallyEdited(false);
     setPayments([{ method: 'CASH', amount: '' }]);
   };
 
@@ -213,9 +215,52 @@ export const PosPage: React.FC = () => {
     return { subtotal, lineDiscounts, tax, invDiscount, total, paid, outstanding };
   }, [cart, invoiceDiscount, payments]);
 
-  const addPaymentRow = () => setPayments((prev) => [...prev, { method: 'CASH', amount: '' }]);
-  const removePaymentRow = (idx: number) => setPayments((prev) => prev.filter((_, i) => i !== idx));
-  const payInFull = () => setPayments([{ method: 'CASH', amount: totals.total.toString() }]);
+  const addPaymentRow = () => {
+    setPaymentManuallyEdited(true);
+    setPayments((prev) => [...prev, { method: 'CASH', amount: '' }]);
+  };
+
+  const removePaymentRow = (idx: number) => {
+    setPayments((prev) => {
+      const next = prev.filter((_, i) => i !== idx);
+      if (next.length <= 1) {
+        setPaymentManuallyEdited(false);
+      }
+      return next;
+    });
+  };
+
+  const payInFull = () => {
+    setPaymentManuallyEdited(false);
+    const formatted = totals.total > 0 ? String(Math.round(totals.total * 100) / 100) : '';
+    setPayments((prev) => {
+      const method = prev[0]?.method || 'CASH';
+      return [{ method, amount: formatted }];
+    });
+  };
+
+  // Auto-sync full payment by default as items or quantities are updated in the cart
+  useEffect(() => {
+    if (!paymentManuallyEdited) {
+      if (cart.length > 0 && totals.total > 0) {
+        const formatted = String(Math.round(totals.total * 100) / 100);
+        setPayments((prev) => {
+          if (prev.length <= 1) {
+            const method = prev[0]?.method || 'CASH';
+            if (prev[0]?.amount === formatted && prev[0]?.method === method) return prev;
+            return [{ method, amount: formatted }];
+          }
+          return prev;
+        });
+      } else if (cart.length === 0) {
+        setPayments((prev) => {
+          if (prev.length <= 1 && prev[0]?.amount === '') return prev;
+          if (prev.length <= 1) return [{ method: prev[0]?.method || 'CASH', amount: '' }];
+          return prev;
+        });
+      }
+    }
+  }, [totals.total, cart.length, paymentManuallyEdited]);
 
   const handleSubmit = async () => {
     if (cart.length === 0) {
@@ -237,7 +282,6 @@ export const PosPage: React.FC = () => {
         payments: validPayments.map((p) => ({ method: p.method, amount: Number(p.amount) })),
       });
       toast.success(`Sale completed successfully — Invoice ${invoice.invoiceNumber}`);
-      setReceipt(invoice);
       clearCart();
       loadMedicines();
     } catch (err: any) {
@@ -857,13 +901,15 @@ export const PosPage: React.FC = () => {
 
                   <input
                     type="number"
+                    step="any"
                     min={0}
                     value={p.amount}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      setPaymentManuallyEdited(true);
                       setPayments((prev) =>
                         prev.map((row, i) => (i === idx ? { ...row, amount: e.target.value } : row))
-                      )
-                    }
+                      );
+                    }}
                     placeholder="Amount (PKR)"
                     className="flex-1 h-7.5 px-2 text-xs border border-slate-200 rounded-lg text-right font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
                   />

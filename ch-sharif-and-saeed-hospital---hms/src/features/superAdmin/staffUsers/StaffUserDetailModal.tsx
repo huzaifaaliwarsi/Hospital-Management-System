@@ -173,8 +173,14 @@ export const StaffUserDetailModal: React.FC<StaffUserDetailModalProps> = ({
                     {isPortalUser ? 'Portal User (Sign-in Enabled)' : 'Staff Record Only'}
                   </span>
                 </div>
+                <div>
+                  <span className="text-[#8b9e95] block text-[10px] uppercase">Staff Role</span>
+                  <span className="font-bold text-[#0e7d5a]">
+                    {staff.staffRole || staff.staffCategory || 'Staff'}
+                  </span>
+                </div>
                 {isPortalUser && (
-                  <div>
+                  <div className="col-span-2">
                     <span className="text-[#8b9e95] block text-[10px] uppercase">Assigned Portal</span>
                     <span className="font-bold uppercase text-[#0e7d5a]">
                       {staff.assignedPortal} Portal

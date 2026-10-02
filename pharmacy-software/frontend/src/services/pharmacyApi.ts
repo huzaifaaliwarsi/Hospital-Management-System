@@ -107,6 +107,8 @@ export interface ManagementDashboard {
     name: string;
     currentStock: number;
     reorderLevel: number;
+    unit?: string;
+    isOutOfStock?: boolean;
   }>;
   nearExpiryList?: Array<{
     id: string;
@@ -114,13 +116,19 @@ export interface ManagementDashboard {
     batchNumber: string;
     expiryDate: string;
     daysLeft: number;
+    quantityRemaining?: number;
   }>;
   supplierUpdates?: Array<{
     id: string;
     name: string;
+    code?: string;
     status: string;
     phone: string;
+    paymentTerms?: string;
+    openOrdersCount?: number;
+    balance?: number;
   }>;
+  openPurchaseOrdersCount?: number;
   smartInsights?: Array<{
     id: string;
     title: string;

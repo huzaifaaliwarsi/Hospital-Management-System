@@ -506,7 +506,7 @@ export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
                     {canEdit && (
                       <button
                         type="button"
-                        onClick={() => openPayModal(ledgerVendor.vendor)}
+                        onClick={() => openPayModal({ ...ledgerVendor.vendor, currentPayable: ledgerVendor.currentPayable })}
                         className="px-2.5 py-1.5 text-xs font-semibold text-slate-800 bg-white hover:bg-emerald-50 rounded-lg shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
                       >
                         <Banknote className="h-3.5 w-3.5 text-[#0e7d5a]" /> Pay Vendor
@@ -656,16 +656,16 @@ export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
                     <thead className="bg-[#f1f5f9] select-none sticky top-0 z-10 border-b border-slate-300 text-[11px] font-bold text-slate-800 uppercase tracking-wider">
                       <tr>
                         <th className="py-2.5 px-3 text-center w-12 border-r border-slate-300">#</th>
-                        <th className="py-2.5 px-3 border-r border-slate-300">Date &amp; Time</th>
-                        <th className="py-2.5 px-3 border-r border-slate-300">Voucher / Ref #</th>
+                        <th className="py-2.5 px-3 w-40 border-r border-slate-300">Date &amp; Time</th>
+                        <th className="py-2.5 px-3 w-36 border-r border-slate-300">Voucher / Ref #</th>
                         <th className="py-2.5 px-3.5 border-r border-slate-300">Particulars / Details</th>
-                        <th className="py-2.5 px-3.5 text-right border-r border-slate-300 text-emerald-800">
+                        <th className="py-2.5 px-3.5 text-right w-36 border-r border-slate-300 text-emerald-800">
                           Debit (Dr - Paid)
                         </th>
-                        <th className="py-2.5 px-3.5 text-right border-r border-slate-300 text-rose-800">
+                        <th className="py-2.5 px-3.5 text-right w-36 border-r border-slate-300 text-rose-800">
                           Credit (Cr - Billed)
                         </th>
-                        <th className="py-2.5 px-3.5 text-right font-black text-slate-900">
+                        <th className="py-2.5 px-3.5 text-right w-44 font-black text-slate-900">
                           Running Balance (PKR)
                         </th>
                       </tr>
@@ -695,38 +695,66 @@ export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
                             (entry.entryType === 'ADJUSTMENT' && Number(entry.amount) < 0);
                           const amt = Math.abs(Number(entry.amount));
 
+                          // Extract clean human-readable voucher code
+                          const voucher =
+                            entry.voucherNo ||
+                            (entry.referenceNo && !entry.referenceNo.includes('-4') && entry.referenceNo.length < 20 ? entry.referenceNo : null) ||
+                            entry.description?.match(/PO-\d+/)?.[0] ||
+                            entry.description?.match(/(VPAY|RET|ADJ|PREQ)-\d+/)?.[0] ||
+                            `PO-${entry.id.slice(0, 4).toUpperCase()}`;
+
+                          // Clean title for Particulars
+                          const typeTitle =
+                            entry.entryType === 'PURCHASE_CREDIT'
+                              ? 'Stock Inward (Purchase)'
+                              : entry.entryType === 'PAYMENT'
+                              ? 'Payment Disbursement'
+                              : entry.entryType === 'RETURN_CREDIT'
+                              ? 'Purchase Return (Debit Note)'
+                              : 'Ledger Adjustment';
+
+                          // Check if description has extra non-redundant info
+                          const isGenericPurchase = entry.description && /^Purchase\s+PO-\d+/i.test(entry.description.trim());
+                          const isGenericPayment = entry.description && /^Paid on purchase\s+PO-\d+/i.test(entry.description.trim());
+                          const extraNote = !isGenericPurchase && !isGenericPayment ? entry.description : null;
+
                           return (
                             <tr key={entry.id || idx} className="hover:bg-emerald-50/30 transition-colors">
                               <td className="py-2.5 px-3 text-center text-slate-400 font-mono text-[11px] bg-slate-50/50 border-r border-slate-200">
                                 {idx + 1}
                               </td>
-                              <td className="py-2.5 px-3 text-slate-700 whitespace-nowrap border-r border-slate-200">
+                              <td className="py-2.5 px-3 text-slate-700 whitespace-nowrap border-r border-slate-200 text-xs">
                                 {formatDateTime(entry.createdAt)}
                               </td>
-                              <td className="py-2.5 px-3 font-mono font-bold text-slate-900 whitespace-nowrap border-r border-slate-200">
-                                {entry.referenceId || entry.id.slice(0, 8).toUpperCase()}
+                              <td className="py-2.5 px-3 whitespace-nowrap border-r border-slate-200">
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-100 text-slate-900 font-mono font-bold text-[11px] border border-slate-200/80">
+                                  {voucher}
+                                </span>
                               </td>
                               <td className="py-2.5 px-3.5 text-slate-800 border-r border-slate-200">
-                                <div className="font-semibold">
-                                  {entry.entryType === 'PURCHASE_CREDIT'
-                                    ? 'Stock Inward / Purchase Order'
-                                    : entry.entryType === 'PAYMENT'
-                                    ? 'Vendor Payment Disbursement'
-                                    : entry.entryType === 'RETURN_CREDIT'
-                                    ? 'Purchase Return (Debit Note)'
-                                    : 'Approved Adjustment'}
+                                <div className="flex items-center gap-2">
+                                  <span className="font-semibold text-slate-900 text-xs">
+                                    {typeTitle}
+                                  </span>
+                                  {entry.vendorInvoiceNo && (
+                                    <span className="text-[10px] text-slate-500 font-mono bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                                      Inv #{entry.vendorInvoiceNo}
+                                    </span>
+                                  )}
                                 </div>
-                                {entry.description && (
-                                  <div className="text-[11px] text-slate-500 mt-0.5">{entry.description}</div>
+                                {extraNote && (
+                                  <div className="text-[11px] text-slate-500 mt-0.5 truncate max-w-sm">
+                                    {extraNote}
+                                  </div>
                                 )}
                               </td>
-                              <td className="py-2.5 px-3.5 text-right font-bold tabular-nums text-emerald-700 border-r border-slate-200">
+                              <td className="py-2.5 px-3.5 text-right font-bold tabular-nums text-emerald-700 border-r border-slate-200 text-xs whitespace-nowrap">
                                 {isDebit ? formatPKR(amt) : '—'}
                               </td>
-                              <td className="py-2.5 px-3.5 text-right font-bold tabular-nums text-rose-700 border-r border-slate-200">
+                              <td className="py-2.5 px-3.5 text-right font-bold tabular-nums text-rose-700 border-r border-slate-200 text-xs whitespace-nowrap">
                                 {isCredit ? formatPKR(amt) : '—'}
                               </td>
-                              <td className="py-2.5 px-3.5 text-right font-extrabold tabular-nums text-slate-950">
+                              <td className="py-2.5 px-3.5 text-right font-black tabular-nums text-slate-950 text-xs whitespace-nowrap">
                                 {formatPKR(entry.computedRunningBalance ?? entry.runningBalance)}
                               </td>
                             </tr>

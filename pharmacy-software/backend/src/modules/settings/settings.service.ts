@@ -78,7 +78,9 @@ export const settingsService = {
       await tx.medicineRequestLine.deleteMany({});
       await tx.medicineRequest.deleteMany({});
 
-      // 3. Purchases & Vendor Ledgers
+      // 3. Purchases, Purchase Orders & Vendor Ledgers
+      await tx.purchaseOrderLine.deleteMany({});
+      const purchaseOrders = await tx.purchaseOrder.deleteMany({});
       await tx.purchaseLine.deleteMany({});
       const purchases = await tx.purchase.deleteMany({});
       await tx.vendorLedgerEntry.deleteMany({});
@@ -101,6 +103,8 @@ export const settingsService = {
 
       // 7. If complete reset, wipe master catalogs as well
       if (scope === 'complete') {
+        await tx.purchaseOrderLine.deleteMany({});
+        await tx.purchaseOrder.deleteMany({});
         await tx.medicinePackagingLevel.deleteMany({});
         const medRes = await tx.medicineMaster.deleteMany({});
         const venRes = await tx.vendor.deleteMany({});
@@ -116,6 +120,7 @@ export const settingsService = {
         cleared: {
           invoices: invoices.count,
           purchases: purchases.count,
+          purchaseOrders: purchaseOrders.count,
           stockMovements: stockEntries.count,
           batches: batches.count,
           medicines: medicinesCount,

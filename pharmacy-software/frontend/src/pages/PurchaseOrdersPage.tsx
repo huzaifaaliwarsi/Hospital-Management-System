@@ -119,9 +119,22 @@ export const PurchaseOrdersPage: React.FC<Props> = ({ canEdit, onConvert }) => {
       const purchLevel = med.packagingLevels.find((l) => l.isPurchaseUnit);
       if (purchLevel) defaultUnit = purchLevel.unitId;
     }
-    updateLine(idx, {
-      medicineId,
-      requiredUnitId: defaultUnit || lines[idx]?.requiredUnitId || (unitCatalog[0]?.id ?? ''),
+
+    setLines((prev) => {
+      const updated = prev.map((l, i) =>
+        i === idx
+          ? {
+              ...l,
+              medicineId,
+              requiredQty: l.requiredQty && Number(l.requiredQty) > 0 ? l.requiredQty : '1',
+              requiredUnitId: defaultUnit || l.requiredUnitId || (unitCatalog[0]?.id ?? ''),
+            }
+          : l
+      );
+      if (idx === prev.length - 1 && medicineId) {
+        return [...updated, emptyLine()];
+      }
+      return updated;
     });
   };
 

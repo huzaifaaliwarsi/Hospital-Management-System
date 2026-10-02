@@ -48,7 +48,24 @@ export async function nextCode(tx: Prisma.TransactionClient, seq: { key: string;
     ON CONFLICT (key) DO UPDATE SET last_value = document_sequences.last_value + 1, updated_at = now()
     RETURNING last_value
   `;
-  return format(seq.prefix, rows[0]!.last_value);
+  let val = rows[0]!.last_value;
+  if (seq.key === SEQUENCE.MEDICINE.key) {
+    const medicines = await tx.medicineMaster.findMany({
+      where: { code: { startsWith: `${seq.prefix}-` } },
+      select: { code: true },
+    });
+    for (const m of medicines) {
+      const match = m.code.match(new RegExp(`^${seq.prefix}-(\\d+)$`));
+      if (match && match[1]) {
+        const n = parseInt(match[1], 10);
+        if (n >= val) val = n + 1;
+      }
+    }
+    await tx.$executeRaw`
+      UPDATE document_sequences SET last_value = ${val}, updated_at = now() WHERE key = ${seq.key}
+    `;
+  }
+  return format(seq.prefix, val);
 }
 
 /**
@@ -61,5 +78,19 @@ export async function nextCode(tx: Prisma.TransactionClient, seq: { key: string;
  */
 export async function peekNextCode(seq: { key: string; prefix: string }): Promise<string> {
   const row = await prisma.documentSequence.findUnique({ where: { key: seq.key } });
-  return format(seq.prefix, (row?.lastValue ?? 0) + 1);
+  let nextVal = (row?.lastValue ?? 0) + 1;
+  if (seq.key === SEQUENCE.MEDICINE.key) {
+    const medicines = await prisma.medicineMaster.findMany({
+      where: { code: { startsWith: `${seq.prefix}-` } },
+      select: { code: true },
+    });
+    for (const m of medicines) {
+      const match = m.code.match(new RegExp(`^${seq.prefix}-(\\d+)$`));
+      if (match && match[1]) {
+        const n = parseInt(match[1], 10);
+        if (n >= nextVal) nextVal = n + 1;
+      }
+    }
+  }
+  return format(seq.prefix, nextVal);
 }

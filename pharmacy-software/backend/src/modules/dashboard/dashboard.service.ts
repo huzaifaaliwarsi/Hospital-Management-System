@@ -36,12 +36,19 @@ export const dashboardService = {
       recentPurchases,
       recentExpenses,
       vendorsList,
+      openPurchaseOrdersCount,
     ] = await Promise.all([
       prisma.pharmacyInvoice.aggregate({ where: { createdAt: { gte: today, lt: tomorrow } }, _sum: { total: true }, _count: true }),
       prisma.purchase.aggregate({ where: { createdAt: { gte: today, lt: tomorrow } }, _sum: { total: true }, _count: true }),
       prisma.medicineMaster.findMany({
         where: { isActive: true },
-        include: { batches: true, stockEntries: { select: { quantityDelta: true } } },
+        include: {
+          batches: {
+            include: { stockEntries: { select: { quantityDelta: true } } },
+          },
+          stockEntries: { select: { quantityDelta: true } },
+          baseUnit: { select: { name: true, shortCode: true } },
+        },
         orderBy: { name: 'asc' },
       }),
       prisma.vendorLedgerEntry.aggregate({ _sum: { amount: true } }),
@@ -53,7 +60,21 @@ export const dashboardService = {
       prisma.pharmacyInvoice.findMany({ where: { createdAt: { gte: sixMonthsAgo } }, select: { total: true, createdAt: true } }),
       prisma.purchase.findMany({ where: { createdAt: { gte: sixMonthsAgo } }, select: { total: true, createdAt: true } }),
       prisma.expense.findMany({ where: { createdAt: { gte: sixMonthsAgo } }, select: { amount: true, createdAt: true } }),
-      prisma.vendor.findMany({ where: { isActive: true }, take: 4, select: { id: true, name: true, phone: true, paymentTermsDays: true } }),
+      prisma.vendor.findMany({
+        where: { isActive: true },
+        take: 6,
+        orderBy: { name: 'asc' },
+        include: {
+          purchaseOrders: {
+            where: { status: 'OPEN' },
+            select: { id: true, orderNumber: true, isUrgent: true },
+          },
+          ledgerEntries: {
+            select: { amount: true },
+          },
+        },
+      }),
+      prisma.purchaseOrder.count({ where: { status: 'OPEN' } }),
     ]);
 
     const now = new Date();
@@ -78,8 +99,23 @@ export const dashboardService = {
       batchNumber: string | null;
     }> = [];
 
-    const lowStockList: Array<{ id: string; name: string; currentStock: number; reorderLevel: number }> = [];
-    const nearExpiryList: Array<{ id: string; name: string; batchNumber: string; expiryDate: string; daysLeft: number }> = [];
+    const lowStockList: Array<{
+      id: string;
+      name: string;
+      currentStock: number;
+      reorderLevel: number;
+      unit: string;
+      isOutOfStock: boolean;
+    }> = [];
+    const nearExpiryList: Array<{
+      id: string;
+      medicineId: string;
+      name: string;
+      batchNumber: string;
+      expiryDate: string;
+      daysLeft: number;
+      quantityRemaining: number;
+    }> = [];
 
     for (const m of medicines) {
       const stock = m.stockEntries.reduce((s, e) => s.plus(e.quantityDelta), new Decimal(0));
@@ -95,9 +131,18 @@ export const dashboardService = {
 
       const isOut = stock.lessThanOrEqualTo(0);
       const isLow = !isOut && stock.lessThanOrEqualTo(m.reorderLevel);
+      const unitCode = m.baseUnit?.shortCode || m.baseUnit?.name || m.unit || 'units';
 
       if (isOut) {
         outOfStock += 1;
+        lowStockList.push({
+          id: m.id,
+          name: m.name,
+          currentStock: 0,
+          reorderLevel: Number(m.reorderLevel),
+          unit: unitCode,
+          isOutOfStock: true,
+        });
       } else if (isLow) {
         lowStock += 1;
         lowStockList.push({
@@ -105,6 +150,8 @@ export const dashboardService = {
           name: m.name,
           currentStock: stock.toNumber(),
           reorderLevel: Number(m.reorderLevel),
+          unit: unitCode,
+          isOutOfStock: false,
         });
       }
 
@@ -116,6 +163,9 @@ export const dashboardService = {
       let hasNearExpiry = false;
 
       for (const b of m.batches) {
+        const batchStock = b.stockEntries.reduce((s, e) => s.plus(e.quantityDelta), new Decimal(0)).toNumber();
+        if (batchStock <= 0) continue;
+
         if (b.expiryDate <= now) {
           expired += 1;
           hasExpired = true;
@@ -124,10 +174,12 @@ export const dashboardService = {
           hasNearExpiry = true;
           nearExpiryList.push({
             id: b.id,
+            medicineId: m.id,
             name: m.name,
             batchNumber: b.batchNumber,
             expiryDate: b.expiryDate.toISOString(),
             daysLeft: Math.max(0, Math.ceil((b.expiryDate.getTime() - now.getTime()) / 86_400_000)),
+            quantityRemaining: batchStock,
           });
         }
       }
@@ -146,6 +198,16 @@ export const dashboardService = {
         batchNumber: earliestBatch ? earliestBatch.batchNumber : null,
       });
     }
+
+    // Sort lowStockList: out of stock items first, then lowest remaining vs reorder
+    lowStockList.sort((a, b) => {
+      if (a.isOutOfStock && !b.isOutOfStock) return -1;
+      if (!a.isOutOfStock && b.isOutOfStock) return 1;
+      return (a.currentStock - a.reorderLevel) - (b.currentStock - b.reorderLevel);
+    });
+
+    // Sort nearExpiryList: expiring earliest first
+    nearExpiryList.sort((a, b) => a.daysLeft - b.daysLeft);
 
     // Build monthly performance for last 6 months
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -228,8 +290,8 @@ export const dashboardService = {
       {
         id: 'ins-2',
         title: 'Inventory Reorder Status',
-        message: lowStock > 0 ? `${lowStock} medicines are below reorder threshold and require stock replenishment.` : 'All active catalog items meet or exceed reorder thresholds.',
-        type: lowStock > 0 ? 'warning' : 'healthy',
+        message: (lowStock + outOfStock) > 0 ? `${lowStock + outOfStock} medicines are below reorder threshold or out of stock.` : 'All active catalog items meet or exceed reorder thresholds.',
+        type: (lowStock + outOfStock) > 0 ? 'warning' : 'healthy',
       },
       {
         id: 'ins-3',
@@ -245,12 +307,28 @@ export const dashboardService = {
       },
     ];
 
-    const supplierUpdates = vendorsList.map((v) => ({
-      id: v.id,
-      name: v.name,
-      status: v.paymentTermsDays ? `${v.paymentTermsDays} days payment term` : 'Active supplier',
-      phone: v.phone || 'Verified vendor',
-    }));
+    const supplierUpdates = vendorsList.map((v) => {
+      const balance = v.ledgerEntries.reduce((s, e) => s.plus(e.amount), new Decimal(0)).toNumber();
+      const openOrdersCount = v.purchaseOrders.length;
+      const termsLabel = v.paymentTermsDays === 0 ? 'Immediate / COD' : `Net ${v.paymentTermsDays} Days`;
+      let statusText = termsLabel;
+      if (openOrdersCount > 0) {
+        statusText = `${openOrdersCount} Open PO`;
+      } else if (balance > 0) {
+        statusText = `PKR ${balance.toLocaleString()} payable`;
+      }
+
+      return {
+        id: v.id,
+        name: v.name,
+        code: v.code,
+        status: statusText,
+        phone: v.phone || 'Verified vendor',
+        paymentTerms: termsLabel,
+        openOrdersCount,
+        balance,
+      };
+    });
 
     return {
       salesToday: salesToday._sum.total ?? new Decimal(0),
@@ -262,7 +340,7 @@ export const dashboardService = {
       totalMedicines: medicines.length,
       totalStockUnits: totalStockUnits.toNumber(),
       currentStockValue: stockValue,
-      lowStockCount: lowStock,
+      lowStockCount: lowStock + outOfStock,
       outOfStockCount: outOfStock,
       nearExpiryCount: nearExpiry,
       expiredCount: expired,
@@ -277,6 +355,7 @@ export const dashboardService = {
       lowStockList: lowStockList.slice(0, 6),
       nearExpiryList: nearExpiryList.slice(0, 6),
       supplierUpdates,
+      openPurchaseOrdersCount,
       smartInsights,
     };
   },

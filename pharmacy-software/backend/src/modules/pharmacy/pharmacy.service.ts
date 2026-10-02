@@ -146,27 +146,81 @@ export const pharmacyService = {
 
   // ── Medicine Master (pharmacy.md §9) ────────────────────────────────────
   async createMedicine(body: CreateMedicineBody, actorId: string) {
-    if (body.code) {
-      const dup = await prisma.medicineMaster.findFirst({ where: { OR: [{ code: body.code }, ...(body.barcode ? [{ barcode: body.barcode }] : [])] } });
-      if (dup) throw new ConflictError('Medicine code or barcode already exists');
-    } else if (body.barcode) {
-      const dup = await prisma.medicineMaster.findFirst({ where: { barcode: body.barcode } });
-      if (dup) throw new ConflictError('Medicine code or barcode already exists');
+    const rawBarcode = body.barcode?.trim() || null;
+    const rawCode = body.code?.trim() || null;
+    const rawGenericName = body.genericName?.trim() || null;
+    const rawStrength = body.strength?.trim() || null;
+    const rawDosageForm = body.dosageForm?.trim() || null;
+    const rawCategory = (body as any).category?.trim() || null;
+
+    if (rawCode) {
+      const dup = await prisma.medicineMaster.findFirst({
+        where: {
+          OR: [
+            { code: rawCode },
+            ...(rawBarcode ? [{ barcode: rawBarcode }] : [])
+          ]
+        }
+      });
+      if (dup) {
+        if (dup.code === rawCode) throw new ConflictError(`Medicine code "${rawCode}" already exists`);
+        if (rawBarcode && dup.barcode === rawBarcode) throw new ConflictError(`Barcode "${rawBarcode}" already exists`);
+        throw new ConflictError('Medicine code or barcode already exists');
+      }
+    } else if (rawBarcode) {
+      const dup = await prisma.medicineMaster.findFirst({ where: { barcode: rawBarcode } });
+      if (dup) throw new ConflictError(`Barcode "${rawBarcode}" already exists`);
     }
-    const { baseUnitId, baseIsPurchaseUnit, baseIsSaleUnit, packagingLevels, code: requestedCode, categoryId, ...rest } = body;
+
+    const { baseUnitId, baseIsPurchaseUnit, baseIsSaleUnit, packagingLevels, code: _c, barcode: _b, genericName: _g, strength: _s, dosageForm: _d, category: _cat, categoryId, ...rest } = body as any;
+
     return prisma.$transaction(async (tx) => {
       const baseUnit = await tx.unit.findUnique({ where: { id: baseUnitId } });
       if (!baseUnit) throw new NotFoundError('Base unit not found');
-      // Database-driven Therapeutic Category master — not required to be active (an inactive one can still be re-saved on an unrelated edit), just required to exist.
+
       let categoryLabel: string | null = null;
       if (categoryId) {
         const category = await tx.medicineCategory.findUnique({ where: { id: categoryId } });
         if (!category) throw new NotFoundError('Medicine category not found');
         categoryLabel = category.name;
+      } else if (rawCategory) {
+        categoryLabel = rawCategory;
       }
-      // Authorized-override path keeps a client-supplied code; otherwise this is the ONLY place a Medicine Code is ever decided.
-      const code = requestedCode || (await nextCode(tx, SEQUENCE.MEDICINE));
-      const medicine = await tx.medicineMaster.create({ data: { ...rest, code, categoryId, categoryLabel, unit: baseUnit.name, baseUnitId, createdById: actorId } });
+
+      // If no code requested, automatically generate next sequence; otherwise advance sequence
+      let code = rawCode;
+      if (!code) {
+        code = await nextCode(tx, SEQUENCE.MEDICINE);
+      } else {
+        const match = code.match(/^MED-(\d+)$/);
+        if (match && match[1]) {
+          const num = parseInt(match[1], 10);
+          if (!isNaN(num)) {
+            await tx.$executeRaw`
+              INSERT INTO document_sequences (key, last_value, updated_at)
+              VALUES (${SEQUENCE.MEDICINE.key}, ${num}, now())
+              ON CONFLICT (key) DO UPDATE SET last_value = GREATEST(document_sequences.last_value, ${num}), updated_at = now()
+            `;
+          }
+        }
+      }
+
+      const medicine = await tx.medicineMaster.create({
+        data: {
+          ...rest,
+          code,
+          barcode: rawBarcode,
+          genericName: rawGenericName,
+          strength: rawStrength,
+          dosageForm: rawDosageForm,
+          categoryId: categoryId || null,
+          categoryLabel,
+          unit: baseUnit.name,
+          baseUnitId,
+          createdById: actorId
+        }
+      });
+
       // Throwing here (bad packaging level) rolls the whole transaction back — the medicine row never persists.
       await writePackagingLevels(tx, medicine.id, baseUnitId, baseIsPurchaseUnit, baseIsSaleUnit, packagingLevels);
       return medicine;
@@ -176,15 +230,19 @@ export const pharmacyService = {
   async updateMedicine(id: string, body: UpdateMedicineBody) {
     const existing = await prisma.medicineMaster.findUnique({ where: { id } });
     if (!existing) throw new NotFoundError('Medicine not found');
-    if (body.code && body.code !== existing.code) {
-      const dup = await prisma.medicineMaster.findFirst({ where: { code: body.code, id: { not: id } } });
-      if (dup) throw new ConflictError('Medicine code already exists');
+
+    const rawBarcode = body.barcode !== undefined ? (body.barcode?.trim() || null) : undefined;
+    const rawCode = body.code !== undefined ? (body.code?.trim() || null) : undefined;
+
+    if (rawCode && rawCode !== existing.code) {
+      const dup = await prisma.medicineMaster.findFirst({ where: { code: rawCode, id: { not: id } } });
+      if (dup) throw new ConflictError(`Medicine code "${rawCode}" already exists`);
     }
-    if (body.barcode && body.barcode !== existing.barcode) {
-      const dup = await prisma.medicineMaster.findFirst({ where: { barcode: body.barcode, id: { not: id } } });
-      if (dup) throw new ConflictError('Barcode already exists');
+    if (rawBarcode && rawBarcode !== existing.barcode) {
+      const dup = await prisma.medicineMaster.findFirst({ where: { barcode: rawBarcode, id: { not: id } } });
+      if (dup) throw new ConflictError(`Barcode "${rawBarcode}" already exists`);
     }
-    const { baseUnitId, baseIsPurchaseUnit, baseIsSaleUnit, packagingLevels, categoryId, ...rest } = body;
+    const { baseUnitId, baseIsPurchaseUnit, baseIsSaleUnit, packagingLevels, categoryId, code: _c, barcode: _b, ...rest } = body as any;
     return prisma.$transaction(async (tx) => {
       // Database-driven Therapeutic Category master — `categoryId` absent = leave untouched, explicit null = clear it, a uuid = set it (kept in sync with categoryLabel for legacy string readers).
       let categoryPatch: { categoryId?: string | null; categoryLabel?: string | null } = {};
