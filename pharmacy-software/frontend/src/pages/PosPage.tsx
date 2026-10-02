@@ -673,11 +673,19 @@ export const PosPage: React.FC = () => {
                               }
                               className="h-6.5 px-2 text-[10.5px] font-semibold bg-slate-50 border border-slate-200 rounded-md text-slate-800"
                             >
-                              {unitOptions.map((o) => (
-                                <option key={o.unitId} value={o.unitId}>
-                                  {o.unit?.name}
-                                </option>
-                              ))}
+                              {unitOptions.map((o) => {
+                                const uName =
+                                  o.unit?.name ||
+                                  unitCatalog.find((u) => u.id === o.unitId)?.name ||
+                                  'Unit';
+                                const conv = Number(o.conversionToBase) || 1;
+                                const baseName = line.medicine.unit || line.medicine.baseUnit?.name || 'unit';
+                                return (
+                                  <option key={o.unitId} value={o.unitId}>
+                                    {uName} {conv > 1 ? `(${conv} ${baseName}s)` : `(1 ${baseName})`}
+                                  </option>
+                                );
+                              })}
                             </select>
                           </div>
                         ) : (

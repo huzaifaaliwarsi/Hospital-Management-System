@@ -107,6 +107,17 @@ enum PurchaseStatus {
   POSTED
 }
 
+/// Purchase Order = what we want to order (a procurement reminder sent to a
+/// vendor, zero stock/cost/ledger impact). Distinct from Purchase (= what we
+/// actually received, the Stock In / GRN record above). OPEN is editable/
+/// cancellable; CONVERTED once "Receive / Convert to Stock In" is used to
+/// pre-fill a real Purchase (the PO itself still never posts stock).
+enum PurchaseOrderStatus {
+  OPEN
+  CONVERTED
+  CANCELLED
+}
+
 /// purchase-costing-plan — how a PurchaseLine's discount was entered.
 enum DiscountType {
   PERCENTAGE
@@ -170,6 +181,7 @@ model PortalUser {
   createdVendors       Vendor[]            @relation("VendorCreatedBy")
   vendorLedgerEntries  VendorLedgerEntry[] @relation("VendorLedgerActor")
   createdPurchases     Purchase[]          @relation("PurchaseCreatedBy")
+  createdPurchaseOrders PurchaseOrder[]    @relation("PurchaseOrderCreatedBy")
   dispensedInvoices    PharmacyInvoice[]   @relation("InvoiceDispensedBy")
   collectedPayments    PharmacyPayment[]   @relation("PaymentCollectedBy")
   handledRequests      MedicineRequest[]   @relation("RequestHandledBy")
@@ -236,12 +248,13 @@ model MedicineMaster {
   taxPercent   Decimal  @default(0) @map("tax_percent") @db.Decimal(5, 2)
   isActive     Boolean  @default(true) @map("is_active")
 
-  batches         MedicineBatch[]
-  stockEntries    StockLedgerEntry[]
-  purchaseLines   PurchaseLine[]
-  invoiceLines    PharmacyInvoiceLine[]
-  requestLines    MedicineRequestLine[]
-  packagingLevels MedicinePackagingLevel[]
+  batches            MedicineBatch[]
+  stockEntries       StockLedgerEntry[]
+  purchaseLines      PurchaseLine[]
+  purchaseOrderLines PurchaseOrderLine[]
+  invoiceLines       PharmacyInvoiceLine[]
+  requestLines       MedicineRequestLine[]
+  packagingLevels    MedicinePackagingLevel[]
 
   createdById   String?     @map("created_by")
   createdByUser PortalUser? @relation("MedicineCreatedBy", fields: [createdById], references: [id])
@@ -270,12 +283,13 @@ model Unit {
   createdById String?  @map("created_by")
   createdAt   DateTime @default(now()) @map("created_at")
 
-  medicinesWithThisBaseUnit   MedicineMaster[]         @relation("MedicineBaseUnit")
-  packagingLevels             MedicinePackagingLevel[]
-  batchesWithThisPurchaseUnit MedicineBatch[]          @relation("BatchPurchaseUnit")
-  purchaseLinesWithThisUnit   PurchaseLine[]           @relation("PurchaseLineUnit")
-  invoiceLinesWithThisUnit    PharmacyInvoiceLine[]    @relation("InvoiceLineSaleUnit")
-  requestLinesWithThisUnit    MedicineRequestLine[]    @relation("RequestLineSaleUnit")
+  medicinesWithThisBaseUnit     MedicineMaster[]         @relation("MedicineBaseUnit")
+  packagingLevels               MedicinePackagingLevel[]
+  batchesWithThisPurchaseUnit   MedicineBatch[]          @relation("BatchPurchaseUnit")
+  purchaseLinesWithThisUnit     PurchaseLine[]           @relation("PurchaseLineUnit")
+  purchaseOrderLinesWithThisUnit PurchaseOrderLine[]     @relation("PurchaseOrderLineUnit")
+  invoiceLinesWithThisUnit      PharmacyInvoiceLine[]    @relation("InvoiceLineSaleUnit")
+  requestLinesWithThisUnit      MedicineRequestLine[]    @relation("RequestLineSaleUnit")
 
   @@map("units")
 }
@@ -393,8 +407,9 @@ model Vendor {
   paymentTermsDays Int     @default(0) @map("payment_terms_days")
   isActive         Boolean @default(true) @map("is_active")
 
-  purchases     Purchase[]
-  ledgerEntries VendorLedgerEntry[]
+  purchases      Purchase[]
+  purchaseOrders PurchaseOrder[]
+  ledgerEntries  VendorLedgerEntry[]
 
   createdById   String?     @map("created_by")
   createdByUser PortalUser? @relation("VendorCreatedBy", fields: [createdById], references: [id])
@@ -489,6 +504,46 @@ model PurchaseLine {
   finalSaleRate     Decimal? @map("final_sale_rate") @db.Decimal(14, 2)
 
   @@map("purchase_lines")
+}
+
+/// Purchase Order — the simple procurement reminder/order screen. Medicine +
+/// required quantity/unit + vendor + notes/urgency, printable/WhatsApp-
+/// shareable. Creating or editing one NEVER touches stock, batches, cost,
+/// payment or the vendor ledger — those only happen when a real Purchase
+/// (Stock In / GRN) is posted, optionally pre-filled from this PO via
+/// "Receive / Convert to Stock In". A PO is never mandatory before a Purchase.
+model PurchaseOrder {
+  id           String              @id @default(uuid())
+  /// System-generated (PREQ-0001…) — never manually typed, see DocumentSequence.
+  orderNumber  String              @unique @map("order_number")
+  vendorId     String              @map("vendor_id")
+  vendor       Vendor              @relation(fields: [vendorId], references: [id])
+  orderDate    DateTime            @map("order_date") @db.Date
+  isUrgent     Boolean             @default(false) @map("is_urgent")
+  notes        String?
+  status       PurchaseOrderStatus @default(OPEN)
+
+  lines PurchaseOrderLine[]
+
+  createdById   String     @map("created_by")
+  createdByUser PortalUser @relation("PurchaseOrderCreatedBy", fields: [createdById], references: [id])
+  createdAt     DateTime   @default(now()) @map("created_at")
+
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderLine {
+  id              String         @id @default(uuid())
+  purchaseOrderId String         @map("purchase_order_id")
+  purchaseOrder   PurchaseOrder  @relation(fields: [purchaseOrderId], references: [id])
+  medicineId      String         @map("medicine_id")
+  medicine        MedicineMaster @relation(fields: [medicineId], references: [id])
+  requiredUnitId  String         @map("required_unit_id")
+  requiredUnit    Unit           @relation("PurchaseOrderLineUnit", fields: [requiredUnitId], references: [id])
+  requiredQty     Decimal        @map("required_qty") @db.Decimal(14, 3)
+  lineNotes       String?        @map("line_notes")
+
+  @@map("purchase_order_lines")
 }
 
 // ═══════════════════════════════════════════════════════════════════════

@@ -94,6 +94,11 @@ export const vendorsService = {
     return peekNextCode(SEQUENCE.VENDOR);
   },
 
+  /** Preview only — not reserved. See `peekNextCode` doc comment. */
+  async peekNextPurchaseCode() {
+    return peekNextCode(SEQUENCE.PURCHASE);
+  },
+
   async create(body: CreateVendorBody, actorId: string) {
     return prisma.$transaction(async (tx) => {
       const code = await nextCode(tx, SEQUENCE.VENDOR);

@@ -11,7 +11,8 @@ import { MedicinesPage } from './pages/MedicinesPage';
 import { PosPage } from './pages/PosPage';
 import { InvoicesPage } from './pages/InvoicesPage';
 import { VendorsPage } from './pages/VendorsPage';
-import { PurchasesPage } from './pages/PurchasesPage';
+import { PurchaseOrdersPage } from './pages/PurchaseOrdersPage';
+import { StockInPage, StockInPrefill } from './pages/StockInPage';
 import { BalanceSheetPage } from './pages/BalanceSheetPage';
 import { SettlementsPage } from './pages/SettlementsPage';
 import { ExpensesPage } from './pages/ExpensesPage';
@@ -23,6 +24,9 @@ import { SettingsPage } from './pages/SettingsPage';
 import { ComingSoonPage } from './pages/ComingSoonPage';
 
 function findLabel(groups: NavGroup[], id: string): string {
+  // 'stock-in' is deliberately not a sidebar item (reached via the Medicines page
+  // button or a Purchase Order's "Receive / Convert to Stock In") — give it its own title.
+  if (id === 'stock-in') return 'New Purchase / Stock In';
   for (const g of groups) {
     const item = g.items.find((i) => i.id === id);
     if (item) return item.label;
@@ -34,6 +38,7 @@ const App: React.FC = () => {
   const { isAuthenticated, isLoading, currentUser, logout } = useAuth();
   const [page, setPage] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [stockInPrefill, setStockInPrefill] = useState<StockInPrefill | null>(null);
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center text-sm text-[#52665e]">Loading…</div>;
   if (!isAuthenticated || !currentUser) return <LoginPage />;
@@ -48,7 +53,7 @@ const App: React.FC = () => {
       case 'dashboard':
         return isSales ? <SalesDashboardPage /> : <ManagementDashboardPage onNavigate={setPage} />;
       case 'medicines':
-        return <MedicinesPage canEdit={!isSales} />;
+        return <MedicinesPage canEdit={!isSales} onNavigate={setPage} />;
       case 'pos':
         return <PosPage />;
       case 'invoices':
@@ -60,7 +65,17 @@ const App: React.FC = () => {
       case 'vendors':
         return <VendorsPage canEdit={!isSales} />;
       case 'purchases':
-        return <PurchasesPage />;
+        return (
+          <PurchaseOrdersPage
+            canEdit={!isSales}
+            onConvert={(prefill) => {
+              setStockInPrefill(prefill);
+              setPage('stock-in');
+            }}
+          />
+        );
+      case 'stock-in':
+        return <StockInPage prefill={stockInPrefill} onConsumedPrefill={() => setStockInPrefill(null)} />;
       case 'balance-sheet':
         return <BalanceSheetPage />;
       case 'settlements':
@@ -91,7 +106,7 @@ const App: React.FC = () => {
       />
       <div
         className="min-h-screen flex flex-col transition-all duration-300 ease-in-out"
-        style={{ marginLeft: sidebarOpen ? '256px' : '0px' }}
+        style={{ marginLeft: sidebarOpen ? '256px' : '72px' }}
       >
         <TopBar
           user={currentUser}

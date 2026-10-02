@@ -27,12 +27,21 @@ import {
   Calendar,
   Building2,
   BadgeCheck,
+  PackagePlus,
 } from 'lucide-react';
 import { pharmacyApi, MedicineRow, Unit, MedicineCategory } from '../services/pharmacyApi';
 import { formatPKR, formatNumber } from '../utils/format';
 import { useToast } from '../context/ToastContext';
 import { PharmacyKpiHeader, KpiItem } from '../components/PharmacyKpiHeader';
-import { MedicinePackagingFields, PackagingLevelForm, computeFlatConversions, flatToRelativeLevels } from '../components/MedicinePackagingFields';
+import {
+  MedicinePackagingFields,
+  PackagingLevelForm,
+  computeFlatConversions,
+  flatToRelativeLevels,
+  validatePackagingState,
+  createPackagingPayload,
+} from '../components/MedicinePackagingFields';
+import { AddMedicineModal } from '../components/AddMedicineModal';
 
 const DOSAGE_FORM_OPTIONS = ['Tablet', 'Capsule', 'Syrup', 'Injection', 'Cream', 'Ointment', 'Drops', 'Suspension', 'Inhaler', 'Sachet'];
 
@@ -60,7 +69,7 @@ const emptyPackaging = {
 type SortField = 'code' | 'name' | 'category' | 'unit' | 'saleRate' | 'currentStock' | 'reorderLevel' | 'stockValue' | 'status';
 type SortOrder = 'asc' | 'desc';
 
-export const MedicinesPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
+export const MedicinesPage: React.FC<{ canEdit: boolean; onNavigate?: (page: string) => void }> = ({ canEdit, onNavigate }) => {
   const toast = useToast();
   const [rows, setRows] = useState<MedicineRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -103,7 +112,6 @@ export const MedicinesPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
   const [unitCatalog, setUnitCatalog] = useState<Unit[]>([]);
   const [loadingPackaging, setLoadingPackaging] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [loadingNextCode, setLoadingNextCode] = useState(false);
 
   // Dual Synchronized Scrollbars Refs
   const topScrollRef = useRef<HTMLDivElement>(null);
@@ -359,7 +367,10 @@ export const MedicinesPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
       const extraLevels = levels.filter((l) => l.level > 0);
       const purchaseLevel = levels.find((l) => l.isPurchaseUnit);
       // Reverse the stored flat conversions back into the "1 Box = 10 Strip" relative chain the builder edits.
-      const relativeLevels = flatToRelativeLevels(extraLevels.map((l) => ({ unitId: l.unitId, conversionToBase: Number(l.conversionToBase) })));
+      const relativeLevels = flatToRelativeLevels(
+        extraLevels.map((l) => ({ unitId: l.unitId, conversionToBase: Number(l.conversionToBase) })),
+        baseUnitId
+      );
       const saleByUnitId = new Map(extraLevels.map((l) => [l.unitId, l.isSaleUnit]));
       setPackaging({
         baseUnitId,
@@ -374,86 +385,6 @@ export const MedicinesPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
     }
   };
 
-  // Validates the packaging-levels builder state before either save (medicine-packaging-plan).
-  const validatePackaging = (): string | null => {
-    if (!packaging.baseUnitId) return 'Base Stock Unit is required.';
-    if (!packaging.defaultPurchaseUnitId) return 'Default Purchase Unit is required.';
-    const seen = new Set<string>();
-    for (const lvl of packaging.levels) {
-      if (!lvl.unitId) return 'Every packaging level needs a unit selected.';
-      if (seen.has(lvl.unitId)) return 'The same unit cannot appear twice in the packaging breakdown.';
-      seen.add(lvl.unitId);
-      if (!lvl.relativeQty || Number(lvl.relativeQty) <= 0) return 'Each packaging level\'s quantity must be greater than 0.';
-    }
-    if (!packaging.baseIsSaleUnit && !packaging.levels.some((l) => l.isSaleUnit)) return 'At least one unit must be marked sellable.';
-    return null;
-  };
-
-  const packagingPayload = () => {
-    const flat = computeFlatConversions(packaging.levels);
-    return {
-      baseUnitId: packaging.baseUnitId,
-      baseIsPurchaseUnit: packaging.defaultPurchaseUnitId === packaging.baseUnitId,
-      baseIsSaleUnit: packaging.baseIsSaleUnit,
-      packagingLevels: packaging.levels.map((l) => ({
-        unitId: l.unitId,
-        conversionToBase: flat.get(l.unitId) ?? 0,
-        isPurchaseUnit: l.unitId === packaging.defaultPurchaseUnitId,
-        isSaleUnit: l.isSaleUnit,
-      })),
-    };
-  };
-
-  // Medicine Code auto-generate — backend-safe sequence (MED-0001…), still editable by an authorized user per the Medicine Master's explicit override exception.
-  const handleAutoGenerateCode = () => {
-    setLoadingNextCode(true);
-    pharmacyApi
-      .getNextMedicineCode()
-      .then((code) => setForm((f) => ({ ...f, code })))
-      .catch(() => toast.error('Failed to fetch next medicine code.'))
-      .finally(() => setLoadingNextCode(false));
-  };
-
-  // Save new medicine
-  const handleSaveNew = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!form.code.trim() || !form.name.trim()) {
-      toast.error('Code and Name are required.');
-      return;
-    }
-    const packagingError = validatePackaging();
-    if (packagingError) {
-      toast.error(packagingError);
-      return;
-    }
-    setSaving(true);
-    try {
-      await pharmacyApi.createMedicine({
-        code: form.code.trim(),
-        barcode: form.barcode.trim() || undefined,
-        name: form.name.trim(),
-        genericName: form.genericName.trim() || undefined,
-        strength: form.strength.trim() || undefined,
-        dosageForm: form.dosageForm.trim() || undefined,
-        category: form.category.trim() || undefined,
-        batchManaged: form.batchManaged,
-        reorderLevel: Number(form.reorderLevel) || 0,
-        saleRate: form.saleRate.trim() ? Number(form.saleRate) : 0,
-        taxPercent: Number(form.taxPercent) || 0,
-        ...packagingPayload(),
-      });
-      toast.success(`Medicine "${form.name}" added to formulary.`);
-      setShowAddModal(false);
-      setForm(emptyForm);
-      setPackaging(emptyPackaging);
-      load();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.error?.message || 'Failed to create medicine.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
   // Update existing medicine
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -462,7 +393,7 @@ export const MedicinesPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
       toast.error('Name is required.');
       return;
     }
-    const packagingError = validatePackaging();
+    const packagingError = validatePackagingState(packaging, unitCatalog);
     if (packagingError) {
       toast.error(packagingError);
       return;
@@ -480,7 +411,7 @@ export const MedicinesPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
         reorderLevel: Number(form.reorderLevel) || 0,
         saleRate: form.saleRate.trim() ? Number(form.saleRate) : 0,
         taxPercent: Number(form.taxPercent) || 0,
-        ...packagingPayload(),
+        ...createPackagingPayload(packaging),
       });
       toast.success(`Medicine "${form.name}" updated successfully.`);
       setShowEditModal(false);
@@ -604,18 +535,23 @@ export const MedicinesPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
         </div>
 
         {canEdit && (
-          <button
-            type="button"
-            onClick={() => {
-              setForm(emptyForm);
-              setPackaging(emptyPackaging);
-              setShowAddModal(true);
-              handleAutoGenerateCode();
-            }}
-            className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-white bg-[#0e7d5a] hover:bg-[#0c6b50] rounded-xl shadow-xs transition-all cursor-pointer"
-          >
-            <Plus className="h-4 w-4" /> Add New Medicine
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onNavigate?.('stock-in')}
+              className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-[#0e7d5a] bg-white border border-[#0e7d5a]/40 hover:bg-emerald-50 rounded-xl shadow-xs transition-all cursor-pointer"
+              title="Record a supplier purchase / receive stock"
+            >
+              <PackagePlus className="h-4 w-4" /> New Purchase / Stock In
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowAddModal(true)}
+              className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-white bg-[#0e7d5a] hover:bg-[#0c6b50] rounded-xl shadow-xs transition-all cursor-pointer"
+            >
+              <Plus className="h-4 w-4" /> Add New Medicine
+            </button>
+          </div>
         )}
       </div>
 
@@ -1290,210 +1226,20 @@ export const MedicinesPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
       {/* ═════════════════════════════════════════════════════════════════════
           6. ADD MEDICINE MODAL
           ═════════════════════════════════════════════════════════════════════ */}
-      {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl border border-slate-200 overflow-hidden">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-white">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-emerald-50 text-[#08775A] flex items-center justify-center">
-                  <Pill className="h-4 w-4" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900">Add Medicine to Formulary</h3>
-                  <p className="text-[11px] text-slate-400">Register new item in pharmacy catalog</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowAddModal(false)}
-                className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg p-1.5 transition-colors cursor-pointer"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveNew} className="p-6 space-y-4 text-xs max-h-[80vh] overflow-y-auto">
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Medicine Code *</label>
-                <div className="flex items-center gap-1.5">
-                  <input
-                    value={form.code}
-                    onChange={(e) => setForm({ ...form, code: e.target.value })}
-                    placeholder="e.g. MED-010"
-                    className="flex-1 h-9 px-3 bg-white border border-slate-200 rounded-xl font-mono focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleAutoGenerateCode}
-                    className="h-9 px-3 shrink-0 text-[11px] font-semibold text-[#0e7d5a] border border-dashed border-[#0e7d5a]/50 hover:bg-emerald-50 rounded-xl transition-colors cursor-pointer whitespace-nowrap"
-                  >
-                    Auto-generate
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Medicine Name *</label>
-                  <input
-                    value={form.name}
-                    onChange={(e) => setForm({ ...form, name: e.target.value })}
-                    placeholder="e.g. Augmentin"
-                    className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl font-semibold focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
-                  />
-                </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Strength</label>
-                  <input
-                    value={form.strength}
-                    onChange={(e) => setForm({ ...form, strength: e.target.value })}
-                    placeholder="e.g. 625mg"
-                    className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Generic Name</label>
-                  <input
-                    value={form.genericName}
-                    onChange={(e) => setForm({ ...form, genericName: e.target.value })}
-                    placeholder="e.g. Amoxicillin + Clavulanate"
-                    className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
-                  />
-                </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Dosage Form</label>
-                  <input
-                    list="dosage-form-options"
-                    value={form.dosageForm}
-                    onChange={(e) => setForm({ ...form, dosageForm: e.target.value })}
-                    placeholder="e.g. Tablet"
-                    className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
-                  />
-                  <datalist id="dosage-form-options">
-                    {DOSAGE_FORM_OPTIONS.map((d) => <option key={d} value={d} />)}
-                  </datalist>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Therapeutic Category</label>
-                  <input
-                    value={form.category}
-                    onChange={(e) => setForm({ ...form, category: e.target.value })}
-                    placeholder="e.g. Antibiotics, Analgesics, Cardiac"
-                    className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
-                  />
-                </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Barcode (Optional)</label>
-                  <input
-                    value={form.barcode}
-                    onChange={(e) => setForm({ ...form, barcode: e.target.value })}
-                    placeholder="Scan or enter barcode"
-                    className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl font-mono focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
-                  />
-                </div>
-              </div>
-
-              <div className="border-t border-slate-100 pt-3">
-                <h4 className="font-bold text-slate-800 mb-2 flex items-center gap-1.5"><Package className="h-3.5 w-3.5 text-[#0e7d5a]" /> Packaging &amp; Units</h4>
-                <MedicinePackagingFields
-                  units={unitCatalog}
-                  onUnitCreated={(u) => setUnitCatalog((prev) => [...prev, u])}
-                  baseUnitId={packaging.baseUnitId}
-                  onBaseUnitIdChange={(id) => setPackaging({ ...packaging, baseUnitId: id })}
-                  baseIsSaleUnit={packaging.baseIsSaleUnit}
-                  onBaseIsSaleUnitChange={(s) => setPackaging({ ...packaging, baseIsSaleUnit: s })}
-                  defaultPurchaseUnitId={packaging.defaultPurchaseUnitId}
-                  onDefaultPurchaseUnitIdChange={(id) => setPackaging({ ...packaging, defaultPurchaseUnitId: id })}
-                  levels={packaging.levels}
-                  onLevelsChange={(levels) => setPackaging({ ...packaging, levels })}
-                />
-              </div>
-
-              <div className="grid grid-cols-3 gap-3 border-t border-slate-100 pt-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Default Sale Price (Optional)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={form.saleRate}
-                    onChange={(e) => setForm({ ...form, saleRate: e.target.value })}
-                    placeholder="0.00"
-                    className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl font-bold font-mono focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
-                  />
-                </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Tax / GST %</label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={form.taxPercent}
-                    onChange={(e) => setForm({ ...form, taxPercent: e.target.value })}
-                    className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
-                  />
-                </div>
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">
-                    Reorder Alert Qty {packaging.baseUnitId && <span className="font-normal text-slate-400">({unitCatalog.find((u) => u.id === packaging.baseUnitId)?.name || '...'})</span>}
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={form.reorderLevel}
-                    onChange={(e) => setForm({ ...form, reorderLevel: e.target.value })}
-                    className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
-                  />
-                  {packaging.baseUnitId && (
-                    <p className="text-[10px] text-slate-400 mt-1">
-                      = {formatNumber(Number(form.reorderLevel) || 0)} {unitCatalog.find((u) => u.id === packaging.baseUnitId)?.name || ''}
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer select-none pt-1">
-                <input
-                  type="checkbox"
-                  checked={form.batchManaged}
-                  onChange={(e) => setForm({ ...form, batchManaged: e.target.checked })}
-                  className="rounded text-emerald-600 focus:ring-emerald-500"
-                />
-                <span>Track batch numbers &amp; expiry dates (FEFO)</span>
-              </label>
-
-              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setShowAddModal(false)}
-                  className="px-4 py-2 font-semibold text-slate-600 border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="px-4 py-2 font-bold text-white bg-[#0e7d5a] hover:bg-[#0c6b50] rounded-xl shadow-xs disabled:opacity-60 transition-colors flex items-center gap-1.5 cursor-pointer"
-                >
-                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                  Save Medicine
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <AddMedicineModal
+        open={showAddModal}
+        onClose={() => setShowAddModal(false)}
+        units={unitCatalog}
+        onUnitCreated={(u) => setUnitCatalog((prev) => [...prev, u])}
+        onCreated={() => load()}
+      />
 
       {/* ═════════════════════════════════════════════════════════════════════
           7. EDIT MEDICINE MODAL
           ═════════════════════════════════════════════════════════════════════ */}
       {showEditModal && selectedMedicine && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl border border-slate-200 overflow-hidden">
+          <div className="bg-white rounded-2xl w-full max-w-xl shadow-2xl border border-slate-200 overflow-hidden">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-white">
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-lg bg-emerald-50 text-[#08775A] flex items-center justify-center">
@@ -1638,11 +1384,18 @@ export const MedicinesPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
                     onChange={(e) => setForm({ ...form, reorderLevel: e.target.value })}
                     className="w-full h-9 px-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
                   />
-                  {packaging.baseUnitId && (
-                    <p className="text-[10px] text-slate-400 mt-1">
-                      = {formatNumber(Number(form.reorderLevel) || 0)} {unitCatalog.find((u) => u.id === packaging.baseUnitId)?.name || ''}
-                    </p>
-                  )}
+                  {packaging.baseUnitId && Number(form.reorderLevel) > 0 && (() => {
+                    const baseName = unitCatalog.find((u) => u.id === packaging.baseUnitId)?.name || 'units';
+                    const { calculatedLevels } = computeFlatConversions(packaging.levels, packaging.baseUnitId, unitCatalog);
+                    const highestPack = calculatedLevels[0];
+                    const packQty = highestPack && highestPack.conversionToBase > 0 ? (Number(form.reorderLevel) / highestPack.conversionToBase) : null;
+                    return (
+                      <p className="text-[10px] text-slate-400 mt-1 truncate">
+                        = {formatNumber(Number(form.reorderLevel) || 0)} {baseName}
+                        {highestPack && packQty ? ` (~${packQty % 1 === 0 ? packQty : packQty.toFixed(1)} ${highestPack.unitName}${packQty > 1 ? 's' : ''})` : ''}
+                      </p>
+                    );
+                  })()}
                 </div>
               </div>
 

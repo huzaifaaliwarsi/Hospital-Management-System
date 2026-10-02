@@ -16,6 +16,7 @@ router.get('/next-code', create, asyncHandler(c.nextCode));
 router.patch('/:id', edit, validate({ params: s.idParamsSchema, body: s.updateVendorBodySchema }), asyncHandler(c.update));
 router.get('/:id/ledger', view, validate({ params: s.idParamsSchema }), asyncHandler(c.getLedger));
 router.post('/:id/pay', create, validate({ params: s.idParamsSchema, body: s.payVendorBodySchema }), asyncHandler(c.payVendor));
+router.get('/purchases/next-code', create, asyncHandler(c.nextPurchaseCode));
 router.post('/purchases', create, validate({ body: s.createPurchaseBodySchema }), asyncHandler(c.createPurchase));
 router.post('/purchases/:id/post', edit, validate({ params: s.idParamsSchema }), asyncHandler(c.postPurchase));
 router.post('/purchase-returns', create, validate({ body: s.purchaseReturnBodySchema }), asyncHandler(c.purchaseReturn));

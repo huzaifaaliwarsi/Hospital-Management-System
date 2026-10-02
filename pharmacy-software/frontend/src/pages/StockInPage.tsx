@@ -12,10 +12,12 @@ import {
   RotateCcw,
   Receipt,
   CreditCard,
+  Printer,
+  Hash,
 } from 'lucide-react';
 import apiClient from '../services/apiClient';
-import { pharmacyApi, MedicineRow, MarkupRule } from '../services/pharmacyApi';
-import { formatPKR } from '../utils/format';
+import { pharmacyApi, MedicineRow, MarkupRule, Unit } from '../services/pharmacyApi';
+import { formatPKR, formatNumber } from '../utils/format';
 import { useToast } from '../context/ToastContext';
 import { PharmacyKpiHeader, KpiItem } from '../components/PharmacyKpiHeader';
 import {
@@ -25,9 +27,29 @@ import {
   purchaseUnitsFor,
 } from '../components/PurchaseLineCard';
 import { calcPurchaseLine } from '../utils/purchaseCosting';
+import { AddVendorModal } from '../components/AddVendorModal';
+import { AddMedicineModal } from '../components/AddMedicineModal';
 
-export const PurchasesPage: React.FC = () => {
+export interface StockInPrefill {
+  vendorId: string;
+  sourcePurchaseOrderId?: string;
+  lines: { medicineId: string; quantity: string }[];
+}
+
+interface Props {
+  /** Set by "Receive / Convert to Stock In" on a Purchase Order — pre-fills vendor + medicine lines + ordered qty. Batch/expiry/cost are never pre-filled; those only exist once goods physically arrive. */
+  prefill?: StockInPrefill | null;
+  /** Called once the prefill has been applied, so the caller can clear it (prevents re-applying stale data on next visit). */
+  onConsumedPrefill?: () => void;
+}
+
+export const StockInPage: React.FC<Props> = ({ prefill, onConsumedPrefill }) => {
   const [vendors, setVendors] = useState<any[]>([]);
+  const [unitCatalog, setUnitCatalog] = useState<Unit[]>([]);
+  const [purchaseRef, setPurchaseRef] = useState('');
+  const [showAddVendorModal, setShowAddVendorModal] = useState(false);
+  const [addMedicineForLineIdx, setAddMedicineForLineIdx] = useState<number | null>(null);
+  const [lastPostedPurchase, setLastPostedPurchase] = useState<any | null>(null);
   const [medicines, setMedicines] = useState<MedicineRow[]>([]);
   const [markupRules, setMarkupRules] = useState<MarkupRule[]>([]);
   const [defaultMarkupPercent, setDefaultMarkupPercent] = useState(20);
@@ -37,18 +59,40 @@ export const PurchasesPage: React.FC = () => {
   const [paymentType, setPaymentType] = useState<'CASH' | 'CARD' | 'ONLINE' | ''>('');
   const [paidNow, setPaidNow] = useState('0');
   const [lines, setLines] = useState<PurchaseLineState[]>([emptyPurchaseLine()]);
-  const [saving, setSaving] = useState<'draft' | 'post' | null>(null);
+  const [saving, setSaving] = useState<'draft' | 'post' | 'postPrint' | null>(null);
   const toast = useToast();
+
+  const refreshPurchaseRef = () => {
+    pharmacyApi.getNextPurchaseCode().then(setPurchaseRef).catch(() => setPurchaseRef(''));
+  };
 
   useEffect(() => {
     apiClient.get('/vendors').then((r) => setVendors(r.data.data || []));
     pharmacyApi.listMedicines().then((meds) => setMedicines(meds || []));
     pharmacyApi.listMarkupRules().then(setMarkupRules).catch(() => {});
+    pharmacyApi.listUnits().then(setUnitCatalog).catch(() => {});
     pharmacyApi
       .getPharmacySettings()
       .then((s) => setDefaultMarkupPercent(Number(s.defaultMarkupPercent)))
       .catch(() => {});
+    refreshPurchaseRef();
   }, []);
+
+  // Apply a Purchase Order's "Receive / Convert to Stock In" pre-fill once the medicine catalog is loaded.
+  useEffect(() => {
+    if (!prefill || medicines.length === 0) return;
+    setVendorId(prefill.vendorId);
+    setLines(
+      prefill.lines.map((l) => {
+        const med = medicines.find((m) => m.id === l.medicineId);
+        const defaultUnit = purchaseUnitsFor(med)[0];
+        return { ...emptyPurchaseLine(), medicineId: l.medicineId, quantity: l.quantity, purchaseUnitId: defaultUnit?.unitId ?? '' };
+      })
+    );
+    toast.info('Pre-filled from the Purchase Order — review batch, expiry and cost before posting.');
+    onConsumedPrefill?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill, medicines]);
 
   const updateLine = (idx: number, patch: Partial<PurchaseLineState>) =>
     setLines((prev) => prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
@@ -170,23 +214,28 @@ export const PurchasesPage: React.FC = () => {
     };
   };
 
-  const handleSubmit = async (post: boolean) => {
+  const handleSubmit = async (post: boolean, printGrn = false) => {
     if (!vendorId) return toast.error('Please select a vendor supplier.');
     if (!purchaseDate) return toast.error('Purchase date is required.');
     const payload = buildPayload(post);
     if (!payload)
       return toast.error('Add at least one valid line item (medicine, batch, expiry, unit, quantity).');
 
-    setSaving(post ? 'post' : 'draft');
+    setSaving(printGrn ? 'postPrint' : post ? 'post' : 'draft');
     try {
-      await apiClient.post('/vendors/purchases', payload);
+      const res = await apiClient.post('/vendors/purchases', payload);
       toast.success(
         post
           ? 'Purchase consignment posted — stock, vendor ledger, and retail prices updated.'
           : 'Purchase saved as draft successfully.'
       );
+      if (printGrn) {
+        setLastPostedPurchase({ ...res.data.data, vendorName: selectedVendorObj?.name });
+        setTimeout(() => window.print(), 50);
+      }
       resetForm();
       pharmacyApi.listMedicines().then((meds) => setMedicines(meds || []));
+      refreshPurchaseRef();
     } catch (err: any) {
       toast.error(err?.response?.data?.error?.message || 'Failed to save purchase.');
     } finally {
@@ -195,7 +244,8 @@ export const PurchasesPage: React.FC = () => {
   };
 
   return (
-    <div className="p-4 sm:p-6 space-y-4 max-w-[1360px] mx-auto font-sans">
+    <>
+    <div className="p-4 sm:p-6 space-y-4 max-w-[1360px] mx-auto font-sans print:hidden">
       {/* ── Page Header ── */}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-xl border border-slate-200/90 shadow-2xs">
         <div>
@@ -235,20 +285,37 @@ export const PurchasesPage: React.FC = () => {
           <span>Vendor Supplier &amp; Invoice Particulars</span>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          <Field label="Purchase Ref">
+            <div className="w-full h-8.5 px-3 text-xs bg-slate-100 border border-slate-200 rounded-lg text-slate-500 font-mono font-semibold flex items-center gap-1.5 cursor-not-allowed">
+              <Hash className="h-3 w-3 text-slate-400 shrink-0" />
+              {purchaseRef || 'Generating…'}
+            </div>
+          </Field>
+
           <Field label="Vendor / Supplier *">
-            <select
-              value={vendorId}
-              onChange={(e) => setVendorId(e.target.value)}
-              className="w-full h-8.5 px-3 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-slate-900 font-semibold focus:outline-none focus:ring-1 focus:ring-[#0e7d5a] focus:border-[#0e7d5a] cursor-pointer transition-colors"
-            >
-              <option value="">Select vendor…</option>
-              {vendors.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.name} ({v.code})
-                </option>
-              ))}
-            </select>
+            <div className="flex items-center gap-1.5">
+              <select
+                value={vendorId}
+                onChange={(e) => setVendorId(e.target.value)}
+                className="flex-1 h-8.5 px-3 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-slate-900 font-semibold focus:outline-none focus:ring-1 focus:ring-[#0e7d5a] focus:border-[#0e7d5a] cursor-pointer transition-colors"
+              >
+                <option value="">Select vendor…</option>
+                {vendors.filter((v) => v.isActive !== false).map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.name} ({v.code})
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => setShowAddVendorModal(true)}
+                title="Add New Vendor"
+                className="h-8.5 w-8.5 shrink-0 flex items-center justify-center border border-dashed border-slate-300 text-slate-500 hover:border-[#0e7d5a] hover:text-[#0e7d5a] rounded-lg cursor-pointer transition-colors"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            </div>
           </Field>
 
           <Field label="Inward / Bill Date *">
@@ -316,9 +383,10 @@ export const PurchasesPage: React.FC = () => {
             onRemove={() => removeLine(idx)}
             canRemove={lines.length > 1}
             medicines={medicines}
-            units={[]}
+            units={unitCatalog}
             markupRules={markupRules}
             defaultMarkupPercent={defaultMarkupPercent}
+            onRequestAddMedicine={() => setAddMedicineForLineIdx(idx)}
           />
         ))}
 
@@ -357,6 +425,15 @@ export const PurchasesPage: React.FC = () => {
               className="w-full h-8 px-2.5 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-slate-900 font-bold focus:outline-none focus:ring-1 focus:ring-[#0e7d5a] focus:border-[#0e7d5a] transition-colors text-right"
             />
           </div>
+
+          <div>
+            <div className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wider">
+              Vendor Due
+            </div>
+            <div className="text-lg font-extrabold tabular-nums text-amber-700 mt-0.5">
+              {formatPKR(Math.max(total - (Number(paidNow) || 0), 0))}
+            </div>
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -387,9 +464,91 @@ export const PurchasesPage: React.FC = () => {
             )}
             Post Consignment to Stock &amp; Ledger
           </button>
+
+          <button
+            type="button"
+            onClick={() => handleSubmit(true, true)}
+            disabled={saving !== null}
+            title="Post this consignment and open the GRN print view"
+            className="h-9.5 px-4 text-xs font-bold text-[#0e7d5a] bg-white border border-[#0e7d5a]/50 hover:bg-emerald-50 rounded-xl disabled:opacity-50 transition-all cursor-pointer flex items-center justify-center gap-1.5"
+          >
+            {saving === 'postPrint' ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Printer className="h-3.5 w-3.5" />
+            )}
+            Post &amp; Print GRN
+          </button>
         </div>
       </div>
-    </div>
+
+      <AddVendorModal
+        open={showAddVendorModal}
+        onClose={() => setShowAddVendorModal(false)}
+        onCreated={(v) => {
+          setVendors((prev) => [...prev, v]);
+          setVendorId(v.id);
+        }}
+      />
+
+      <AddMedicineModal
+        open={addMedicineForLineIdx !== null}
+        onClose={() => setAddMedicineForLineIdx(null)}
+        units={unitCatalog}
+        onUnitCreated={(u) => setUnitCatalog((prev) => [...prev, u])}
+        onCreated={(med) => {
+          setMedicines((prev) => [...prev, med]);
+          if (addMedicineForLineIdx !== null) updateLine(addMedicineForLineIdx, { medicineId: med.id });
+          setAddMedicineForLineIdx(null);
+        }}
+      />
+      </div>
+
+      {/* ── GRN print view (screen-hidden; shown only by window.print() after "Post & Print GRN") ── */}
+      {lastPostedPurchase && (
+        <div className="hidden print:block p-8 text-slate-900 font-sans">
+          <h1 className="text-lg font-bold mb-0.5">Goods Receiving Note (GRN)</h1>
+          <p className="text-xs text-slate-500 mb-4">CH Sharif &amp; Saeed Hospital Pharmacy</p>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs mb-4 border-b border-slate-300 pb-3">
+            <div><span className="font-semibold">Purchase Ref:</span> {lastPostedPurchase.purchaseNumber}</div>
+            <div><span className="font-semibold">Date:</span> {String(lastPostedPurchase.purchaseDate).slice(0, 10)}</div>
+            <div><span className="font-semibold">Vendor:</span> {lastPostedPurchase.vendorName || '—'}</div>
+            <div><span className="font-semibold">Vendor Invoice #:</span> {lastPostedPurchase.vendorInvoiceNo || '—'}</div>
+          </div>
+          <table className="w-full border-collapse text-xs">
+            <thead>
+              <tr className="border-b-2 border-slate-400 text-left">
+                <th className="py-1 pr-2">Medicine</th>
+                <th className="py-1 pr-2">Batch</th>
+                <th className="py-1 pr-2">Expiry</th>
+                <th className="py-1 pr-2 text-right">Qty (Base)</th>
+                <th className="py-1 pr-2 text-right">Cost/Unit</th>
+                <th className="py-1 text-right">Line Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(lastPostedPurchase.lines || []).map((l: any) => (
+                <tr key={l.id} className="border-b border-slate-200">
+                  <td className="py-1 pr-2">{medicines.find((m) => m.id === l.medicineId)?.name ?? l.medicineId}</td>
+                  <td className="py-1 pr-2 font-mono">{l.batch?.batchNumber ?? '—'}</td>
+                  <td className="py-1 pr-2">{l.batch?.expiryDate ? String(l.batch.expiryDate).slice(0, 10) : '—'}</td>
+                  <td className="py-1 pr-2 text-right">{formatNumber(Number(l.quantity))}</td>
+                  <td className="py-1 pr-2 text-right">{formatPKR(Number(l.unitCost))}</td>
+                  <td className="py-1 text-right">{formatPKR(Number(l.lineTotal))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="mt-3 text-right font-bold text-sm">
+            Total: {formatPKR(Number(lastPostedPurchase.total ?? 0))}
+          </div>
+          <div className="mt-12 grid grid-cols-2 gap-6 text-center text-xs text-slate-700">
+            <div className="border-t border-slate-400 pt-1">Received By</div>
+            <div className="border-t border-slate-400 pt-1">Authorized Signatory</div>
+          </div>
+        </div>
+      )}
+    </>
   );
 };
 

@@ -153,8 +153,6 @@ export const pharmacyService = {
       const dup = await prisma.medicineMaster.findFirst({ where: { barcode: body.barcode } });
       if (dup) throw new ConflictError('Medicine code or barcode already exists');
     }
-    // pharmacy.md §3 Settings "Tax/discount" policy — falls back to the configured default when the form leaves tax at 0.
-    const taxPercent = body.taxPercent || (await getSettings()).defaultTaxPercent;
     const { baseUnitId, baseIsPurchaseUnit, baseIsSaleUnit, packagingLevels, code: requestedCode, categoryId, ...rest } = body;
     return prisma.$transaction(async (tx) => {
       const baseUnit = await tx.unit.findUnique({ where: { id: baseUnitId } });
@@ -168,7 +166,7 @@ export const pharmacyService = {
       }
       // Authorized-override path keeps a client-supplied code; otherwise this is the ONLY place a Medicine Code is ever decided.
       const code = requestedCode || (await nextCode(tx, SEQUENCE.MEDICINE));
-      const medicine = await tx.medicineMaster.create({ data: { ...rest, code, categoryId, categoryLabel, unit: baseUnit.name, baseUnitId, taxPercent, createdById: actorId } });
+      const medicine = await tx.medicineMaster.create({ data: { ...rest, code, categoryId, categoryLabel, unit: baseUnit.name, baseUnitId, createdById: actorId } });
       // Throwing here (bad packaging level) rolls the whole transaction back — the medicine row never persists.
       await writePackagingLevels(tx, medicine.id, baseUnitId, baseIsPurchaseUnit, baseIsSaleUnit, packagingLevels);
       return medicine;

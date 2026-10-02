@@ -12,6 +12,8 @@ export const SEQUENCE = {
   VENDOR: { key: 'vendor', prefix: 'VND' },
   MEDICINE: { key: 'medicine', prefix: 'MED' },
   PURCHASE: { key: 'purchase', prefix: 'PO' },
+  /// Purchase Order (procurement reminder, distinct from the PO-prefixed Purchase/Stock-In record above) — deliberately a different prefix so the two are never confused.
+  PURCHASE_ORDER: { key: 'purchase_order', prefix: 'PREQ' },
   INVOICE_RETAIL: { key: 'invoice_retail', prefix: 'INV' },
   INVOICE_HMS: { key: 'invoice_hms', prefix: 'PHI' },
   MEDICINE_REQUEST: { key: 'medicine_request', prefix: 'REQ' },

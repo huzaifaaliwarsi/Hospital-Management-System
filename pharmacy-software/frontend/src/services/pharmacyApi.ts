@@ -190,6 +190,20 @@ export const pharmacyApi = {
   /** Preview only (not reserved) — the actual code is decided server-side at create time. */
   getNextVendorCode: () => apiClient.get<{ data: { code: string } }>('/vendors/next-code').then((r) => r.data.data.code),
   createVendor: (body: Record<string, unknown>) => apiClient.post('/vendors', body).then((r) => r.data.data),
+  /** Preview only (not reserved) — the actual purchase number ("PO-0001…") is decided server-side at create/post time. */
+  getNextPurchaseCode: () => apiClient.get<{ data: { code: string } }>('/vendors/purchases/next-code').then((r) => r.data.data.code),
+
+  // Purchase Orders — the procurement reminder screen (what we want to order).
+  // Zero stock/cost/ledger impact; distinct from the Purchase/Stock-In above
+  // (what we actually received).
+  listPurchaseOrders: (status?: 'OPEN' | 'CONVERTED' | 'CANCELLED') =>
+    apiClient.get('/purchase-orders', { params: { status } }).then((r) => r.data.data),
+  getPurchaseOrder: (id: string) => apiClient.get(`/purchase-orders/${id}`).then((r) => r.data.data),
+  /** Preview only (not reserved) — the actual order number ("PREQ-0001…") is decided server-side at create time. */
+  getNextPurchaseOrderCode: () => apiClient.get<{ data: { code: string } }>('/purchase-orders/next-code').then((r) => r.data.data.code),
+  createPurchaseOrder: (body: Record<string, unknown>) => apiClient.post('/purchase-orders', body).then((r) => r.data.data),
+  cancelPurchaseOrder: (id: string) => apiClient.post(`/purchase-orders/${id}/cancel`).then((r) => r.data.data),
+  markPurchaseOrderConverted: (id: string) => apiClient.post(`/purchase-orders/${id}/mark-converted`).then((r) => r.data.data),
 
   listInvoices: () => apiClient.get('/pharmacy/invoices').then((r) => r.data.data),
   getInvoiceById: (id: string) => apiClient.get(`/pharmacy/invoices/${id}`).then((r) => r.data.data),

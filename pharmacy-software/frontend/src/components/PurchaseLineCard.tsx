@@ -70,6 +70,8 @@ interface Props {
   units: Unit[];
   markupRules: { category: string; markupPercent: number | string; isActive: boolean }[];
   defaultMarkupPercent: number;
+  /** Opens the "Add New Medicine" modal for this line (medicine quick-add from inside the Purchase form). */
+  onRequestAddMedicine?: () => void;
 }
 
 export const PurchaseLineCard: React.FC<Props> = ({
@@ -81,6 +83,7 @@ export const PurchaseLineCard: React.FC<Props> = ({
   medicines,
   markupRules,
   defaultMarkupPercent,
+  onRequestAddMedicine,
 }) => {
   const med = medicines.find((m) => m.id === line.medicineId);
   const purchaseOptions = purchaseUnitsFor(med);
@@ -150,7 +153,7 @@ export const PurchaseLineCard: React.FC<Props> = ({
             <label className={labelCls}>Medicine Item *</label>
             <select
               value={line.medicineId}
-              onChange={(e) => selectMedicine(e.target.value)}
+              onChange={(e) => (e.target.value === '__add__' ? onRequestAddMedicine?.() : selectMedicine(e.target.value))}
               className={`${inputCls} font-bold text-slate-900 cursor-pointer`}
             >
               <option value="">Select medicine from formulary…</option>
@@ -159,6 +162,7 @@ export const PurchaseLineCard: React.FC<Props> = ({
                   {m.name} ({m.code})
                 </option>
               ))}
+              {onRequestAddMedicine && <option value="__add__">+ Add New Medicine…</option>}
             </select>
             {med?.category && (
               <p className="text-[10px] text-slate-400 mt-0.5 truncate flex items-center gap-1">
@@ -219,7 +223,7 @@ export const PurchaseLineCard: React.FC<Props> = ({
       ) : (
         <div className="pl-9 space-y-2.5">
           {/* ── Row 2: Quantity & Costing Inputs ── */}
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 pt-1 border-t border-slate-100">
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-2.5 pt-1 border-t border-slate-100">
             {/* Purchase Unit */}
             <div>
               <div className="flex items-center justify-between mb-1">
@@ -298,7 +302,7 @@ export const PurchaseLineCard: React.FC<Props> = ({
               </div>
             </div>
 
-            {/* Tax & Freight combined / Freight */}
+            {/* Tax */}
             <div>
               <label className={labelCls}>Tax / GST (PKR)</label>
               <input
@@ -306,6 +310,19 @@ export const PurchaseLineCard: React.FC<Props> = ({
                 min={0}
                 value={line.taxAmount}
                 onChange={(e) => onChange({ taxAmount: e.target.value })}
+                placeholder="0"
+                className={`${inputCls} text-right font-mono`}
+              />
+            </div>
+
+            {/* Freight / Landed Cost */}
+            <div>
+              <label className={labelCls}>Freight (PKR)</label>
+              <input
+                type="number"
+                min={0}
+                value={line.freightAmount}
+                onChange={(e) => onChange({ freightAmount: e.target.value })}
                 placeholder="0"
                 className={`${inputCls} text-right font-mono`}
               />

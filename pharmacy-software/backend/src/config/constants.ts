@@ -12,6 +12,7 @@ export const MODULE_KEYS = [
   'identity',
   'pharmacy',
   'vendors',
+  'purchaseOrders',
   'cash',
   'expenses',
   'reports',

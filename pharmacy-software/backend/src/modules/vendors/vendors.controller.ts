@@ -8,6 +8,10 @@ export const vendorsController = {
     const code = await vendorsService.peekNextVendorCode();
     res.json({ data: { code } });
   },
+  async nextPurchaseCode(_req: Request, res: Response) {
+    const code = await vendorsService.peekNextPurchaseCode();
+    res.json({ data: { code } });
+  },
   async create(req: Request, res: Response) {
     if (!req.user) throw new AuthenticationError();
     const data = await vendorsService.create(req.body as CreateVendorBody, req.user.sub);

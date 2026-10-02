@@ -16,6 +16,7 @@ const POLICY: Record<PortalRole, Partial<Record<ModuleKey, Set<Action>>>> = {
     identity: new Set(fullAccess),
     pharmacy: new Set(fullAccess),
     vendors: new Set(fullAccess),
+    purchaseOrders: new Set(fullAccess),
     cash: new Set(fullAccess),
     expenses: new Set(fullAccess),
     reports: new Set<Action>(['view']),
@@ -27,6 +28,7 @@ const POLICY: Record<PortalRole, Partial<Record<ModuleKey, Set<Action>>>> = {
     identity: new Set(fullAccess),
     pharmacy: new Set(fullAccess),
     vendors: new Set(fullAccess),
+    purchaseOrders: new Set(fullAccess),
     cash: new Set(fullAccess),
     expenses: new Set(fullAccess),
     reports: new Set<Action>(['view']),
@@ -37,8 +39,11 @@ const POLICY: Record<PortalRole, Partial<Record<ModuleKey, Set<Action>>>> = {
   SALES_DISPENSING: {
     // pharmacy.md §4 Sales User Restriction — no users/vendors/medicine
     // masters/purchase stock/manual qty edit; only POS, HMS fulfillment,
-    // allowed returns, own cash control.
+    // allowed returns, own cash control. Purchase Orders are the one
+    // exception: a zero-stock/zero-financial-impact procurement reminder, so
+    // a counter-staff member can flag "need more of this" without Admin.
     pharmacy: new Set<Action>(['view', 'create']),
+    purchaseOrders: new Set<Action>(['view', 'create']),
     cash: new Set<Action>(['view', 'create']),
     reports: new Set<Action>(['view']),
     dashboard: new Set<Action>(['view']),

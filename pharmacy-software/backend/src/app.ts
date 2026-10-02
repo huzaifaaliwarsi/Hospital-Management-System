@@ -14,6 +14,7 @@ import usersRoutes from '@/modules/identity/users.routes';
 import pharmacyRoutes from '@/modules/pharmacy/pharmacy.routes';
 import hmsRequestsRoutes from '@/modules/hms-requests/hms-requests.routes';
 import vendorsRoutes from '@/modules/vendors/vendors.routes';
+import purchaseOrdersRoutes from '@/modules/purchase-orders/purchase-orders.routes';
 import cashRoutes from '@/modules/cash/cash.routes';
 import expensesRoutes from '@/modules/expenses/expenses.routes';
 import dashboardRoutes from '@/modules/dashboard/dashboard.routes';
@@ -59,6 +60,7 @@ export function createApp() {
   app.use('/api/v1/pharmacy', pharmacyRoutes);
   app.use('/api/v1/hms-requests', hmsRequestsRoutes);
   app.use('/api/v1/vendors', vendorsRoutes);
+  app.use('/api/v1/purchase-orders', purchaseOrdersRoutes);
   app.use('/api/v1/cash', cashRoutes);
   app.use('/api/v1/expenses', expensesRoutes);
   app.use('/api/v1/dashboard', dashboardRoutes);

@@ -4,6 +4,7 @@ import App from './App';
 import { AuthProvider } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
 import './index.css';
+import 'react-toastify/dist/ReactToastify.css';
 
 document.documentElement.classList.add('portal-montserrat');
 
