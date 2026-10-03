@@ -3,8 +3,19 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
 import { NotFoundError, ConflictError, ValidationError } from '@/shared/errors/AppError';
 import { nextCode, SEQUENCE } from '@/shared/sequence';
+import { hmsBridgeClient } from '@/shared/hmsBridgeClient';
+import { broadcastHmsNotification } from '@/shared/hmsEvents';
 import { pharmacyService } from '../pharmacy/pharmacy.service';
-import type { CreateRequestBody, ListRequestsQuery, FulfillRequestBody, RejectRequestBody, UpdateSettingsBody } from './hms-requests.schemas';
+import type {
+  CreateRequestBody,
+  ListRequestsQuery,
+  FulfillRequestBody,
+  RejectRequestBody,
+  UpdateSettingsBody,
+  PatientCollectedCallbackBody,
+  CreateSettlementRequestBody,
+  ReleaseSettlementCallbackBody,
+} from './hms-requests.schemas';
 
 async function getOrCreateSettings() {
   const existing = await prisma.pharmacySettings.findFirst();
@@ -16,11 +27,11 @@ const requestInclude = {
   lines: { include: { medicine: true, batch: true } },
   handledByUser: { select: { id: true, fullName: true, username: true } },
   approvedByUser: { select: { id: true, fullName: true, username: true } },
-  invoice: { include: { lines: true, payments: true } },
+  invoice: { include: { lines: true, payments: true, settlements: true } },
 } satisfies Prisma.MedicineRequestInclude;
 
 export const hmsRequestsService = {
-  // ── Settings (pharmacy.md §3/§7.3 — configured, never hardcoded) ─────────
+  // ── Settings ─────────────────────────────────────────────────────────────
   async getSettings() {
     return getOrCreateSettings();
   },
@@ -29,18 +40,28 @@ export const hmsRequestsService = {
     return prisma.pharmacySettings.update({ where: { id: settings.id }, data: { ...body, updatedById: actorId } });
   },
 
-  // ── Requests (pharmacy.md §7.1 steps 1-2, §15) ────────────────────────────
-  /**
-   * In production this is what HMS's own backend calls. Until the live
-   * HMS<->Pharmacy integration exists (deferred), Pharmacy staff use the same
-   * endpoint/shape as a manual stand-in — identical downstream flow either way.
-   */
-  async createRequest(body: CreateRequestBody, actorId: string) {
+  // ── Requests (Idempotent creation) ────────────────────────────────────────
+  async createRequest(body: CreateRequestBody, actorId?: string) {
+    if (body.externalRequestRef) {
+      const existing = await prisma.medicineRequest.findFirst({
+        where: { externalRequestRef: body.externalRequestRef },
+        include: requestInclude,
+      });
+      if (existing) return existing;
+    }
+
     for (const line of body.lines) {
       const medicine = await prisma.medicineMaster.findUnique({ where: { id: line.medicineId } });
       if (!medicine || !medicine.isActive) throw new NotFoundError(`Medicine ${line.medicineId} not found or inactive`);
     }
-    return prisma.$transaction(async (tx) => {
+
+    let validActorId: string | null = null;
+    if (actorId && actorId !== 'bridge-system') {
+      const user = await prisma.portalUser.findUnique({ where: { id: actorId } });
+      if (user) validActorId = user.id;
+    }
+
+    const created = await prisma.$transaction(async (tx) => {
       const requestNumber = await nextCode(tx, SEQUENCE.MEDICINE_REQUEST);
       return tx.medicineRequest.create({
         data: {
@@ -50,12 +71,32 @@ export const hmsRequestsService = {
           patientNameSnapshot: body.patientNameSnapshot,
           urgency: body.urgency,
           requestedByExternal: body.requestedByExternal,
-          handledById: actorId,
-          lines: { create: body.lines.map((l) => ({ medicineId: l.medicineId, requestedQuantity: new Decimal(l.requestedQuantity), notes: l.notes })) },
+          handledById: validActorId,
+          lines: {
+            create: body.lines.map((l) => ({
+              medicineId: l.medicineId,
+              requestedQuantity: new Decimal(l.requestedQuantity),
+              notes: l.notes,
+            })),
+          },
         },
         include: requestInclude,
       });
     });
+
+    // Broadcast real-time SSE notification to connected Pharmacy apps
+    const medSummary = created.lines.map((l) => `${Number(l.requestedQuantity)}x ${l.medicine.name}`).join(', ');
+    broadcastHmsNotification({
+      type: 'NEW_HMS_REQUEST',
+      requestNumber: created.requestNumber,
+      patientName: created.patientNameSnapshot || 'Patient',
+      admissionRef: created.externalAdmissionRef,
+      urgency: created.urgency || 'ROUTINE',
+      medicinesSummary: medSummary,
+      timestamp: new Date().toISOString(),
+    });
+
+    return created;
   },
 
   async list(query: ListRequestsQuery) {
@@ -68,13 +109,12 @@ export const hmsRequestsService = {
     return req;
   },
 
-  /** Estimate at requested qty × current sale rate — for the high-value gate only; the real invoice is computed at FEFO/dispense time. */
   async estimatedValue(requestId: string): Promise<Decimal> {
     const lines = await prisma.medicineRequestLine.findMany({ where: { medicineRequestId: requestId }, include: { medicine: true } });
     return lines.reduce((sum, l) => sum.plus(l.requestedQuantity.mul(l.medicine.saleRate)), new Decimal(0));
   },
 
-  // ── Decision (pharmacy.md §7.1 steps 3-4, §7.3) ───────────────────────────
+  // ── Approvals & Rejections ────────────────────────────────────────────────
   async approve(id: string, actorId: string) {
     const request = await prisma.medicineRequest.findUnique({ where: { id } });
     if (!request) throw new NotFoundError('Medicine request not found');
@@ -90,15 +130,7 @@ export const hmsRequestsService = {
     return prisma.medicineRequest.update({ where: { id }, data: { status: 'REJECTED', rejectionReason: body.reason, handledById: actorId }, include: requestInclude });
   },
 
-  /**
-   * pharmacy.md §7.1 steps 4-6 + §8 — "Accept & Dispense" / "Partial Fulfill"
-   * are the same action here, driven purely by the quantity chosen per line.
-   * Real FEFO allocation (shared with POS via pharmacyService), posts
-   * HMS_DISPENSE_OUT stock, and creates/extends ONE channel=HMS_LINKED
-   * PharmacyInvoice per request (0 paid at dispense time — payment is
-   * collected separately later via the existing invoice-payments endpoint,
-   * which already flips clearanceStatus to CLEARED once outstanding hits 0).
-   */
+  // ── FEFO Dispensing (HMS Linked Invoice) ──────────────────────────────────
   async fulfill(id: string, body: FulfillRequestBody, actorId: string) {
     const settings = await getOrCreateSettings();
     const request = await prisma.medicineRequest.findUnique({ where: { id }, include: { lines: { include: { medicine: true } } } });
@@ -124,7 +156,9 @@ export const hmsRequestsService = {
       }
     }
 
-    return prisma.$transaction(async (tx) => {
+    const dispenseEventId = `DISP-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+    const updatedRequest = await prisma.$transaction(async (tx) => {
       let subtotal = new Decimal(0);
       let taxTotal = new Decimal(0);
       const invoiceLines: Prisma.PharmacyInvoiceLineCreateManyInvoiceInput[] = [];
@@ -142,7 +176,21 @@ export const hmsRequestsService = {
           const tax = gross.mul(medicine.taxPercent).div(100);
           subtotal = subtotal.plus(gross);
           taxTotal = taxTotal.plus(tax);
-          invoiceLines.push({ medicineId: medicine.id, batchId: alloc.batchId, quantity: alloc.quantity, rateSnapshot: medicine.saleRate, discountAmount: 0, taxAmount: tax, lineNet: gross.plus(tax) });
+          invoiceLines.push({
+            medicineId: medicine.id,
+            batchId: alloc.batchId,
+            quantity: alloc.quantity,
+            rateSnapshot: medicine.saleRate,
+            discountAmount: 0,
+            taxAmount: tax,
+            lineNet: gross.plus(tax),
+            medicineRequestId: id,
+            requestLineId: line.id,
+            externalRequestRef: request.externalRequestRef,
+            dispenseEventId,
+            dispensedById: actorId,
+            dispensedAt: new Date(),
+          });
           stockDeductions.push({ medicineId: medicine.id, batchId: alloc.batchId, quantity: alloc.quantity });
         }
 
@@ -153,27 +201,57 @@ export const hmsRequestsService = {
       }
 
       const callTotal = subtotal.plus(taxTotal);
-      const existingInvoice = await tx.pharmacyInvoice.findUnique({ where: { medicineRequestId: id } });
+
+      // ── ONE ACTIVE ADMISSION = ONE HMS-LINKED PHARMACY INVOICE ──────────────
+      // Concurrency lock per admission reference (§1, §17)
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${request.externalAdmissionRef}))`;
+
+      // Search for an existing active/open HMS-linked invoice for this admission
+      const existingInvoice = await tx.pharmacyInvoice.findFirst({
+        where: {
+          channel: 'HMS_LINKED',
+          externalAdmissionRef: request.externalAdmissionRef,
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      let targetInvoiceId: string;
 
       if (existingInvoice) {
+        const newSubtotal = existingInvoice.subtotal.plus(subtotal);
+        const newTaxTotal = existingInvoice.taxTotal.plus(taxTotal);
         const newTotal = existingInvoice.total.plus(callTotal);
+        const newOutstanding = Decimal.max(0, newTotal.minus(existingInvoice.paidTotal));
+        const newStatus = newOutstanding.equals(0)
+          ? 'PAID'
+          : existingInvoice.paidTotal.greaterThan(0)
+            ? 'PARTIALLY_PAID'
+            : 'UNPAID';
+        const newClearanceStatus = newOutstanding.equals(0) ? 'CLEARED' : 'OUTSTANDING';
+
         await tx.pharmacyInvoice.update({
           where: { id: existingInvoice.id },
           data: {
-            subtotal: existingInvoice.subtotal.plus(subtotal),
-            taxTotal: existingInvoice.taxTotal.plus(taxTotal),
+            subtotal: newSubtotal,
+            taxTotal: newTaxTotal,
             total: newTotal,
-            outstanding: existingInvoice.outstanding.plus(callTotal),
-            status: existingInvoice.paidTotal.greaterThanOrEqualTo(newTotal) ? 'PAID' : existingInvoice.paidTotal.greaterThan(0) ? 'PARTIALLY_PAID' : 'UNPAID',
+            outstanding: newOutstanding,
+            status: newStatus,
+            clearanceStatus: newClearanceStatus,
             lines: invoiceLines.length ? { create: invoiceLines } : undefined,
           },
         });
+
+        targetInvoiceId = existingInvoice.id;
       } else {
         const invoiceNumber = await nextCode(tx, SEQUENCE.INVOICE_HMS);
-        await tx.pharmacyInvoice.create({
+        const createdInvoice = await tx.pharmacyInvoice.create({
           data: {
             invoiceNumber,
             channel: 'HMS_LINKED',
+            externalAdmissionRef: request.externalAdmissionRef,
+            collectionOwner: 'HMS_FRONT_DESK',
+            internalSettlementStatus: 'NOT_DUE',
             medicineRequestId: id,
             customerName: request.patientNameSnapshot,
             subtotal,
@@ -182,17 +260,28 @@ export const hmsRequestsService = {
             total: callTotal,
             paidTotal: 0,
             outstanding: callTotal,
+            hmsReceivable: 0,
             status: 'UNPAID',
             clearanceStatus: 'OUTSTANDING',
             dispensedById: actorId,
             lines: { create: invoiceLines },
           },
         });
+
+        targetInvoiceId = createdInvoice.id;
       }
 
       for (const d of stockDeductions) {
         await tx.stockLedgerEntry.create({
-          data: { medicineId: d.medicineId, batchId: d.batchId, movementType: 'HMS_DISPENSE_OUT', quantityDelta: d.quantity.negated(), referenceTable: 'medicine_requests', referenceId: id, actorId },
+          data: {
+            medicineId: d.medicineId,
+            batchId: d.batchId,
+            movementType: 'HMS_DISPENSE_OUT',
+            quantityDelta: d.quantity.negated(),
+            referenceTable: 'medicine_requests',
+            referenceId: id,
+            actorId,
+          },
         });
       }
 
@@ -201,13 +290,225 @@ export const hmsRequestsService = {
       const anyDispensed = allLines.some((l) => l.dispensedQuantity.greaterThan(0));
       const newStatus = allFullyDispensed ? 'DISPENSED' : anyDispensed ? 'PARTIALLY_ACCEPTED' : request.status;
 
-      const updatedRequest = await tx.medicineRequest.update({
+      return tx.medicineRequest.update({
         where: { id },
-        data: { status: newStatus, handledById: actorId },
+        data: {
+          status: newStatus,
+          handledById: actorId,
+          invoiceId: targetInvoiceId,
+        },
         include: requestInclude,
       });
+    });
 
-      return updatedRequest;
+    // Notify HMS Backend via Webhook
+    if (updatedRequest.invoiceId) {
+      const dispenser = actorId ? await prisma.portalUser.findUnique({ where: { id: actorId } }) : null;
+      const fullLines = await prisma.pharmacyInvoiceLine.findMany({
+        where: { invoiceId: updatedRequest.invoiceId },
+        include: { medicine: true, batch: true },
+        orderBy: { dispensedAt: 'asc' },
+      });
+
+      const invoice = await prisma.pharmacyInvoice.findUnique({
+        where: { id: updatedRequest.invoiceId },
+      });
+
+      if (invoice) {
+        const dispenserName = dispenser?.fullName || dispenser?.username || 'Pharmacy Dispenser';
+        const eventLines = fullLines.filter((l) => l.dispenseEventId === dispenseEventId);
+        const deltaAmount = eventLines.reduce((s, l) => s + Number(l.lineNet), 0);
+
+        hmsBridgeClient
+          .notifyDispensed({
+            dispenseEventId,
+            externalAdmissionRef: updatedRequest.externalAdmissionRef,
+            externalRequestRef: updatedRequest.externalRequestRef,
+            pharmacyInvoiceId: invoice.id,
+            pharmacyInvoiceNumber: invoice.invoiceNumber,
+            subtotal: Number(invoice.subtotal),
+            taxTotal: Number(invoice.taxTotal),
+            discountTotal: Number(invoice.discountTotal),
+            totalAmount: Number(invoice.total),
+            deltaAmount,
+            dispensedBy: dispenserName,
+            dispensedAt: new Date().toISOString(),
+            lines: fullLines.map((l) => ({
+              dispenseEventId: l.dispenseEventId || dispenseEventId,
+              externalRequestRef: l.externalRequestRef || updatedRequest.externalRequestRef,
+              medicineName: l.medicine.name,
+              unit: l.medicine.unit,
+              batchNumber: l.batch?.batchNumber || null,
+              quantity: Number(l.quantity),
+              rate: Number(l.rateSnapshot),
+              lineNet: Number(l.lineNet),
+              dispensedAt: l.dispensedAt?.toISOString(),
+              dispensedBy: dispenserName,
+            })),
+          })
+          .catch((err) => {
+            // eslint-disable-next-line no-console
+            console.error('[hmsRequestsService] notifyDispensed webhook error:', err.message);
+          });
+      }
+    }
+
+    return updatedRequest;
+  },
+
+  // ── Patient Front Desk Collection Callback ────────────────────────────────
+  async handlePatientCollected(body: PatientCollectedCallbackBody) {
+    const invoice = await prisma.pharmacyInvoice.findUnique({
+      where: { invoiceNumber: body.pharmacyInvoiceNumber },
+    });
+    if (!invoice) throw new NotFoundError(`Invoice ${body.pharmacyInvoiceNumber} not found`);
+
+    const collectedAmt = new Decimal(body.collectedAmount);
+    const newCollectedTotal = invoice.hmsCollectedAmount.plus(collectedAmt);
+    const newReceivable = newCollectedTotal.minus(invoice.hmsSettledAmount);
+    const isFullyCollected = newCollectedTotal.greaterThanOrEqualTo(invoice.total);
+
+    return prisma.pharmacyInvoice.update({
+      where: { id: invoice.id },
+      data: {
+        hmsCollectedAmount: newCollectedTotal,
+        hmsReceivable: Decimal.max(0, newReceivable),
+        internalSettlementStatus: newReceivable.greaterThan(0) ? 'PENDING' : 'SETTLED',
+        // Only CLEARED once the patient's full pharmacy share is actually
+        // collected at Front Desk — a partial collection must stay
+        // OUTSTANDING (integration.md §1.3 dual-clearance rule), otherwise
+        // Pharmacy staff see a false "Cleared" badge on a half-paid invoice.
+        clearanceStatus: isFullyCollected ? 'CLEARED' : 'OUTSTANDING',
+        paidTotal: newCollectedTotal,
+        outstanding: Decimal.max(0, invoice.total.minus(newCollectedTotal)),
+        status: isFullyCollected ? 'PAID' : 'PARTIALLY_PAID',
+      },
+    });
+  },
+
+  // ── Request Settlement from HMS ───────────────────────────────────────────
+  async createSettlementRequest(body: CreateSettlementRequestBody, actorId: string) {
+    const invoice = await prisma.pharmacyInvoice.findUnique({
+      where: { invoiceNumber: body.invoiceNumber },
+      include: { medicineRequests: true },
+    });
+    if (!invoice) throw new NotFoundError(`Invoice ${body.invoiceNumber} not found`);
+    if (invoice.channel !== 'HMS_LINKED') throw new ConflictError('Only HMS-linked invoices can request settlement');
+
+    if (invoice.internalSettlementStatus !== 'PENDING' && invoice.internalSettlementStatus !== 'PARTIALLY_RELEASED') {
+      throw new ConflictError(`Invoice is in status ${invoice.internalSettlementStatus}, cannot request settlement`);
+    }
+
+    const requested = new Decimal(body.amountRequested);
+    if (requested.greaterThan(invoice.hmsReceivable)) {
+      throw new ValidationError(`Requested amount (${requested}) exceeds remaining receivable (${invoice.hmsReceivable})`);
+    }
+
+    const user = await prisma.portalUser.findUnique({ where: { id: actorId } });
+    const settlementNumber = `SET-PHARM-${Date.now().toString().slice(-6)}`;
+
+    const settlement = await prisma.$transaction(async (tx) => {
+      const rec = await tx.hmsReceivableSettlement.create({
+        data: {
+          settlementNumber,
+          invoiceId: invoice.id,
+          externalAdmissionRef: invoice.externalAdmissionRef || 'N/A',
+          patientNameSnapshot: invoice.customerName,
+          invoiceNumber: invoice.invoiceNumber,
+          invoiceTotal: invoice.total,
+          hmsCollected: invoice.hmsCollectedAmount,
+          amountRequested: requested,
+          amountReleased: new Decimal(0),
+          remainingReceivable: invoice.hmsReceivable,
+          status: 'REQUESTED',
+          requestedById: actorId,
+          releaseRemarks: body.remarks,
+        },
+      });
+
+      await tx.pharmacyInvoice.update({
+        where: { id: invoice.id },
+        data: { internalSettlementStatus: 'REQUESTED' },
+      });
+
+      return rec;
+    });
+
+    // Notify HMS Backend
+    await hmsBridgeClient.requestSettlement({
+      settlementNumber,
+      pharmacyInvoiceNumber: invoice.invoiceNumber,
+      requestedAmount: Number(requested),
+      requestedBy: user?.fullName || user?.username || 'Pharmacy Manager',
+      remarks: body.remarks,
+    });
+
+    return settlement;
+  },
+
+  // ── Handle Settlement Release from HMS ─────────────────────────────────────
+  async handleSettlementRelease(body: ReleaseSettlementCallbackBody) {
+    const invoice = await prisma.pharmacyInvoice.findUnique({
+      where: { invoiceNumber: body.pharmacyInvoiceNumber },
+    });
+    if (!invoice) throw new NotFoundError(`Invoice ${body.pharmacyInvoiceNumber} not found`);
+
+    const released = new Decimal(body.releasedAmount);
+    const newSettled = invoice.hmsSettledAmount.plus(released);
+    const newReceivable = Decimal.max(0, invoice.hmsReceivable.minus(released));
+    const newStatus = newReceivable.equals(0) ? 'SETTLED' : 'PARTIALLY_RELEASED';
+
+    return prisma.$transaction(async (tx) => {
+      await tx.pharmacyInvoice.update({
+        where: { id: invoice.id },
+        data: {
+          hmsSettledAmount: newSettled,
+          hmsReceivable: newReceivable,
+          internalSettlementStatus: newStatus,
+        },
+      });
+
+      const existingSettlement = await tx.hmsReceivableSettlement.findFirst({
+        where: {
+          OR: [{ settlementNumber: body.settlementNumber }, { invoiceId: invoice.id }],
+        },
+        orderBy: { requestedAt: 'desc' },
+      });
+
+      if (existingSettlement) {
+        await tx.hmsReceivableSettlement.update({
+          where: { id: existingSettlement.id },
+          data: {
+            amountReleased: existingSettlement.amountReleased.plus(released),
+            remainingReceivable: newReceivable,
+            status: newStatus,
+            releasedAt: body.releasedAt ? new Date(body.releasedAt) : new Date(),
+            paymentMethod: body.paymentMethod,
+            paymentReference: body.paymentReference,
+            releaseRemarks: body.remarks,
+          },
+        });
+      }
+
+      return {
+        invoiceNumber: invoice.invoiceNumber,
+        releasedAmount: released,
+        remainingReceivable: newReceivable,
+        status: newStatus,
+      };
+    });
+  },
+
+  // ── List Receivables & Settlements ────────────────────────────────────────
+  async listReceivables() {
+    return prisma.pharmacyInvoice.findMany({
+      where: { channel: 'HMS_LINKED' },
+      include: {
+        medicineRequests: true,
+        settlements: { orderBy: { requestedAt: 'desc' } },
+        dispensedByUser: { select: { fullName: true, username: true } },
+      },
+      orderBy: { createdAt: 'desc' },
     });
   },
 };

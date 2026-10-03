@@ -40,6 +40,8 @@ const envSchema = z.object({
   AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(5),
 
   ATTENDANCE_DEVICE_ADAPTER: z.enum(['api', 'sdk', 'lan_sync', 'file_import']).default('file_import'),
+  PHARMACY_BACKEND_URL: z.string().default('http://localhost:4100/api/v1'),
+  INTERNAL_BRIDGE_SECRET: z.string().default('chss_bridge_shared_secret_2026_secure'),
 });
 
 function loadEnv() {

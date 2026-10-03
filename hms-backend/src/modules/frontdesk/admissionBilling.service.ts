@@ -6,6 +6,7 @@ import { admissionService } from '@/modules/admission/admission.service';
 
 import { generateReceiptNumber, generateFinalBillNumber } from '@/shared/idGenerator';
 import { patientPaymentStatus, patientResponsibility } from '@/shared/invoicePaymentStatus';
+import { pharmacyBridgeClient } from '@/shared/pharmacyBridgeClient';
 
 const invoiceInclude = {
   department: { select: { id: true, name: true, code: true } },
@@ -78,6 +79,23 @@ export const admissionBillingService = {
     });
     if (!admission) throw new NotFoundError('Admission record not found');
 
+    const pharmacyCharge = await prisma.hmsPharmacyCharge.findFirst({
+      where: { admissionRecordId: admissionId },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const pendingClearances = await prisma.pharmacyClearance.findMany({
+      where: {
+        admissionRecordId: admissionId,
+        status: { in: ['REQUESTED', 'AUTHORIZATION_REQUIRED', 'ACCEPTED', 'PARTIALLY_FULFILLED'] },
+      },
+      include: {
+        lines: { include: { medicine: true, batch: true } },
+        requestedBy: { select: { id: true, displayName: true, username: true } },
+      },
+      orderBy: { requestedAt: 'asc' },
+    });
+
     const unallocated = await prisma.paymentReceipt.aggregate({
       where: { admissionRecordId: admissionId, hospitalInvoiceId: null, isReversed: false },
       _sum: { amount: true },
@@ -89,10 +107,21 @@ export const admissionBillingService = {
       const rawOutstanding = Decimal.max(0, patientResponsibility(inv).minus(inv.paidTotal));
       const creditApplied = Decimal.min(remainingCredit, rawOutstanding);
       remainingCredit = remainingCredit.minus(creditApplied);
+
+      const isPharmacy = inv.invoiceNumber.startsWith('INV-PHARM-') || inv.department?.code === 'PHARM' || inv.department?.code === 'PHARMACY';
+
       return {
         ...inv,
         outstanding: rawOutstanding.minus(creditApplied),
         creditApplied,
+        pharmacyDetails: isPharmacy && pharmacyCharge ? {
+          pharmacyInvoiceNumber: pharmacyCharge.pharmacyInvoiceNumber,
+          items: pharmacyCharge.itemsJson,
+          dispensedBy: pharmacyCharge.dispensedBySnapshot,
+          dispensedAt: pharmacyCharge.dispensedAt,
+          patientPaymentStatus: pharmacyCharge.patientPaymentStatus,
+          settlementStatus: pharmacyCharge.settlementStatus,
+        } : null,
       };
     });
 
@@ -117,6 +146,47 @@ export const admissionBillingService = {
       },
     );
 
+    let effectivePharmacyCharge: any = pharmacyCharge;
+    if (!effectivePharmacyCharge && pendingClearances.length > 0) {
+      const items = pendingClearances.flatMap((c) =>
+        c.lines.map((l) => {
+          const rate = Number(l.medicine?.saleRate ?? l.batch?.costRate ?? 0);
+          const qty = Number(l.requestedQuantity);
+          const amount = rate * qty;
+          return {
+            medicineName: l.medicine?.name || 'Medicine',
+            quantity: qty,
+            unitPrice: rate,
+            totalPrice: amount,
+            status: 'REQUESTED',
+            requestNumber: c.medicineRequestNumber,
+          };
+        }),
+      );
+      const pendingTotal = items.reduce((sum, it) => sum + it.totalPrice, 0);
+
+      effectivePharmacyCharge = {
+        id: 'pending',
+        pharmacyInvoiceNumber: pendingClearances[0].medicineRequestNumber,
+        subtotal: new Decimal(pendingTotal),
+        taxTotal: new Decimal(0),
+        discountTotal: new Decimal(0),
+        totalAmount: new Decimal(pendingTotal),
+        patientPaid: new Decimal(0),
+        patientOutstanding: new Decimal(pendingTotal),
+        patientPaymentStatus: 'PENDING',
+        settlementStatus: 'NOT_DUE',
+        itemsJson: items,
+        dispensedBySnapshot: pendingClearances[0].requestedBy?.displayName ?? 'Doctor (Pending Dispense)',
+        dispensedAt: null,
+      };
+
+      consolidated.subtotal = consolidated.subtotal.plus(pendingTotal);
+      consolidated.total = consolidated.total.plus(pendingTotal);
+      consolidated.patientShare = consolidated.patientShare.plus(pendingTotal);
+      consolidated.outstanding = consolidated.outstanding.plus(pendingTotal);
+    }
+
     // Real money collected includes the unallocated advance/deposit that
     // isn't sitting in any invoice's own `paidTotal`; any of it not yet
     // consumed by an outstanding invoice (`remainingCredit`) is a genuine
@@ -132,6 +202,21 @@ export const admissionBillingService = {
       consolidated,
       unallocatedCreditTotal,
       availableCredit: remainingCredit,
+      pharmacyCharge: effectivePharmacyCharge ? {
+        id: effectivePharmacyCharge.id,
+        pharmacyInvoiceNumber: effectivePharmacyCharge.pharmacyInvoiceNumber,
+        subtotal: effectivePharmacyCharge.subtotal,
+        taxTotal: effectivePharmacyCharge.taxTotal,
+        discountTotal: effectivePharmacyCharge.discountTotal,
+        totalAmount: effectivePharmacyCharge.totalAmount,
+        patientPaid: effectivePharmacyCharge.patientPaid,
+        patientOutstanding: effectivePharmacyCharge.patientOutstanding,
+        patientPaymentStatus: effectivePharmacyCharge.patientPaymentStatus,
+        settlementStatus: effectivePharmacyCharge.settlementStatus,
+        items: effectivePharmacyCharge.itemsJson,
+        dispensedBy: effectivePharmacyCharge.dispensedBySnapshot,
+        dispensedAt: effectivePharmacyCharge.dispensedAt,
+      } : null,
     };
   },
 
@@ -152,6 +237,14 @@ export const admissionBillingService = {
         selfPayEncounter: { select: { id: true, fullName: true, phone: true } },
         bed: { include: { room: { include: { ward: true } } } },
         hospitalInvoices: { where: { sourceType: 'ADMISSION' }, select: { id: true, total: true, patientShare: true, panelReceivable: true, panelPatientId: true } },
+        pharmacyClearances: {
+          where: {
+            status: { in: ['REQUESTED', 'AUTHORIZATION_REQUIRED', 'ACCEPTED', 'PARTIALLY_FULFILLED'] },
+          },
+          include: {
+            lines: { include: { medicine: true, batch: true } },
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -183,7 +276,16 @@ export const admissionBillingService = {
 
     return admissions.map((a) => {
       // Patient-facing: what the patient owes (patient share on panel invoices), not the company's part.
-      const currentCharges = a.hospitalInvoices.reduce((sum, inv) => sum.plus(patientResponsibility(inv)), new Decimal(0));
+      const billedCharges = a.hospitalInvoices.reduce((sum, inv) => sum.plus(patientResponsibility(inv)), new Decimal(0));
+      const pendingPharmacyTotal = (a.pharmacyClearances || []).reduce((clearanceSum, c) => {
+        const lineTotal = (c.lines || []).reduce((sum, l) => {
+          const rate = l.medicine?.saleRate ?? l.batch?.costRate ?? new Decimal(0);
+          return sum.plus(new Decimal(rate).mul(l.requestedQuantity));
+        }, new Decimal(0));
+        return clearanceSum.plus(lineTotal);
+      }, new Decimal(0));
+
+      const currentCharges = billedCharges.plus(pendingPharmacyTotal);
       const totalPaid = paidByAdmission.get(a.id) ?? new Decimal(0);
       const outstanding = Decimal.max(0, currentCharges.minus(totalPaid));
       const availableCredit = Decimal.max(0, totalPaid.minus(currentCharges));
@@ -239,6 +341,16 @@ export const admissionBillingService = {
           },
           orderBy: { createdAt: 'asc' },
         },
+        pharmacyClearances: {
+          where: {
+            status: { in: ['REQUESTED', 'AUTHORIZATION_REQUIRED', 'ACCEPTED', 'PARTIALLY_FULFILLED'] },
+          },
+          include: {
+            lines: { include: { medicine: true, batch: true } },
+            requestedBy: { select: { id: true, username: true, displayName: true } },
+          },
+          orderBy: { requestedAt: 'asc' },
+        },
       },
     });
     if (!admission) throw new NotFoundError('Admission record not found');
@@ -257,8 +369,32 @@ export const admissionBillingService = {
       orderBy: { collectedAt: 'asc' },
     });
 
-    // Patient-facing balance: panel receivable is tracked separately below (panelOutstanding).
-    const totalCharges = admission.hospitalInvoices.reduce((sum, inv) => sum.plus(patientResponsibility(inv)), new Decimal(0));
+    const pendingPharmacyLines = (admission.pharmacyClearances || []).flatMap((c) =>
+      c.lines.map((l) => {
+        const rate = l.medicine?.saleRate ?? l.batch?.costRate ?? new Decimal(0);
+        const amount = new Decimal(rate).mul(l.requestedQuantity);
+        return {
+          id: l.id,
+          date: c.requestedAt,
+          type: 'Pharmacy',
+          department: 'Pharmacy',
+          description: `${l.medicine?.name || 'Medicine'} [Requested - Pending Dispense]`,
+          qty: l.requestedQuantity,
+          rate: rate,
+          grossAmount: amount,
+          discountAmount: new Decimal(0),
+          discountReason: `Req: ${c.medicineRequestNumber}`,
+          amount: amount,
+          reference: c.medicineRequestNumber,
+          postedBy: c.requestedBy?.displayName ?? c.requestedBy?.username ?? 'Doctor',
+          isPendingPharmacy: true,
+        };
+      }),
+    );
+
+    const billedCharges = admission.hospitalInvoices.reduce((sum, inv) => sum.plus(patientResponsibility(inv)), new Decimal(0));
+    const pendingPharmacyTotal = pendingPharmacyLines.reduce((sum, pl) => sum.plus(pl.amount), new Decimal(0));
+    const totalCharges = billedCharges.plus(pendingPharmacyTotal);
     const totalPaid = receipts.reduce((sum, r) => sum.plus(r.amount), new Decimal(0));
     const outstandingBalance = Decimal.max(0, totalCharges.minus(totalPaid));
     const availableCredit = Decimal.max(0, totalPaid.minus(totalCharges));
@@ -272,7 +408,7 @@ export const admissionBillingService = {
     }
 
     // Flatten all service lines across invoices and sort chronologically
-    const allLines = admission.hospitalInvoices
+    const invoiceLines = admission.hospitalInvoices
       .flatMap((inv) =>
         inv.lines.map((l) => {
           const isSelf =
@@ -284,7 +420,9 @@ export const admissionBillingService = {
             date: l.createdAt,
             type: /ward\s*fixed/i.test(l.serviceRate.name) ? 'Ward Price' : l.serviceRate.name,
             department: inv.department?.name ?? null,
-            description: isSelf ? '[Self-Arranged]' : (/ward\s*fixed/i.test(l.serviceRate.name) ? 'Ward Price' : l.serviceRate.name),
+            description: isSelf
+              ? '[Self-Arranged]'
+              : (l.discountReason || (/ward\s*fixed/i.test(l.serviceRate.name) ? 'Ward Price' : l.serviceRate.name)),
             qty: l.quantity,
             rate: l.rateSnapshot,
             grossAmount: l.lineGross,
@@ -293,10 +431,12 @@ export const admissionBillingService = {
             amount: l.lineNet,
             reference: inv.invoiceNumber,
             postedBy: l.performedBy?.fullName ?? null,
+            isPendingPharmacy: false,
           };
         }),
-      )
-      .sort((a, b) => a.date.getTime() - b.date.getTime());
+      );
+
+    const allLines = [...invoiceLines, ...pendingPharmacyLines].sort((a, b) => a.date.getTime() - b.date.getTime());
 
     // Settle payments against services in FIFO order so each service row shows its exact paid & due amounts
     let remainingPaymentPool = new Decimal(totalPaid);
@@ -318,14 +458,16 @@ export const admissionBillingService = {
         l.description?.includes('Self-Arranged') ||
         l.description?.includes('Self Arranged');
 
-      const lineStatus: 'PAID' | 'UNPAID' | 'PARTIAL' | 'SELF' =
+      const lineStatus: 'PAID' | 'UNPAID' | 'PARTIAL' | 'SELF' | 'REQUESTED' =
         isSelfArranged
           ? 'SELF'
-          : dueForLine.equals(0)
-            ? 'PAID'
-            : paidForLine.greaterThan(0)
-              ? 'PARTIAL'
-              : 'UNPAID';
+          : (l as any).isPendingPharmacy && dueForLine.greaterThan(0) && paidForLine.equals(0)
+            ? 'REQUESTED'
+            : dueForLine.equals(0)
+              ? 'PAID'
+              : paidForLine.greaterThan(0)
+                ? 'PARTIAL'
+                : 'UNPAID';
 
       return {
         date: l.date,
@@ -427,7 +569,7 @@ export const admissionBillingService = {
    * posted" case.
    */
   async collectPayment(admissionId: string, body: CollectAdmissionPaymentBody, actorId: string) {
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const admission = await tx.admissionRecord.findUnique({ where: { id: admissionId } });
       if (!admission) throw new NotFoundError('Admission record not found');
 
@@ -542,6 +684,8 @@ export const admissionBillingService = {
       });
 
       // Update paidTotal & status for each allocated invoice
+      const pharmacyNotifications: Array<{ pharmacyInvoiceNumber: string; amount: number; receiptNumber: string }> = [];
+
       for (const alloc of allocations) {
         if (alloc.amount.lessThanOrEqualTo(0) || !alloc.invoiceId) continue;
         const invoice = invoices.find((i) => i.id === alloc.invoiceId);
@@ -552,7 +696,83 @@ export const admissionBillingService = {
             where: { id: invoice.id },
             data: { paidTotal: newPaidTotal, status: newStatus },
           });
+
+          // Check if this invoice is an HMS-linked pharmacy charge (INV-PHARM-...)
+          if (invoice.invoiceNumber.startsWith('INV-PHARM-')) {
+            const pharmInvNum = invoice.invoiceNumber.replace('INV-PHARM-', '');
+            const charge = await tx.hmsPharmacyCharge.findFirst({
+              where: {
+                OR: [
+                  { admissionRecordId: admissionId },
+                  { pharmacyInvoiceNumber: pharmInvNum },
+                ],
+              },
+            });
+            if (charge) {
+              const newPatientPaid = charge.patientPaid.plus(alloc.amount);
+              const newPatientOutstanding = Decimal.max(0, charge.totalAmount.minus(newPatientPaid));
+              const chargePaidInFull = newPatientOutstanding.equals(0);
+              const patientPaymentStatus = chargePaidInFull ? 'CLEARED' : 'PARTIALLY_COLLECTED';
+              const settlementStatus = chargePaidInFull && charge.settlementStatus === 'NOT_DUE' ? 'PENDING' : charge.settlementStatus;
+
+              await tx.hmsPharmacyCharge.update({
+                where: { id: charge.id },
+                data: {
+                  patientPaid: newPatientPaid,
+                  patientOutstanding: newPatientOutstanding,
+                  patientPaymentStatus,
+                  settlementStatus,
+                },
+              });
+
+              pharmacyNotifications.push({
+                pharmacyInvoiceNumber: pharmInvNum,
+                amount: Number(alloc.amount),
+                receiptNumber: receipt.receiptNumber,
+              });
+            }
+          }
         }
+      }
+
+      // Check if all pharmacy charges for this admission are now cleared.
+      // Gated on totalChargesCount > 0 — otherwise an admission that never
+      // used Hospital-Managed pharmacy (zero HmsPharmacyCharge rows) would
+      // vacuously pass this check on its very first, pharmacy-unrelated
+      // payment and get falsely stamped PHARMACY=CLEARED with this cashier
+      // as clearedBy, even though nothing pharmacy-related was collected.
+      const totalChargesCount = await tx.hmsPharmacyCharge.count({
+        where: { admissionRecordId: admissionId },
+      });
+      const uncollectedChargesCount = await tx.hmsPharmacyCharge.count({
+        where: {
+          admissionRecordId: admissionId,
+          patientPaymentStatus: { not: 'CLEARED' },
+        },
+      });
+
+      if (totalChargesCount > 0 && uncollectedChargesCount === 0) {
+        // Mark dual discharge clearance as CLEARED
+        await tx.dualDischargeClearance.upsert({
+          where: {
+            admissionRecordId_clearanceType: {
+              admissionRecordId: admissionId,
+              clearanceType: 'PHARMACY',
+            },
+          },
+          update: {
+            status: 'CLEARED',
+            clearedById: actorId,
+            clearedAt: new Date(),
+          },
+          create: {
+            admissionRecordId: admissionId,
+            clearanceType: 'PHARMACY',
+            status: 'CLEARED',
+            clearedById: actorId,
+            clearedAt: new Date(),
+          },
+        });
       }
 
       // Reconcile discharge status: if doctor already clinically discharged and balance is now 0, auto-discharge & free bed
@@ -562,8 +782,28 @@ export const admissionBillingService = {
         receipts: [receipt],
         allocations: allocations.map((a) => ({ invoiceId: a.invoiceId, amount: a.amount })),
         isDischarged: reconcile.isDischarged,
+        pharmacyNotifications,
       };
     });
+
+    // Notify Pharmacy Software via Bridge asynchronously outside the DB transaction
+    for (const notif of result.pharmacyNotifications) {
+      pharmacyBridgeClient.notifyPatientCollected({
+        pharmacyInvoiceNumber: notif.pharmacyInvoiceNumber,
+        collectedAmount: notif.amount,
+        receiptNumber: notif.receiptNumber,
+        collectedAt: new Date().toISOString(),
+      }).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[admissionBillingService] Failed to notify pharmacy of patient collection:', err);
+      });
+    }
+
+    return {
+      receipts: result.receipts,
+      allocations: result.allocations,
+      isDischarged: result.isDischarged,
+    };
   },
 
   /**

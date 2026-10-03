@@ -634,7 +634,12 @@ export const pharmacyService = {
   async getInvoiceById(id: string) {
     const invoice = await prisma.pharmacyInvoice.findUnique({
       where: { id },
-      include: { lines: { include: { medicine: true, batch: true, saleUnit: true } }, payments: { include: { collectedByUser: { select: { id: true, fullName: true } } } }, dispensedByUser: { select: { id: true, fullName: true } } },
+      include: {
+        lines: { include: { medicine: true, batch: true, saleUnit: true } },
+        payments: { include: { collectedByUser: { select: { id: true, fullName: true } } } },
+        dispensedByUser: { select: { id: true, fullName: true, username: true } },
+        medicineRequests: { include: { lines: true } },
+      },
     });
     if (!invoice) throw new NotFoundError('Invoice not found');
     return invoice;

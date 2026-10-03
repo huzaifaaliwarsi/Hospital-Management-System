@@ -16,6 +16,7 @@ import {
   BarChart3,
   FileText,
   Settings,
+  Undo2,
 } from 'lucide-react';
 
 export interface NavItem {
@@ -53,7 +54,20 @@ export const MANAGEMENT_NAV: NavGroup[] = [
       { id: 'balance-sheet', label: 'Balance Sheet', icon: Wallet },
       { id: 'settlements', label: 'Account Settlement', icon: Coins },
       { id: 'expenses', label: 'Operating Expenses', icon: CreditCard },
-      { id: 'reports', label: 'Reports & Analytics', icon: BarChart3 },
+    ],
+  },
+  {
+    id: 'reports',
+    title: 'REPORTS',
+    items: [
+      { id: 'reports-sales', label: 'Sales & Collection', icon: Receipt },
+      { id: 'reports-hms', label: 'HMS Request / Dispense', icon: ClipboardList },
+      { id: 'reports-purchase', label: 'Purchase Inward', icon: PackagePlus },
+      { id: 'reports-stock-movement', label: 'Stock Movement Audit', icon: RotateCcw },
+      { id: 'reports-vendor-ledger', label: 'Vendor Payables Ledger', icon: Truck },
+      { id: 'reports-expense', label: 'Operational Expense', icon: CreditCard },
+      { id: 'reports-returns', label: 'Sales & Purchase Returns', icon: Undo2 },
+      { id: 'reports-settlement', label: 'Balance & Drawer Settlement', icon: Wallet },
     ],
   },
   {
@@ -84,7 +98,7 @@ export const SALES_NAV: NavGroup[] = [
     items: [
       { id: 'balance-sheet', label: 'My Balance Sheet', icon: Wallet },
       { id: 'settlements', label: 'My Settlement', icon: Coins },
-      { id: 'reports', label: 'My Shift Reports', icon: BarChart3 },
+      { id: 'reports-sales', label: 'My Shift Reports', icon: BarChart3 },
     ],
   },
 ];

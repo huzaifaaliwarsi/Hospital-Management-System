@@ -1,9 +1,9 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { Loader2, FileBarChart, Filter, RotateCcw, FileSpreadsheet, Download, FileText, Printer, ArrowUpDown } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Loader2, FileBarChart, Filter, RotateCcw, FileSpreadsheet, Download, FileText, Printer } from 'lucide-react';
 import apiClient from '../services/apiClient';
 import { formatPKR, formatNumber } from '../utils/format';
 
-type ReportType =
+export type ReportType =
   | 'SALES_COLLECTION'
   | 'HMS_DISPENSE'
   | 'PURCHASE'
@@ -13,18 +13,16 @@ type ReportType =
   | 'RETURN_REFUND'
   | 'BALANCE_SETTLEMENT';
 
-const REPORT_OPTIONS: { value: ReportType; label: string }[] = [
-  { value: 'SALES_COLLECTION', label: 'Sales & Collection' },
-  { value: 'HMS_DISPENSE', label: 'HMS Request / Dispense' },
-  { value: 'PURCHASE', label: 'Purchase Inward' },
-  { value: 'STOCK_MOVEMENT', label: 'Stock Movement Audit' },
-  { value: 'VENDOR_LEDGER', label: 'Vendor Payables Ledger' },
-  { value: 'EXPENSE', label: 'Operational Expense' },
-  { value: 'RETURN_REFUND', label: 'Sales & Purchase Returns' },
-  { value: 'BALANCE_SETTLEMENT', label: 'Balance & Drawer Settlement' },
-];
+interface ReportColumn {
+  key: string;
+  label: string;
+  align?: 'right';
+  money?: boolean;
+  date?: boolean;
+  datetime?: boolean;
+}
 
-const COLUMNS: Record<ReportType, { key: string; label: string; align?: 'right'; money?: boolean; date?: boolean; datetime?: boolean }[]> = {
+export const REPORT_COLUMNS: Record<ReportType, ReportColumn[]> = {
   SALES_COLLECTION: [
     { key: 'invoiceNumber', label: 'Invoice #' },
     { key: 'channel', label: 'Channel' },
@@ -115,7 +113,7 @@ const COLUMNS: Record<ReportType, { key: string; label: string; align?: 'right';
   ],
 };
 
-function fmtCell(val: any, col: { money?: boolean; date?: boolean; datetime?: boolean }): string {
+function fmtCell(val: any, col: ReportColumn): string {
   if (val == null || val === '') return '—';
   if (col.money) return formatPKR(val);
   if (col.date) {
@@ -135,8 +133,20 @@ function fmtCell(val: any, col: { money?: boolean; date?: boolean; datetime?: bo
   return String(val);
 }
 
-export const ReportsPage: React.FC = () => {
-  const [type, setType] = useState<ReportType>('SALES_COLLECTION');
+interface Props {
+  type: ReportType;
+  title: string;
+  subtitle: string;
+}
+
+/**
+ * Report table + date filter + export (Excel/CSV/Print) for ONE report type —
+ * each report now lives on its own page/URL rather than behind a type dropdown
+ * on a single shared screen. Column definitions and rendering are unchanged
+ * from the original single-page ReportsPage, just parameterized by `type`
+ * instead of switched via local state.
+ */
+export const ReportView: React.FC<Props> = ({ type, title, subtitle }) => {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [rows, setRows] = useState<any[]>([]);
@@ -144,7 +154,6 @@ export const ReportsPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Dual Synchronized Scrollbars
   const topScrollRef = useRef<HTMLDivElement>(null);
   const bottomScrollRef = useRef<HTMLDivElement>(null);
   const isSyncingScroll = useRef(false);
@@ -184,17 +193,15 @@ export const ReportsPage: React.FC = () => {
       .finally(() => setLoading(false));
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(load, [type]);
 
-  const columns = COLUMNS[type];
+  const columns = REPORT_COLUMNS[type];
 
-  // CSV Export
   const handleExportCsv = () => {
     if (rows.length === 0) return;
     const headerRow = columns.map((c) => `"${c.label}"`).join(',');
-    const dataRows = rows.map((r) =>
-      columns.map((c) => `"${fmtCell(r[c.key], c).replace(/"/g, '""')}"`).join(',')
-    );
+    const dataRows = rows.map((r) => columns.map((c) => `"${fmtCell(r[c.key], c).replace(/"/g, '""')}"`).join(','));
     const csvContent = [headerRow, ...dataRows].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -206,7 +213,6 @@ export const ReportsPage: React.FC = () => {
     document.body.removeChild(link);
   };
 
-  // Excel Export
   const handleExportExcel = () => {
     if (rows.length === 0) return;
     const headerHtml = columns.map((c) => `<th>${c.label}</th>`).join('');
@@ -224,7 +230,7 @@ export const ReportsPage: React.FC = () => {
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
       <head><meta charset="utf-8"/></head>
       <body>
-        <h2>${REPORT_OPTIONS.find((o) => o.value === type)?.label} Report</h2>
+        <h2>${title} Report</h2>
         <table border="1">
           <tr style="background:#0e5944;color:#ffffff;font-weight:bold;">${headerHtml}</tr>
           ${rowsHtml}
@@ -245,40 +251,19 @@ export const ReportsPage: React.FC = () => {
 
   return (
     <div className="p-6 sm:p-8 space-y-6 max-w-[1700px] mx-auto">
-      {/* Title */}
       <div>
         <div className="flex items-center gap-2.5">
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
-            Pharmacy Reports &amp; Analytics
-          </h1>
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">{title}</h1>
           <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200/80">
-            Consolidated Center
+            Report
           </span>
         </div>
-        <p className="text-xs text-slate-500 mt-1">
-          Complete multi-period financial statements, stock ledger movements, inpatient requisitions, and vendor audits.
-        </p>
+        <p className="text-xs text-slate-500 mt-1">{subtitle}</p>
       </div>
 
-      {/* Filter Toolbar */}
+      {/* Filter Toolbar — date range only; the report type is this page's identity, not a dropdown anymore */}
       <div className="bg-white p-3 rounded-xl border border-slate-300/80 shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-wrap items-center justify-between gap-2.5">
         <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-[280px]">
-          {/* Report Type Select */}
-          <div className="w-56">
-            <select
-              value={type}
-              onChange={(e) => setType(e.target.value as ReportType)}
-              className="w-full h-8.5 px-2.5 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-slate-700 font-semibold focus:outline-none focus:ring-1 focus:ring-[#0e7d5a] cursor-pointer"
-            >
-              {REPORT_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Date From */}
           <div className="w-36">
             <input
               type="date"
@@ -287,8 +272,6 @@ export const ReportsPage: React.FC = () => {
               className="w-full h-8.5 px-2.5 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
             />
           </div>
-
-          {/* Date To */}
           <div className="w-36">
             <input
               type="date"
@@ -297,8 +280,6 @@ export const ReportsPage: React.FC = () => {
               className="w-full h-8.5 px-2.5 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
             />
           </div>
-
-          {/* Apply & Reset Buttons */}
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
@@ -330,21 +311,16 @@ export const ReportsPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Table Container */}
       <div className="bg-white rounded-2xl border border-slate-300/80 shadow-[0_1px_4px_rgba(0,0,0,0.04)] overflow-hidden">
-        {/* Dark Emerald Header Strip */}
         <div className="bg-[#0e5944] text-white px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5">
           <div className="flex items-center gap-2">
             <FileSpreadsheet className="h-4 w-4 text-emerald-300" />
-            <span className="font-bold text-xs sm:text-sm tracking-tight text-white whitespace-nowrap">
-              {REPORT_OPTIONS.find((o) => o.value === type)?.label} Statement
-            </span>
+            <span className="font-bold text-xs sm:text-sm tracking-tight text-white whitespace-nowrap">{title} Statement</span>
             <span className="text-[10px] font-semibold bg-emerald-700/60 text-emerald-200 px-2 py-0.5 rounded-full border border-emerald-500/30 whitespace-nowrap">
               Formal Statement
             </span>
           </div>
 
-          {/* Export Action Buttons */}
           <div className="flex items-center gap-1.5 flex-wrap">
             <button
               type="button"
@@ -381,21 +357,11 @@ export const ReportsPage: React.FC = () => {
           </div>
         </div>
 
-        {/* ── TOP HORIZONTAL SCROLLER ── */}
-        <div
-          ref={topScrollRef}
-          onScroll={syncTopToBottom}
-          className="overflow-x-auto overflow-y-hidden h-2 bg-slate-100 border-b border-slate-200 scrollbar-thin"
-        >
+        <div ref={topScrollRef} onScroll={syncTopToBottom} className="overflow-x-auto overflow-y-hidden h-2 bg-slate-100 border-b border-slate-200 scrollbar-thin">
           <div style={{ width: '1400px', height: '1px' }} />
         </div>
 
-        {/* ── MAIN TABLE CONTAINER ── */}
-        <div
-          ref={bottomScrollRef}
-          onScroll={syncBottomToTop}
-          className="overflow-x-auto max-h-[calc(100vh-380px)] scrollbar-thin"
-        >
+        <div ref={bottomScrollRef} onScroll={syncBottomToTop} className="overflow-x-auto max-h-[calc(100vh-380px)] scrollbar-thin">
           <table className="w-full min-w-[1400px] border-collapse text-left text-xs">
             <thead className="bg-[#f8fafc] text-slate-700 font-bold sticky top-0 z-10 border-b border-slate-200 uppercase tracking-wider select-none text-xs">
               <tr>
@@ -403,9 +369,7 @@ export const ReportsPage: React.FC = () => {
                 {columns.map((col) => (
                   <th
                     key={col.key}
-                    className={`py-3 px-4 border-r border-slate-200 last:border-r-0 whitespace-nowrap ${
-                      col.align === 'right' ? 'text-right' : 'text-left'
-                    }`}
+                    className={`py-3 px-4 border-r border-slate-200 last:border-r-0 whitespace-nowrap ${col.align === 'right' ? 'text-right' : 'text-left'}`}
                   >
                     {col.label}
                   </th>
@@ -437,22 +401,14 @@ export const ReportsPage: React.FC = () => {
               ) : (
                 rows.map((row, i) => (
                   <tr key={i} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="py-3.5 px-3.5 text-center border-r border-slate-100 text-slate-500 font-semibold text-xs whitespace-nowrap">
-                      {i + 1}
-                    </td>
+                    <td className="py-3.5 px-3.5 text-center border-r border-slate-100 text-slate-500 font-semibold text-xs whitespace-nowrap">{i + 1}</td>
                     {columns.map((col) => (
                       <td
                         key={col.key}
-                        className={`py-3.5 px-4 border-r border-slate-100 last:border-r-0 whitespace-nowrap text-xs ${
-                          col.align === 'right' ? 'text-right font-bold text-slate-900' : 'text-slate-900'
-                        }`}
+                        className={`py-3.5 px-4 border-r border-slate-100 last:border-r-0 whitespace-nowrap text-xs ${col.align === 'right' ? 'text-right font-bold text-slate-900' : 'text-slate-900'}`}
                       >
                         {col.key === 'quantityDelta' ? (
-                          <span
-                            className={`font-bold ${
-                              Number(row[col.key]) >= 0 ? 'text-emerald-700' : 'text-rose-700'
-                            }`}
-                          >
+                          <span className={`font-bold ${Number(row[col.key]) >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
                             {Number(row[col.key]) >= 0 ? '+' : ''}
                             {formatNumber(row[col.key])}
                           </span>
@@ -469,17 +425,10 @@ export const ReportsPage: React.FC = () => {
               <tfoot className="bg-[#f8fafc] font-bold border-t-2 border-b border-slate-300 text-slate-900 text-xs">
                 <tr>
                   <td className="py-4 px-3.5 text-center border-r border-slate-200 whitespace-nowrap">
-                    <span className="bg-slate-800 text-white text-[10.5px] font-black px-2.5 py-1 rounded tracking-wider uppercase inline-block">
-                      TOTAL
-                    </span>
+                    <span className="bg-slate-800 text-white text-[10.5px] font-black px-2.5 py-1 rounded tracking-wider uppercase inline-block">TOTAL</span>
                   </td>
                   {columns.map((col) => (
-                    <td
-                      key={col.key}
-                      className={`py-4 px-4 border-r border-slate-200 last:border-r-0 whitespace-nowrap ${
-                        col.align === 'right' ? 'text-right font-bold text-slate-900' : ''
-                      }`}
-                    >
+                    <td key={col.key} className={`py-4 px-4 border-r border-slate-200 last:border-r-0 whitespace-nowrap ${col.align === 'right' ? 'text-right font-bold text-slate-900' : ''}`}>
                       {totals[col.key] != null ? formatPKR(totals[col.key]) : '—'}
                     </td>
                   ))}

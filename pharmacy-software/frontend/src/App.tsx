@@ -19,9 +19,25 @@ import { ExpensesPage } from './pages/ExpensesPage';
 import { UsersPage } from './pages/UsersPage';
 import { StockMovementsPage } from './pages/StockMovementsPage';
 import { HmsRequestQueuePage } from './pages/HmsRequestQueuePage';
-import { ReportsPage } from './pages/ReportsPage';
+import { ReportView } from './components/ReportView';
 import { SettingsPage } from './pages/SettingsPage';
 import { ComingSoonPage } from './pages/ComingSoonPage';
+import { useHmsNotifications } from './context/HmsNotificationContext';
+
+// Each report is its own direct sidebar item and page/URL — same pattern as
+// the Front Desk "REPORTS" menu group (one menu item per report, no shared
+// dropdown and no intermediate hub page). See ReportView.tsx for the shared
+// table/export UI and navigation.ts's 'reports' group for the menu entries.
+const REPORT_PAGES: { page: string; type: import('./components/ReportView').ReportType; title: string; subtitle: string }[] = [
+  { page: 'reports-sales', type: 'SALES_COLLECTION', title: 'Sales & Collection', subtitle: 'Every retail and HMS-linked invoice, payment status and collector.' },
+  { page: 'reports-hms', type: 'HMS_DISPENSE', title: 'HMS Request / Dispense', subtitle: 'Inpatient medicine requests, dispensing status and clearance.' },
+  { page: 'reports-purchase', type: 'PURCHASE', title: 'Purchase Inward', subtitle: 'Goods received, landed cost and vendor payment status per GRN.' },
+  { page: 'reports-stock-movement', type: 'STOCK_MOVEMENT', title: 'Stock Movement Audit', subtitle: 'Every stock ledger entry — purchases, sales, returns, adjustments.' },
+  { page: 'reports-vendor-ledger', type: 'VENDOR_LEDGER', title: 'Vendor Payables Ledger', subtitle: 'Vendor-wise credit, payment and return entries with running balance.' },
+  { page: 'reports-expense', type: 'EXPENSE', title: 'Operational Expense', subtitle: 'Approved and pending operating expenses by category and payee.' },
+  { page: 'reports-returns', type: 'RETURN_REFUND', title: 'Sales & Purchase Returns', subtitle: 'Refunds and purchase returns, reason and processed-by audit trail.' },
+  { page: 'reports-settlement', type: 'BALANCE_SETTLEMENT', title: 'Balance & Drawer Settlement', subtitle: 'Cashier shift-end reconciliations, variance and review status.' },
+];
 
 // Every screen the app can render, keyed by its own URL path (e.g. /stock-in) —
 // no router library in this project, so this is a deliberately small, explicit
@@ -31,7 +47,7 @@ import { ComingSoonPage } from './pages/ComingSoonPage';
 const VALID_PAGES = [
   'dashboard', 'medicines', 'pos', 'invoices', 'hms-requests', 'stock-movements',
   'vendors', 'purchases', 'stock-in', 'balance-sheet', 'settlements', 'expenses',
-  'users', 'reports', 'settings',
+  'users', 'settings', ...REPORT_PAGES.map((r) => r.page),
 ];
 
 function pageFromPath(): string {
@@ -40,6 +56,8 @@ function pageFromPath(): string {
 }
 
 function findLabel(groups: NavGroup[], id: string): string {
+  const reportPage = REPORT_PAGES.find((r) => r.page === id);
+  if (reportPage) return reportPage.title;
   for (const g of groups) {
     const item = g.items.find((i) => i.id === id);
     if (item) return item.label;
@@ -58,6 +76,12 @@ const App: React.FC = () => {
     const path = id === 'dashboard' ? '/' : `/${id}`;
     if (window.location.pathname !== path) window.history.pushState({ page: id }, '', path);
   };
+
+  const { setOnNavigateToQueue } = useHmsNotifications();
+
+  useEffect(() => {
+    setOnNavigateToQueue(() => navigate('hms-requests'));
+  }, [setOnNavigateToQueue]);
 
   useEffect(() => {
     const onPopState = () => setPageState(pageFromPath());
@@ -109,12 +133,13 @@ const App: React.FC = () => {
         return <ExpensesPage canApprove={!isSales} />;
       case 'users':
         return <UsersPage />;
-      case 'reports':
-        return <ReportsPage />;
       case 'settings':
         return <SettingsPage />;
-      default:
+      default: {
+        const reportPage = REPORT_PAGES.find((r) => r.page === page);
+        if (reportPage) return <ReportView type={reportPage.type} title={reportPage.title} subtitle={reportPage.subtitle} />;
         return <ComingSoonPage title="Not found" step="—" />;
+      }
     }
   };
 
@@ -138,6 +163,7 @@ const App: React.FC = () => {
           pageTitle={findLabel(navGroups, page)}
           sidebarOpen={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
+          onNavigate={navigate}
         />
         <main className="flex-1">{renderPage()}</main>
       </div>

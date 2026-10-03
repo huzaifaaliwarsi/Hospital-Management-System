@@ -48,7 +48,7 @@ export const SalesDashboardPage: React.FC<Props> = ({ onNavigate }) => {
     return (
       <div className="min-h-[75vh] flex flex-col items-center justify-center text-slate-500 gap-3">
         <Loader2 className="h-8 w-8 animate-spin text-[#0e7d5a]" />
-        <p className="text-sm font-medium">Loading sales terminal dataâ€¦</p>
+        <p className="text-sm font-medium">Loading sales terminal data…</p>
       </div>
     );
   }

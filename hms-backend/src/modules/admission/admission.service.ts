@@ -9,6 +9,8 @@ import { resolvePanelCoverage } from '@/shared/panelCoverage';
 import { assertMembershipEligible } from '@/shared/panelMembership';
 import { patientPaymentStatus, patientResponsibility } from '@/shared/invoicePaymentStatus';
 import { assertCaseAuthorization, caseAuthorizationIneligibilityReasons } from '@/shared/panelAuthorization';
+import { pharmacyBridgeClient } from '@/shared/pharmacyBridgeClient';
+import { syncRemoteMedicineToLocal } from '@/modules/pharmacy/pharmacy.service';
 import type {
   CreatePlannedAdmissionBody,
   UpdatePlannedAdmissionBody,
@@ -125,7 +127,8 @@ async function postWardFixedChargeIfApplicable(
   tx: Prisma.TransactionClient,
   admissionId: string,
   target: string | { bedId?: string | null; wardId?: string | null },
-  actorId: string
+  actorId: string,
+  existingInvoice?: any,
 ) {
   const bedId = typeof target === 'string' ? target : target?.bedId;
   const wardId = typeof target === 'object' ? target?.wardId : undefined;
@@ -152,10 +155,10 @@ async function postWardFixedChargeIfApplicable(
 
   const wardFixedRate = new Decimal(ward.fixedPrice);
 
-  let invoice = await tx.hospitalInvoice.findFirst({
+  let invoice = existingInvoice ?? (await tx.hospitalInvoice.findFirst({
     where: { admissionRecordId: admissionId, sourceType: 'ADMISSION' },
     include: { lines: true },
-  });
+  }));
 
   if (!invoice) {
     const admission = await tx.admissionRecord.findUnique({ where: { id: admissionId } });
@@ -216,7 +219,8 @@ async function postWardFixedChargeIfApplicable(
   }
 
   // Idempotency: verify this one-time fee has not already been posted on the admission's invoice
-  const alreadyBilled = invoice.lines.some((l) => l.serviceRateId === serviceRate!.id);
+  const linesList = invoice.lines ?? (await tx.invoiceLineItem.findMany({ where: { hospitalInvoiceId: invoice.id } })) ?? [];
+  const alreadyBilled = linesList.some((l) => l.serviceRateId === serviceRate!.id);
   if (alreadyBilled) {
     return null;
   }
@@ -249,7 +253,7 @@ async function postWardFixedChargeIfApplicable(
     },
   });
 
-  await recalcInvoiceTotals(tx, invoice, [...invoice.lines, createdLine]);
+  await recalcInvoiceTotals(tx, invoice, [...linesList, createdLine]);
 
   return createdLine;
 }
@@ -470,6 +474,7 @@ export const admissionService = {
           status: 'PAID',
           createdById: actorId,
         },
+        include: { lines: true },
       });
 
       let advanceReceipt = null;
@@ -509,7 +514,8 @@ export const admissionService = {
           tx,
           admission.id,
           { bedId: body.preferredBedId, wardId: body.wardId },
-          actorId
+          actorId,
+          invoice,
         );
       }
 
@@ -517,7 +523,7 @@ export const admissionService = {
         await postInitialRoomChargeIfApplicable(tx, admission.id, body.preferredBedId, actorId);
       }
       return { admission, advanceReceipt, invoice };
-    });
+    }, { maxWait: 15000, timeout: 30000 });
 
     try {
       const patientName = result.admission.panelPatient?.fullName || result.admission.selfPayEncounter?.fullName || 'Patient';
@@ -839,7 +845,7 @@ export const admissionService = {
       }
 
       return updatedAdmission;
-    });
+    }, { maxWait: 15000, timeout: 30000 });
   },
 
   /**
@@ -911,7 +917,7 @@ export const admissionService = {
         admission: updatedAdmission,
         transferLog,
       };
-    });
+    }, { maxWait: 15000, timeout: 30000 });
   },
 
   /**
@@ -1054,7 +1060,7 @@ export const admissionService = {
       }
 
       return createdLine;
-    });
+    }, { maxWait: 15000, timeout: 30000 });
   },
 
   /**
@@ -1105,11 +1111,88 @@ export const admissionService = {
   },
 
   /**
+   * Helper: Dispatches an authorized pharmacy clearance request to the Standalone Pharmacy API.
+   */
+  async dispatchToPharmacyBridge(clearanceId: string) {
+    try {
+      const clearance = (await prisma.pharmacyClearance.findUnique({
+        where: { id: clearanceId },
+        include: {
+          admissionRecord: {
+            include: {
+              panelPatient: { select: { fullName: true } },
+              selfPayEncounter: { select: { fullName: true } },
+            },
+          },
+          lines: { include: { medicine: true } },
+          requestedBy: { select: { username: true, displayName: true } },
+        },
+      })) as any;
+
+      if (!clearance) return;
+      const patientName =
+        clearance.admissionRecord?.panelPatient?.fullName ||
+        clearance.admissionRecord?.selfPayEncounter?.fullName ||
+        'Patient';
+
+      await pharmacyBridgeClient.dispatchMedicineRequest({
+        externalAdmissionRef: clearance.admissionRecord.admissionNumber,
+        externalRequestRef: clearance.medicineRequestNumber,
+        patientNameSnapshot: patientName,
+        urgency: 'ROUTINE',
+        requestedByExternal: clearance.requestedBy?.displayName || clearance.requestedBy?.username || 'Doctor',
+        lines: (clearance.lines || []).map((l: any) => ({
+          medicineId: l.medicineId,
+          requestedQuantity: Number(l.requestedQuantity),
+          notes: l.notes || undefined,
+        })),
+      });
+    } catch (err: any) {
+      // eslint-disable-next-line no-console
+      console.error('[dispatchToPharmacyBridge] Outbound dispatch error:', err.message);
+      // Surface the failure instead of leaving the request stuck at REQUESTED
+      // with no indication Pharmacy never received it — INTEGRATION_ERROR
+      // exists in PharmacyClearanceStatus exactly for this case.
+      await prisma.pharmacyClearance
+        .update({ where: { id: clearanceId }, data: { status: 'INTEGRATION_ERROR' } })
+        .catch(() => null);
+    }
+  },
+
+  /**
    * Create medicine request for Standalone Pharmacy queue (§4.7, §8.8)
    * Permitted ONLY when medicationMode is HOSPITAL_MANAGED.
    */
   async createPharmacyRequest(admissionId: string, body: CreatePharmacyRequestBody, actorId: string) {
-    return prisma.$transaction(async (tx) => {
+    // 1. Validate admission exists and is HOSPITAL_MANAGED before doing external sync or opening transaction
+    const admissionCheck = await prisma.admissionRecord.findUnique({
+      where: { id: admissionId },
+    });
+    if (!admissionCheck) throw new NotFoundError('Admission record not found');
+    if (admissionCheck.medicationMode !== 'HOSPITAL_MANAGED') {
+      throw new ValidationError(
+        'Pharmacy requests are permitted only when Medication Mode is HOSPITAL_MANAGED. Current mode is SELF.',
+      );
+    }
+
+    // 2. Pre-verify and sync all requested medicines into local MedicineMaster
+    for (const line of body.lines) {
+      let localMed = await prisma.medicineMaster.findUnique({ where: { id: line.medicineId } });
+      if (!localMed) {
+        // Fetch from Standalone Pharmacy bridge and sync
+        const remoteMeds = await pharmacyBridgeClient.getMedicines().catch(() => null);
+        const remoteMed = Array.isArray(remoteMeds) ? remoteMeds.find((rm: any) => rm.id === line.medicineId) : null;
+        if (remoteMed) {
+          await syncRemoteMedicineToLocal(remoteMed);
+          localMed = await prisma.medicineMaster.findUnique({ where: { id: line.medicineId } });
+        }
+      }
+      if (!localMed) {
+        throw new ValidationError(`Medicine with ID ${line.medicineId} not found in Pharmacy catalog.`);
+      }
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
       const admission = await tx.admissionRecord.findUnique({
         where: { id: admissionId },
       });
@@ -1187,7 +1270,13 @@ export const admissionService = {
       });
 
       return { ...clearance, highCostAuthorization };
-    });
+    }, { maxWait: 15000, timeout: 30000 });
+
+    if (result.status === 'REQUESTED') {
+      this.dispatchToPharmacyBridge(result.id).catch(() => null);
+    }
+
+    return result;
   },
 
   /**
@@ -1204,7 +1293,7 @@ export const admissionService = {
     body: AuthorizeHighCostMedicineBody,
     actorId: string,
   ) {
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const clearance = await tx.pharmacyClearance.findUnique({
         where: { id: clearanceId },
         include: { highCostAuthorization: true },
@@ -1282,6 +1371,10 @@ export const admissionService = {
 
       return updated;
     });
+
+    this.dispatchToPharmacyBridge(clearanceId).catch(() => null);
+
+    return result;
   },
 
   /** Explicit decline — no credential requirement, matches "Rejected/Pending request cannot be dispensed" as the safe default. */
@@ -1386,7 +1479,7 @@ export const admissionService = {
 
       await this.reconcileAdmissionDischarge(tx, admission.id, actorId);
       return cleared;
-    });
+    }, { maxWait: 15000, timeout: 30000 });
   },
 
   /**
@@ -1564,7 +1657,7 @@ export const admissionService = {
           });
 
       return { admission: finalAdmission, dischargeSummary: summary };
-    });
+    }, { maxWait: 15000, timeout: 30000 });
 
     try {
       const patName = result.admission?.panelPatient?.fullName || result.admission?.selfPayEncounter?.fullName || 'Patient';
@@ -1697,7 +1790,7 @@ export const admissionService = {
         admission: discharged,
         message: 'Patient discharged successfully. Bed freed to AVAILABLE.',
       };
-    });
+    }, { maxWait: 15000, timeout: 30000 });
 
     try {
       const patName = result.admission?.panelPatient?.fullName || result.admission?.selfPayEncounter?.fullName || 'Patient';

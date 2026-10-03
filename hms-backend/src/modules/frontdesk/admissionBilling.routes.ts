@@ -23,6 +23,13 @@ router.post(
 );
 
 router.post(
+  '/:id/payments',
+  create,
+  validate({ params: s.admissionIdParamsSchema, body: s.collectAdmissionPaymentSchema }),
+  asyncHandler(c.collectPayment),
+);
+
+router.post(
   '/:id/generate-final-bill',
   create,
   validate({ params: s.admissionIdParamsSchema }),

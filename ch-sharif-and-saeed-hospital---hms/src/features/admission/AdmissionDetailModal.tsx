@@ -264,7 +264,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
   const [pharmNotes, setPharmNotes] = useState('');
 
   useEffect(() => {
-    if (tab === 'pharmacy' && medicines.length === 0) {
+    if (tab === 'pharmacy') {
       pharmacyApiService.getMedicines().then(setMedicines).catch(() => setMedicines([]));
     }
   }, [tab]);
@@ -921,36 +921,68 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
               )}
 
               {detail.pharmacyRequests.length > 0 && (
-                <div className="border border-slate-200 rounded-lg overflow-hidden">
-                  <div className="bg-slate-50 border-b border-slate-200 px-3 py-1.5 text-[11px] font-bold text-slate-600 uppercase">Request History</div>
-                  {detail.pharmacyRequests.map((r) => (
-                    <div key={r.id} className="px-3 py-2 border-b border-slate-100 last:border-0 text-xs">
-                      <div className="flex items-center justify-between">
-                        <span className="font-mono text-slate-700">{r.medicineRequestNumber}</span>
-                        <span
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                            r.status === 'AUTHORIZATION_REQUIRED' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-700'
-                          }`}
-                        >
-                          {r.status.replace(/_/g, ' ')}
-                        </span>
-                      </div>
-                      <div className="text-slate-500 mt-1">
-                        {r.lines.map((l) => `${l.medicineName} × ${l.requestedQuantity}`).join(', ')}
-                      </div>
-                      {r.status === 'AUTHORIZATION_REQUIRED' && (
-                        <div className="mt-1.5">
-                          <button
-                            type="button"
-                            onClick={() => setHighCostTarget(r)}
-                            className="px-2.5 py-1 text-[11px] font-semibold text-white bg-amber-600 hover:bg-amber-700 rounded-md"
-                          >
-                            Authorize / Reject
-                          </button>
+                <div className="border border-slate-200/90 rounded-xl overflow-hidden shadow-xs bg-white mt-4">
+                  <div className="bg-slate-50/90 border-b border-slate-200/80 px-3.5 py-2 flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Request History</span>
+                    <span className="px-2 py-0.5 text-[10px] font-bold bg-slate-200/80 text-slate-700 rounded-full">
+                      {detail.pharmacyRequests.length} {detail.pharmacyRequests.length === 1 ? 'request' : 'requests'}
+                    </span>
+                  </div>
+                  {detail.pharmacyRequests.map((r) => {
+                    const shortReqId = r.medicineRequestNumber.replace(/^REQ-\d{2}-/, 'REQ-');
+                    return (
+                      <div key={r.id} className="px-3.5 py-3 border-b border-slate-100 last:border-0 hover:bg-slate-50/50 transition-colors">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[13px] font-bold text-slate-900 tracking-tight">
+                            {shortReqId}
+                          </span>
+                          {r.status === 'DISPENSED' ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/70">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                              DISPENSED
+                            </span>
+                          ) : r.status === 'AUTHORIZATION_REQUIRED' ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200/70">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                              AUTH REQUIRED
+                            </span>
+                          ) : r.status === 'REJECTED' || r.status === 'CANCELLED' ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200/70">
+                              <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                              {r.status}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-sky-50 text-sky-700 border border-sky-200/70">
+                              <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse" />
+                              REQUESTED
+                            </span>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  ))}
+                        <div className="flex flex-wrap gap-1.5 mt-2">
+                          {r.lines.map((l, idx) => (
+                            <span
+                              key={`${l.medicineName}-${idx}`}
+                              className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-slate-100/80 border border-slate-200/60 text-slate-800 text-[11.5px] font-medium"
+                            >
+                              <span>{l.medicineName}</span>
+                              <strong className="text-[#08775A] font-semibold">× {l.requestedQuantity}</strong>
+                            </span>
+                          ))}
+                        </div>
+                        {r.status === 'AUTHORIZATION_REQUIRED' && (
+                          <div className="mt-2">
+                            <button
+                              type="button"
+                              onClick={() => setHighCostTarget(r)}
+                              className="px-2.5 py-1 text-[11px] font-semibold text-white bg-amber-600 hover:bg-amber-700 rounded-md"
+                            >
+                              Authorize / Reject
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

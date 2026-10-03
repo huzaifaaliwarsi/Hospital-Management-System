@@ -50,3 +50,31 @@ export const updateSettingsBodySchema = z.object({
   highValueThreshold: z.coerce.number().nonnegative(),
 });
 export type UpdateSettingsBody = z.infer<typeof updateSettingsBodySchema>;
+
+export const patientCollectedCallbackSchema = z.object({
+  pharmacyInvoiceNumber: z.string().min(1),
+  collectedAmount: z.coerce.number().positive(),
+  collectedAt: z.string().optional(),
+  receiptNumber: z.string().optional(),
+});
+export type PatientCollectedCallbackBody = z.infer<typeof patientCollectedCallbackSchema>;
+
+export const createSettlementRequestBodySchema = z.object({
+  invoiceNumber: z.string().min(1),
+  amountRequested: z.coerce.number().positive(),
+  remarks: z.string().max(500).optional(),
+});
+export type CreateSettlementRequestBody = z.infer<typeof createSettlementRequestBodySchema>;
+
+export const releaseSettlementCallbackSchema = z.object({
+  settlementNumber: z.string().min(1),
+  pharmacyInvoiceNumber: z.string().min(1),
+  releasedAmount: z.coerce.number().positive(),
+  remainingPayable: z.coerce.number().nonnegative(),
+  paymentMethod: z.string().optional(),
+  paymentReference: z.string().optional(),
+  releasedBy: z.string().optional(),
+  releasedAt: z.string().optional(),
+  remarks: z.string().optional(),
+});
+export type ReleaseSettlementCallbackBody = z.infer<typeof releaseSettlementCallbackSchema>;

@@ -354,6 +354,7 @@ export const MedicinesPage: React.FC<{ canEdit: boolean; onNavigate?: (page: str
       strength: med.strength || '',
       dosageForm: med.dosageForm || '',
       category: med.category || '',
+      categoryId: med.categoryId || '',
       batchManaged: med.batchManaged,
       reorderLevel: String(med.reorderLevel),
       saleRate: String(med.saleRate),

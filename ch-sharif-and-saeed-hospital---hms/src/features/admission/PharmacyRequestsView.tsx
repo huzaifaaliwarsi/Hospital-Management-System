@@ -14,6 +14,7 @@ const STATUS_BADGE: Record<string, string> = {
   PARTIALLY_FULFILLED: 'bg-indigo-100 text-indigo-700',
   FULFILLED: 'bg-emerald-100 text-emerald-800',
   REJECTED: 'bg-rose-100 text-rose-700',
+  INTEGRATION_ERROR: 'bg-red-100 text-red-700',
 };
 
 interface PharmacyRequestRow {
@@ -53,6 +54,7 @@ const STATUS_OPTIONS = [
   { label: 'PARTIALLY FULFILLED', value: 'PARTIALLY_FULFILLED' },
   { label: 'FULFILLED', value: 'FULFILLED' },
   { label: 'REJECTED', value: 'REJECTED' },
+  { label: 'INTEGRATION ERROR', value: 'INTEGRATION_ERROR' },
 ];
 
 /**
@@ -164,8 +166,8 @@ export const PharmacyRequestsView: React.FC = () => {
               <tbody className="divide-y divide-slate-100">
                 {filtered.map((r) => (
                   <tr key={r.id} className="hover:bg-slate-50/60">
-                    <td className="px-3 py-2.5 whitespace-nowrap font-mono text-slate-700">{r.medicineRequestNumber}</td>
-                    <td className="px-3 py-2.5 whitespace-nowrap font-mono text-slate-600">{r.admissionNumber}</td>
+                    <td className="px-3 py-2.5 whitespace-nowrap font-semibold text-slate-900">{r.medicineRequestNumber.replace(/^REQ-\d{2}-/, 'REQ-')}</td>
+                    <td className="px-3 py-2.5 whitespace-nowrap text-slate-600 font-medium">{r.admissionNumber}</td>
                     <td className="px-3 py-2.5 whitespace-nowrap font-semibold text-slate-900">{r.patientName}</td>
                     <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">{r.bedLabel}</td>
                     <td className="px-3 py-2.5 text-slate-600 max-w-xs truncate" title={r.medicines}>{r.medicines}</td>

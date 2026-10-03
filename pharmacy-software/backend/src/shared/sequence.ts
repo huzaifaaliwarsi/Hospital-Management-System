@@ -65,6 +65,22 @@ export async function nextCode(tx: Prisma.TransactionClient, seq: { key: string;
       UPDATE document_sequences SET last_value = ${val}, updated_at = now() WHERE key = ${seq.key}
     `;
   }
+  if (seq.key === SEQUENCE.INVOICE_HMS.key || seq.key === SEQUENCE.INVOICE_RETAIL.key) {
+    const invoices = await tx.pharmacyInvoice.findMany({
+      where: { invoiceNumber: { startsWith: `${seq.prefix}-` } },
+      select: { invoiceNumber: true },
+    });
+    for (const inv of invoices) {
+      const match = inv.invoiceNumber.match(new RegExp(`^${seq.prefix}-(\\d+)$`));
+      if (match && match[1]) {
+        const n = parseInt(match[1], 10);
+        if (n >= val) val = n + 1;
+      }
+    }
+    await tx.$executeRaw`
+      UPDATE document_sequences SET last_value = ${val}, updated_at = now() WHERE key = ${seq.key}
+    `;
+  }
   return format(seq.prefix, val);
 }
 

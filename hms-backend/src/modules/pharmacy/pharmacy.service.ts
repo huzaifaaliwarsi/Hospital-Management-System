@@ -1,6 +1,7 @@
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '@/db/client';
 import { NotFoundError, ValidationError } from '@/shared/errors/AppError';
+import { pharmacyBridgeClient } from '@/shared/pharmacyBridgeClient';
 import type {
   CreateMedicineBody,
   UpdateMedicineBody,
@@ -12,6 +13,60 @@ export interface BatchAllocation {
   batchId: string | null;
   quantity: Decimal;
   costRate: Decimal;
+}
+
+export async function syncRemoteMedicineToLocal(rm: any) {
+  if (!rm || !rm.id) return;
+  const saleRate = rm.saleRate !== undefined && rm.saleRate !== null ? Number(rm.saleRate) : 0;
+  const code = rm.code || `MED-${rm.id.slice(0, 8)}`;
+  const name = rm.name;
+  const unit = rm.unit || 'Unit';
+  const isActive = rm.isActive ?? true;
+
+  try {
+    const existingById = await prisma.medicineMaster.findUnique({ where: { id: rm.id } });
+    if (existingById) {
+      await prisma.medicineMaster.update({
+        where: { id: rm.id },
+        data: {
+          name,
+          saleRate: new Decimal(saleRate),
+          unit,
+          isActive,
+        },
+      });
+      return;
+    }
+
+    const existingByCode = await prisma.medicineMaster.findUnique({ where: { code } });
+    if (existingByCode) {
+      // Primary key update cascades to pharmacy_clearance_lines and other relations
+      await prisma.$executeRawUnsafe(
+        `UPDATE medicine_masters SET id = $1, name = $2, sale_rate = $3, unit = $4, is_active = $5 WHERE code = $6`,
+        rm.id,
+        name,
+        saleRate,
+        unit,
+        isActive,
+        code,
+      );
+      return;
+    }
+
+    await prisma.medicineMaster.create({
+      data: {
+        id: rm.id,
+        code,
+        name,
+        unit,
+        saleRate: new Decimal(saleRate),
+        isActive,
+      },
+    });
+  } catch (err: any) {
+    // eslint-disable-next-line no-console
+    console.warn(`[syncRemoteMedicineToLocal] Failed to sync medicine ${rm.id} (${name}):`, err.message);
+  }
 }
 
 export const pharmacyService = {
@@ -46,6 +101,33 @@ export const pharmacyService = {
   },
 
   async listMedicines(search?: string) {
+    try {
+      const remoteMedicines = await pharmacyBridgeClient.getMedicines(search);
+      if (Array.isArray(remoteMedicines) && remoteMedicines.length > 0) {
+        // Sync/cache medicines into hms_db so local foreign keys will not fail
+        for (const rm of remoteMedicines) {
+          await syncRemoteMedicineToLocal(rm);
+        }
+
+        return remoteMedicines.map((m: any) => ({
+          id: m.id,
+          code: m.code,
+          name: m.name,
+          category: m.category,
+          unit: m.unit || 'Unit',
+          batchManaged: m.batchManaged ?? true,
+          purchaseRate: m.purchaseRate ? new Decimal(m.purchaseRate) : null,
+          saleRate: m.saleRate ? new Decimal(m.saleRate) : new Decimal(0),
+          isActive: m.isActive ?? true,
+          currentStock: new Decimal(m.currentStock ?? m.stock ?? 0),
+          batchesCount: m.batches?.length ?? m.batchesCount ?? 0,
+        }));
+      }
+    } catch (err: any) {
+      // eslint-disable-next-line no-console
+      console.warn('[pharmacyService] Remote medicine proxy failed, falling back to local DB:', err.message);
+    }
+
     const medicines = await prisma.medicineMaster.findMany({
       where: search
         ? {

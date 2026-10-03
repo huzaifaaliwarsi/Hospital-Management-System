@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { authorize } from '@/middleware/authorize';
 import { validate } from '@/middleware/validate';
 import { asyncHandler } from '@/shared/asyncHandler';
+import { bridgeAuth } from '@/middleware/bridgeAuth';
 import { pharmacyController as c } from './pharmacy.controller';
 import * as s from './pharmacy.schemas';
 
@@ -10,9 +11,16 @@ const view = authorize('pharmacy', 'view');
 const create = authorize('pharmacy', 'create');
 const edit = authorize('pharmacy', 'edit');
 
+const viewOrBridge = (req: any, res: any, next: any) => {
+  if (req.headers['x-bridge-token'] || req.headers['x-internal-secret']) {
+    return bridgeAuth(req, res, next);
+  }
+  return view(req, res, next);
+};
+
 // Medicine Master (pharmacy.md §9) — Sales cannot create/edit (§4 restriction, `edit` not granted to SALES_DISPENSING).
 router.post('/medicines', edit, validate({ body: s.createMedicineBodySchema }), asyncHandler(c.createMedicine));
-router.get('/medicines', view, validate({ query: s.listMedicinesQuerySchema }), asyncHandler(c.listMedicines));
+router.get('/medicines', viewOrBridge, validate({ query: s.listMedicinesQuerySchema }), asyncHandler(c.listMedicines));
 router.get('/medicines/next-code', edit, asyncHandler(c.nextMedicineCode));
 router.patch('/medicines/:id', edit, validate({ params: s.idParamsSchema, body: s.updateMedicineBodySchema }), asyncHandler(c.updateMedicine));
 

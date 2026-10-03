@@ -68,6 +68,14 @@ export interface DepartmentInvoiceRow {
   panelReceivable: number;
   status: string;
   lines: DepartmentInvoiceLine[];
+  pharmacyDetails?: {
+    pharmacyInvoiceNumber: string;
+    items: any[];
+    dispensedBy: string | null;
+    dispensedAt: string | null;
+    patientPaymentStatus: string;
+    settlementStatus: string;
+  } | null;
 }
 
 export interface AdmissionStatement {
@@ -89,6 +97,21 @@ export interface AdmissionStatement {
   unallocatedCreditTotal: number;
   /** Portion of `unallocatedCreditTotal` not yet consumed by any outstanding invoice — a genuine available credit for this admission. */
   availableCredit: number;
+  pharmacyCharge?: {
+    id: string;
+    pharmacyInvoiceNumber: string;
+    subtotal: number;
+    taxTotal: number;
+    discountTotal: number;
+    totalAmount: number;
+    patientPaid: number;
+    patientOutstanding: number;
+    patientPaymentStatus: string;
+    settlementStatus: string;
+    items: any[];
+    dispensedBy: string | null;
+    dispensedAt: string | null;
+  } | null;
 }
 
 function toNumber(v: any): number {
@@ -104,7 +127,7 @@ function normalize(raw: Record<string, any>): AdmissionStatement {
     departmentInvoices: (raw.departmentInvoices || []).map((inv: any) => ({
       id: inv.id,
       invoiceNumber: inv.invoiceNumber,
-      departmentName: inv.department?.name || 'Unassigned',
+      departmentName: inv.department?.name || (inv.invoiceNumber?.startsWith('INV-PHARM-') ? 'Pharmacy Department' : 'Unassigned'),
       subtotal: toNumber(inv.subtotal),
       discountTotal: toNumber(inv.discountTotal),
       total: toNumber(inv.total),
@@ -113,6 +136,7 @@ function normalize(raw: Record<string, any>): AdmissionStatement {
       patientShare: toNumber(inv.patientShare),
       panelReceivable: toNumber(inv.panelReceivable),
       status: inv.status,
+      pharmacyDetails: inv.pharmacyDetails || null,
       lines: (inv.lines || []).map((l: any) => ({
         id: l.id,
         serviceName: l.serviceRate?.name || '',
@@ -136,6 +160,21 @@ function normalize(raw: Record<string, any>): AdmissionStatement {
     },
     unallocatedCreditTotal: toNumber(raw.unallocatedCreditTotal),
     availableCredit: toNumber(raw.availableCredit),
+    pharmacyCharge: raw.pharmacyCharge ? {
+      id: raw.pharmacyCharge.id,
+      pharmacyInvoiceNumber: raw.pharmacyCharge.pharmacyInvoiceNumber,
+      subtotal: toNumber(raw.pharmacyCharge.subtotal),
+      taxTotal: toNumber(raw.pharmacyCharge.taxTotal),
+      discountTotal: toNumber(raw.pharmacyCharge.discountTotal),
+      totalAmount: toNumber(raw.pharmacyCharge.totalAmount),
+      patientPaid: toNumber(raw.pharmacyCharge.patientPaid),
+      patientOutstanding: toNumber(raw.pharmacyCharge.patientOutstanding),
+      patientPaymentStatus: raw.pharmacyCharge.patientPaymentStatus,
+      settlementStatus: raw.pharmacyCharge.settlementStatus,
+      items: raw.pharmacyCharge.items || [],
+      dispensedBy: raw.pharmacyCharge.dispensedBy,
+      dispensedAt: raw.pharmacyCharge.dispensedAt,
+    } : null,
   };
 }
 
@@ -211,7 +250,7 @@ export interface AdmissionLedgerEntry {
   credit: number;
   paidAmount?: number;
   dueAmount?: number;
-  status?: 'PAID' | 'UNPAID' | 'PARTIAL' | 'SELF';
+  status?: 'PAID' | 'UNPAID' | 'PARTIAL' | 'SELF' | 'REQUESTED';
   runningBalance: number;
   reference: string;
   postedBy: string | null;

@@ -140,11 +140,11 @@ export async function generateRemittanceNumber(tx?: PrismaClientOrTx): Promise<s
 }
 
 /**
- * Short Medicine Request Number: e.g. `REQ-26-0001`
+ * Short Medicine Request Number: e.g. `REQ-0001`
  */
 export async function generateMedicineRequestNumber(tx?: PrismaClientOrTx): Promise<string> {
-  const prefix = `REQ-${currentYear2()}-`;
-  return generateSequentialId(tx, 'medicineRequest', 'requestNumber', prefix, 4);
+  const prefix = 'REQ-';
+  return generateSequentialId(tx, 'pharmacyClearance', 'medicineRequestNumber', prefix, 4);
 }
 
 /**

@@ -33,6 +33,9 @@ const envSchema = z.object({
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
   AUTH_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(900_000),
   AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(5),
+
+  HMS_BACKEND_URL: z.string().default('http://localhost:4000/api/v1'),
+  INTERNAL_BRIDGE_SECRET: z.string().default('chss_bridge_shared_secret_2026_secure'),
 });
 
 function loadEnv() {

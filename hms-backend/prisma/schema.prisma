@@ -259,6 +259,23 @@ enum PharmacyClearanceStatus {
   AUTHORIZATION_REQUIRED
 }
 
+enum PatientPharmacyPaymentStatus {
+  PENDING
+  PARTIALLY_COLLECTED
+  COLLECTED_AT_FRONT_DESK
+  CLEARED
+}
+
+enum PharmacySettlementStatus {
+  NOT_DUE
+  PENDING
+  REQUESTED
+  APPROVED
+  PARTIALLY_RELEASED
+  SETTLED
+  REJECTED
+}
+
 enum CashModuleScope {
   BILLING
   INVENTORY
@@ -655,6 +672,8 @@ model PortalUser {
   dispensedPharmacyDispenses  PharmacyDispense[]        @relation("PharmacyDispenseDispensedBy")
   requestedPharmacyClearances PharmacyClearance[]       @relation("PharmacyClearanceRequestedBy")
   fulfilledPharmacyClearances PharmacyClearance[]       @relation("PharmacyClearanceFulfilledBy")
+  collectedPharmacyCharges    HmsPharmacyCharge[]       @relation("PharmacyChargeCollectedBy")
+  releasedPharmacySettlements HmsPharmacySettlement[]   @relation("PharmacySettlementReleasedBy")
   importedRawPunches          BiometricRawPunch[]       @relation("RawPunchImportedBy")
   approvedAttendance          AttendanceRecord[]        @relation("AttendanceApprovedBy")
   markedAttendance            AttendanceRecord[]        @relation("AttendanceMarkedBy")
@@ -1679,6 +1698,7 @@ model AdmissionRecord {
   paymentRequests       AdmissionPaymentRequest[]
   dischargeClearances   DualDischargeClearance[]
   pharmacyClearances    PharmacyClearance[]
+  pharmacyCharges       HmsPharmacyCharge[]
   dischargeSummary      DischargeSummary?
   paymentReceipts       PaymentReceipt[]
   roomChargeLogs        AdmissionRoomChargeLog[]
@@ -2180,6 +2200,8 @@ model PharmacyClearance {
   lines                 PharmacyClearanceLine[]
   pharmacyDispenses     PharmacyDispense[]
   highCostAuthorization HighCostMedicineAuthorization?
+  pharmacyChargeId      String?                 @map("pharmacy_charge_id")
+  pharmacyCharge        HmsPharmacyCharge?      @relation(fields: [pharmacyChargeId], references: [id])
 
   requestedById String      @map("requested_by")
   requestedBy   PortalUser  @relation("PharmacyClearanceRequestedBy", fields: [requestedById], references: [id])
@@ -2240,6 +2262,76 @@ model PharmacyClearanceLine {
   notes               String?
 
   @@map("pharmacy_clearance_lines")
+}
+
+/// Inpatient Pharmacy Charge: Tracks dispensed medicines from Standalone Pharmacy
+/// attached to an admission. Billed through Front Desk; settles separately with Pharmacy.
+model HmsPharmacyCharge {
+  id                    String                       @id @default(uuid())
+  admissionRecordId     String                       @map("admission_record_id")
+  admissionRecord       AdmissionRecord              @relation(fields: [admissionRecordId], references: [id])
+  pharmacyClearances    PharmacyClearance[]
+  pharmacyInvoiceNumber String                       @unique @map("pharmacy_invoice_number")
+  pharmacyInvoiceId     String?                      @map("pharmacy_invoice_id")
+  processedEventIds     String[]                     @default([]) @map("processed_event_ids")
+
+  subtotal              Decimal                      @default(0) @db.Decimal(14, 2)
+  taxTotal              Decimal                      @default(0) @map("tax_total") @db.Decimal(14, 2)
+  discountTotal         Decimal                      @default(0) @map("discount_total") @db.Decimal(14, 2)
+  totalAmount           Decimal                      @default(0) @map("total_amount") @db.Decimal(14, 2)
+
+  patientPaid           Decimal                      @default(0) @map("patient_paid") @db.Decimal(14, 2)
+  patientOutstanding    Decimal                      @default(0) @map("patient_outstanding") @db.Decimal(14, 2)
+  patientPaymentStatus  PatientPharmacyPaymentStatus @default(PENDING) @map("patient_payment_status")
+
+  settlementStatus      PharmacySettlementStatus     @default(NOT_DUE) @map("settlement_status")
+  settledAmount         Decimal                      @default(0) @map("settled_amount") @db.Decimal(14, 2)
+
+  itemsJson             Json?                        @map("items_json")
+  dispensedBySnapshot   String?                      @map("dispensed_by_snapshot")
+  dispensedAt           DateTime?                    @map("dispensed_at")
+
+  collectedAt           DateTime?                    @map("collected_at")
+  collectedById         String?                      @map("collected_by")
+  collectedByUser       PortalUser?                  @relation("PharmacyChargeCollectedBy", fields: [collectedById], references: [id])
+
+  settlements           HmsPharmacySettlement[]
+
+  createdAt             DateTime                     @default(now()) @map("created_at")
+  updatedAt             DateTime                     @updatedAt @map("updated_at")
+
+  @@index([admissionRecordId])
+  @@index([patientPaymentStatus])
+  @@index([settlementStatus])
+  @@map("hms_pharmacy_charges")
+}
+
+model HmsPharmacySettlement {
+  id                    String                   @id @default(uuid())
+  settlementNumber      String                   @unique @map("settlement_number")
+  pharmacyChargeId      String                   @map("pharmacy_charge_id")
+  pharmacyCharge        HmsPharmacyCharge        @relation(fields: [pharmacyChargeId], references: [id])
+  pharmacyInvoiceNumber String                   @map("pharmacy_invoice_number")
+
+  requestedAmount       Decimal                  @db.Decimal(14, 2) @map("requested_amount")
+  approvedAmount        Decimal?                 @db.Decimal(14, 2) @map("approved_amount")
+  releasedAmount        Decimal                  @default(0) @db.Decimal(14, 2) @map("released_amount")
+  remainingAmount       Decimal                  @db.Decimal(14, 2) @map("remaining_amount")
+  status                PharmacySettlementStatus @default(REQUESTED)
+
+  paymentMethod         PaymentMethod?           @map("payment_method")
+  paymentReference      String?                  @map("payment_reference")
+  rejectionReason       String?                  @map("rejection_reason")
+  remarks               String?
+
+  requestedByExternal   String?                  @map("requested_by_external")
+  requestedAt           DateTime                 @default(now()) @map("requested_at")
+
+  releasedById          String?                  @map("released_by")
+  releasedByUser        PortalUser?              @relation("PharmacySettlementReleasedBy", fields: [releasedById], references: [id])
+  releasedAt            DateTime?                @map("released_at")
+
+  @@map("hms_pharmacy_settlements")
 }
 
 // ═══════════════════════════════════════════════════════════════════════

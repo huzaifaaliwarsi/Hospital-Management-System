@@ -22,6 +22,18 @@ declare global {
 
 /** Verifies the JWT access token and attaches `req.user` (§7.6 step 6, §7.8). */
 export function authenticate(req: Request, _res: Response, next: NextFunction) {
+  const bridgeToken = req.headers['x-bridge-token'] || req.headers['x-internal-secret'] || req.headers['x-bridge-key'];
+  if (bridgeToken && bridgeToken === env.INTERNAL_BRIDGE_SECRET) {
+    (req as any).isInternalBridge = true;
+    req.user = {
+      sub: 'bridge-system',
+      role: 'SUPER_ADMIN',
+      staffId: null,
+      mustResetPassword: false,
+    };
+    return next();
+  }
+
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) {
     throw new AuthenticationError('Missing or malformed Authorization header');

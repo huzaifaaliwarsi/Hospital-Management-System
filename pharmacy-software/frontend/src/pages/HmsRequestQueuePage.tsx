@@ -59,6 +59,15 @@ export const HmsRequestQueuePage: React.FC<{ canApprove: boolean }> = ({ canAppr
     pharmacyApi.getHmsSettings().then(setSettings);
   }, []);
 
+  // Real-time automatic queue refresh when HMS submits a new requisition
+  useEffect(() => {
+    const handleNewRequest = () => {
+      load();
+    };
+    window.addEventListener('hms-request-received', handleNewRequest);
+    return () => window.removeEventListener('hms-request-received', handleNewRequest);
+  }, []);
+
   const summary = useMemo(() => {
     const s = { pending: 0, partial: 0, dispensed: 0, rejected: 0, needsApproval: 0 };
     for (const r of rows) {

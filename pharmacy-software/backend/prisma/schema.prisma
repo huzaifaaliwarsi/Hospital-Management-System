@@ -54,6 +54,20 @@ enum ClearanceStatus {
   APPROVED_CREDIT
 }
 
+enum CollectionOwner {
+  PHARMACY_RETAIL
+  HMS_FRONT_DESK
+}
+
+enum InternalSettlementStatus {
+  NOT_DUE
+  PENDING
+  REQUESTED
+  PARTIALLY_RELEASED
+  SETTLED
+  REJECTED
+}
+
 /// pharmacy.md §7.1 steps 3-4 — the Accept/Partial/Reject decision on an
 /// inbound HMS medicine request, before it becomes a PharmacyInvoice.
 enum MedicineRequestStatus {
@@ -192,6 +206,7 @@ model PortalUser {
   cashEntriesIssued    CashLedgerEntry[]   @relation("CashEntryIssuedBy")
   settlementsSubmitted AccountSettlement[] @relation("SettlementSubmittedBy")
   settlementsReviewed  AccountSettlement[] @relation("SettlementReviewedBy")
+  requestedReceivableSettlements HmsReceivableSettlement[] @relation("ReceivableSettlementRequestedBy")
 
   @@map("portal_users")
 }
@@ -573,8 +588,9 @@ model MedicineRequest {
   approvedByUser       PortalUser?           @relation("RequestApprovedBy", fields: [approvedById], references: [id])
   approvedAt           DateTime?             @map("approved_at")
 
-  lines   MedicineRequestLine[]
-  invoice PharmacyInvoice?
+  lines     MedicineRequestLine[]
+  invoiceId String?               @map("invoice_id")
+  invoice   PharmacyInvoice?      @relation(fields: [invoiceId], references: [id])
 
   handledById   String?     @map("handled_by")
   handledByUser PortalUser? @relation("RequestHandledBy", fields: [handledById], references: [id])
@@ -608,10 +624,11 @@ model PharmacyInvoice {
   id                String           @id @default(uuid())
   /// System-generated — never manually typed, see DocumentSequence. INV-0001… for channel=RETAIL (POS Sale Invoice), PHI-0001… for channel=HMS_LINKED (Pharmacy Invoice) — two counters sharing this one column/table.
   invoiceNumber     String           @unique @map("invoice_number")
-  channel           SaleChannel
-  medicineRequestId String?          @unique @map("medicine_request_id")
-  medicineRequest   MedicineRequest? @relation(fields: [medicineRequestId], references: [id])
-  customerName      String?          @map("customer_name")
+  channel                  SaleChannel
+  externalAdmissionRef     String?                   @map("external_admission_ref")
+  medicineRequestId        String?                   @map("medicine_request_id")
+  medicineRequests         MedicineRequest[]
+  customerName             String?                   @map("customer_name")
 
   subtotal        Decimal          @default(0) @db.Decimal(14, 2)
   discountTotal   Decimal          @default(0) @map("discount_total") @db.Decimal(14, 2)
@@ -623,6 +640,13 @@ model PharmacyInvoice {
   /// Only set for channel = HMS_LINKED (pharmacy.md §8).
   clearanceStatus ClearanceStatus? @map("clearance_status")
 
+  collectionOwner          CollectionOwner           @default(PHARMACY_RETAIL) @map("collection_owner")
+  hmsCollectedAmount       Decimal                   @default(0) @map("hms_collected_amount") @db.Decimal(14, 2)
+  hmsSettledAmount         Decimal                   @default(0) @map("hms_settled_amount") @db.Decimal(14, 2)
+  hmsReceivable            Decimal                   @default(0) @map("hms_receivable") @db.Decimal(14, 2)
+  internalSettlementStatus InternalSettlementStatus? @map("internal_settlement_status")
+  settlements              HmsReceivableSettlement[]
+
   lines    PharmacyInvoiceLine[]
   payments PharmacyPayment[]
 
@@ -630,6 +654,7 @@ model PharmacyInvoice {
   dispensedByUser PortalUser @relation("InvoiceDispensedBy", fields: [dispensedById], references: [id])
   createdAt       DateTime   @default(now()) @map("created_at")
 
+  @@index([channel, externalAdmissionRef])
   @@map("pharmacy_invoices")
 }
 
@@ -648,11 +673,20 @@ model PharmacyInvoiceLine {
   taxAmount      Decimal         @default(0) @map("tax_amount") @db.Decimal(14, 2)
   lineNet        Decimal         @map("line_net") @db.Decimal(14, 2)
 
+  /// Traceability to specific medicine request, request line, and dispense event
+  medicineRequestId  String?  @map("medicine_request_id")
+  requestLineId      String?  @map("request_line_id")
+  externalRequestRef String?  @map("external_request_ref")
+  dispenseEventId    String?  @map("dispense_event_id")
+  dispensedById      String?  @map("dispensed_by")
+  dispensedAt        DateTime @default(now()) @map("dispensed_at")
+
   /// What the cashier actually sold this line as (medicine-packaging-plan) — e.g. "2 Strip". Null = base unit (backward-compatible default).
   saleUnitId       String?  @map("sale_unit_id")
   saleUnit         Unit?    @relation("InvoiceLineSaleUnit", fields: [saleUnitId], references: [id])
   saleUnitQuantity Decimal? @map("sale_unit_quantity") @db.Decimal(14, 3)
 
+  @@index([invoiceId, dispenseEventId])
   @@map("pharmacy_invoice_lines")
 }
 
@@ -721,6 +755,33 @@ model AccountSettlement {
   reviewedAt       DateTime?        @map("reviewed_at")
 
   @@map("account_settlements")
+}
+
+model HmsReceivableSettlement {
+  id                    String                   @id @default(uuid())
+  settlementNumber      String                   @unique @map("settlement_number")
+  invoiceId             String                   @map("invoice_id")
+  invoice               PharmacyInvoice          @relation(fields: [invoiceId], references: [id])
+  externalAdmissionRef  String                   @map("external_admission_ref")
+  patientNameSnapshot   String?                  @map("patient_name_snapshot")
+  invoiceNumber         String                   @map("invoice_number")
+  invoiceTotal          Decimal                  @db.Decimal(14, 2) @map("invoice_total")
+  hmsCollected          Decimal                  @db.Decimal(14, 2) @map("hms_collected")
+  amountRequested       Decimal                  @db.Decimal(14, 2) @map("amount_requested")
+  amountReleased        Decimal                  @default(0) @db.Decimal(14, 2) @map("amount_released")
+  remainingReceivable   Decimal                  @db.Decimal(14, 2) @map("remaining_receivable")
+  status                InternalSettlementStatus @default(REQUESTED)
+
+  requestedById         String                   @map("requested_by")
+  requestedByUser       PortalUser               @relation("ReceivableSettlementRequestedBy", fields: [requestedById], references: [id])
+  requestedAt           DateTime                 @default(now()) @map("requested_at")
+
+  releasedAt            DateTime?                @map("released_at")
+  paymentMethod         String?                  @map("payment_method")
+  paymentReference      String?                  @map("payment_reference")
+  releaseRemarks        String?                  @map("release_remarks")
+
+  @@map("hms_receivable_settlements")
 }
 
 model Expense {

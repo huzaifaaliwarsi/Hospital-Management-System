@@ -14,6 +14,7 @@ import {
   User,
   Plus,
   Loader2,
+  Pill,
 } from 'lucide-react';
 import { formatPKR, formatNumber, formatDateTime } from '../utils/format';
 import { pharmacyApi } from '../services/pharmacyApi';
@@ -33,7 +34,10 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
 }) => {
   const toast = useToast();
   const [invoice, setInvoice] = useState(initialInvoice);
-  const [viewMode, setViewMode] = useState<'thermal' | 'tax_invoice'>('thermal');
+  const [viewMode, setViewMode] = useState<'thermal' | 'tax_invoice' | 'hms_details'>(
+    initialInvoice.channel === 'HMS_LINKED' ? 'hms_details' : 'thermal'
+  );
+  const [hmsTab, setHmsTab] = useState<'granular' | 'aggregated'>('granular');
 
   // Payment states
   const [showAddPayment, setShowAddPayment] = useState(false);
@@ -126,12 +130,12 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-900/60 backdrop-blur-xs overflow-y-auto print:p-0 print:bg-white print:static">
-      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl border border-slate-200 flex flex-col max-h-[92vh] overflow-hidden print:max-h-none print:shadow-none print:border-none print:w-full print:max-w-none">
+      <div className={`bg-white rounded-2xl w-full shadow-2xl border border-slate-200 flex flex-col max-h-[92vh] overflow-hidden print:max-h-none print:shadow-none print:border-none print:w-full print:max-w-none ${viewMode === 'hms_details' ? 'max-w-4xl' : 'max-w-2xl'}`}>
         {/* Top Control Bar (Clean White Theme — Hidden when printing) */}
         <div className="px-5 py-3.5 bg-white border-b border-slate-200/90 flex items-center justify-between gap-3 shrink-0 print:hidden">
           <div className="flex items-center gap-3">
             <div className="h-8 w-8 rounded-lg bg-emerald-50 text-[#0e7d5a] flex items-center justify-center font-bold">
-              <Receipt className="h-4 w-4" />
+              {viewMode === 'hms_details' ? <Pill className="h-4 w-4" /> : <Receipt className="h-4 w-4" />}
             </div>
             <div>
               <div className="flex items-center gap-2">
@@ -151,6 +155,19 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
           <div className="flex items-center gap-2">
             {/* View Mode Toggle (Clean Slate Pill) */}
             <div className="bg-slate-100 p-0.5 rounded-lg flex items-center border border-slate-200">
+              {invoice.channel === 'HMS_LINKED' && (
+                <button
+                  type="button"
+                  onClick={() => setViewMode('hms_details')}
+                  className={`px-2.5 py-1 text-xs font-semibold rounded-md flex items-center gap-1.5 transition-colors cursor-pointer ${
+                    viewMode === 'hms_details'
+                      ? 'bg-white text-[#0e7d5a] shadow-2xs font-bold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Pill className="h-3.5 w-3.5" /> Inpatient Details
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setViewMode('thermal')}
@@ -618,6 +635,223 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
                     </div>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* ═════════════════════════════════════════════════════════════
+               HMS-LINKED INPATIENT DISPENSE DETAILS (§15)
+               ═════════════════════════════════════════════════════════════ */}
+            {viewMode === 'hms_details' && (
+              <div className="space-y-5">
+                {/* Header Information Bar */}
+                <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-emerald-50/60 rounded-xl border border-emerald-200">
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-xl bg-[#0e7d5a] text-white flex items-center justify-center font-bold shadow-2xs">
+                      <Pill className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-base font-extrabold text-slate-900">
+                          {invoice.invoiceNumber}
+                        </span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wider ${statusColor}`}>
+                          {invoice.status.replace('_', ' ')}
+                        </span>
+                        <span className="text-[10px] font-bold bg-[#effaf5] text-[#0e7d5a] border border-[#b2e5d6] px-2 py-0.5 rounded-full">
+                          ONE ACTIVE ADMISSION INVOICE
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 font-medium">
+                        Patient: <strong className="text-slate-800">{invoice.customerName || 'Inpatient Admission'}</strong> · Admission Ref: <strong className="font-mono text-[#0e7d5a]">{invoice.externalAdmissionRef || 'N/A'}</strong>
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[10px] text-slate-400 uppercase font-semibold block">Channel &amp; Collection</span>
+                    <span className="text-xs font-bold text-slate-700">HMS Front Desk Managed</span>
+                  </div>
+                </div>
+
+                {/* 8-Card Summary Metrics (§15) */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                  <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs">
+                    <span className="text-[10px] text-slate-400 uppercase font-semibold block">Total Medicines</span>
+                    <span className="text-base font-extrabold text-slate-900">{invoice.lines?.length || 0} line(s)</span>
+                  </div>
+                  <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs">
+                    <span className="text-[10px] text-slate-400 uppercase font-semibold block">Subtotal</span>
+                    <span className="text-base font-extrabold text-slate-900">{formatPKR(invoice.subtotal)}</span>
+                  </div>
+                  <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs">
+                    <span className="text-[10px] text-slate-400 uppercase font-semibold block">Tax / GST</span>
+                    <span className="text-base font-extrabold text-slate-900">{formatPKR(invoice.taxTotal)}</span>
+                  </div>
+                  <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs">
+                    <span className="text-[10px] text-slate-400 uppercase font-semibold block">Discount</span>
+                    <span className="text-base font-extrabold text-emerald-700">{formatPKR(invoice.discountTotal)}</span>
+                  </div>
+                  <div className="p-3 bg-slate-900 text-white rounded-xl border border-slate-800 shadow-2xs">
+                    <span className="text-[10px] text-slate-300 uppercase font-semibold block">Net Total</span>
+                    <span className="text-base font-extrabold text-emerald-400">{formatPKR(invoice.total)}</span>
+                  </div>
+                  <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200 shadow-2xs">
+                    <span className="text-[10px] text-emerald-700 uppercase font-semibold block">Collected By HMS</span>
+                    <span className="text-base font-extrabold text-emerald-800">{formatPKR(invoice.hmsCollectedAmount)}</span>
+                  </div>
+                  <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 shadow-2xs">
+                    <span className="text-[10px] text-amber-700 uppercase font-semibold block">HMS Receivable</span>
+                    <span className="text-base font-extrabold text-amber-900">{formatPKR(invoice.hmsReceivable)}</span>
+                  </div>
+                  <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs">
+                    <span className="text-[10px] text-slate-400 uppercase font-semibold block">Settlement Status</span>
+                    <span className="text-xs font-bold text-slate-800 uppercase px-2 py-0.5 rounded bg-slate-100 inline-block mt-0.5">
+                      {(invoice.internalSettlementStatus || 'NOT_DUE').replace('_', ' ')}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Tab Switcher: Granular History vs Aggregated Summary */}
+                <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                  <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-lg">
+                    <button
+                      type="button"
+                      onClick={() => setHmsTab('granular')}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                        hmsTab === 'granular'
+                          ? 'bg-white text-slate-900 shadow-2xs font-bold'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Granular Dispense Traceability ({invoice.lines?.length || 0})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setHmsTab('aggregated')}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                        hmsTab === 'aggregated'
+                          ? 'bg-white text-slate-900 shadow-2xs font-bold'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Aggregated Medicines Summary
+                    </button>
+                  </div>
+                  <span className="text-[11px] text-slate-400 font-medium">
+                    {hmsTab === 'granular' ? 'Every dispense event & batch separately traceable' : 'Combined medicine quantities'}
+                  </span>
+                </div>
+
+                {/* Table Content */}
+                {hmsTab === 'granular' ? (
+                  <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs bg-white">
+                    <table className="w-full text-left">
+                      <thead className="bg-[#f8fafc] text-[11px] font-bold text-slate-700 uppercase tracking-wide border-b border-slate-200">
+                        <tr>
+                          <th className="py-2.5 px-3">Medicine</th>
+                          <th className="py-2.5 px-3 text-center">Batch</th>
+                          <th className="py-2.5 px-3 text-center">Dispensed Qty</th>
+                          <th className="py-2.5 px-3 text-right">Rate</th>
+                          <th className="py-2.5 px-3 text-right">Amount</th>
+                          <th className="py-2.5 px-3">Request / Event</th>
+                          <th className="py-2.5 px-3">Date / Dispensed By</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-xs">
+                        {invoice.lines?.map((line: any, idx: number) => {
+                          const medName = line.medicine?.name || 'Medicine Item';
+                          const unit = line.medicine?.unit || '';
+                          const batchNo = line.batch?.batchNumber || '—';
+                          const qty = Number(line.quantity || 0);
+                          const rate = Number(line.rateSnapshot || 0);
+                          const net = Number(line.lineNet || 0);
+                          const reqRef = line.externalRequestRef || '—';
+                          const eventId = line.dispenseEventId || '—';
+                          const dispTime = line.dispensedAt ? formatDateTime(line.dispensedAt) : '—';
+                          const dispUser = invoice.dispensedByUser?.fullName || invoice.dispensedByUser?.username || 'Pharmacist';
+
+                          return (
+                            <tr key={line.id || idx} className="hover:bg-slate-50/70">
+                              <td className="py-2.5 px-3 font-semibold text-slate-900">
+                                <div>{medName}</div>
+                                <div className="text-[10px] text-slate-400 font-mono">{line.medicine?.code}</div>
+                              </td>
+                              <td className="py-2.5 px-3 text-center font-mono text-[11px] text-slate-700">
+                                <span className="bg-slate-100 px-1.5 py-0.5 rounded font-medium">{batchNo}</span>
+                              </td>
+                              <td className="py-2.5 px-3 text-center font-bold text-slate-900 tabular-nums">
+                                {qty} {unit}
+                              </td>
+                              <td className="py-2.5 px-3 text-right tabular-nums text-slate-600">
+                                {formatPKR(rate)}
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-extrabold text-slate-900 tabular-nums">
+                                {formatPKR(net)}
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <div className="font-mono text-[11px] font-bold text-[#0e7d5a]">{reqRef}</div>
+                                <div className="font-mono text-[9px] text-slate-400">{eventId}</div>
+                              </td>
+                              <td className="py-2.5 px-3 text-slate-500 text-[11px]">
+                                <div>{dispTime}</div>
+                                <div className="text-[10px] text-slate-400">{dispUser}</div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs bg-white">
+                    <table className="w-full text-left">
+                      <thead className="bg-[#f8fafc] text-[11px] font-bold text-slate-700 uppercase tracking-wide border-b border-slate-200">
+                        <tr>
+                          <th className="py-2.5 px-3">Medicine Name</th>
+                          <th className="py-2.5 px-3 text-center">Total Quantity</th>
+                          <th className="py-2.5 px-3 text-right">Standard Rate</th>
+                          <th className="py-2.5 px-3 text-right">Net Amount</th>
+                          <th className="py-2.5 px-3 text-center">Dispenses</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-xs">
+                        {(() => {
+                          const map = new Map<string, { name: string; unit: string; totalQty: number; rate: number; totalAmount: number; count: number }>();
+                          for (const l of (invoice.lines || [])) {
+                            const name = l.medicine?.name || 'Medicine Item';
+                            const unit = l.medicine?.unit || 'Units';
+                            const qty = Number(l.quantity || 0);
+                            const amount = Number(l.lineNet || (qty * Number(l.rateSnapshot || 0)));
+                            const rate = Number(l.rateSnapshot || (qty > 0 ? amount / qty : 0));
+                            const existing = map.get(name);
+                            if (existing) {
+                              existing.totalQty += qty;
+                              existing.totalAmount += amount;
+                              existing.count += 1;
+                            } else {
+                              map.set(name, { name, unit, totalQty: qty, rate, totalAmount: amount, count: 1 });
+                            }
+                          }
+                          const list = Array.from(map.values());
+                          return list.map((m) => (
+                            <tr key={m.name} className="hover:bg-slate-50/70">
+                              <td className="py-2.5 px-3 font-bold text-slate-900">{m.name}</td>
+                              <td className="py-2.5 px-3 text-center font-extrabold text-slate-900 tabular-nums">
+                                {m.totalQty} {m.unit}
+                              </td>
+                              <td className="py-2.5 px-3 text-right text-slate-600 tabular-nums">{formatPKR(m.rate)}</td>
+                              <td className="py-2.5 px-3 text-right font-extrabold text-slate-900 tabular-nums">{formatPKR(m.totalAmount)}</td>
+                              <td className="py-2.5 px-3 text-center">
+                                <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-full text-[10px] font-bold">
+                                  {m.count} dispense event(s)
+                                </span>
+                              </td>
+                            </tr>
+                          ));
+                        })()}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
           </div>

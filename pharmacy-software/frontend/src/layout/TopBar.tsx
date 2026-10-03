@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { Search, Bell, MessageSquare, Moon, Sun, ChevronDown, PanelLeftOpen } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Search, Bell, MessageSquare, Moon, Sun, ChevronDown, PanelLeftOpen, Check, Trash2, Pill, ExternalLink } from 'lucide-react';
 import type { CurrentUser } from '../types';
+import { useHmsNotifications } from '../context/HmsNotificationContext';
 
 const ROLE_LABEL: Record<CurrentUser['role'], string> = {
   SUPER_ADMIN: 'Pharmacy Admin',
@@ -14,6 +15,7 @@ interface TopBarProps {
   onSearch?: (query: string) => void;
   sidebarOpen?: boolean;
   onToggleSidebar?: () => void;
+  onNavigate?: (pageId: string) => void;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -22,13 +24,37 @@ export const TopBar: React.FC<TopBarProps> = ({
   onSearch,
   sidebarOpen,
   onToggleSidebar,
+  onNavigate,
 }) => {
   const [searchVal, setSearchVal] = useState('');
   const [darkMode, setDarkMode] = useState(false);
+  const [showNotifMenu, setShowNotifMenu] = useState(false);
+  const notifRef = useRef<HTMLDivElement>(null);
+
+  const { notifications, unreadCount, markAsRead, markAllAsRead, clearAll } = useHmsNotifications();
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
+        setShowNotifMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearchVal(e.target.value);
     if (onSearch) onSearch(e.target.value);
+  };
+
+  const handleNotifClick = (id: string) => {
+    markAsRead(id);
+    setShowNotifMenu(false);
+    if (onNavigate) {
+      onNavigate('hms-requests');
+    }
   };
 
   return (
@@ -64,15 +90,122 @@ export const TopBar: React.FC<TopBarProps> = ({
 
         {/* Action Icons */}
         <div className="flex items-center gap-1.5 border-l border-slate-100 pl-3">
-          {/* Notifications */}
-          <button
-            type="button"
-            className="relative p-2 rounded-xl text-slate-500 hover:text-slate-700 hover:bg-slate-100/70 transition-colors cursor-pointer"
-            title="Notifications"
-          >
-            <Bell className="h-4.5 w-4.5" />
-            <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-white" />
-          </button>
+          {/* Notifications Dropdown */}
+          <div className="relative" ref={notifRef}>
+            <button
+              type="button"
+              onClick={() => setShowNotifMenu(!showNotifMenu)}
+              className="relative p-2 rounded-xl text-slate-500 hover:text-slate-700 hover:bg-slate-100/70 transition-colors cursor-pointer"
+              title="Hospital Ward Requisitions"
+            >
+              <Bell className="h-4.5 w-4.5" />
+              {unreadCount > 0 ? (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-emerald-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center ring-2 ring-white animate-pulse">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              ) : null}
+            </button>
+
+            {/* Notification Dropdown Menu */}
+            {showNotifMenu && (
+              <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-slate-200 z-50 overflow-hidden animate-in fade-in duration-200">
+                <div className="p-3.5 bg-slate-50/80 border-b border-slate-200/80 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-900">Ward Notifications</span>
+                    {unreadCount > 0 && (
+                      <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-100 text-emerald-800 rounded-full">
+                        {unreadCount} new
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {unreadCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={markAllAsRead}
+                        className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 transition-colors cursor-pointer flex items-center gap-1"
+                        title="Mark all as read"
+                      >
+                        <Check className="h-3 w-3" /> Mark read
+                      </button>
+                    )}
+                    {notifications.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={clearAll}
+                        className="text-[11px] font-semibold text-slate-400 hover:text-rose-600 transition-colors cursor-pointer flex items-center gap-1"
+                        title="Clear all"
+                      >
+                        <Trash2 className="h-3 w-3" /> Clear
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Notifications List */}
+                <div className="max-h-80 overflow-y-auto divide-y divide-slate-100">
+                  {notifications.length === 0 ? (
+                    <div className="py-8 px-4 text-center">
+                      <Bell className="h-8 w-8 text-slate-300 mx-auto mb-2 opacity-50" />
+                      <p className="text-xs font-medium text-slate-500">No new notifications</p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        New inpatient medicine requests from HMS will appear here in real time.
+                      </p>
+                    </div>
+                  ) : (
+                    notifications.map((n) => (
+                      <div
+                        key={n.id}
+                        onClick={() => handleNotifClick(n.id)}
+                        className={`p-3.5 hover:bg-slate-50/80 transition-colors cursor-pointer flex items-start gap-3 ${
+                          !n.read ? 'bg-emerald-50/30' : ''
+                        }`}
+                      >
+                        <div
+                          className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
+                            !n.read ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
+                          }`}
+                        >
+                          <Pill className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-1">
+                            <h5 className="text-xs font-bold text-slate-900 truncate">
+                              {n.patientName} <span className="font-normal text-slate-400">({n.admissionRef})</span>
+                            </h5>
+                            {!n.read && <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />}
+                          </div>
+                          <p className="text-[11px] font-medium text-emerald-800 line-clamp-1 mt-0.5">
+                            {n.medicinesSummary}
+                          </p>
+                          <div className="flex items-center justify-between text-[10px] text-slate-400 mt-1">
+                            <span>Req: {n.requestNumber}</span>
+                            <span>{new Date(n.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Footer action to queue */}
+                {notifications.length > 0 && onNavigate && (
+                  <div className="p-2.5 bg-slate-50 border-t border-slate-200 text-center">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowNotifMenu(false);
+                        onNavigate('hms-requests');
+                      }}
+                      className="text-xs font-bold text-emerald-700 hover:text-emerald-800 flex items-center justify-center gap-1.5 w-full cursor-pointer"
+                    >
+                      View All in Request Queue <ExternalLink className="h-3 w-3" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
           {/* Messages */}
           <button

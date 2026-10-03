@@ -20,7 +20,7 @@ export function auditLog(req: Request, res: Response, next: NextFunction) {
     void prisma.auditLog
       .create({
         data: {
-          actorId: req.user?.sub,
+          actorId: (req as any).isInternalBridge ? null : req.user?.sub,
           action: `${req.method} ${req.route?.path ?? req.path}`,
           entityType: req.baseUrl.replace('/api/v1/', '') || 'unknown',
           entityId: req.params?.id,
