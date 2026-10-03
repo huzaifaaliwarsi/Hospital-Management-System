@@ -63,6 +63,8 @@ export const dispensedCallbackSchema = z.object({
         batchNumber: z.string().optional().nullable(),
         quantity: z.coerce.number(),
         rate: z.coerce.number(),
+        discountAmount: z.coerce.number().optional().nullable(),
+        lineGross: z.coerce.number().optional().nullable(),
         lineNet: z.coerce.number(),
       }),
     )

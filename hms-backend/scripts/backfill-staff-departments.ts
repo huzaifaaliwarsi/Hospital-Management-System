@@ -16,6 +16,10 @@ async function main() {
   let skipped = 0;
 
   for (const s of staff) {
+    if (!s.departmentId) {
+      skipped++;
+      continue;
+    }
     const existing = await prisma.staffDepartment.findUnique({
       where: { staffId_departmentId: { staffId: s.id, departmentId: s.departmentId } },
     });

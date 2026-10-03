@@ -146,40 +146,51 @@ export const admissionBillingService = {
       },
     );
 
-    let effectivePharmacyCharge: any = pharmacyCharge;
-    if (!effectivePharmacyCharge && pendingClearances.length > 0) {
-      const items = pendingClearances.flatMap((c) =>
-        c.lines.map((l) => {
-          const rate = Number(l.medicine?.saleRate ?? l.batch?.costRate ?? 0);
-          const qty = Number(l.requestedQuantity);
-          const amount = rate * qty;
-          return {
-            medicineName: l.medicine?.name || 'Medicine',
-            quantity: qty,
-            unitPrice: rate,
-            totalPrice: amount,
-            status: 'REQUESTED',
-            requestNumber: c.medicineRequestNumber,
-          };
-        }),
-      );
-      const pendingTotal = items.reduce((sum, it) => sum + it.totalPrice, 0);
+    const pendingItems = pendingClearances.flatMap((c) =>
+      c.lines.map((l) => {
+        const rate = Number(l.medicine?.saleRate ?? l.batch?.costRate ?? 0);
+        const qty = Number(l.requestedQuantity);
+        const amount = rate * qty;
+        return {
+          medicineName: l.medicine?.name || 'Medicine',
+          quantity: qty,
+          unitPrice: rate,
+          totalPrice: amount,
+          status: 'REQUESTED',
+          requestNumber: c.medicineRequestNumber,
+        };
+      }),
+    );
+    const pendingTotal = pendingItems.reduce((sum, it) => sum + it.totalPrice, 0);
 
-      effectivePharmacyCharge = {
-        id: 'pending',
-        pharmacyInvoiceNumber: pendingClearances[0]?.medicineRequestNumber ?? 'REQ-PENDING',
-        subtotal: new Decimal(pendingTotal),
-        taxTotal: new Decimal(0),
-        discountTotal: new Decimal(0),
-        totalAmount: new Decimal(pendingTotal),
-        patientPaid: new Decimal(0),
-        patientOutstanding: new Decimal(pendingTotal),
-        patientPaymentStatus: 'PENDING',
-        settlementStatus: 'NOT_DUE',
-        itemsJson: items,
-        dispensedBySnapshot: pendingClearances[0]?.requestedBy?.displayName ?? 'Doctor (Pending Dispense)',
-        dispensedAt: null,
-      };
+    let effectivePharmacyCharge: any = pharmacyCharge;
+    if (pendingClearances.length > 0) {
+      if (effectivePharmacyCharge) {
+        const existingItems = Array.isArray(effectivePharmacyCharge.itemsJson) ? effectivePharmacyCharge.itemsJson : [];
+        effectivePharmacyCharge = {
+          ...effectivePharmacyCharge,
+          subtotal: effectivePharmacyCharge.subtotal.plus(pendingTotal),
+          totalAmount: effectivePharmacyCharge.totalAmount.plus(pendingTotal),
+          patientOutstanding: effectivePharmacyCharge.patientOutstanding.plus(pendingTotal),
+          itemsJson: [...existingItems, ...pendingItems],
+        };
+      } else {
+        effectivePharmacyCharge = {
+          id: 'pending',
+          pharmacyInvoiceNumber: pendingClearances[0]?.medicineRequestNumber ?? 'REQ-PENDING',
+          subtotal: new Decimal(pendingTotal),
+          taxTotal: new Decimal(0),
+          discountTotal: new Decimal(0),
+          totalAmount: new Decimal(pendingTotal),
+          patientPaid: new Decimal(0),
+          patientOutstanding: new Decimal(pendingTotal),
+          patientPaymentStatus: 'PENDING',
+          settlementStatus: 'NOT_DUE',
+          itemsJson: pendingItems,
+          dispensedBySnapshot: pendingClearances[0]?.requestedBy?.displayName ?? 'Doctor (Pending Dispense)',
+          dispensedAt: null,
+        };
+      }
 
       consolidated.subtotal = consolidated.subtotal.plus(pendingTotal);
       consolidated.total = consolidated.total.plus(pendingTotal);

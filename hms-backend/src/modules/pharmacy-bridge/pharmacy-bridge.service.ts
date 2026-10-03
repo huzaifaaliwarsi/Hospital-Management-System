@@ -513,13 +513,18 @@ export const pharmacyBridgeService = {
       });
 
       // 10. Update Pharmacy Clearance status to DISPENSED
-      if (body.externalRequestRef) {
+      const allRequestRefs = new Set<string>();
+      if (body.externalRequestRef) allRequestRefs.add(body.externalRequestRef);
+      for (const line of body.lines || []) {
+        if (line.externalRequestRef) allRequestRefs.add(line.externalRequestRef);
+      }
+      if (allRequestRefs.size > 0) {
         await tx.pharmacyClearance.updateMany({
           where: {
             admissionRecordId: admission.id,
             OR: [
-              { medicineRequestNumber: body.externalRequestRef },
-              { id: body.externalRequestRef },
+              { medicineRequestNumber: { in: Array.from(allRequestRefs) } },
+              { id: { in: Array.from(allRequestRefs) } },
             ],
           },
           data: { status: 'DISPENSED', fulfilledAt: new Date() },
@@ -563,14 +568,12 @@ export const pharmacyBridgeService = {
         updatedProcessedEventIds.push(reqKey);
       }
 
-      let targetPharmacyInvoiceNumber = body.pharmacyInvoiceNumber;
-      if (!existingCharge) {
-        const otherAdmissionCharge = await tx.hmsPharmacyCharge.findUnique({
-          where: { pharmacyInvoiceNumber: targetPharmacyInvoiceNumber },
-        });
-        if (otherAdmissionCharge && otherAdmissionCharge.admissionRecordId !== admission.id) {
-          targetPharmacyInvoiceNumber = `${body.pharmacyInvoiceNumber}-${admission.admissionNumber || admission.id.slice(-6)}`;
-        }
+      let targetPharmacyInvoiceNumber = existingCharge?.pharmacyInvoiceNumber || body.pharmacyInvoiceNumber;
+      const otherAdmissionCharge = await tx.hmsPharmacyCharge.findUnique({
+        where: { pharmacyInvoiceNumber: targetPharmacyInvoiceNumber },
+      });
+      if (otherAdmissionCharge && otherAdmissionCharge.id !== existingCharge?.id) {
+        targetPharmacyInvoiceNumber = `${body.pharmacyInvoiceNumber}-${admission.admissionNumber || admission.id.slice(-6)}`;
       }
 
       const chargeData = {
@@ -609,13 +612,13 @@ export const pharmacyBridgeService = {
       }
 
       // Link clearance to charge if applicable
-      if (body.externalRequestRef) {
+      if (allRequestRefs.size > 0) {
         await tx.pharmacyClearance.updateMany({
           where: {
             admissionRecordId: admission.id,
             OR: [
-              { medicineRequestNumber: body.externalRequestRef },
-              { id: body.externalRequestRef },
+              { medicineRequestNumber: { in: Array.from(allRequestRefs) } },
+              { id: { in: Array.from(allRequestRefs) } },
             ],
           },
           data: { pharmacyChargeId: charge.id },

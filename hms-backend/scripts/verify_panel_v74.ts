@@ -59,8 +59,8 @@ async function main() {
       },
       actor.id,
     );
-    const companyId = company.id as string;
-    assert.equal(company.billingTerms, 'Configured test cycle');
+    const companyId = (company as any).id as string;
+    assert.equal((company as any).billingTerms, 'Configured test cycle');
     const department = await prisma.department.create({
       data: { code: 'TEST-DEPT', name: 'Test Department', departmentType: 'CLINICAL' },
     });
@@ -82,7 +82,7 @@ async function main() {
       },
       actor.id,
     );
-    const patientId = patient.id as string;
+    const patientId = (patient as any).id as string;
     const savedRules = await setupService.replaceDiscountRules(
       companyId,
       replaceDiscountRulesSchema.parse({
@@ -230,7 +230,7 @@ async function main() {
     await assert.rejects(() => patientsService.createPanelPatient({ fullName: 'Missing identity', corporatePanelId: companyId }, actor.id), /Employee ID/);
     await assert.rejects(() => patientsService.createPanelPatient({ fullName: 'Missing dates', corporatePanelId: companyId, panelMemberId: 'MEMBER' }, actor.id), /start and end dates/);
     const renewed = await patientsService.updatePanelPatient(patientId, { membershipValidFrom: new Date('2020-01-01'), membershipValidTo: new Date('2099-12-31'), planName: 'Gold' }, actor.id);
-    assert.equal(renewed.mrNumber, patient.mrNumber);
+    assert.equal((renewed as any).mrNumber, (patient as any).mrNumber);
     assert.equal((await panelBillingService.verifyPanelPatient(patientId)).membershipActive, true);
     const { appointmentsService } = await import('../src/modules/frontdesk/appointments.service');
     const booking = await appointmentsService.bookAppointment({ panelPatientId: patientId, departmentId: department.id, serviceRateId: service.id, slotAt: new Date(), paymentMethod: 'CASH' }, actor.id);
