@@ -1,6 +1,7 @@
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '@/db/client';
 import { NotFoundError, ValidationError } from '@/shared/errors/AppError';
+import { generateInvoiceNumber } from '@/shared/idGenerator';
 import { pharmacyService } from '../pharmacy/pharmacy.service';
 import { pharmacyBridgeClient } from '@/shared/pharmacyBridgeClient';
 import type {
@@ -295,15 +296,20 @@ export const pharmacyBridgeService = {
   // ── Dispense Callback from Pharmacy Backend (Webhook) ────────────────────
   async handleDispensedCallback(body: DispensedCallbackBody) {
     return prisma.$transaction(async (tx) => {
-      // Concurrency lock per admission reference
+      // 1. Concurrency lock per admission reference
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${body.externalAdmissionRef}))`;
 
+      // 2. Find the active admission using Admission ID / Admission Ref
       const admission = await tx.admissionRecord.findFirst({
         where: {
           OR: [
             { admissionNumber: body.externalAdmissionRef },
             { id: body.externalAdmissionRef },
           ],
+        },
+        include: {
+          panelPatient: true,
+          selfPayEncounter: true,
         },
       });
       if (!admission) throw new NotFoundError(`Admission ${body.externalAdmissionRef} not found`);
@@ -313,96 +319,86 @@ export const pharmacyBridgeService = {
         throw new ValidationError(`Cannot append pharmacy charges to a finalized/discharged admission (${admission.status})`);
       }
 
-      // ── Idempotency & Unique Collision Safety ────────────────────────────
-      // ONE ACTIVE ADMISSION = ONE PHARMACY CHARGE COMPONENT (§1, §6, §12)
+      // 3. Verify MR Number matches that admission (if MR Number provided)
+      const patientMrNumber = admission.panelPatient?.mrNumber || admission.selfPayEncounter?.mrNumber || null;
+      if (body.patientMrNumber && patientMrNumber && body.patientMrNumber !== patientMrNumber) {
+        throw new ValidationError(`Patient MR Number mismatch: callback has ${body.patientMrNumber} but admission has ${patientMrNumber}`);
+      }
+
+      // 4. Find the existing ACTIVE patient invoice for that admission
+      // FINAL RULE: ONE ACTIVE ADMISSION = ONE PATIENT BILL / INVOICE LEDGER
+      // All later charges for that same active admission must update the SAME invoice.
+      let hospitalInvoice = await tx.hospitalInvoice.findFirst({
+        where: {
+          admissionRecordId: admission.id,
+          sourceType: 'ADMISSION',
+          status: { not: 'VOID' },
+          NOT: { invoiceNumber: { startsWith: 'INV-PHARM-' } },
+        },
+        orderBy: { createdAt: 'asc' }, // The original admission invoice created at admission check-in
+        include: { lines: true },
+      });
+
+      if (!hospitalInvoice) {
+        // Fallback: If no primary admission invoice exists yet, create one standard admission invoice
+        const invoiceNumber = await generateInvoiceNumber(tx);
+        hospitalInvoice = await tx.hospitalInvoice.create({
+          data: {
+            invoiceNumber,
+            sourceType: 'ADMISSION',
+            admissionRecordId: admission.id,
+            departmentId: admission.departmentId,
+            panelPatientId: admission.panelPatientId,
+            selfPayEncounterId: admission.selfPayEncounterId,
+            subtotal: new Decimal(0),
+            discountTotal: new Decimal(0),
+            total: new Decimal(0),
+            paidTotal: new Decimal(0),
+            patientShare: new Decimal(0),
+            panelReceivable: new Decimal(0),
+            status: 'UNPAID',
+          },
+          include: { lines: true },
+        });
+      }
+
+      // 5. Idempotency Check:
+      // Prevent duplicate processing on retries using dispenseEventId or externalRequestRef
       let existingCharge = await tx.hmsPharmacyCharge.findFirst({
         where: {
           admissionRecordId: admission.id,
         },
       });
 
-      if (!existingCharge) {
-        existingCharge = await tx.hmsPharmacyCharge.findFirst({
-          where: {
-            pharmacyInvoiceNumber: body.pharmacyInvoiceNumber,
-            admissionRecordId: admission.id,
-          },
-        });
-      }
-
-      let targetPharmacyInvoiceNumber = body.pharmacyInvoiceNumber;
-      if (!existingCharge) {
-        const otherAdmissionCharge = await tx.hmsPharmacyCharge.findUnique({
-          where: { pharmacyInvoiceNumber: targetPharmacyInvoiceNumber },
-        });
-        if (otherAdmissionCharge && otherAdmissionCharge.admissionRecordId !== admission.id) {
-          targetPharmacyInvoiceNumber = `${body.pharmacyInvoiceNumber}-${admission.admissionNumber || admission.id.slice(-6)}`;
-          const secondCheck = await tx.hmsPharmacyCharge.findUnique({
-            where: { pharmacyInvoiceNumber: targetPharmacyInvoiceNumber },
-          });
-          if (secondCheck && secondCheck.admissionRecordId !== admission.id) {
-            targetPharmacyInvoiceNumber = `${body.pharmacyInvoiceNumber}-${admission.admissionNumber || admission.id.slice(-6)}-${Date.now().toString().slice(-4)}`;
-          }
-        }
-      }
-
-      let dept = await tx.department.findFirst({
-        where: { OR: [{ code: 'PHARM' }, { code: 'PHARMACY' }] },
-      });
-      if (!dept) {
-        dept = await tx.department.create({
-          data: {
-            code: 'PHARM',
-            name: 'Pharmacy Department',
-            departmentType: 'CLINICAL',
-          },
-        });
-      }
-
-      let hospitalInvoice = await tx.hospitalInvoice.findFirst({
-        where: {
-          admissionRecordId: admission.id,
-          OR: [
-            { invoiceNumber: `INV-PHARM-${targetPharmacyInvoiceNumber}` },
-            { invoiceNumber: `INV-PHARM-${body.pharmacyInvoiceNumber}` },
-            { departmentId: dept.id },
-            { invoiceNumber: { startsWith: 'INV-PHARM-' } },
-          ],
-        },
-        include: { lines: true },
-      });
+      const eventKey = body.dispenseEventId || null;
+      const reqKey = body.externalRequestRef || null;
 
       if (
         existingCharge &&
-        body.dispenseEventId &&
-        existingCharge.processedEventIds.includes(body.dispenseEventId)
+        ((eventKey && existingCharge.processedEventIds.includes(eventKey)) ||
+         (reqKey && existingCharge.processedEventIds.includes(reqKey)))
       ) {
-        // Already processed this exact dispense event — return idempotent success
+        // Idempotent retry: this exact dispense event / request has already been processed!
         return { charge: existingCharge, hospitalInvoice, alreadyProcessed: true };
       }
 
-      let clearance = null;
-      if (body.externalRequestRef) {
-        clearance = await tx.pharmacyClearance.findFirst({
-          where: {
-            OR: [
-              { medicineRequestNumber: body.externalRequestRef },
-              { id: body.externalRequestRef },
-            ],
-          },
-        });
-        if (clearance) {
-          await tx.pharmacyClearance.update({
-            where: { id: clearance.id },
-            data: { status: 'DISPENSED', fulfilledAt: new Date() },
-          });
-        }
-      }
-
+      // 6. Ensure Pharmacy Service Rate exists
       let serviceRate = await tx.serviceRate.findFirst({
         where: { code: 'SRV-PHARMACY' },
       });
       if (!serviceRate) {
+        let dept = await tx.department.findFirst({
+          where: { OR: [{ code: 'PHARM' }, { code: 'PHARMACY' }] },
+        });
+        if (!dept) {
+          dept = await tx.department.create({
+            data: {
+              code: 'PHARM',
+              name: 'Pharmacy Department',
+              departmentType: 'CLINICAL',
+            },
+          });
+        }
         serviceRate = await tx.serviceRate.create({
           data: {
             code: 'SRV-PHARMACY',
@@ -416,6 +412,7 @@ export const pharmacyBridgeService = {
         });
       }
 
+      // 7. Prepare Pharmacy Lines
       const totalDecimal = new Decimal(body.totalAmount);
       const subtotalDecimal = new Decimal(body.subtotal);
       const taxDecimal = new Decimal(body.taxTotal);
@@ -428,9 +425,11 @@ export const pharmacyBridgeService = {
             rateSnapshot: new Decimal(l.rate),
             quantity: new Decimal(l.quantity),
             lineGross: new Decimal(l.lineNet),
+            discountAmount: new Decimal(0),
+            discountReason: `Pharmacy: ${l.medicineName}${l.batchNumber ? ` [Batch: ${l.batchNumber}]` : ''}${l.externalRequestRef ? ` [Req: ${l.externalRequestRef}]` : ''}`,
             lineNet: new Decimal(l.lineNet),
             patientShare: new Decimal(l.lineNet),
-            discountReason: `${l.medicineName}${l.batchNumber ? ` [Batch: ${l.batchNumber}]` : ''}`,
+            panelReceivable: new Decimal(0),
           }))
         : [
             {
@@ -438,168 +437,192 @@ export const pharmacyBridgeService = {
               rateSnapshot: totalDecimal,
               quantity: new Decimal(1),
               lineGross: totalDecimal,
+              discountAmount: new Decimal(0),
+              discountReason: `Pharmacy Medication Charges${body.externalRequestRef ? ` [Req: ${body.externalRequestRef}]` : ''}`,
               lineNet: totalDecimal,
               patientShare: totalDecimal,
-              discountReason: 'Pharmacy Medication Charges',
+              panelReceivable: new Decimal(0),
             },
           ];
 
-      // ── Hospital Invoice (ONE ACTIVE ADMISSION = ONE BILL) ───────────────
-      if (!hospitalInvoice) {
-        let invoiceNumber = `INV-PHARM-${targetPharmacyInvoiceNumber}`;
-        const collision = await tx.hospitalInvoice.findUnique({
-          where: { invoiceNumber },
-        });
-        if (collision) {
-          if (collision.admissionRecordId === admission.id) {
-            hospitalInvoice = collision;
-          } else {
-            invoiceNumber = `INV-PHARM-${admission.admissionNumber || admission.id.slice(-6)}-${targetPharmacyInvoiceNumber}`;
-            const collision2 = await tx.hospitalInvoice.findUnique({
-              where: { invoiceNumber },
-            });
-            if (collision2) {
-              invoiceNumber = `INV-PHARM-${admission.admissionNumber || admission.id.slice(-6)}-${targetPharmacyInvoiceNumber}-${Date.now().toString().slice(-4)}`;
-            }
-          }
-        }
+      // 8. Update Pharmacy Section on the SAME Hospital Invoice:
+      // Delete existing pharmacy lines on this invoice (preserving all hospital room, doctor, procedure lines)
+      const targetInvoice = hospitalInvoice!;
+      await tx.invoiceLineItem.deleteMany({
+        where: {
+          hospitalInvoiceId: targetInvoice.id,
+          serviceRateId: serviceRate.id,
+        },
+      });
 
-        if (!hospitalInvoice) {
-          hospitalInvoice = await tx.hospitalInvoice.create({
-            data: {
-              invoiceNumber,
-              sourceType: 'ADMISSION',
-              admissionRecordId: admission.id,
-              departmentId: dept.id,
-              panelPatientId: admission.panelPatientId,
-              subtotal: subtotalDecimal,
-              discountTotal: discountDecimal,
-              total: totalDecimal,
-              patientShare: totalDecimal,
-              paidTotal: new Decimal(0),
-              status: 'UNPAID',
-              lines: {
-                create: linesToCreate,
-              },
-            },
-            include: { lines: true },
-          });
+      // Insert updated pharmacy lines
+      await tx.invoiceLineItem.createMany({
+        data: linesToCreate.map((l) => ({
+          ...l,
+          hospitalInvoiceId: targetInvoice.id,
+        })),
+      });
+
+      // Clean up any legacy erroneous INV-PHARM-... invoices for this admission
+      const legacyPharmInvoices = await tx.hospitalInvoice.findMany({
+        where: {
+          admissionRecordId: admission.id,
+          invoiceNumber: { startsWith: 'INV-PHARM-' },
+          id: { not: targetInvoice.id },
+        },
+        include: { paymentReceipts: true },
+      });
+      for (const legacy of legacyPharmInvoices) {
+        if (legacy.paymentReceipts.length === 0) {
+          await tx.invoiceLineItem.deleteMany({ where: { hospitalInvoiceId: legacy.id } });
+          await tx.hospitalInvoice.delete({ where: { id: legacy.id } });
         }
       }
 
-      if (hospitalInvoice && hospitalInvoice.createdAt) {
-        // Update existing Hospital Invoice: PRESERVE paidTotal! (§10)
-        const paidTotal = hospitalInvoice.paidTotal;
-        const newOutstanding = Decimal.max(0, totalDecimal.minus(paidTotal));
-        const newStatus = newOutstanding.equals(0)
-          ? 'PAID'
-          : paidTotal.greaterThan(0)
-          ? 'PARTIALLY_PAID'
-          : 'UNPAID';
+      // 9. Recalculate Hospital Invoice Totals (Hospital Charges + Pharmacy Charges):
+      const allLines = await tx.invoiceLineItem.findMany({
+        where: { hospitalInvoiceId: hospitalInvoice.id },
+      });
 
-        await tx.invoiceLineItem.deleteMany({
-          where: { hospitalInvoiceId: hospitalInvoice.id },
-        });
-        await tx.invoiceLineItem.createMany({
-          data: linesToCreate.map((l) => ({
-            ...l,
-            hospitalInvoiceId: hospitalInvoice.id,
-          })),
-        });
+      const newSubtotal = allLines.reduce((sum, l) => sum.plus(l.lineGross), new Decimal(0));
+      const newDiscount = allLines.reduce((sum, l) => sum.plus(l.discountAmount), new Decimal(0));
+      const newTotal = allLines.reduce((sum, l) => sum.plus(l.lineNet), new Decimal(0));
+      const newPatientShare = allLines.reduce((sum, l) => sum.plus(l.patientShare), new Decimal(0));
+      const newPanelReceivable = allLines.reduce((sum, l) => sum.plus(l.panelReceivable), new Decimal(0));
 
-        hospitalInvoice = await tx.hospitalInvoice.update({
-          where: { id: hospitalInvoice.id },
-          data: {
-            subtotal: subtotalDecimal,
-            discountTotal: discountDecimal,
-            total: totalDecimal,
-            patientShare: totalDecimal,
-            status: newStatus,
+      // PRESERVE existing paid amount! (§10)
+      const paidTotal = hospitalInvoice.paidTotal;
+      const newOutstanding = Decimal.max(0, newPatientShare.minus(paidTotal));
+      const newStatus = newOutstanding.equals(0)
+        ? 'PAID'
+        : paidTotal.greaterThan(0)
+        ? 'PARTIALLY_PAID'
+        : 'UNPAID';
+
+      hospitalInvoice = await tx.hospitalInvoice.update({
+        where: { id: hospitalInvoice.id },
+        data: {
+          subtotal: newSubtotal,
+          discountTotal: newDiscount,
+          total: newTotal,
+          patientShare: newPatientShare,
+          panelReceivable: newPanelReceivable,
+          status: newStatus,
+        },
+        include: { lines: true },
+      });
+
+      // 10. Update Pharmacy Clearance status to DISPENSED
+      if (body.externalRequestRef) {
+        await tx.pharmacyClearance.updateMany({
+          where: {
+            admissionRecordId: admission.id,
+            OR: [
+              { medicineRequestNumber: body.externalRequestRef },
+              { id: body.externalRequestRef },
+            ],
           },
-          include: { lines: true },
+          data: { status: 'DISPENSED', fulfilledAt: new Date() },
+        });
+      } else {
+        await tx.pharmacyClearance.updateMany({
+          where: {
+            admissionRecordId: admission.id,
+            status: { in: ['REQUESTED', 'ACCEPTED', 'AUTHORIZATION_REQUIRED', 'PARTIALLY_FULFILLED'] },
+          },
+          data: { status: 'DISPENSED', fulfilledAt: new Date() },
         });
       }
 
-      // ── HMS Pharmacy Charge Record (§8, §10, §12) ────────────────────────
-      const updatedProcessedEventIds = existingCharge
-        ? (body.dispenseEventId && !existingCharge.processedEventIds.includes(body.dispenseEventId)
-            ? [...existingCharge.processedEventIds, body.dispenseEventId]
-            : existingCharge.processedEventIds)
-        : (body.dispenseEventId ? [body.dispenseEventId] : []);
+      // Automatically update DualDischargeClearance (PHARMACY) to CLEARED
+      await tx.dualDischargeClearance.upsert({
+        where: {
+          admissionRecordId_clearanceType: {
+            admissionRecordId: admission.id,
+            clearanceType: 'PHARMACY',
+          },
+        },
+        update: {
+          status: 'CLEARED',
+          clearedAt: new Date(),
+        },
+        create: {
+          admissionRecordId: admission.id,
+          clearanceType: 'PHARMACY',
+          status: 'CLEARED',
+          clearedAt: new Date(),
+        },
+      });
 
-      const patientPaid = existingCharge ? existingCharge.patientPaid : new Decimal(0);
-      const patientOutstanding = Decimal.max(0, totalDecimal.minus(patientPaid));
-      const patientPaymentStatus = patientOutstanding.equals(0)
-        ? 'CLEARED'
-        : patientPaid.greaterThan(0)
-        ? 'PARTIALLY_COLLECTED'
-        : 'PENDING';
+      // 11. Update or create HmsPharmacyCharge component record
+      const updatedProcessedEventIds = existingCharge ? [...existingCharge.processedEventIds] : [];
+      if (eventKey && !updatedProcessedEventIds.includes(eventKey)) {
+        updatedProcessedEventIds.push(eventKey);
+      }
+      if (reqKey && !updatedProcessedEventIds.includes(reqKey)) {
+        updatedProcessedEventIds.push(reqKey);
+      }
 
-      const charge = existingCharge
-        ? await tx.hmsPharmacyCharge.update({
-            where: { id: existingCharge.id },
-            data: {
-              pharmacyInvoiceNumber: targetPharmacyInvoiceNumber,
-              pharmacyInvoiceId: body.pharmacyInvoiceId || existingCharge.pharmacyInvoiceId,
-              subtotal: subtotalDecimal,
-              taxTotal: taxDecimal,
-              discountTotal: discountDecimal,
-              totalAmount: totalDecimal,
-              patientPaid,
-              patientOutstanding,
-              patientPaymentStatus,
-              itemsJson: (body.lines as any) || existingCharge.itemsJson,
-              dispensedBySnapshot: body.dispensedBy,
-              dispensedAt: body.dispensedAt ? new Date(body.dispensedAt) : new Date(),
-              processedEventIds: updatedProcessedEventIds,
-            },
-          })
-        : await tx.hmsPharmacyCharge.create({
-            data: {
-              admissionRecordId: admission.id,
-              pharmacyInvoiceNumber: targetPharmacyInvoiceNumber,
-              pharmacyInvoiceId: body.pharmacyInvoiceId || null,
-              subtotal: subtotalDecimal,
-              taxTotal: taxDecimal,
-              discountTotal: discountDecimal,
-              totalAmount: totalDecimal,
-              patientPaid: new Decimal(0),
-              patientOutstanding: totalDecimal,
-              patientPaymentStatus: 'PENDING',
-              settlementStatus: 'NOT_DUE',
-              itemsJson: (body.lines as any) || [],
-              dispensedBySnapshot: body.dispensedBy,
-              dispensedAt: body.dispensedAt ? new Date(body.dispensedAt) : new Date(),
-              processedEventIds: updatedProcessedEventIds,
-            },
-          });
+      let targetPharmacyInvoiceNumber = body.pharmacyInvoiceNumber;
+      if (!existingCharge) {
+        const otherAdmissionCharge = await tx.hmsPharmacyCharge.findUnique({
+          where: { pharmacyInvoiceNumber: targetPharmacyInvoiceNumber },
+        });
+        if (otherAdmissionCharge && otherAdmissionCharge.admissionRecordId !== admission.id) {
+          targetPharmacyInvoiceNumber = `${body.pharmacyInvoiceNumber}-${admission.admissionNumber || admission.id.slice(-6)}`;
+        }
+      }
 
-      if (clearance) {
-        await tx.pharmacyClearance.update({
-          where: { id: clearance.id },
+      const chargeData = {
+        admissionRecordId: admission.id,
+        pharmacyInvoiceNumber: targetPharmacyInvoiceNumber,
+        pharmacyInvoiceId: body.pharmacyInvoiceId || existingCharge?.pharmacyInvoiceId || null,
+        processedEventIds: updatedProcessedEventIds,
+        subtotal: subtotalDecimal,
+        taxTotal: taxDecimal,
+        discountTotal: discountDecimal,
+        totalAmount: totalDecimal,
+        patientPaid: existingCharge ? existingCharge.patientPaid : new Decimal(0),
+        patientOutstanding: Decimal.max(0, totalDecimal.minus(existingCharge ? existingCharge.patientPaid : 0)),
+        patientPaymentStatus: (existingCharge && existingCharge.patientPaid.greaterThanOrEqualTo(totalDecimal))
+          ? ('CLEARED' as any)
+          : existingCharge && existingCharge.patientPaid.greaterThan(0)
+          ? ('PARTIALLY_COLLECTED' as any)
+          : ('PENDING' as any),
+        settlementStatus: existingCharge?.settlementStatus ?? ('NOT_DUE' as any),
+        settledAmount: existingCharge?.settledAmount ?? new Decimal(0),
+        itemsJson: (body.lines && body.lines.length > 0) ? (body.lines as any) : [],
+        dispensedBySnapshot: body.dispensedBy || 'Pharmacy Staff',
+        dispensedAt: body.dispensedAt ? new Date(body.dispensedAt) : new Date(),
+      };
+
+      let charge;
+      if (existingCharge) {
+        charge = await tx.hmsPharmacyCharge.update({
+          where: { id: existingCharge.id },
+          data: chargeData,
+        });
+      } else {
+        charge = await tx.hmsPharmacyCharge.create({
+          data: chargeData,
+        });
+      }
+
+      // Link clearance to charge if applicable
+      if (body.externalRequestRef) {
+        await tx.pharmacyClearance.updateMany({
+          where: {
+            admissionRecordId: admission.id,
+            OR: [
+              { medicineRequestNumber: body.externalRequestRef },
+              { id: body.externalRequestRef },
+            ],
+          },
           data: { pharmacyChargeId: charge.id },
         });
       }
 
-      // Patient Pharmacy Payment Clearance remains PENDING until paid in full at Front Desk
-      if (patientOutstanding.greaterThan(0)) {
-        await tx.dualDischargeClearance.upsert({
-          where: {
-            admissionRecordId_clearanceType: {
-              admissionRecordId: admission.id,
-              clearanceType: 'PHARMACY',
-            },
-          },
-          update: { status: 'PENDING', clearedById: null, clearedAt: null },
-          create: {
-            admissionRecordId: admission.id,
-            clearanceType: 'PHARMACY',
-            status: 'PENDING',
-          },
-        });
-      }
-
-      return { charge, hospitalInvoice };
+      return { charge, hospitalInvoice, alreadyProcessed: false };
     }, { maxWait: 15000, timeout: 30000 });
   },
 

@@ -1,8 +1,6 @@
-import { prisma as hmsPrisma } from '../db/client';
-import { prisma as pharmPrisma } from '../../../pharmacy-software/backend/src/db/client';
-import { pharmacyBridgeService } from '../modules/pharmacy-bridge/pharmacy-bridge.service';
-import { hmsRequestsService } from '../../../pharmacy-software/backend/src/modules/hms-requests/hms-requests.service';
-import { admissionBillingService } from '../modules/frontdesk/admissionBilling.service';
+import { prisma as hmsPrisma } from '../src/db/client';
+import { pharmacyBridgeService } from '../src/modules/pharmacy-bridge/pharmacy-bridge.service';
+import { admissionBillingService } from '../src/modules/frontdesk/admissionBilling.service';
 import { Decimal } from '@prisma/client/runtime/library';
 
 async function runVerification() {

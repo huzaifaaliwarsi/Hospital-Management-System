@@ -460,7 +460,10 @@ ${invoice?.sourceType === 'ADMISSION' ? `<div class="meta-row"><span class="meta
               ${invoice?.lines.map((l, i) => `
                 <tr>
                   <td class="text-center" style="color: #64748b;">${i + 1}</td>
-                  <td><strong>${formatServiceName(l.serviceName)}</strong> ${formatServiceCode(l.serviceCode) ? `<span style="color: #64748b; font-size: 11px; font-weight: 500;">(${formatServiceCode(l.serviceCode)})</span>` : ''}</td>
+                  <td>
+                    <strong>${formatServiceName(l.serviceName)}</strong> ${formatServiceCode(l.serviceCode) ? `<span style="color: #64748b; font-size: 11px; font-weight: 500;">(${formatServiceCode(l.serviceCode)})</span>` : ''}
+                    ${l.discountReason ? `<div style="font-size: 11px; color: #475569; font-weight: 500; margin-top: 2px;">${l.discountReason}</div>` : ''}
+                  </td>
                   <td class="text-right">${l.quantity}</td>
                   <td class="text-right">${formatPKR(l.rate)}</td>
                   <td class="text-right"><strong style="color: #0f172a;">${formatPKR(l.lineGross)}</strong></td>
@@ -632,8 +635,22 @@ ${invoice?.sourceType === 'ADMISSION' ? `<div class="meta-row"><span class="meta
                     <tr key={l.id}>
                       <td className="py-2.5 px-3.5 text-center text-slate-500 font-semibold">{idx + 1}</td>
                       <td className="py-2.5 px-3.5 font-semibold text-slate-900">
-                        {formatServiceName(l.serviceName)}
-                        {formatServiceCode(l.serviceCode) && <span className="ml-1.5 text-slate-400 font-semibold text-[11px]">({formatServiceCode(l.serviceCode)})</span>}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span>{formatServiceName(l.serviceName)}</span>
+                          {formatServiceCode(l.serviceCode) && (
+                            <span className="text-slate-400 font-semibold text-[11px]">({formatServiceCode(l.serviceCode)})</span>
+                          )}
+                          {l.serviceCode === 'SRV-PHARMACY' && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200">
+                              Pharmacy
+                            </span>
+                          )}
+                        </div>
+                        {l.discountReason && (
+                          <div className="text-[11px] font-medium text-slate-500 mt-0.5">
+                            {l.discountReason}
+                          </div>
+                        )}
                       </td>
                       <td className="py-2.5 px-3.5 text-right text-slate-800 font-semibold">{l.quantity}</td>
                       <td className="py-2.5 px-3.5 text-right text-slate-800 font-semibold">{formatPKR(l.rate)}</td>

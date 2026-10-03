@@ -167,7 +167,7 @@ export const admissionBillingService = {
 
       effectivePharmacyCharge = {
         id: 'pending',
-        pharmacyInvoiceNumber: pendingClearances[0].medicineRequestNumber,
+        pharmacyInvoiceNumber: pendingClearances[0]?.medicineRequestNumber ?? 'REQ-PENDING',
         subtotal: new Decimal(pendingTotal),
         taxTotal: new Decimal(0),
         discountTotal: new Decimal(0),
@@ -177,7 +177,7 @@ export const admissionBillingService = {
         patientPaymentStatus: 'PENDING',
         settlementStatus: 'NOT_DUE',
         itemsJson: items,
-        dispensedBySnapshot: pendingClearances[0].requestedBy?.displayName ?? 'Doctor (Pending Dispense)',
+        dispensedBySnapshot: pendingClearances[0]?.requestedBy?.displayName ?? 'Doctor (Pending Dispense)',
         dispensedAt: null,
       };
 

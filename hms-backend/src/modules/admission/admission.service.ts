@@ -220,7 +220,7 @@ async function postWardFixedChargeIfApplicable(
 
   // Idempotency: verify this one-time fee has not already been posted on the admission's invoice
   const linesList = invoice.lines ?? (await tx.invoiceLineItem.findMany({ where: { hospitalInvoiceId: invoice.id } })) ?? [];
-  const alreadyBilled = linesList.some((l) => l.serviceRateId === serviceRate!.id);
+  const alreadyBilled = linesList.some((l: any) => l.serviceRateId === serviceRate!.id);
   if (alreadyBilled) {
     return null;
   }

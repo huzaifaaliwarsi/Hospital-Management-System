@@ -44,6 +44,7 @@ export const dispensedCallbackSchema = z.object({
   dispenseEventId: z.string().optional().nullable(),
   externalAdmissionRef: z.string().min(1),
   externalRequestRef: z.string().optional().nullable(),
+  patientMrNumber: z.string().optional().nullable(),
   pharmacyInvoiceId: z.string().optional().nullable(),
   pharmacyInvoiceNumber: z.string().min(1),
   subtotal: z.coerce.number().nonnegative(),
