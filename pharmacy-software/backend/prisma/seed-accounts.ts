@@ -1,26 +1,17 @@
-/* eslint-disable no-console */
 import bcrypt from 'bcryptjs';
 import { PrismaClient } from '@prisma/client';
-import { env } from '../src/config/env';
 
-/**
- * Dev/staging bootstrap seed — idempotent, safe to run repeatedly. Seeds only
- * the first protected Super Admin account (guarded by a SUPER_ADMIN count
- * check, mirroring hms-backend's own seed pattern) — every other account is
- * created live through the app per pharmacy.md §13 (Super Admin -> Admin,
- * Admin -> Sales), never re-seeded.
- *
- * Run with: npm run prisma:seed
- */
 const prisma = new PrismaClient();
 
-async function seedSuperAdmin() {
+async function main() {
+  console.log('Seeding demo & standard accounts matching frontend LoginPage...');
+
   const accounts = [
     {
       username: 'superadmin',
-      email: env.SUPER_ADMIN_EMAIL || 'superadmin@pharmacy.example',
+      email: 'superadmin@pharmacy.example',
       fullName: 'Pharmacy Super Admin',
-      password: env.SUPER_ADMIN_BOOTSTRAP_PASSWORD || 'SuperAdmin@2026New',
+      password: 'SuperAdmin@2026New',
       role: 'SUPER_ADMIN' as const,
       isProtected: true,
       mustResetPassword: false,
@@ -47,11 +38,16 @@ async function seedSuperAdmin() {
 
   for (const acc of accounts) {
     const passwordHash = await bcrypt.hash(acc.password, 12);
-    await prisma.portalUser.upsert({
+    const user = await prisma.portalUser.upsert({
       where: { username: acc.username },
       update: {
+        email: acc.email,
+        fullName: acc.fullName,
         passwordHash,
-        mustResetPassword: false,
+        role: acc.role,
+        isProtected: acc.isProtected,
+        mustResetPassword: acc.mustResetPassword,
+        status: 'ACTIVE',
       },
       create: {
         username: acc.username,
@@ -61,14 +57,11 @@ async function seedSuperAdmin() {
         role: acc.role,
         isProtected: acc.isProtected,
         mustResetPassword: acc.mustResetPassword,
+        status: 'ACTIVE',
       },
     });
-    console.log(`Seeded account: ${acc.username} (${acc.role})`);
+    console.log(`✓ Account ready: ${user.username} (${acc.role}) - Password: ${acc.password}`);
   }
-}
-
-async function main() {
-  await seedSuperAdmin();
 }
 
 main()

@@ -3,6 +3,7 @@ import {
   Receipt,
   Loader2,
   AlertTriangle,
+  AlertCircle,
   Search,
   RefreshCw,
   X,
@@ -11,6 +12,14 @@ import {
   RotateCcw,
   Eye,
   CreditCard,
+  FileSpreadsheet,
+  Download,
+  FileText,
+  Printer,
+  ChevronLeft,
+  ChevronRight,
+  TrendingUp,
+  Banknote,
 } from 'lucide-react';
 import { formatPKR } from '../../../utils/formatters';
 import {
@@ -20,6 +29,7 @@ import {
   EncounterType,
 } from '../../../services/invoiceService';
 import { InvoiceDetailModal, InvoiceModalAction } from './InvoiceDetailModal';
+import { HospitalKpiHeader } from '../../../components/common/HospitalKpiHeader';
 import {
   formatDateISO,
   getHospitalCurrentDate,
@@ -260,6 +270,91 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
     setEndDate(todayStr);
   };
 
+  // Pharmacy-style pagination & export states
+  const [pageSize, setPageSize] = useState(15);
+  const [currentPage, setCurrentPage] = useState(1);
+
+  const paginatedInvoices = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredInvoices.slice(start, start + pageSize);
+  }, [filteredInvoices, currentPage, pageSize]);
+
+  // Reset page when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeQueue, statusFilter, payerFilter, startDate, endDate, searchTerm]);
+
+  const handleExportCsv = () => {
+    if (filteredInvoices.length === 0) return;
+    const headers = ['#', 'Invoice Number', 'Patient Name', 'MRN', 'Care Type', 'Payer', 'Gross', 'Discount', 'Net Payable', 'Paid', 'Due', 'Status', 'Date'];
+    const rows = filteredInvoices.map((inv, idx) => [
+      idx + 1,
+      `"${inv.invoiceNumber}"`,
+      `"${inv.patientName}"`,
+      `"${inv.patientMr || ''}"`,
+      `"${getInvoiceCareQueue(inv)}"`,
+      `"${inv.payerType}"`,
+      inv.subtotal || (inv.total + inv.discountTotal),
+      inv.discountTotal,
+      inv.total,
+      inv.paidTotal,
+      inv.balanceDue,
+      `"${inv.status}"`,
+      `"${inv.createdAt}"`
+    ]);
+    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `hospital_invoices_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+  };
+
+  const handleExportExcel = () => {
+    if (filteredInvoices.length === 0) return;
+    const headers = ['#', 'Invoice Number', 'Patient Name', 'MRN', 'Care Type', 'Payer', 'Gross', 'Discount', 'Net Payable', 'Paid', 'Due', 'Status', 'Date'];
+    const rowsHtml = filteredInvoices.map((inv, idx) => `
+      <tr>
+        <td>${idx + 1}</td>
+        <td>${inv.invoiceNumber}</td>
+        <td>${inv.patientName}</td>
+        <td>${inv.patientMr || ''}</td>
+        <td>${getInvoiceCareQueue(inv)}</td>
+        <td>${inv.payerType}</td>
+        <td>${inv.subtotal || (inv.total + inv.discountTotal)}</td>
+        <td>${inv.discountTotal}</td>
+        <td>${inv.total}</td>
+        <td>${inv.paidTotal}</td>
+        <td>${inv.balanceDue}</td>
+        <td>${inv.status}</td>
+        <td>${inv.createdAt}</td>
+      </tr>
+    `).join('');
+
+    const html = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head><meta charset="utf-8"/></head>
+      <body>
+        <h2>Hospital Invoices Ledger Registry</h2>
+        <table border="1">
+          <tr style="background:#0e5944;color:#ffffff;font-weight:bold;">
+            ${headers.map(h => `<th>${h}</th>`).join('')}
+          </tr>
+          ${rowsHtml}
+        </table>
+      </body>
+      </html>
+    `;
+
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `hospital_invoices_${new Date().toISOString().slice(0, 10)}.xls`;
+    link.click();
+  };
+
   if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center py-28 text-slate-500 gap-3">
@@ -347,54 +442,39 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
         </div>
       </div>
 
-      {/* Financial Summary Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-        <div className="bg-white rounded-xl border border-[#e2eae5] p-3.5 shadow-2xs">
-          <span className="block text-[11px] font-semibold text-[#52665e] uppercase tracking-wider">
-            Invoices in View
-          </span>
-          <div className="mt-1">
-            <span className="text-xl font-bold text-[#111827]">{metrics.totalInvoices}</span>
-          </div>
-          <span className="text-[10px] text-[#8b9e95] mt-0.5 block">Matching current criteria</span>
-        </div>
-
-        <div className="bg-white rounded-xl border border-[#e2eae5] p-3.5 shadow-2xs">
-          <span className="block text-[11px] font-semibold text-[#52665e] uppercase tracking-wider">
-            Net Billed (PKR)
-          </span>
-          <div className="mt-1">
-            <span className="text-base sm:text-lg font-bold text-[#111827] font-mono">
-              {formatPKR(metrics.totalBilled)}
-            </span>
-          </div>
-          <span className="text-[10px] text-[#8b9e95] mt-0.5 block">Total invoice amount</span>
-        </div>
-
-        <div className="bg-white rounded-xl border border-[#e2eae5] p-3.5 shadow-2xs">
-          <span className="block text-[11px] font-semibold text-[#08775A] uppercase tracking-wider">
-            Total Collected (PKR)
-          </span>
-          <div className="mt-1">
-            <span className="text-base sm:text-lg font-bold text-[#08775A] font-mono">
-              {formatPKR(metrics.totalPaid)}
-            </span>
-          </div>
-          <span className="text-[10px] text-[#8b9e95] mt-0.5 block">Realized payments</span>
-        </div>
-
-        <div className="bg-white rounded-xl border border-[#e2eae5] p-3.5 shadow-2xs">
-          <span className="block text-[11px] font-semibold text-rose-700 uppercase tracking-wider">
-            Total Balance Due (PKR)
-          </span>
-          <div className="mt-1">
-            <span className="text-base sm:text-lg font-bold text-rose-700 font-mono">
-              {formatPKR(metrics.totalDue)}
-            </span>
-          </div>
-          <span className="text-[10px] text-[#8b9e95] mt-0.5 block">Pending settlement</span>
-        </div>
-      </div>
+      {/* Financial Summary Cards (Pharmacy KPI Card Design) */}
+      <HospitalKpiHeader
+        items={[
+          {
+            label: 'Invoices in View',
+            value: metrics.totalInvoices,
+            icon: Receipt,
+            tone: 'info',
+            subtitle: 'Matching current criteria',
+          },
+          {
+            label: 'Net Billed (PKR)',
+            value: formatPKR(metrics.totalBilled),
+            icon: TrendingUp,
+            tone: 'default',
+            subtitle: 'Total invoice amount',
+          },
+          {
+            label: 'Total Collected (PKR)',
+            value: formatPKR(metrics.totalPaid),
+            icon: Banknote,
+            tone: 'success',
+            subtitle: 'Realized payments',
+          },
+          {
+            label: 'Total Balance Due (PKR)',
+            value: formatPKR(metrics.totalDue),
+            icon: AlertCircle,
+            tone: metrics.totalDue > 0 ? 'danger' : 'success',
+            subtitle: 'Pending settlement',
+          },
+        ]}
+      />
 
       {/* Filter Toolbar: Direct Custom Date, Search, Status & Payer */}
       <div className="bg-white rounded-xl border border-[#e2eae5] p-3 shadow-2xs">
@@ -518,28 +598,106 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
         </div>
       </div>
 
-      {/* Main Ledger Table */}
-      <div className="bg-white rounded-xl border border-[#e2eae5] shadow-2xs overflow-hidden">
+      {/* ── Pharmacy Table Container ── */}
+      <div className="bg-white rounded-2xl border border-slate-300/80 shadow-[0_1px_4px_rgba(0,0,0,0.04)] overflow-hidden">
+        {/* Dark Emerald Header Strip */}
+        <div className="bg-[#0e5944] text-white px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2">
+            <FileSpreadsheet className="h-4 w-4 text-emerald-300" />
+            <span className="font-bold text-xs sm:text-sm tracking-tight text-white whitespace-nowrap">
+              Hospital Invoices & Ledger Registry
+            </span>
+            <span className="text-[10px] font-semibold bg-emerald-700/60 text-emerald-200 px-2 py-0.5 rounded-full border border-emerald-500/30 whitespace-nowrap">
+              {filteredInvoices.length} Active Records
+            </span>
+          </div>
+
+          {/* Export Action Buttons */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              type="button"
+              onClick={handleExportExcel}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#16a34a] hover:bg-[#15803d] text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer whitespace-nowrap"
+              title="Download Excel Worksheet"
+            >
+              <FileSpreadsheet className="h-3.5 w-3.5" /> Excel
+            </button>
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#0284c7] hover:bg-[#0369a1] text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer whitespace-nowrap"
+              title="Download CSV"
+            >
+              <Download className="h-3.5 w-3.5" /> CSV
+            </button>
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#dc2626] hover:bg-[#b91c1c] text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer whitespace-nowrap"
+              title="Export as PDF via Print"
+            >
+              <FileText className="h-3.5 w-3.5" /> PDF
+            </button>
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer whitespace-nowrap"
+              title="Print Table"
+            >
+              <Printer className="h-3.5 w-3.5" /> Print
+            </button>
+          </div>
+        </div>
+
+        {/* Search in Results Bar */}
+        <div className="px-3.5 py-2 bg-slate-50/70 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+          <div className="text-slate-600 font-medium">
+            Showing <strong className="text-slate-800">{paginatedInvoices.length}</strong> of{' '}
+            <strong className="text-slate-800">{filteredInvoices.length}</strong> matching records
+          </div>
+
+          <div className="flex items-center gap-1.5 whitespace-nowrap text-slate-500 font-medium">
+            <span>Per page:</span>
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value));
+                setCurrentPage(1);
+              }}
+              className="bg-white border border-slate-200 rounded-md px-2 py-0.5 text-xs text-slate-700 focus:outline-none"
+            >
+              <option value={10}>10</option>
+              <option value={15}>15</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Main Table Scroll Container */}
         <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)] min-h-[320px]">
           <table className="w-full text-left text-xs border-collapse">
-            <thead className="sticky top-0 z-10 bg-[#f8faf9] shadow-2xs">
-              <tr className="border-b border-[#e2eae5] text-[11px] font-bold text-[#52665e] uppercase tracking-wider">
-                <th className="py-3 px-4 whitespace-nowrap">Invoice #</th>
-                <th className="py-3 px-4 whitespace-nowrap">Patient Info</th>
-                <th className="py-3 px-4 whitespace-nowrap">Care Type</th>
-                <th className="py-3 px-4 whitespace-nowrap">Payer</th>
-                <th className="py-3 px-4 text-right whitespace-nowrap">Gross</th>
-                <th className="py-3 px-4 text-right whitespace-nowrap">Discount</th>
-                <th className="py-3 px-4 text-right font-bold text-[#111827] whitespace-nowrap">Net Payable</th>
-                <th className="py-3 px-4 text-right font-bold text-emerald-800 whitespace-nowrap">Paid</th>
-                <th className="py-3 px-4 text-right font-bold text-rose-800 whitespace-nowrap">Due</th>
-                <th className="py-3 px-4 text-center whitespace-nowrap">Status</th>
-                <th className="py-3 px-4 text-right whitespace-nowrap">Date</th>
+            <thead className="bg-[#f8fafc] text-slate-700 font-bold sticky top-0 z-10 border-b border-slate-200 uppercase tracking-wider select-none text-xs">
+              <tr>
+                <th className="py-3 px-3.5 text-center border-r border-slate-200 w-12 whitespace-nowrap">#</th>
+                <th className="py-3 px-4 border-r border-slate-200 whitespace-nowrap">Invoice #</th>
+                <th className="py-3 px-4 border-r border-slate-200 whitespace-nowrap">Patient Info</th>
+                <th className="py-3 px-4 border-r border-slate-200 whitespace-nowrap">Care Type</th>
+                <th className="py-3 px-4 border-r border-slate-200 whitespace-nowrap">Payer</th>
+                <th className="py-3 px-4 border-r border-slate-200 text-right whitespace-nowrap">Gross</th>
+                <th className="py-3 px-4 border-r border-slate-200 text-right whitespace-nowrap">Discount</th>
+                <th className="py-3 px-4 border-r border-slate-200 text-right font-bold text-[#111827] whitespace-nowrap">Net Payable</th>
+                <th className="py-3 px-4 border-r border-slate-200 text-right font-bold text-emerald-800 whitespace-nowrap">Paid</th>
+                <th className="py-3 px-4 border-r border-slate-200 text-right font-bold text-rose-800 whitespace-nowrap">Due</th>
+                <th className="py-3 px-4 border-r border-slate-200 text-center whitespace-nowrap">Status</th>
+                <th className="py-3 px-4 border-r border-slate-200 text-right whitespace-nowrap">Date</th>
                 <th className="py-3 px-4 text-center whitespace-nowrap">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#e2eae5] text-slate-700">
-              {filteredInvoices.map((inv) => {
+            <tbody className="divide-y divide-slate-100 text-slate-700">
+              {paginatedInvoices.map((inv, idx) => {
+                const globalIdx = (currentPage - 1) * pageSize + idx + 1;
                 const careQueue = getInvoiceCareQueue(inv);
                 const isPaid = inv.status === 'PAID';
                 const isPartiallyPaid = inv.status === 'PARTIALLY_PAID';
@@ -548,16 +706,21 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
                 return (
                   <tr
                     key={inv.id}
-                    className="hover:bg-[#f8fcfa] transition-colors cursor-pointer group"
+                    className="hover:bg-slate-50/80 transition-colors cursor-pointer group"
                     onClick={() => openInvoice(inv.id)}
                   >
+                    {/* Index */}
+                    <td className="py-3.5 px-3.5 text-center border-r border-slate-100 text-slate-500 font-semibold text-xs whitespace-nowrap font-mono">
+                      {globalIdx}
+                    </td>
+
                     {/* Invoice # */}
-                    <td className="py-3 px-4 font-mono font-bold text-slate-900 group-hover:text-[#08775A] whitespace-nowrap">
+                    <td className="py-3.5 px-4 border-r border-slate-100 font-mono font-bold text-slate-900 group-hover:text-[#08775A] whitespace-nowrap">
                       {inv.invoiceNumber}
                     </td>
 
                     {/* Patient Info */}
-                    <td className="py-3 px-4 whitespace-nowrap">
+                    <td className="py-3.5 px-4 border-r border-slate-100 whitespace-nowrap">
                       <span className="font-semibold text-slate-900 block whitespace-nowrap">{inv.patientName}</span>
                       {inv.patientMr && (
                         <span className="inline-block mt-0.5 font-mono text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200 whitespace-nowrap">
@@ -567,7 +730,7 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
                     </td>
 
                     {/* Clean Care Type Badge */}
-                    <td className="py-3 px-4 whitespace-nowrap">
+                    <td className="py-3.5 px-4 border-r border-slate-100 whitespace-nowrap">
                       {careQueue === 'OPD' && (
                         <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200 whitespace-nowrap">
                           OPD
@@ -596,7 +759,7 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
                     </td>
 
                     {/* Payer Type */}
-                    <td className="py-3 px-4 whitespace-nowrap">
+                    <td className="py-3.5 px-4 border-r border-slate-100 whitespace-nowrap">
                       <span
                         className={`text-[10px] font-semibold px-2 py-0.5 rounded border whitespace-nowrap ${
                           inv.payerType === 'Corporate / Panel'
@@ -609,12 +772,12 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
                     </td>
 
                     {/* Gross */}
-                    <td className="py-3 px-4 text-right font-mono text-slate-500 whitespace-nowrap">
+                    <td className="py-3.5 px-4 border-r border-slate-100 text-right font-mono text-slate-500 whitespace-nowrap">
                       {formatPKR(inv.subtotal || inv.total + inv.discountTotal)}
                     </td>
 
                     {/* Discount */}
-                    <td className="py-3 px-4 text-right font-mono text-slate-500 whitespace-nowrap">
+                    <td className="py-3.5 px-4 border-r border-slate-100 text-right font-mono text-slate-500 whitespace-nowrap">
                       {inv.discountTotal > 0 ? (
                         <span className="text-amber-700 font-semibold whitespace-nowrap">
                           -{formatPKR(inv.discountTotal)}
@@ -625,12 +788,12 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
                     </td>
 
                     {/* Net Payable */}
-                    <td className="py-3 px-4 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
+                    <td className="py-3.5 px-4 border-r border-slate-100 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
                       {formatPKR(inv.total)}
                     </td>
 
-                    {/* Paid (with a Refunded tag when applicable) */}
-                    <td className="py-3 px-4 text-right font-mono font-bold text-emerald-700 whitespace-nowrap">
+                    {/* Paid */}
+                    <td className="py-3.5 px-4 border-r border-slate-100 text-right font-mono font-bold text-emerald-700 whitespace-nowrap">
                       {formatPKR(inv.paidTotal)}
                       {inv.hasRefund && (
                         <span className="block text-[10px] font-semibold text-rose-700 mt-0.5 whitespace-nowrap">
@@ -639,8 +802,8 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
                       )}
                     </td>
 
-                    {/* Balance Due / Remaining */}
-                    <td className="py-3 px-4 text-right font-mono font-bold whitespace-nowrap">
+                    {/* Balance Due */}
+                    <td className="py-3.5 px-4 border-r border-slate-100 text-right font-mono font-bold whitespace-nowrap">
                       {inv.balanceDue > 0 ? (
                         <span className="text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200 whitespace-nowrap">
                           {formatPKR(inv.balanceDue)}
@@ -654,8 +817,8 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
                       )}
                     </td>
 
-                    {/* Bill Status */}
-                    <td className="py-3 px-4 text-center whitespace-nowrap">
+                    {/* Status */}
+                    <td className="py-3.5 px-4 border-r border-slate-100 text-center whitespace-nowrap">
                       <span
                         className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border whitespace-nowrap ${
                           isPaid
@@ -672,12 +835,12 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
                     </td>
 
                     {/* Date */}
-                    <td className="py-3 px-4 text-right text-[11px] text-slate-500 whitespace-nowrap">
+                    <td className="py-3.5 px-4 border-r border-slate-100 text-right text-[11px] text-slate-500 whitespace-nowrap">
                       {inv.createdAt}
                     </td>
 
                     {/* Actions */}
-                    <td className="py-3 px-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                    <td className="py-3.5 px-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-center gap-1.5 whitespace-nowrap">
                         <button
                           type="button"
@@ -731,7 +894,7 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
 
               {filteredInvoices.length === 0 && (
                 <tr>
-                  <td colSpan={12} className="py-16 text-center text-slate-500">
+                  <td colSpan={13} className="py-16 text-center text-slate-500">
                     <Receipt className="h-9 w-9 text-slate-300 mx-auto mb-2" />
                     <h4 className="text-sm font-semibold text-slate-800">No Invoices Found</h4>
                     <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
@@ -759,6 +922,33 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* ── Table Pagination Bar (Matching Pharmacy) ── */}
+        <div className="px-4 py-3 bg-slate-50/80 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600">
+          <div>
+            Page <strong className="text-slate-800">{currentPage}</strong> of{' '}
+            <strong className="text-slate-800">{Math.max(1, Math.ceil(filteredInvoices.length / pageSize))}</strong>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              disabled={currentPage <= 1}
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:pointer-events-none font-semibold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" /> Previous
+            </button>
+            <button
+              type="button"
+              disabled={currentPage >= Math.ceil(filteredInvoices.length / pageSize)}
+              onClick={() => setCurrentPage((p) => p + 1)}
+              className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:pointer-events-none font-semibold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+            >
+              Next <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </div>
       </div>
 

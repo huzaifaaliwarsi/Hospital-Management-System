@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { SidebarTrigger } from '../ui/sidebar-trigger';
 import {
   LayoutDashboard,
   Users,
@@ -233,15 +234,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
             )}
           </div>
 
-          {/* Desktop collapse toggle button */}
-          <button
-            type="button"
-            onClick={onToggleCollapse}
-            className="hidden lg:flex p-1.5 rounded-md text-[#52665e] hover:text-[#111827] hover:bg-[#f0faf6] transition-colors cursor-pointer"
-            title={isCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
-          >
-            {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-          </button>
+          {/* Desktop shadcn collapse toggle button */}
+          <SidebarTrigger
+            isCollapsed={isCollapsed}
+            onToggle={onToggleCollapse}
+            className="hidden lg:flex"
+          />
 
           {/* Mobile close button */}
           <button
