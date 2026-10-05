@@ -28,6 +28,7 @@ import { cn } from '../../utils/formatters';
 import { formatHeaderDate } from '../../utils/dateConstants';
 
 import { GlobalSearchModal } from './GlobalSearchModal';
+import { SidebarTrigger } from '../ui/sidebar-trigger';
 
 interface HeaderProps {
   user: any;
@@ -36,6 +37,8 @@ interface HeaderProps {
   currentModuleName: string;
   currentGroupTitle: string;
   onToggleMobileSidebar: () => void;
+  onToggleDesktopSidebar?: () => void;
+  isSidebarCollapsed?: boolean;
   onLogout: () => void;
   onOpenQuickSearch: () => void;
   onOpenShowcase?: () => void;
@@ -48,6 +51,8 @@ export const Header: React.FC<HeaderProps> = ({
   currentModuleName,
   currentGroupTitle,
   onToggleMobileSidebar,
+  onToggleDesktopSidebar,
+  isSidebarCollapsed,
   onLogout,
   onOpenQuickSearch,
   onOpenShowcase,
@@ -162,6 +167,7 @@ export const Header: React.FC<HeaderProps> = ({
       <header className="h-14 bg-white border-b border-[#e2eae5] sticky top-0 z-30 flex items-center justify-between px-4 sm:px-6 shrink-0 gap-4">
         {/* Left Area: Mobile menu trigger + Portal Indicator + Breadcrumbs */}
         <div className="flex items-center gap-2.5 min-w-0">
+          {/* Mobile menu trigger */}
           <button
             type="button"
             onClick={onToggleMobileSidebar}
@@ -170,6 +176,15 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <Menu className="h-5 w-5" />
           </button>
+
+          {/* Desktop Shadcn SidebarTrigger (Collapses / Expands Left Navigation) */}
+          {onToggleDesktopSidebar && (
+            <SidebarTrigger
+              isCollapsed={isSidebarCollapsed}
+              onToggle={onToggleDesktopSidebar}
+              className="hidden lg:inline-flex shrink-0 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg"
+            />
+          )}
 
           {/* Current Authenticated Portal */}
           <div className="flex items-center gap-1.5 h-7 px-2.5 rounded-md bg-[#e7f6f1] border border-[#c2e7db] text-[#0e7d5a] text-xs font-semibold shrink-0">

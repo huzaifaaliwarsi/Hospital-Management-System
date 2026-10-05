@@ -26,11 +26,51 @@
   --info: #2563eb;
 }
 
-html, body, input, button, select, textarea {
+html,
+body,
+input,
+button,
+select,
+textarea {
   font-family: var(--font-sans);
 }
 
-/* Front Desk / Super Admin / Admin / Inventory portals: Montserrat everywhere, including
+/* ═══════════════════════════════════════════════════════════════════════
+   Front Desk Portal: INTER FONT EVERYWHERE
+   Applied strictly to all components, sidebar, header, inputs, buttons, tables, figures
+   ═══════════════════════════════════════════════════════════════════════ */
+html.portal-inter {
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+html.portal-inter,
+html.portal-inter body,
+html.portal-inter input,
+html.portal-inter button,
+html.portal-inter select,
+html.portal-inter textarea,
+html.portal-inter p,
+html.portal-inter h1,
+html.portal-inter h2,
+html.portal-inter h3,
+html.portal-inter h4,
+html.portal-inter h5,
+html.portal-inter h6,
+html.portal-inter span,
+html.portal-inter th,
+html.portal-inter td,
+html.portal-inter a,
+html.portal-inter div {
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  letter-spacing: -0.011em;
+}
+
+html.portal-inter .font-mono {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif !important;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Super Admin / Admin / Inventory portals: Montserrat everywhere, including
    amounts that use `font-mono` (the mono face is too thin to read figures).
    Class is set on <html> by App.tsx. */
 html.portal-montserrat {
@@ -42,15 +82,18 @@ html.portal-montserrat {
   --color-slate-500: #475569;
   --color-slate-600: #334155;
 }
+
 /* Montserrat at 400 looks thin at the 10–12px sizes the forms use; default
    body text is medium (500). Explicit font-* classes still win. Placeholders
    stay at 400 so an empty field's hint never looks like a filled value. */
 html.portal-montserrat body {
   font-weight: 500;
 }
+
 html.portal-montserrat ::placeholder {
   font-weight: 400;
 }
+
 html.portal-montserrat .font-mono {
   font-family: var(--font-sans);
   font-variant-numeric: tabular-nums;
@@ -138,6 +181,7 @@ body {
 .Toastify__toast--error {
   background: #dc2626 !important;
 }
+
 .Toastify__toast--error .Toastify__toast-icon {
   width: 22px !important;
   height: 22px !important;
@@ -150,6 +194,7 @@ body {
   margin-right: 12px !important;
   margin-top: 0 !important;
 }
+
 .Toastify__toast--error .Toastify__toast-icon svg {
   fill: #dc2626 !important;
   width: 14px !important;
@@ -160,6 +205,7 @@ body {
 .Toastify__toast--success {
   background: #16a34a !important;
 }
+
 .Toastify__toast--success .Toastify__toast-icon {
   width: 22px !important;
   height: 22px !important;
@@ -172,6 +218,7 @@ body {
   margin-right: 12px !important;
   margin-top: 0 !important;
 }
+
 .Toastify__toast--success .Toastify__toast-icon svg {
   fill: #16a34a !important;
   width: 14px !important;
@@ -182,6 +229,7 @@ body {
 .Toastify__toast--warning {
   background: #ea580c !important;
 }
+
 .Toastify__toast--warning .Toastify__toast-icon {
   width: 22px !important;
   height: 22px !important;
@@ -194,6 +242,7 @@ body {
   margin-right: 12px !important;
   margin-top: 0 !important;
 }
+
 .Toastify__toast--warning .Toastify__toast-icon svg {
   fill: #ea580c !important;
   width: 14px !important;
@@ -204,6 +253,7 @@ body {
 .Toastify__toast--info {
   background: #2563eb !important;
 }
+
 .Toastify__toast--info .Toastify__toast-icon {
   width: 22px !important;
   height: 22px !important;
@@ -216,6 +266,7 @@ body {
   margin-right: 12px !important;
   margin-top: 0 !important;
 }
+
 .Toastify__toast--info .Toastify__toast-icon svg {
   fill: #2563eb !important;
   width: 14px !important;
@@ -249,11 +300,13 @@ body {
   align-items: center !important;
   justify-content: center !important;
 }
+
 .Toastify__close-button:hover {
   opacity: 1 !important;
   color: #ffffff !important;
 }
-.Toastify__close-button > svg {
+
+.Toastify__close-button>svg {
   fill: #ffffff !important;
   width: 14px !important;
   height: 14px !important;
@@ -266,6 +319,7 @@ body {
   border-radius: 0 0 10px 10px !important;
   bottom: 0 !important;
 }
+
 .Toastify__progress-bar--success,
 .Toastify__progress-bar--error,
 .Toastify__progress-bar--warning,

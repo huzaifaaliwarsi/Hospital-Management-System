@@ -15,7 +15,14 @@ import {
   LogIn,
   Receipt,
   Pencil,
+  FileSpreadsheet,
+  Download,
+  FileText,
+  Printer,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
+import { HospitalKpiHeader } from '../../../components/common/HospitalKpiHeader';
 import { Select, TextInput } from '../../../components/forms/FormControls';
 import { DepartmentService } from '../../../services/departmentService';
 import { StaffUserService } from '../../../services/staffUserService';
@@ -145,6 +152,90 @@ export const AppointmentsView: React.FC = () => {
     };
   }, [appointments]);
 
+  // Pharmacy-style pagination & export states
+  const [pageSize, setPageSize] = useState(15);
+  const [currentPage, setCurrentPage] = useState(1);
+
+  const paginatedAppointments = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return appointments.slice(start, start + pageSize);
+  }, [appointments, currentPage, pageSize]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [dateFilter, departmentFilter, doctorFilter, statusFilter, searchTerm]);
+
+  const handleExportCsv = () => {
+    if (appointments.length === 0) return;
+    const headers = ['#', 'Slot Time', 'Slot Date', 'Patient Name', 'Phone', 'Payer', 'Doctor', 'Department', 'Service', 'Payable', 'Advance Paid', 'Remaining', 'Status'];
+    const rows = appointments.map((a, idx) => [
+      idx + 1,
+      `"${a.slotTime}"`,
+      `"${a.slotDate}"`,
+      `"${a.patientName}"`,
+      `"${a.patientPhone}"`,
+      `"${a.payerType === 'Corporate / Panel' ? a.panelName || 'Panel' : 'Self Pay'}"`,
+      `"${a.doctorName}"`,
+      `"${a.departmentName}"`,
+      `"${a.serviceName}"`,
+      payableAmount(a),
+      a.advancePaid,
+      Math.max(0, payableAmount(a) - a.advancePaid),
+      `"${a.status}"`
+    ]);
+    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `appointments_${dateFilter || 'today'}.csv`;
+    link.click();
+  };
+
+  const handleExportExcel = () => {
+    if (appointments.length === 0) return;
+    const headers = ['#', 'Slot Time', 'Slot Date', 'Patient Name', 'Phone', 'Payer', 'Doctor', 'Department', 'Service', 'Payable', 'Advance Paid', 'Remaining', 'Status'];
+    const rowsHtml = appointments.map((a, idx) => `
+      <tr>
+        <td>${idx + 1}</td>
+        <td>${a.slotTime}</td>
+        <td>${a.slotDate}</td>
+        <td>${a.patientName}</td>
+        <td>${a.patientPhone}</td>
+        <td>${a.payerType === 'Corporate / Panel' ? a.panelName || 'Panel' : 'Self Pay'}</td>
+        <td>${a.doctorName}</td>
+        <td>${a.departmentName}</td>
+        <td>${a.serviceName}</td>
+        <td>${payableAmount(a)}</td>
+        <td>${a.advancePaid}</td>
+        <td>${Math.max(0, payableAmount(a) - a.advancePaid)}</td>
+        <td>${a.status}</td>
+      </tr>
+    `).join('');
+
+    const html = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head><meta charset="utf-8"/></head>
+      <body>
+        <h2>Patient Appointments Registry</h2>
+        <table border="1">
+          <tr style="background:#0e5944;color:#ffffff;font-weight:bold;">
+            ${headers.map(h => `<th>${h}</th>`).join('')}
+          </tr>
+          ${rowsHtml}
+        </table>
+      </body>
+      </html>
+    `;
+
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `appointments_${dateFilter || 'today'}.xls`;
+    link.click();
+  };
+
   const handleCheckIn = async (a: AppointmentRecord) => {
     setCheckingInId(a.id);
     try {
@@ -187,25 +278,43 @@ export const AppointmentsView: React.FC = () => {
         </button>
       </div>
 
-      {/* KPI cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[
-          { label: "Today's Appointments", value: kpis.total, icon: CalendarClock, color: 'text-slate-700 bg-slate-100' },
-          { label: 'Confirmed / Scheduled', value: kpis.confirmed, icon: CheckCircle2, color: 'text-blue-700 bg-blue-50' },
-          { label: 'Checked In', value: kpis.checkedIn, icon: UserCheck, color: 'text-emerald-700 bg-emerald-50' },
-          { label: 'Cancelled', value: kpis.cancelled, icon: Ban, color: 'text-rose-700 bg-rose-50' },
-        ].map((k) => (
-          <div key={k.label} className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex items-center gap-3">
-            <div className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 ${k.color}`}>
-              <k.icon className="h-4.5 w-4.5" />
-            </div>
-            <div>
-              <p className="text-lg font-bold text-slate-900 leading-none">{k.value}</p>
-              <p className="text-[11px] text-slate-500 mt-1">{k.label}</p>
-            </div>
-          </div>
-        ))}
-      </div>
+      {/* KPI Header Cards */}
+      <HospitalKpiHeader
+        cards={[
+          {
+            title: "Total Appointments",
+            value: kpis.total,
+            subtitle: "Scheduled / logged today",
+            icon: CalendarClock,
+            accentColor: "#08775A",
+            category: "DAILY VOLUME",
+          },
+          {
+            title: "Confirmed / Scheduled",
+            value: kpis.confirmed,
+            subtitle: "Awaiting patient arrival",
+            icon: CheckCircle2,
+            accentColor: "#0284c7",
+            category: "UPCOMING",
+          },
+          {
+            title: "Checked In",
+            value: kpis.checkedIn,
+            subtitle: "In clinic / invoice issued",
+            icon: UserCheck,
+            accentColor: "#16a34a",
+            category: "PRESENT",
+          },
+          {
+            title: "Cancelled / No Show",
+            value: kpis.cancelled,
+            subtitle: "Slot released or void",
+            icon: Ban,
+            accentColor: "#dc2626",
+            category: "DROPPED",
+          },
+        ]}
+      />
 
       {/* Filters */}
       <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
@@ -254,8 +363,75 @@ export const AppointmentsView: React.FC = () => {
         </div>
       </div>
 
-      {/* Table */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+      {/* Table Container in Pharmacy Design */}
+      <div className="bg-white rounded-2xl border border-slate-300/80 shadow-[0_1px_4px_rgba(0,0,0,0.04)] overflow-hidden font-sans">
+        {/* Dark Emerald Header Strip */}
+        <div className="bg-[#0e5944] text-white px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2">
+            <Clock className="w-4 h-4 text-emerald-300" />
+            <span className="font-bold text-sm tracking-wide">Appointments Directory</span>
+            <span className="text-[11px] font-semibold text-emerald-200/90 bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-500/30">
+              {appointments.length} record{appointments.length === 1 ? '' : 's'}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              type="button"
+              onClick={handleExportExcel}
+              className="bg-[#16a34a] hover:bg-[#15803d] text-white text-xs font-semibold px-2.5 py-1 rounded-lg shadow-xs inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Export to Excel"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <span>Excel</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              className="bg-[#0284c7] hover:bg-[#0369a1] text-white text-xs font-semibold px-2.5 py-1 rounded-lg shadow-xs inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Export to CSV"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>CSV</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold px-2.5 py-1 rounded-lg shadow-xs inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Print Table"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>Print</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Search in results toolbar */}
+        <div className="px-3.5 py-2 bg-slate-50/70 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="text-slate-600 font-medium">Show</span>
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value));
+                setCurrentPage(1);
+              }}
+              className="bg-white border border-slate-300 rounded px-2 py-0.5 text-xs font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#08775A]"
+            >
+              <option value={10}>10</option>
+              <option value={15}>15</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+            </select>
+            <span className="text-slate-600 font-medium">records per page</span>
+          </div>
+
+          <div className="text-slate-500 font-medium">
+            Showing {appointments.length === 0 ? 0 : (currentPage - 1) * pageSize + 1} to{' '}
+            {Math.min(currentPage * pageSize, appointments.length)} of {appointments.length} entries
+          </div>
+        </div>
+
         {loadError ? (
           <div className="p-8 flex flex-col items-center gap-2 text-center">
             <AlertCircle className="h-6 w-6 text-rose-500" />
@@ -277,30 +453,39 @@ export const AppointmentsView: React.FC = () => {
           <div className="p-10 text-center text-xs text-slate-500">No appointments found for the selected filters.</div>
         ) : (
           <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)] min-h-[300px]">
-            <table className="w-full text-xs">
-              <thead className="sticky top-0 z-10 bg-slate-50/95 shadow-2xs">
+            <table className="w-full text-xs text-left border-collapse">
+              <thead className="bg-[#f8fafc] text-slate-700 font-bold sticky top-0 z-10 border-b border-slate-200 uppercase tracking-wider select-none">
                 <tr>
-                  {['Slot', 'Patient', 'Payer', 'Doctor', 'Department', 'Service', 'Patient Payable', 'Advance Paid', 'Remaining', 'Status', 'Actions'].map(
-                    (h) => (
-                      <th key={h} className="text-left px-3 py-2.5 font-semibold text-slate-600 whitespace-nowrap">
-                        {h}
-                      </th>
-                    ),
-                  )}
+                  <th className="py-3 px-3.5 text-center border-r border-slate-200 w-12 whitespace-nowrap">#</th>
+                  <th className="py-3 px-4 border-r border-slate-200 whitespace-nowrap">Slot Time</th>
+                  <th className="py-3 px-4 border-r border-slate-200 whitespace-nowrap">Patient</th>
+                  <th className="py-3 px-4 border-r border-slate-200 whitespace-nowrap">Payer</th>
+                  <th className="py-3 px-4 border-r border-slate-200 whitespace-nowrap">Doctor</th>
+                  <th className="py-3 px-4 border-r border-slate-200 whitespace-nowrap">Department</th>
+                  <th className="py-3 px-4 border-r border-slate-200 whitespace-nowrap">Service</th>
+                  <th className="py-3 px-4 border-r border-slate-200 whitespace-nowrap text-right">Payable</th>
+                  <th className="py-3 px-4 border-r border-slate-200 whitespace-nowrap text-right">Advance Paid</th>
+                  <th className="py-3 px-4 border-r border-slate-200 whitespace-nowrap text-right">Remaining</th>
+                  <th className="py-3 px-4 border-r border-slate-200 whitespace-nowrap text-center">Status</th>
+                  <th className="py-3 px-4 whitespace-nowrap text-center">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
-                {appointments.map((a) => {
+              <tbody className="divide-y divide-slate-100 font-sans">
+                {paginatedAppointments.map((a, idx) => {
                   const payable = payableAmount(a);
                   const remaining = Math.max(0, payable - a.advancePaid);
                   const eligibleForActions = a.status === 'CONFIRMED' || a.status === 'RESCHEDULED';
+                  const rowNumber = (currentPage - 1) * pageSize + idx + 1;
                   return (
-                    <tr key={a.id} className="hover:bg-slate-50/60">
-                      <td className="px-3 py-2.5 whitespace-nowrap">
-                        <div className="font-semibold text-slate-800">{a.slotTime}</div>
-                        <div className="text-[10px] text-slate-400">{a.slotDate}</div>
+                    <tr key={a.id} className="hover:bg-slate-50/80 transition-colors group">
+                      <td className="py-3.5 px-3.5 text-center border-r border-slate-100 text-slate-500 font-semibold text-xs whitespace-nowrap font-mono">
+                        {rowNumber}
                       </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap">
+                      <td className="py-3.5 px-4 border-r border-slate-100 whitespace-nowrap">
+                        <div className="font-semibold text-slate-800">{a.slotTime}</div>
+                        <div className="text-[10px] text-slate-400 font-mono">{a.slotDate}</div>
+                      </td>
+                      <td className="py-3.5 px-4 border-r border-slate-100 whitespace-nowrap">
                         <div className="font-semibold text-slate-900">{a.patientName}</div>
                         <div className="flex items-center gap-1.5 mt-0.5">
                           {a.payerType === 'Corporate / Panel' ? (
@@ -308,23 +493,23 @@ export const AppointmentsView: React.FC = () => {
                           ) : (
                             <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-600">Self-Pay</span>
                           )}
-                          <span className="text-[10px] text-slate-400">{a.patientPhone}</span>
+                          <span className="text-[10px] text-slate-400 font-mono">{a.patientPhone}</span>
                         </div>
                       </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">
+                      <td className="py-3.5 px-4 border-r border-slate-100 whitespace-nowrap text-slate-600">
                         {a.payerType === 'Corporate / Panel' ? a.panelName || '—' : 'Self Pay'}
                       </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap text-slate-700">{a.doctorName}</td>
-                      <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">{a.departmentName}</td>
-                      <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">{a.serviceName}</td>
-                      <td className="px-3 py-2.5 whitespace-nowrap font-semibold text-slate-800">{formatPKR(payable)}</td>
-                      <td className="px-3 py-2.5 whitespace-nowrap text-emerald-700">{formatPKR(a.advancePaid)}</td>
-                      <td className="px-3 py-2.5 whitespace-nowrap font-semibold text-amber-700">{formatPKR(remaining)}</td>
-                      <td className="px-3 py-2.5 whitespace-nowrap">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${STATUS_BADGE[a.status]}`}>{a.status}</span>
+                      <td className="py-3.5 px-4 border-r border-slate-100 whitespace-nowrap text-slate-700 font-medium">{a.doctorName}</td>
+                      <td className="py-3.5 px-4 border-r border-slate-100 whitespace-nowrap text-slate-600">{a.departmentName}</td>
+                      <td className="py-3.5 px-4 border-r border-slate-100 whitespace-nowrap text-slate-600">{a.serviceName}</td>
+                      <td className="py-3.5 px-4 border-r border-slate-100 whitespace-nowrap font-bold text-slate-800 text-right tabular-nums">{formatPKR(payable)}</td>
+                      <td className="py-3.5 px-4 border-r border-slate-100 whitespace-nowrap text-emerald-700 font-bold text-right tabular-nums">{formatPKR(a.advancePaid)}</td>
+                      <td className="py-3.5 px-4 border-r border-slate-100 whitespace-nowrap font-bold text-amber-700 text-right tabular-nums">{formatPKR(remaining)}</td>
+                      <td className="py-3.5 px-4 border-r border-slate-100 whitespace-nowrap text-center">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide ${STATUS_BADGE[a.status]}`}>{a.status}</span>
                       </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap">
-                        <div className="flex items-center gap-1">
+                      <td className="py-3.5 px-4 whitespace-nowrap text-center">
+                        <div className="flex items-center justify-center gap-1">
                           {eligibleForActions && (
                             <>
                               <button
@@ -332,7 +517,7 @@ export const AppointmentsView: React.FC = () => {
                                 title="Check In"
                                 disabled={checkingInId === a.id}
                                 onClick={() => handleCheckIn(a)}
-                                className="p-1.5 rounded-md text-[#08775A] hover:bg-[#effaf5] disabled:opacity-50"
+                                className="p-1.5 rounded-md text-[#08775A] hover:bg-[#effaf5] disabled:opacity-50 transition-colors"
                               >
                                 {checkingInId === a.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LogIn className="h-3.5 w-3.5" />}
                               </button>
@@ -340,7 +525,7 @@ export const AppointmentsView: React.FC = () => {
                                 type="button"
                                 title="Collect Advance"
                                 onClick={() => setAdvanceTarget(a)}
-                                className="p-1.5 rounded-md text-amber-700 hover:bg-amber-50"
+                                className="p-1.5 rounded-md text-amber-700 hover:bg-amber-50 transition-colors"
                               >
                                 <Wallet className="h-3.5 w-3.5" />
                               </button>
@@ -348,7 +533,7 @@ export const AppointmentsView: React.FC = () => {
                                 type="button"
                                 title="Reschedule"
                                 onClick={() => setRescheduleTarget(a)}
-                                className="p-1.5 rounded-md text-blue-700 hover:bg-blue-50"
+                                className="p-1.5 rounded-md text-blue-700 hover:bg-blue-50 transition-colors"
                               >
                                 <Pencil className="h-3.5 w-3.5" />
                               </button>
@@ -356,7 +541,7 @@ export const AppointmentsView: React.FC = () => {
                                 type="button"
                                 title="Cancel"
                                 onClick={() => setCancelTarget(a)}
-                                className="p-1.5 rounded-md text-rose-700 hover:bg-rose-50"
+                                className="p-1.5 rounded-md text-rose-700 hover:bg-rose-50 transition-colors"
                               >
                                 <Ban className="h-3.5 w-3.5" />
                               </button>
@@ -367,7 +552,7 @@ export const AppointmentsView: React.FC = () => {
                               type="button"
                               title="Open Invoice / Billing"
                               onClick={() => setInvoiceModalId(a.invoiceId!)}
-                              className="p-1.5 rounded-md text-emerald-700 hover:bg-emerald-50"
+                              className="p-1.5 rounded-md text-emerald-700 hover:bg-emerald-50 transition-colors"
                             >
                               <Receipt className="h-3.5 w-3.5" />
                             </button>
@@ -376,7 +561,7 @@ export const AppointmentsView: React.FC = () => {
                             type="button"
                             title="View Details"
                             onClick={() => setDetailId(a.id)}
-                            className="p-1.5 rounded-md text-slate-500 hover:bg-slate-100"
+                            className="p-1.5 rounded-md text-slate-500 hover:bg-slate-100 transition-colors"
                           >
                             <Eye className="h-3.5 w-3.5" />
                           </button>
@@ -387,6 +572,56 @@ export const AppointmentsView: React.FC = () => {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* Pharmacy Pagination Footer */}
+        {appointments.length > 0 && (
+          <div className="px-4 py-3 bg-white border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <span className="text-slate-500">
+              Showing {(currentPage - 1) * pageSize + 1} to{' '}
+              {Math.min(currentPage * pageSize, appointments.length)} of {appointments.length} entries
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                className="px-2.5 py-1 rounded border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-transparent inline-flex items-center gap-1 cursor-pointer disabled:cursor-not-allowed"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+                Previous
+              </button>
+              <div className="flex items-center gap-1">
+                {Array.from({ length: Math.ceil(appointments.length / pageSize) }, (_, i) => i + 1)
+                  .filter((p) => p === 1 || p === Math.ceil(appointments.length / pageSize) || Math.abs(p - currentPage) <= 1)
+                  .map((p, idx, arr) => (
+                    <React.Fragment key={p}>
+                      {idx > 0 && arr[idx - 1] !== p - 1 && <span className="px-1 text-slate-400">…</span>}
+                      <button
+                        type="button"
+                        onClick={() => setCurrentPage(p)}
+                        className={`w-7 h-7 rounded text-xs font-semibold cursor-pointer ${
+                          currentPage === p
+                            ? 'bg-[#08775A] text-white shadow-xs'
+                            : 'text-slate-600 hover:bg-slate-100 border border-slate-200'
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    </React.Fragment>
+                  ))}
+              </div>
+              <button
+                type="button"
+                disabled={currentPage === Math.ceil(appointments.length / pageSize) || appointments.length === 0}
+                onClick={() => setCurrentPage((p) => Math.min(Math.ceil(appointments.length / pageSize), p + 1))}
+                className="px-2.5 py-1 rounded border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-transparent inline-flex items-center gap-1 cursor-pointer disabled:cursor-not-allowed"
+              >
+                Next
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
         )}
       </div>

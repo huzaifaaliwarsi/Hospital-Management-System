@@ -111,6 +111,8 @@ export const PortalLayout: React.FC<PortalLayoutProps> = ({ children }) => {
           currentModuleName={currentModuleName}
           currentGroupTitle={currentGroupTitle}
           onToggleMobileSidebar={() => setIsMobileSidebarOpen(true)}
+          onToggleDesktopSidebar={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+          isSidebarCollapsed={isSidebarCollapsed}
           onLogout={handleLogout}
           onOpenQuickSearch={() => {}}
         />
