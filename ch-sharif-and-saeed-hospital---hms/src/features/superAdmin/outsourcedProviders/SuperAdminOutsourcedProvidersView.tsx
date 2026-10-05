@@ -194,9 +194,6 @@ export const SuperAdminOutsourcedProvidersView: React.FC = () => {
         <div>
           <div className="flex items-center gap-2.5">
             <h1 className="text-xl font-bold text-slate-900">Outsourced Providers</h1>
-            <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-              v7.2 Department Outsourcing
-            </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">
             External Lab / Neurology / diagnostic providers a Department can be linked to when its fulfillment mode is Outsourced.

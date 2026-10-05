@@ -53,6 +53,18 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
   const [refundMethod, setRefundMethod] = useState<'CASH' | 'CARD' | 'ONLINE'>('CASH');
   const [returnReason, setReturnReason] = useState('');
   const [returning, setReturning] = useState(false);
+  const [hospitalLogo, setHospitalLogo] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    fetch('http://localhost:4000/api/v1/public/hospital-profile')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.data?.logo) {
+          setHospitalLogo(data.data.logo);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const handlePrint = () => {
     window.print();
@@ -243,7 +255,12 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
               <Undo2 className="h-3.5 w-3.5" /> {showReturn ? 'Cancel Return' : 'Sales Return'}
             </button>
 
-            {Number(invoice.outstanding) > 0 && (
+            {/* HMS-linked invoices are paid by the patient at the HMS Front
+                Desk, not at this pharmacy counter — "Record Payment" here
+                is only for retail/walk-in invoices. What HMS owes Pharmacy
+                back is collected via "Request Settlement" instead (see the
+                HMS Receivable card above / HMS Receivables page). */}
+            {invoice.channel !== 'HMS_LINKED' && Number(invoice.outstanding) > 0 && (
               <button
                 type="button"
                 onClick={() => {
@@ -280,6 +297,13 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
               <div className="space-y-3">
                 {/* Hospital Header */}
                 <div className="text-center space-y-1">
+                  {hospitalLogo && (
+                    <img
+                      src={hospitalLogo}
+                      alt="Hospital Logo"
+                      className="h-10 w-10 object-contain mx-auto mb-1 rounded"
+                    />
+                  )}
                   <div className="font-extrabold text-[15px] tracking-wide uppercase text-slate-950">
                     CH SHARIF &amp; SAEED HOSPITAL
                   </div>
@@ -448,9 +472,17 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
                 <div className="flex items-start justify-between pb-4 border-b-2 border-emerald-800">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
-                      <div className="h-8 w-8 rounded-lg bg-emerald-700 text-white flex items-center justify-center font-bold text-base">
-                        CH
-                      </div>
+                      {hospitalLogo ? (
+                        <img
+                          src={hospitalLogo}
+                          alt="Hospital Logo"
+                          className="h-8 w-8 object-contain rounded border border-emerald-200"
+                        />
+                      ) : (
+                        <div className="h-8 w-8 rounded-lg bg-emerald-700 text-white flex items-center justify-center font-bold text-base">
+                          CH
+                        </div>
+                      )}
                       <h1 className="text-lg font-black tracking-tight text-slate-900 uppercase">
                         CH Sharif &amp; Saeed Hospital
                       </h1>
@@ -709,6 +741,13 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
                     </span>
                   </div>
                 </div>
+
+                {Number(invoice.hmsReceivable) > 0 && (
+                  <p className="text-[11px] text-amber-700 bg-amber-50/70 border border-amber-200 rounded-lg px-3 py-2">
+                    HMS owes Pharmacy {formatPKR(invoice.hmsReceivable)} for this invoice — collect it from{' '}
+                    <strong>HMS Receivables → Request Settlement</strong>, not "Record Payment" here.
+                  </p>
+                )}
 
                 {/* Tab Switcher: Granular History vs Aggregated Summary */}
                 <div className="flex items-center justify-between border-b border-slate-200 pb-2">

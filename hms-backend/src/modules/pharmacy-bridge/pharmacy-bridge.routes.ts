@@ -8,17 +8,18 @@ import * as s from './pharmacy-bridge.schemas';
 
 const router = Router();
 const view = authorize('pharmacy-bridge', 'view');
-const create = authorize('pharmacy-bridge', 'create');
 const edit = authorize('pharmacy-bridge', 'edit');
 
-// Inpatient Medicine Requests
-router.post(
-  '/requests',
-  create,
-  validate({ body: s.createMedicineRequestSchema }),
-  asyncHandler(c.createRequest),
-);
-
+// Inpatient Medicine Requests — READ ONLY here. Requests are created via
+// `/admissions/:id/pharmacy-requests` (admission.service.ts's
+// `createPharmacyRequest`), which dispatches to the standalone Pharmacy
+// system; dispensing happens there too, and lands back on the admission's
+// invoice via the `/callback/dispensed` webhook below. A local
+// create-and-dispense pair used to live here as a second path — removed
+// (2026-10-05): it dispensed medicine straight out of local stock and
+// marked itself PAID without ever touching the HospitalInvoice, so a
+// request made through it was free to the patient. Confirmed unused by any
+// caller (frontend, scripts, or the Pharmacy backend) before removal.
 router.get(
   '/requests',
   view,
@@ -31,13 +32,6 @@ router.get(
   view,
   validate({ params: s.idParamsSchema }),
   asyncHandler(c.getRequestById),
-);
-
-router.post(
-  '/requests/:id/dispense',
-  create,
-  validate({ params: s.idParamsSchema }),
-  asyncHandler(c.fulfillAndDispense),
 );
 
 // ── Webhook Callback from Standalone Pharmacy ──────────────────────────────
@@ -73,6 +67,15 @@ router.get(
   '/charges',
   view,
   asyncHandler(c.listCharges),
+);
+
+// Manual resync (idempotent) for when `collectPayment`'s automatic webhook
+// to Pharmacy silently failed — see `resyncPatientCollected`'s doc comment.
+router.post(
+  '/charges/:admissionId/resync',
+  edit,
+  validate({ params: s.admissionIdParamsSchema }),
+  asyncHandler(c.resyncPatientCollected),
 );
 
 export default router;

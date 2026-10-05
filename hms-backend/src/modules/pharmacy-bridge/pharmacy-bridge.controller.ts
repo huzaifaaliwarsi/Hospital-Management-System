@@ -2,7 +2,6 @@ import type { Request, Response } from 'express';
 import { pharmacyBridgeService } from './pharmacy-bridge.service';
 import { AuthenticationError } from '@/shared/errors/AppError';
 import type {
-  CreateMedicineRequestBody,
   ListRequestsQuery,
   DispensedCallbackBody,
   SettlementRequestBody,
@@ -14,15 +13,12 @@ function actorId(req: Request): string {
   return req.user.sub;
 }
 
-export const pharmacyBridgeController = {
-  createRequest: async (req: Request, res: Response) => {
-    const request = await pharmacyBridgeService.createRequest(
-      req.body as CreateMedicineRequestBody,
-      actorId(req),
-    );
-    res.status(201).json({ data: request });
-  },
+function actorRole(req: Request): string {
+  if (!req.user) throw new AuthenticationError();
+  return req.user.role;
+}
 
+export const pharmacyBridgeController = {
   listRequests: async (req: Request, res: Response) => {
     const requests = await pharmacyBridgeService.listRequests(
       req.query as unknown as ListRequestsQuery,
@@ -33,14 +29,6 @@ export const pharmacyBridgeController = {
   getRequestById: async (req: Request, res: Response) => {
     const request = await pharmacyBridgeService.getRequestById(req.params.id!);
     res.json({ data: request });
-  },
-
-  fulfillAndDispense: async (req: Request, res: Response) => {
-    const result = await pharmacyBridgeService.fulfillAndDispense(
-      req.params.id!,
-      actorId(req),
-    );
-    res.status(200).json({ data: result });
   },
 
   // ── Webhook / Callback from Pharmacy Backend ─────────────────────────────
@@ -69,6 +57,7 @@ export const pharmacyBridgeController = {
       req.params.id as string,
       req.body as ReleaseSettlementBody,
       actorId(req),
+      actorRole(req),
     );
     res.json({ data: settlement });
   },
@@ -78,5 +67,10 @@ export const pharmacyBridgeController = {
       req.query.admissionRecordId as string | undefined,
     );
     res.json({ data: charges });
+  },
+
+  resyncPatientCollected: async (req: Request, res: Response) => {
+    const charge = await pharmacyBridgeService.resyncPatientCollected(req.params.admissionId as string);
+    res.json({ data: charge });
   },
 };

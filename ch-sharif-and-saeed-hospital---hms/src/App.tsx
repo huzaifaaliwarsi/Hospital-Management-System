@@ -20,7 +20,7 @@ import { DesignSystemShowcase } from './features/shared/DesignSystemShowcase';
 import { PORTAL_CONFIGS, PORTAL_NAVIGATION_MAP } from './constants/portalNavigations';
 
 const MONTSERRAT_PORTALS: string[] = ['super-admin', 'admin', 'inventory'];
-const INTER_PORTALS: string[] = ['front-desk'];
+const INTER_PORTALS: string[] = ['front-desk', 'admission'];
 
 const MainPortalRouter: React.FC = () => {
   const { isAuthenticated, currentUser, activePortal } = useAuth();

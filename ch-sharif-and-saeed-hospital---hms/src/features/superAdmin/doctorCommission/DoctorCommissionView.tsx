@@ -217,7 +217,6 @@ export const DoctorCommissionView: React.FC = () => {
         <div>
           <div className="flex items-center gap-2.5">
             <h1 className="text-xl font-bold text-slate-900">Doctor Commission</h1>
-            <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200">v7.2</span>
           </div>
           <p className="text-xs text-slate-500 mt-1 max-w-2xl">
             Fixed/% commission rules per doctor (optionally per service), Gross/Net basis, and Commission Tax — a stream fully

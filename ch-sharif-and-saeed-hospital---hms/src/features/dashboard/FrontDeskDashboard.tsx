@@ -57,6 +57,17 @@ import { InvoiceDetailModal, InvoiceModalAction } from '../frontDesk/billing/Inv
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
 
+// Recharts for live day-wise & shift trend analytics
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+} from 'recharts';
+
 interface DashboardState {
   todayAppointmentsCount: number;
   todayAdmissionsCount: number;
@@ -137,7 +148,7 @@ export const FrontDeskDashboard: React.FC = () => {
   // Tab & Filter states
   const [activeTab, setActiveTab] = useState<'invoices' | 'admissions' | 'transactions'>('invoices');
   const [tableSearch, setTableSearch] = useState('');
-  const [timeframe, setTimeframe] = useState<'today' | '7d'>('today');
+  const [timeframe, setTimeframe] = useState<'7d' | '14d' | '30d' | 'today'>('7d');
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
   const [tableFilter, setTableFilter] = useState<'ALL' | 'OPD' | 'OBSERVATION' | 'EMERGENCY' | 'CUSTOM'>('ALL');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PAID' | 'PARTIALLY_PAID' | 'UNPAID'>('ALL');
@@ -169,19 +180,35 @@ export const FrontDeskDashboard: React.FC = () => {
       const emergencyCount = todayInvoices.filter((inv) => inv.encounterType === 'EMERGENCY').length;
       const customBillingCount = todayInvoices.filter((inv) => inv.encounterType === 'CUSTOM').length;
 
-      const outstandingBalance = allInvoices.reduce((sum, inv) => sum + Number(inv.balanceDue ?? 0), 0);
+      const outstandingBalance = allInvoices.reduce((sum, inv) => {
+        const net = Number(inv.total ?? 0);
+        const paid = Number(inv.paidTotal ?? 0);
+        const patientShare = inv.panelPatientId ? Number(inv.patientShare ?? 0) : net;
+        const due = inv.balanceDue !== undefined && inv.balanceDue !== null
+          ? Number(inv.balanceDue)
+          : Math.max(0, patientShare - paid);
+        return sum + (Number.isFinite(due) ? due : 0);
+      }, 0);
 
-      const recentInvoices = allInvoices.slice(0, 15).map((inv) => ({
-        id: inv.id,
-        invoiceNumber: inv.invoiceNumber,
-        patient: inv.panelPatient?.fullName || inv.selfPayEncounter?.fullName || 'Walk-in Patient',
-        encounterType: inv.encounterType || 'OPD',
-        net: Number(inv.total ?? 0),
-        paid: Number(inv.paidTotal ?? 0),
-        due: Number(inv.balanceDue ?? 0),
-        status: inv.status,
-        createdAt: inv.createdAt,
-      }));
+      const recentInvoices = allInvoices.slice(0, 15).map((inv) => {
+        const net = Number(inv.total ?? 0);
+        const paid = Number(inv.paidTotal ?? 0);
+        const patientShare = inv.panelPatientId ? Number(inv.patientShare ?? 0) : net;
+        const due = inv.balanceDue !== undefined && inv.balanceDue !== null
+          ? Number(inv.balanceDue)
+          : Math.max(0, patientShare - paid);
+        return {
+          id: inv.id,
+          invoiceNumber: inv.invoiceNumber,
+          patient: inv.panelPatient?.fullName || inv.selfPayEncounter?.fullName || 'Walk-in Patient',
+          encounterType: inv.encounterType || 'OPD',
+          net,
+          paid,
+          due,
+          status: inv.status,
+          createdAt: inv.createdAt,
+        };
+      });
 
       const patients = getAllPatients();
       const recentPatients = [...patients]
@@ -251,62 +278,176 @@ export const FrontDeskDashboard: React.FC = () => {
     return data.opdCount + data.observationCount + data.emergencyCount + data.todayAdmissionsCount + data.customBillingCount;
   }, [data.opdCount, data.observationCount, data.emergencyCount, data.todayAdmissionsCount, data.customBillingCount]);
 
-  // Hourly or 7-day trend items computed dynamically from live data
+  // Real day-wise or hourly trend items computed dynamically from live database records
   const trendItems = useMemo(() => {
-    if (timeframe === '7d') {
-      const days: { label: string; revenue: number; encounters: number; cash: number }[] = [];
-      const now = new Date();
-      for (let i = 6; i >= 0; i--) {
-        const d = new Date(now);
-        d.setDate(d.getDate() - i);
-        const dateStr = d.toISOString().slice(0, 10);
-        const dayLabel = i === 0 ? 'Today' : d.toLocaleDateString('en-US', { weekday: 'short' });
+    const todayIso = formatDateISO(getHospitalCurrentDate());
 
-        const dayInvoices = rawInvoices.filter((inv) => String(inv.createdAt).slice(0, 10) === dateStr);
-        const rev = dayInvoices.reduce((s, inv) => s + Number(inv.total ?? 0), 0);
-        const csh = dayInvoices.reduce((s, inv) => s + Number(inv.paidTotal ?? 0), 0);
-        days.push({
-          label: dayLabel,
-          revenue: i === 0 ? Math.max(rev, totalShiftRevenue) : rev,
-          encounters: i === 0 ? Math.max(dayInvoices.length, totalEncounters || data.todayInvoicesCount) : dayInvoices.length,
-          cash: i === 0 ? Math.max(csh, data.cashCollected) : csh,
+    if (timeframe === 'today') {
+      // Real hourly shift breakdown for today: 2-hour operational buckets
+      const slots = [
+        { label: '08:00', startH: 8, endH: 10 },
+        { label: '10:00', startH: 10, endH: 12 },
+        { label: '12:00', startH: 12, endH: 14 },
+        { label: '14:00', startH: 14, endH: 16 },
+        { label: '16:00', startH: 16, endH: 18 },
+        { label: '18:00', startH: 18, endH: 20 },
+        { label: '20:00+', startH: 20, endH: 24 },
+      ];
+
+      const todayInvoices = rawInvoices.filter((inv) => {
+        if (!inv.createdAt) return false;
+        return formatDateISO(new Date(inv.createdAt)) === todayIso;
+      });
+
+      const todayTx = (data.recentTransactions || []).filter((tx: any) => {
+        if (!tx.occurredAt) return false;
+        return formatDateISO(new Date(tx.occurredAt)) === todayIso;
+      });
+
+      return slots.map((slot) => {
+        const slotInvs = todayInvoices.filter((inv) => {
+          const h = new Date(inv.createdAt).getHours();
+          return h >= slot.startH && h < slot.endH;
         });
-      }
-      return days;
+        const slotTx = todayTx.filter((tx: any) => {
+          const h = new Date(tx.occurredAt).getHours();
+          return h >= slot.startH && h < slot.endH;
+        });
+
+        const billed = slotInvs.reduce((s, inv) => s + Number(inv.total ?? 0), 0);
+        const txCash = slotTx.filter((t: any) => t.method === 'CASH').reduce((s, t) => s + Number(t.amount ?? 0), 0);
+        const txTotal = slotTx.reduce((s, t) => s + Number(t.amount ?? 0), 0);
+        const invPaid = slotInvs.reduce((s, inv) => s + Number(inv.paidTotal ?? 0), 0);
+
+        return {
+          label: slot.label,
+          fullDate: `Today, ${slot.label} Window`,
+          billed,
+          collections: Math.max(txTotal, invPaid),
+          cash: Math.max(txCash, invPaid),
+          encounters: slotInvs.length,
+        };
+      });
     }
-    // Today hourly trend
-    return [
-      { label: '08:00', revenue: Math.round(totalShiftRevenue * 0.15), encounters: Math.max(1, Math.round((totalEncounters || 4) * 0.15)), cash: Math.round(data.cashCollected * 0.15) },
-      { label: '10:00', revenue: Math.round(totalShiftRevenue * 0.38), encounters: Math.max(2, Math.round((totalEncounters || 4) * 0.38)), cash: Math.round(data.cashCollected * 0.38) },
-      { label: '12:00', revenue: Math.round(totalShiftRevenue * 0.65), encounters: Math.max(3, Math.round((totalEncounters || 4) * 0.65)), cash: Math.round(data.cashCollected * 0.65) },
-      { label: '14:00', revenue: Math.round(totalShiftRevenue * 0.85), encounters: Math.max(3, Math.round((totalEncounters || 4) * 0.85)), cash: Math.round(data.cashCollected * 0.85) },
-      { label: 'Now', revenue: totalShiftRevenue, encounters: totalEncounters || data.todayInvoicesCount, cash: data.cashCollected },
-    ];
-  }, [timeframe, rawInvoices, totalShiftRevenue, totalEncounters, data.todayInvoicesCount, data.cashCollected]);
 
-  // Chart coordinates
-  const chartW = 600;
-  const chartH = 150;
-  const maxRev = Math.max(...trendItems.map((m) => m.revenue), 100);
-  const stepX = chartW / Math.max(1, trendItems.length - 1);
+    // Day-wise distribution (7d, 14d, 30d)
+    const daysCount = timeframe === '30d' ? 30 : timeframe === '14d' ? 14 : 7;
+    const days: Array<{
+      label: string;
+      fullDate: string;
+      billed: number;
+      collections: number;
+      cash: number;
+      encounters: number;
+    }> = [];
+    const now = getHospitalCurrentDate();
 
-  const chartPoints = trendItems.map((m, idx) => {
-    const x = idx * stepX;
-    const y = chartH - (m.revenue / maxRev) * (chartH - 30) - 15;
-    return { x, y, ...m };
-  });
+    for (let i = daysCount - 1; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const dateStr = formatDateISO(d);
+      const dayLabel = i === 0 ? 'Today' : d.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+      const fullDate = d.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 
-  let pathD = `M${chartPoints[0]?.x ?? 0},${chartPoints[0]?.y ?? chartH - 20}`;
-  for (let i = 0; i < chartPoints.length - 1; i++) {
-    const p0 = chartPoints[i];
-    const p1 = chartPoints[i + 1];
-    const cp1x = p0.x + (p1.x - p0.x) / 2;
-    const cp1y = p0.y;
-    const cp2x = p0.x + (p1.x - p0.x) / 2;
-    const cp2y = p1.y;
-    pathD += ` C${cp1x},${cp1y} ${cp2x},${cp2y} ${p1.x},${p1.y}`;
-  }
-  const areaD = `${pathD} L${chartW},${chartH} L0,${chartH} Z`;
+      const dayInvoices = rawInvoices.filter((inv) => {
+        if (!inv.createdAt) return false;
+        return formatDateISO(new Date(inv.createdAt)) === dateStr;
+      });
+
+      const dayTx = (data.recentTransactions || []).filter((tx: any) => {
+        if (!tx.occurredAt) return false;
+        return formatDateISO(new Date(tx.occurredAt)) === dateStr;
+      });
+
+      const billed = dayInvoices.reduce((s, inv) => s + Number(inv.total ?? 0), 0);
+      const txCash = dayTx.filter((t: any) => t.method === 'CASH').reduce((s, t) => s + Number(t.amount ?? 0), 0);
+      const txTotal = dayTx.reduce((s, t) => s + Number(t.amount ?? 0), 0);
+      const invPaid = dayInvoices.reduce((s, inv) => s + Number(inv.paidTotal ?? 0), 0);
+
+      // If today, incorporate live drawer physical cash & non-physical
+      const collections = i === 0
+        ? Math.max(txTotal, invPaid, data.cashCollected + data.onlineCollected)
+        : Math.max(txTotal, invPaid);
+
+      const cash = i === 0
+        ? Math.max(data.cashCollected, txCash, invPaid)
+        : txCash;
+
+      const encounters = i === 0
+        ? Math.max(dayInvoices.length, data.todayInvoicesCount)
+        : dayInvoices.length;
+
+      days.push({
+        label: dayLabel,
+        fullDate,
+        billed: i === 0 && billed === 0 ? collections : billed,
+        collections,
+        cash,
+        encounters,
+      });
+    }
+
+    return days;
+  }, [timeframe, rawInvoices, data]);
+
+  // Aggregate metrics for the selected period
+  const periodStats = useMemo(() => {
+    const todayIso = formatDateISO(getHospitalCurrentDate());
+
+    if (timeframe === 'today') {
+      const todayInvs = rawInvoices.filter((inv) => formatDateISO(new Date(inv.createdAt)) === todayIso);
+      const billed = todayInvs.reduce((s, inv) => s + Number(inv.total ?? 0), 0);
+      const due = todayInvs.reduce((s, inv) => {
+        const d = inv.balanceDue !== undefined && inv.balanceDue !== null
+          ? Number(inv.balanceDue)
+          : Math.max(0, Number(inv.total ?? 0) - Number(inv.paidTotal ?? 0));
+        return s + (d > 0 ? d : 0);
+      }, 0);
+
+      return {
+        billed: billed > 0 ? billed : (data.cashCollected + data.onlineCollected + data.outstandingBalance),
+        invoiceCount: todayInvs.length || data.todayInvoicesCount,
+        cash: data.cashCollected,
+        digital: data.onlineCollected,
+        due,
+      };
+    }
+
+    const daysCount = timeframe === '30d' ? 30 : timeframe === '14d' ? 14 : 7;
+    const cutoff = getHospitalCurrentDate();
+    cutoff.setDate(cutoff.getDate() - (daysCount - 1));
+    cutoff.setHours(0, 0, 0, 0);
+    const cutoffIso = formatDateISO(cutoff);
+
+    const periodInvs = rawInvoices.filter((inv) => {
+      if (!inv.createdAt) return false;
+      return formatDateISO(new Date(inv.createdAt)) >= cutoffIso;
+    });
+
+    const billed = periodInvs.reduce((s, inv) => s + Number(inv.total ?? 0), 0);
+    const due = periodInvs.reduce((s, inv) => {
+      const d = inv.balanceDue !== undefined && inv.balanceDue !== null
+        ? Number(inv.balanceDue)
+        : Math.max(0, Number(inv.total ?? 0) - Number(inv.paidTotal ?? 0));
+      return s + (d > 0 ? d : 0);
+    }, 0);
+
+    const periodTx = (data.recentTransactions || []).filter((tx: any) => {
+      if (!tx.occurredAt) return false;
+      return formatDateISO(new Date(tx.occurredAt)) >= cutoffIso;
+    });
+
+    const cash = Math.max(data.cashCollected, periodTx.filter(t => t.method === 'CASH').reduce((s, t) => s + Number(t.amount ?? 0), 0));
+    const digital = Math.max(data.onlineCollected, periodTx.filter(t => t.method !== 'CASH').reduce((s, t) => s + Number(t.amount ?? 0), 0));
+
+    return {
+      billed: billed > 0 ? billed : (cash + digital + due),
+      invoiceCount: Math.max(periodInvs.length, data.todayInvoicesCount),
+      cash,
+      digital,
+      due,
+    };
+  }, [timeframe, rawInvoices, data]);
 
   // Encounter distribution data for Donut Chart
   const distributionData = [
@@ -318,7 +459,7 @@ export const FrontDeskDashboard: React.FC = () => {
   ];
 
   const totalDistCount = distributionData.reduce((s, d) => s + d.count, 0) || 1;
-  const donutR = 50;
+  const donutR = 52;
   const donutCircumference = 2 * Math.PI * donutR;
   let accumulatedAngle = 0;
 
@@ -1028,17 +1169,25 @@ export const FrontDeskDashboard: React.FC = () => {
             {/* Header */}
             <CardHeader className="p-0 pb-4 border-b border-slate-100 flex-row items-center justify-between space-y-0">
               <div>
-                <CardTitle>Shift Encounter & Revenue Performance</CardTitle>
-                <CardDescription className="mt-0.5">Patient intake, cash flow and billing volume timeline</CardDescription>
+                <CardTitle>
+                  {timeframe === 'today' ? "Today's Shift Billing & Revenue" : 'Daily Revenue & Billing Performance'}
+                </CardTitle>
+                <CardDescription className="mt-0.5">
+                  {timeframe === 'today'
+                    ? "Patient intake, cash flow and billing volume timeline for today's operational shift"
+                    : 'Day-by-day billed services, cash drawer collections, and patient encounters'}
+                </CardDescription>
               </div>
               <div className="flex items-center gap-2">
                 <select
                   value={timeframe}
                   onChange={(e) => setTimeframe(e.target.value as any)}
-                  className="text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
+                  className="text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer shadow-sm hover:border-slate-300 transition-colors"
                 >
-                  <option value="today">Today's Shift Timeline</option>
-                  <option value="7d">Last 7 Days Trend</option>
+                  <option value="7d">Last 7 Days (Daily Trend)</option>
+                  <option value="14d">Last 14 Days (Daily Trend)</option>
+                  <option value="30d">Last 30 Days (Daily Trend)</option>
+                  <option value="today">Today's Shift Hours</option>
                 </select>
                 <button
                   type="button"
@@ -1057,177 +1206,143 @@ export const FrontDeskDashboard: React.FC = () => {
                 <div className="flex items-center gap-1.5 text-xs text-slate-400">
                   <span className="h-2 w-2 rounded-full bg-blue-500" /> Total Billed
                 </div>
-                <div className="text-lg font-bold text-slate-900 mt-1">{formatPKR(totalShiftRevenue + data.outstandingBalance)}</div>
-                <div className="text-[10px] text-emerald-600 font-semibold">{data.todayInvoicesCount} invoices</div>
+                <div className="text-lg font-bold text-slate-900 mt-1">{formatPKR(periodStats.billed)}</div>
+                <div className="text-[10px] text-blue-600 font-semibold">{periodStats.invoiceCount} invoices</div>
               </div>
               <div>
                 <div className="flex items-center gap-1.5 text-xs text-slate-400">
                   <span className="h-2 w-2 rounded-full bg-emerald-500" /> Cash Inflow
                 </div>
-                <div className="text-lg font-bold text-slate-900 mt-1">{formatPKR(data.cashCollected)}</div>
+                <div className="text-lg font-bold text-slate-900 mt-1">{formatPKR(periodStats.cash)}</div>
                 <div className="text-[10px] text-emerald-600 font-semibold">Physical drawer</div>
               </div>
               <div>
                 <div className="flex items-center gap-1.5 text-xs text-slate-400">
                   <span className="h-2 w-2 rounded-full bg-teal-500" /> Digital / POS
                 </div>
-                <div className="text-lg font-bold text-slate-900 mt-1">{formatPKR(data.onlineCollected)}</div>
+                <div className="text-lg font-bold text-slate-900 mt-1">{formatPKR(periodStats.digital)}</div>
                 <div className="text-[10px] text-slate-400 font-medium">Card & online</div>
               </div>
               <div>
                 <div className="flex items-center gap-1.5 text-xs text-slate-400">
                   <span className="h-2 w-2 rounded-full bg-amber-500" /> Balance Due
                 </div>
-                <div className="text-lg font-bold text-slate-900 mt-1">{formatPKR(data.outstandingBalance)}</div>
-                <div className="text-[10px] text-rose-600 font-medium">Pending collection</div>
+                <div className="text-lg font-bold text-slate-900 mt-1">{formatPKR(periodStats.due)}</div>
+                <div className={`text-[10px] font-medium ${periodStats.due > 0 ? 'text-rose-600' : 'text-slate-400'}`}>
+                  {periodStats.due > 0 ? 'Pending collection' : 'All cleared'}
+                </div>
               </div>
             </div>
 
-            {/* SVG Area Chart with interactive hover tooltip */}
-            <div className="relative pt-6 pb-2">
-              {hoveredIdx !== null && chartPoints[hoveredIdx] && (
-                <div
-                  className="absolute z-30 pointer-events-none transition-all duration-150 ease-out"
-                  style={{
-                    left: `${Math.min(Math.max(18, (chartPoints[hoveredIdx].x / chartW) * 100), 82)}%`,
-                    top: '20px',
-                    transform: 'translate(-50%, -100%)',
-                  }}
-                >
-                  <div className="bg-white text-slate-800 rounded-xl p-3.5 shadow-[0_12px_32px_rgba(0,0,0,0.12)] border border-slate-200/90 w-64 text-xs ring-1 ring-slate-900/5">
-                    <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-2.5">
-                      <div className="flex items-center gap-1.5 font-bold text-slate-900">
-                        <Clock className="h-3.5 w-3.5 text-[#0e7d5a]" />
-                        <span>{chartPoints[hoveredIdx].label}</span>
-                      </div>
-                      <Badge variant="success" className="text-[10px] font-semibold py-0.5 px-2">
-                        {chartPoints[hoveredIdx].encounters} encounters
-                      </Badge>
-                    </div>
-                    <div className="space-y-1.5 text-[11px]">
-                      <div className="flex items-center justify-between">
-                        <span className="text-slate-500 flex items-center gap-1.5">
-                          <span className="h-2 w-2 rounded-full bg-blue-500 shrink-0" /> Total Revenue:
-                        </span>
-                        <span className="font-bold text-slate-900 font-mono text-xs">{formatPKR(chartPoints[hoveredIdx].revenue)}</span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-slate-500 flex items-center gap-1.5">
-                          <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" /> Cash Drawer:
-                        </span>
-                        <span className="font-semibold text-slate-800 font-mono text-xs">{formatPKR(chartPoints[hoveredIdx].cash)}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <svg
-                className="w-full h-44 overflow-visible cursor-crosshair"
-                viewBox={`0 0 ${chartW} ${chartH}`}
-                preserveAspectRatio="none"
-                onMouseMove={(e) => {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const xPos = ((e.clientX - rect.left) / rect.width) * chartW;
-                  let closest = 0;
-                  let minD = Infinity;
-                  chartPoints.forEach((pt, i) => {
-                    const d = Math.abs(pt.x - xPos);
-                    if (d < minD) {
-                      minD = d;
-                    }
-                    if (d === minD) {
-                      closest = i;
-                    }
-                  });
-                  setHoveredIdx(closest);
-                }}
-                onMouseLeave={() => setHoveredIdx(null)}
-              >
-                <defs>
-                  <linearGradient id="frontdeskRevGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#0e7d5a" stopOpacity="0.35" />
-                    <stop offset="100%" stopColor="#0e7d5a" stopOpacity="0.0" />
-                  </linearGradient>
-                </defs>
-
-                {/* Grid guidelines */}
-                <line x1="0" y1={chartH * 0.25} x2={chartW} y2={chartH * 0.25} stroke="#f1f5f9" strokeDasharray="3 3" />
-                <line x1="0" y1={chartH * 0.5} x2={chartW} y2={chartH * 0.5} stroke="#f1f5f9" strokeDasharray="3 3" />
-                <line x1="0" y1={chartH * 0.75} x2={chartW} y2={chartH * 0.75} stroke="#f1f5f9" strokeDasharray="3 3" />
-
-                {/* Area and Line */}
-                <path d={areaD} fill="url(#frontdeskRevGrad)" />
-                <path d={pathD} fill="none" stroke="#0e7d5a" strokeWidth="3" strokeLinecap="round" />
-
-                {/* Hover vertical crosshair */}
-                {hoveredIdx !== null && chartPoints[hoveredIdx] && (
-                  <line
-                    x1={chartPoints[hoveredIdx].x}
-                    y1={0}
-                    x2={chartPoints[hoveredIdx].x}
-                    y2={chartH}
-                    stroke="#0e7d5a"
-                    strokeWidth="1.5"
-                    strokeDasharray="4 4"
-                  />
-                )}
-
-                {/* Points */}
-                {chartPoints.map((pt, i) => {
-                  const isHovered = hoveredIdx === i;
-                  return (
-                    <g key={i}>
-                      {isHovered && (
-                        <circle cx={pt.x} cy={pt.y} r="10" fill="#0e7d5a" fillOpacity="0.25" className="animate-ping" />
-                      )}
-                      <circle
-                        cx={pt.x}
-                        cy={pt.y}
-                        r={isHovered ? '6' : '4.5'}
-                        fill={isHovered ? '#0e7d5a' : '#ffffff'}
-                        stroke="#0e7d5a"
-                        strokeWidth={isHovered ? '3' : '2.5'}
-                        className="transition-all duration-150 cursor-pointer"
-                        onMouseEnter={() => setHoveredIdx(i)}
-                      />
-                    </g>
-                  );
-                })}
-              </svg>
-
-              {/* X-Axis labels */}
-              <div className="flex justify-between text-[11px] text-slate-400 pt-2 font-medium">
-                {trendItems.map((m, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => setHoveredIdx(idx)}
-                    className={`text-center cursor-pointer transition-colors ${
-                      hoveredIdx === idx ? 'text-[#0e7d5a] font-bold' : 'hover:text-slate-600'
-                    }`}
-                  >
-                    {m.label}
-                  </button>
-                ))}
+            {/* Live Recharts Day-wise / Hourly Chart */}
+            <div className="relative pt-2 pb-2">
+              <div className="h-56 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={trendItems} margin={{ top: 12, right: 12, left: -15, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="fdCollectionsGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#0e7d5a" stopOpacity={0.35} />
+                        <stop offset="95%" stopColor="#0e7d5a" stopOpacity={0.0} />
+                      </linearGradient>
+                      <linearGradient id="fdBilledGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.25} />
+                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                    <XAxis
+                      dataKey="label"
+                      tickLine={false}
+                      axisLine={{ stroke: '#e2e8f0' }}
+                      tick={{ fontSize: 11, fill: '#64748b', fontWeight: 500 }}
+                    />
+                    <YAxis
+                      tickLine={false}
+                      axisLine={false}
+                      tick={{ fontSize: 11, fill: '#94a3b8' }}
+                      tickFormatter={(val) => (val >= 1000 ? `${(val / 1000).toFixed(val % 1000 === 0 ? 0 : 1)}k` : `${val}`)}
+                      domain={[0, (dataMax: number) => Math.max(dataMax * 1.15, 1000)]}
+                    />
+                    <RechartsTooltip
+                      content={({ active, payload }: any) => {
+                        if (active && payload && payload.length) {
+                          const item = payload[0].payload;
+                          return (
+                            <div className="bg-white text-slate-800 rounded-xl p-3 shadow-xl border border-slate-200/90 w-64 text-xs ring-1 ring-slate-900/5">
+                              <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-2">
+                                <div className="flex items-center gap-1.5 font-bold text-slate-900">
+                                  <Calendar className="h-3.5 w-3.5 text-emerald-600" />
+                                  <span>{item.fullDate || item.label}</span>
+                                </div>
+                                <Badge variant="outline" className="text-[10px] font-semibold py-0.5 px-2 bg-emerald-50 text-emerald-700 border-emerald-200">
+                                  {item.encounters} {item.encounters === 1 ? 'encounter' : 'encounters'}
+                                </Badge>
+                              </div>
+                              <div className="space-y-1.5 text-[11px]">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-slate-500 flex items-center gap-1.5">
+                                    <span className="h-2 w-2 rounded-full bg-blue-500 shrink-0" /> Total Billed:
+                                  </span>
+                                  <span className="font-bold text-slate-900 font-mono text-xs">{formatPKR(item.billed)}</span>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-slate-500 flex items-center gap-1.5">
+                                    <span className="h-2 w-2 rounded-full bg-emerald-600 shrink-0" /> Collections Realized:
+                                  </span>
+                                  <span className="font-bold text-emerald-700 font-mono text-xs">{formatPKR(item.collections)}</span>
+                                </div>
+                                <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[10px] text-slate-400">
+                                  <span>Physical Cash Drawer:</span>
+                                  <span className="font-medium text-slate-600 font-mono">{formatPKR(item.cash)}</span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="billed"
+                      name="Total Billed"
+                      stroke="#3b82f6"
+                      strokeWidth={2}
+                      fillOpacity={1}
+                      fill="url(#fdBilledGrad)"
+                      activeDot={{ r: 5, fill: '#3b82f6', stroke: '#fff', strokeWidth: 2 }}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="collections"
+                      name="Collections Realized"
+                      stroke="#0e7d5a"
+                      strokeWidth={2.5}
+                      fillOpacity={1}
+                      fill="url(#fdCollectionsGrad)"
+                      activeDot={{ r: 6, fill: '#0e7d5a', stroke: '#fff', strokeWidth: 2 }}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
               </div>
 
-              {/* Inspection Bar */}
+              {/* Inspection Bar / Legend */}
               <div className="mt-3 py-2 px-3 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-between text-xs text-slate-600">
-                {hoveredIdx !== null && chartPoints[hoveredIdx] ? (
-                  <div className="flex items-center gap-4 flex-wrap">
-                    <span className="font-bold text-slate-900">{chartPoints[hoveredIdx].label} Timeline:</span>
-                    <span>Revenue: <strong className="text-blue-600">{formatPKR(chartPoints[hoveredIdx].revenue)}</strong></span>
-                    <span>Cash Drawer: <strong className="text-emerald-700">{formatPKR(chartPoints[hoveredIdx].cash)}</strong></span>
-                    <span>Encounters: <strong className="text-slate-800">{chartPoints[hoveredIdx].encounters}</strong></span>
-                  </div>
-                ) : (
-                  <div className="text-slate-400 text-[11px]">
-                    Graph point par hover karein detailed shift revenue aur encounter count dekhne ke liye.
-                  </div>
-                )}
-                <Badge variant="success" className="text-[10px] font-semibold py-0.5 px-2">
-                  Live DB Trend
+                <div className="flex items-center gap-3 text-[11px] flex-wrap">
+                  <span className="flex items-center gap-1.5 font-medium text-slate-700">
+                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-600" />
+                    Collections Realized
+                  </span>
+                  <span className="flex items-center gap-1.5 font-medium text-slate-700">
+                    <span className="h-2.5 w-2.5 rounded-full bg-blue-500" />
+                    Total Billed Services
+                  </span>
+                  <span className="text-slate-400 hidden sm:inline">
+                    • Din ke mutabiq graph amount ke sath proportionally upar jaye ga.
+                  </span>
+                </div>
+                <Badge variant="success" className="text-[10px] font-semibold py-0.5 px-2 shrink-0">
+                  Live DB Synchronized
                 </Badge>
               </div>
             </div>
@@ -1255,43 +1370,47 @@ export const FrontDeskDashboard: React.FC = () => {
             {/* Donut SVG */}
             <div className="py-6 flex items-center justify-center relative">
               <svg className="w-48 h-48 -rotate-90 transform" viewBox="0 0 140 140">
-                <circle cx="70" cy="70" r={donutR} fill="none" stroke="#f1f5f9" strokeWidth="18" />
-                {distributionData.map((cat, idx) => {
-                  const pct = totalDistCount > 0 ? cat.count / totalDistCount : 0.2;
-                  const dashLength = pct * donutCircumference;
-                  const dashOffset = -accumulatedAngle;
-                  accumulatedAngle += dashLength;
-                  return (
-                    <circle
-                      key={idx}
-                      cx="70"
-                      cy="70"
-                      r={donutR}
-                      fill="none"
-                      stroke={cat.color}
-                      strokeWidth="18"
-                      strokeDasharray={`${dashLength} ${donutCircumference - dashLength}`}
-                      strokeDashoffset={dashOffset}
-                      className="transition-all duration-300 hover:opacity-85 cursor-pointer"
-                      onClick={() => {
-                        if (cat.dept !== 'ALL') {
-                          setTableFilter(tableFilter === cat.dept ? 'ALL' : cat.dept);
-                          setActiveTab('invoices');
-                        } else {
-                          setActiveTab('admissions');
-                        }
-                      }}
-                    />
-                  );
-                })}
+                <circle cx="70" cy="70" r={donutR} fill="none" stroke="#f1f5f9" strokeWidth="14" />
+                {(() => {
+                  let accAngle = 0;
+                  return distributionData.map((cat, idx) => {
+                    const pct = totalDistCount > 0 ? cat.count / totalDistCount : 0.2;
+                    const dashLength = pct * donutCircumference;
+                    const dashOffset = -accAngle;
+                    accAngle += dashLength;
+                    return (
+                      <circle
+                        key={idx}
+                        cx="70"
+                        cy="70"
+                        r={donutR}
+                        fill="none"
+                        stroke={cat.color}
+                        strokeWidth="14"
+                        strokeDasharray={`${dashLength} ${donutCircumference - dashLength}`}
+                        strokeDashoffset={dashOffset}
+                        className="transition-all duration-300 hover:opacity-85 cursor-pointer"
+                        onClick={() => {
+                          if (cat.dept !== 'ALL') {
+                            setTableFilter(tableFilter === cat.dept ? 'ALL' : cat.dept);
+                            setActiveTab('invoices');
+                          } else {
+                            setActiveTab('admissions');
+                          }
+                        }}
+                      />
+                    );
+                  });
+                })()}
               </svg>
 
               {/* Total in Center */}
-              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">TOTAL ENCOUNTERS</span>
-                <span className="text-2xl font-extrabold text-slate-900 mt-0.5">
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center select-none">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">TOTAL</span>
+                <span className="text-3xl font-extrabold text-slate-900 leading-none my-1 tracking-tight">
                   {totalEncounters || data.todayInvoicesCount}
                 </span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">ENCOUNTERS</span>
               </div>
             </div>
 

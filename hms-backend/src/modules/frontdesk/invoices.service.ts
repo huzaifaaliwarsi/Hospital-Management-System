@@ -1,12 +1,13 @@
 import { resolvePanelCoverage } from '@/shared/panelCoverage';
 import { assertMembershipEligible } from '@/shared/panelMembership';
 import { assertCaseAuthorization } from '@/shared/panelAuthorization';
-import { patientPaymentStatus, patientResponsibility } from '@/shared/invoicePaymentStatus';
+import { patientPaymentStatus, patientResponsibility, patientBalanceDue } from '@/shared/invoicePaymentStatus';
 import { Decimal } from '@prisma/client/runtime/library';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
 import { NotFoundError, ValidationError, AuthorizationError } from '@/shared/errors/AppError';
 import { commissionService } from '@/modules/commission/commission.service';
+import { pharmacyBridgeClient } from '@/shared/pharmacyBridgeClient';
 import type {
   CreateEncounterBody,
   AddServiceLineBody,
@@ -18,49 +19,11 @@ import type {
 } from './invoices.schemas';
 
 import { generateInvoiceNumber, generateReceiptNumber, generateMrNumber } from '@/shared/idGenerator';
-
-const DISCOUNT_APPROVAL_PERCENT_THRESHOLD = 15; // > 15% requires Admin approval
-const DISCOUNT_APPROVAL_AMOUNT_THRESHOLD = 1500; // > PKR 1,500 requires Admin approval
-
-function isEligibleHospitalService(serviceRate: any): boolean {
-  if (!serviceRate) return true;
-  if (serviceRate.discountAllowed === false) return false;
-  if (serviceRate.serviceStream === 'LAB') return false;
-
-  const cat = (serviceRate.category || '').toLowerCase();
-  if (
-    cat.includes('lab') ||
-    cat.includes('pathology') ||
-    cat.includes('pharmacy') ||
-    cat.includes('radiology') ||
-    cat.includes('diagnostic')
-  ) {
-    return false;
-  }
-
-  const dept = serviceRate.department;
-  if (dept) {
-    if (dept.fulfillmentOwnership === 'OUTSOURCED') return false;
-    if (Boolean(dept.outsourcedProviderId)) return false;
-    if (dept.pharmacyRelated) return false;
-    const deptName = (dept.name || '').toLowerCase();
-    const deptCode = (dept.code || '').toLowerCase();
-    if (
-      deptName.includes('lab') ||
-      deptName.includes('pathology') ||
-      deptName.includes('pharmacy') ||
-      deptName.includes('radiology') ||
-      deptName.includes('imaging') ||
-      deptCode.includes('lab') ||
-      deptCode.includes('pharm') ||
-      deptCode.includes('rad')
-    ) {
-      return false;
-    }
-  }
-
-  return true;
-}
+import {
+  isEligibleHospitalService,
+  DISCOUNT_APPROVAL_PERCENT_THRESHOLD,
+  DISCOUNT_APPROVAL_AMOUNT_THRESHOLD,
+} from '@/shared/discountEligibility';
 
 export const invoicesService = {
   /**
@@ -519,7 +482,7 @@ export const invoicesService = {
    * and feeds cashier physical cash vs digital balance (§4.9, §8.12).
    */
   async collectPayment(invoiceId: string, body: CollectPaymentBody, actorId: string) {
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const invoice = await tx.hospitalInvoice.findUnique({
         where: { id: invoiceId },
         include: { paymentReceipts: true, lines: true },
@@ -565,6 +528,7 @@ export const invoicesService = {
         },
       });
 
+      const previousPaidTotal = invoice.paidTotal;
       const newPaidTotal = invoice.paidTotal.plus(amountDecimal);
       const newStatus = patientPaymentStatus(invoice, newPaidTotal);
 
@@ -580,8 +544,126 @@ export const invoicesService = {
         },
       });
 
-      return { receipt, invoice: updatedInvoice };
+      // ── Pharmacy Charges & Cross-Entity Settlement Reconciliation ──
+      const pharmacyNotifications: Array<{ pharmacyInvoiceNumber: string; amount: number; receiptNumber: string }> = [];
+      const pharmacyServiceRate = await tx.serviceRate.findFirst({ where: { code: 'SRV-PHARMACY' } });
+      if (pharmacyServiceRate) {
+        const invoiceLines = await tx.invoiceLineItem.findMany({
+          where: { hospitalInvoiceId: invoice.id },
+          orderBy: { createdAt: 'asc' },
+          select: { serviceRateId: true, patientShare: true },
+        });
+
+        let cursor = new Decimal(0);
+        let pharmacyPortion = new Decimal(0);
+        for (const line of invoiceLines) {
+          const lineStart = cursor;
+          const lineEnd = cursor.plus(line.patientShare);
+          cursor = lineEnd;
+          if (line.serviceRateId !== pharmacyServiceRate.id) continue;
+          const overlapStart = Decimal.max(lineStart, previousPaidTotal);
+          const overlapEnd = Decimal.min(lineEnd, newPaidTotal);
+          if (overlapEnd.greaterThan(overlapStart)) {
+            pharmacyPortion = pharmacyPortion.plus(overlapEnd.minus(overlapStart));
+          }
+        }
+
+        if (pharmacyPortion.greaterThan(0)) {
+          const charges = await tx.hmsPharmacyCharge.findMany({
+            where: invoice.admissionRecordId
+              ? { admissionRecordId: invoice.admissionRecordId }
+              : undefined,
+            orderBy: { createdAt: 'asc' },
+          });
+
+          let remainingPortion = pharmacyPortion;
+          for (const charge of charges) {
+            if (remainingPortion.lessThanOrEqualTo(0)) break;
+            const uncollected = Decimal.max(0, charge.totalAmount.minus(charge.patientPaid));
+            if (uncollected.lessThanOrEqualTo(0)) continue;
+
+            const alloc = Decimal.min(remainingPortion, uncollected);
+            const newPatientPaid = charge.patientPaid.plus(alloc);
+            const newPatientOutstanding = Decimal.max(0, charge.totalAmount.minus(newPatientPaid));
+            const chargePaidInFull = newPatientOutstanding.equals(0);
+            const newPatientPaymentStatus = chargePaidInFull ? 'CLEARED' : 'PARTIALLY_COLLECTED';
+            const settlementStatus = chargePaidInFull && charge.settlementStatus === 'NOT_DUE' ? 'PENDING' : charge.settlementStatus;
+
+            await tx.hmsPharmacyCharge.update({
+              where: { id: charge.id },
+              data: {
+                patientPaid: newPatientPaid,
+                patientOutstanding: newPatientOutstanding,
+                patientPaymentStatus: newPatientPaymentStatus,
+                settlementStatus,
+                collectedById: actorId,
+                collectedAt: new Date(),
+              },
+            });
+
+            pharmacyNotifications.push({
+              pharmacyInvoiceNumber: charge.pharmacyInvoiceNumber,
+              amount: Number(alloc),
+              receiptNumber,
+            });
+
+            remainingPortion = remainingPortion.minus(alloc);
+          }
+
+          if (invoice.admissionRecordId) {
+            const totalChargesCount = await tx.hmsPharmacyCharge.count({
+              where: { admissionRecordId: invoice.admissionRecordId },
+            });
+            const uncollectedChargesCount = await tx.hmsPharmacyCharge.count({
+              where: {
+                admissionRecordId: invoice.admissionRecordId,
+                patientPaymentStatus: { not: 'CLEARED' },
+              },
+            });
+
+            if (totalChargesCount > 0 && uncollectedChargesCount === 0) {
+              await tx.dualDischargeClearance.upsert({
+                where: {
+                  admissionRecordId_clearanceType: {
+                    admissionRecordId: invoice.admissionRecordId,
+                    clearanceType: 'PHARMACY',
+                  },
+                },
+                update: {
+                  status: 'CLEARED',
+                  clearedById: actorId,
+                  clearedAt: new Date(),
+                },
+                create: {
+                  admissionRecordId: invoice.admissionRecordId,
+                  clearanceType: 'PHARMACY',
+                  status: 'CLEARED',
+                  clearedById: actorId,
+                  clearedAt: new Date(),
+                },
+              });
+            }
+          }
+        }
+      }
+
+      return { receipt, invoice: updatedInvoice, pharmacyNotifications };
     });
+
+    // Notify Pharmacy Software via Bridge asynchronously outside the DB transaction
+    for (const notif of result.pharmacyNotifications || []) {
+      pharmacyBridgeClient.notifyPatientCollected({
+        pharmacyInvoiceNumber: notif.pharmacyInvoiceNumber,
+        collectedAmount: notif.amount,
+        receiptNumber: notif.receiptNumber,
+        collectedAt: new Date().toISOString(),
+      }).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[invoicesService] Failed to notify pharmacy of patient collection:', err);
+      });
+    }
+
+    return { receipt: result.receipt, invoice: result.invoice };
   },
 
   /**
@@ -792,7 +874,7 @@ export const invoicesService = {
       where.status = { in: ['UNPAID', 'PARTIALLY_PAID'] };
     }
 
-    return prisma.hospitalInvoice.findMany({
+    const invoices = await prisma.hospitalInvoice.findMany({
       where,
       include: {
         panelPatient: {
@@ -817,6 +899,12 @@ export const invoicesService = {
       orderBy: { createdAt: 'desc' },
       take: 200,
     });
+
+    return invoices.map((inv) => ({
+      ...inv,
+      balanceDue: patientBalanceDue(inv, inv.paidTotal).toNumber(),
+      status: inv.status === 'VOID' ? 'VOID' : patientPaymentStatus(inv, inv.paidTotal),
+    }));
   },
 
   async getInvoice(id: string) {
@@ -861,6 +949,11 @@ export const invoicesService = {
       },
     });
     if (!invoice) throw new NotFoundError('Invoice not found');
-    return { ...invoice, status: invoice.status === 'VOID' ? 'VOID' : patientPaymentStatus(invoice, invoice.paidTotal), lines: invoice.lines.filter((l) => invoice.sourceType !== 'ADMISSION' || l.serviceRate.code !== 'ADM-ADVANCE') };
+    return {
+      ...invoice,
+      balanceDue: patientBalanceDue(invoice, invoice.paidTotal).toNumber(),
+      status: invoice.status === 'VOID' ? 'VOID' : patientPaymentStatus(invoice, invoice.paidTotal),
+      lines: invoice.lines.filter((l) => invoice.sourceType !== 'ADMISSION' || l.serviceRate.code !== 'ADM-ADVANCE'),
+    };
   },
 };

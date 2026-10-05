@@ -547,6 +547,17 @@ export const pharmacyService = {
       const invoice = await tx.pharmacyInvoice.findUnique({ where: { id: invoiceId } });
       if (!invoice) throw new NotFoundError('Invoice not found');
       if (invoice.status === 'PAID') throw new ConflictError('Invoice is already fully paid');
+      // HMS-linked invoices are paid by the patient at the HMS Front Desk,
+      // never at this pharmacy counter — "collecting" one here would log a
+      // physical-cash entry that was never actually received, while leaving
+      // `hmsCollectedAmount`/`hmsReceivable` (the real cross-entity receivable)
+      // untouched. That money only ever moves through the settlement
+      // workflow: `createSettlementRequest` → HMS releases it → `handleSettlementRelease`.
+      if (invoice.channel === 'HMS_LINKED') {
+        throw new ValidationError(
+          'HMS-linked invoices are collected by the patient at the HMS Front Desk, not here. Use "Request Settlement" on this invoice to collect what HMS owes Pharmacy.',
+        );
+      }
       const amount = new Decimal(body.amount);
       if (amount.greaterThan(invoice.outstanding)) throw new ValidationError(`Payment exceeds outstanding balance of ${invoice.outstanding}`);
 
@@ -554,16 +565,15 @@ export const pharmacyService = {
       const newPaid = invoice.paidTotal.plus(amount);
       const newOutstanding = invoice.outstanding.minus(amount);
       const newStatus = newOutstanding.lessThanOrEqualTo(0) ? 'PAID' : 'PARTIALLY_PAID';
-      const newClearance = invoice.channel === 'HMS_LINKED' ? (newOutstanding.lessThanOrEqualTo(0) ? 'CLEARED' : 'OUTSTANDING') : undefined;
 
       const updated = await tx.pharmacyInvoice.update({
         where: { id: invoiceId },
-        data: { paidTotal: newPaid, outstanding: newOutstanding, status: newStatus, ...(newClearance ? { clearanceStatus: newClearance } : {}) },
+        data: { paidTotal: newPaid, outstanding: newOutstanding, status: newStatus },
         include: { lines: true, payments: true },
       });
 
       await tx.cashLedgerEntry.create({
-        data: { portalUserId: actorId, direction: 'IN', amount, category: invoice.channel === 'HMS_LINKED' ? 'HMS_COLLECTION' : 'POS_COLLECTION', isPhysicalCash: body.method === 'CASH', referenceTable: 'pharmacy_invoices', referenceId: invoiceId },
+        data: { portalUserId: actorId, direction: 'IN', amount, category: 'POS_COLLECTION', isPhysicalCash: body.method === 'CASH', referenceTable: 'pharmacy_invoices', referenceId: invoiceId },
       });
 
       return updated;

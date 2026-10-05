@@ -37,6 +37,38 @@ function toHospitalProfile(raw: Record<string, unknown>): HospitalProfile {
   } as HospitalProfile;
 }
 
+import { useState, useEffect } from 'react';
+
+type ProfileListener = (profile: HospitalProfile) => void;
+const listeners = new Set<ProfileListener>();
+
+export function subscribeHospitalProfile(fn: ProfileListener): () => void {
+  listeners.add(fn);
+  fn(cachedProfile);
+  return () => {
+    listeners.delete(fn);
+  };
+}
+
+function notifyProfileSubscribers(profile: HospitalProfile) {
+  listeners.forEach((fn) => {
+    try {
+      fn(profile);
+    } catch (e) {
+      console.error(e);
+    }
+  });
+}
+
+/** React hook that subscribes to live hospital profile and logo changes across the whole app */
+export function useHospitalProfile(): HospitalProfile {
+  const [profile, setProfile] = useState<HospitalProfile>(() => getHospitalProfile());
+  useEffect(() => {
+    return subscribeHospitalProfile(setProfile);
+  }, []);
+  return profile;
+}
+
 // In-memory cache (never localStorage) for the many print/export helpers
 // that need a synchronous "current hospital letterhead" read. Always
 // populated from a real backend response — `primeHospitalProfileCache()`
@@ -48,15 +80,47 @@ let cachedProfile: HospitalProfile = DEFAULT_HOSPITAL_PROFILE;
 export async function fetchHospitalProfile(): Promise<HospitalProfile> {
   const res = await apiClient.get<{ data: Record<string, unknown> }>('/setup/hospital-profile');
   cachedProfile = toHospitalProfile(res.data.data);
+  notifyProfileSubscribers(cachedProfile);
+  return cachedProfile;
+}
+
+export async function fetchPublicHospitalProfile(): Promise<HospitalProfile> {
+  try {
+    const res = await apiClient.get<{ data: Record<string, unknown> }>('/public/hospital-profile');
+    if (res.data?.data) {
+      cachedProfile = {
+        ...cachedProfile,
+        name: (res.data.data.name as string) || cachedProfile.name,
+        shortName: (res.data.data.shortName as string) || cachedProfile.shortName,
+        logo: (res.data.data.logo as string | null) ?? cachedProfile.logo,
+      };
+      notifyProfileSubscribers(cachedProfile);
+    }
+  } catch {
+    // Keep cached
+  }
   return cachedProfile;
 }
 
 export async function saveHospitalProfile(profile: HospitalProfile): Promise<HospitalProfile> {
   // Strip client-only/derived fields (id, audit trail) — the backend owns those.
   const { id: _id, createdAt: _createdAt, createdBy: _createdBy, updatedAt: _updatedAt, updatedBy: _updatedBy, ...payload } = profile;
-  const res = await apiClient.put<{ data: Record<string, unknown> }>('/setup/hospital-profile', payload);
+  const res = await apiClient.put<{ data: Record<string, unknown> }>('/setup/hospital-profile', {
+    ...payload,
+    logo: profile.logo,
+    logoUrl: profile.logo,
+  });
   cachedProfile = toHospitalProfile(res.data.data);
+  notifyProfileSubscribers(cachedProfile);
   return cachedProfile;
+}
+
+/** Direct one-shot helper to update or clear the hospital logo */
+export async function updateHospitalLogo(logoDataUrl: string | null): Promise<HospitalProfile> {
+  return saveHospitalProfile({
+    ...getHospitalProfile(),
+    logo: logoDataUrl,
+  });
 }
 
 /** Async warm-up — call once at app startup (post-login) so sync readers below have real data. */

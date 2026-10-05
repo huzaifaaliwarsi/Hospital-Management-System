@@ -203,24 +203,34 @@ export const frontdeskReportsService = {
       take: 500,
     });
 
-    const filtered = rows.filter((r) => (query.minOutstanding == null ? true : r.total.minus(r.paidTotal).toNumber() >= query.minOutstanding));
-    const totalOutstanding = filtered.reduce((s, r) => s.plus(r.total.minus(r.paidTotal)), new Decimal(0));
+    const filtered = rows.filter((r) => {
+      const diff = r.total.minus(r.paidTotal);
+      if (query.minOutstanding != null) return diff.toNumber() >= query.minOutstanding;
+      return diff.greaterThan(0);
+    });
+    const totalOutstanding = filtered.reduce((s, r) => {
+      const diff = r.total.minus(r.paidTotal);
+      return diff.greaterThan(0) ? s.plus(diff) : s;
+    }, new Decimal(0));
 
     return {
       period: { label, start: start.toISOString(), end: end.toISOString() },
       summary: { totalOutstanding, invoiceCount: filtered.length },
-      rows: filtered.map((r) => ({
-        invoiceNumber: r.invoiceNumber,
-        patient: patientDisplayName(r),
-        department: r.department?.name ?? null,
-        net: r.total,
-        paid: r.paidTotal,
-        outstanding: r.total.minus(r.paidTotal),
-        lastPaymentAt: r.paymentReceipts[0]?.collectedAt ?? null,
-        payer: r.corporatePanelId ? 'Panel' : 'Self-Pay',
-        createdBy: r.createdByUser?.displayName || r.createdByUser?.username || null,
-        status: r.status,
-      })),
+      rows: filtered.map((r) => {
+        const diff = r.total.minus(r.paidTotal);
+        return {
+          invoiceNumber: r.invoiceNumber,
+          patient: patientDisplayName(r),
+          department: r.department?.name ?? null,
+          net: r.total,
+          paid: r.paidTotal,
+          outstanding: diff.greaterThan(0) ? diff : new Decimal(0),
+          lastPaymentAt: r.paymentReceipts[0]?.collectedAt ?? null,
+          payer: r.corporatePanelId ? 'Panel' : 'Self-Pay',
+          createdBy: r.createdByUser?.displayName || r.createdByUser?.username || null,
+          status: r.status,
+        };
+      }),
     };
   },
 

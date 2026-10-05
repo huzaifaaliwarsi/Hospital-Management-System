@@ -18,7 +18,8 @@ const dayWorkingHoursSchema = z.object({
 export const updateHospitalProfileSchema = z.object({
   name: z.string().max(200).optional(),
   shortName: z.string().max(50).optional(),
-  logoUrl: z.string().optional(),
+  logo: z.string().nullable().optional(),
+  logoUrl: z.string().nullable().optional(),
   hospitalType: z.string().max(100).optional(),
   registrationNumber: z.string().max(100).optional(),
   licenseNumber: z.string().max(100).optional(),

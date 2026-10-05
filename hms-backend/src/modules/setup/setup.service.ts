@@ -151,6 +151,25 @@ export const setupService = {
     return toClientProfile(row);
   },
 
+  async getHospitalPublicProfile() {
+    const existing = await prisma.hospitalProfile.findFirst();
+    if (!existing) {
+      return {
+        name: 'CH Sharif and Saeed Hospital',
+        shortName: 'CSS Hospital',
+        logo: null,
+      };
+    }
+    const extended = (existing.extendedProfile as Record<string, unknown>) ?? {};
+    return {
+      name: existing.name || (extended.name as string) || 'CH Sharif and Saeed Hospital',
+      shortName: (extended.shortName as string) || 'CSS Hospital',
+      logo: existing.logoUrl ?? null,
+      primaryPhone: existing.contactPhone || '',
+      address: existing.address || '',
+    };
+  },
+
   async getHospitalSummary() {
     const [
       departments,
@@ -198,8 +217,8 @@ export const setupService = {
     if (!row.createdBy) data.createdBy = updatedBy;
     if (body.name !== undefined) data.name = body.name;
     if (body.primaryPhone !== undefined) data.contactPhone = body.primaryPhone;
-    if (body.primaryEmail !== undefined) data.contactEmail = body.primaryEmail;
-    if (body.logoUrl !== undefined) data.logoUrl = body.logoUrl;
+    const logoVal = (body as any).logo !== undefined ? (body as any).logo : body.logoUrl;
+    if (logoVal !== undefined) data.logoUrl = logoVal;
     if (body.currency !== undefined) data.currencyCode = body.currency;
     if (body.timezone !== undefined) data.timezone = body.timezone;
     if (body.printHeaderConfig !== undefined) data.printHeaderConfig = body.printHeaderConfig as Prisma.InputJsonValue;

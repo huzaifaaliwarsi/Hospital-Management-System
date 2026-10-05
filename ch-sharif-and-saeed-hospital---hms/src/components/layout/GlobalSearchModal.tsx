@@ -438,11 +438,6 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
                         <span className="text-xs font-bold text-slate-900 truncate">
                           {item.title}
                         </span>
-                        {item.badge && (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 font-semibold border border-slate-200">
-                            {item.badge}
-                          </span>
-                        )}
                       </div>
                       <p className="text-[11px] text-slate-500 truncate mt-0.5">
                         {item.subtitle}

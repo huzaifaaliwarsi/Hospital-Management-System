@@ -383,22 +383,22 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="flex border-b border-slate-200 overflow-x-auto -mx-6 px-6">
+          <div className="flex border-b border-slate-200 overflow-x-auto -mx-6 px-6 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {TABS.map((t) => (
               <button
                 key={t.id}
                 type="button"
                 onClick={() => setTab(t.id)}
-                className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
-                  tab === t.id ? 'border-[#08775A] text-[#08775A]' : 'border-transparent text-slate-500 hover:text-slate-800'
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs whitespace-nowrap border-b-2 transition-colors cursor-pointer ${
+                  tab === t.id
+                    ? 'border-emerald-600 text-emerald-700 font-semibold'
+                    : 'border-transparent text-slate-500 hover:text-slate-800 font-medium'
                 }`}
               >
                 <t.icon className="h-3.5 w-3.5" /> {t.label}
               </button>
             ))}
           </div>
-
-          <AdmissionLedgerButton admissionId={admissionId} />
 
           {actionError && (
             <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700 font-medium flex items-center gap-2">
@@ -408,38 +408,110 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
 
           {tab === 'overview' && (
             <div className="space-y-3">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
-                <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
-                  <span className="text-[10px] text-slate-500 uppercase block">Payer</span>
-                  <span className="font-semibold text-slate-900 flex items-center gap-1.5">
-                    {detail.payerType === 'Corporate / Panel' ? <PanelBadge /> : 'Self-Pay'}
-                  </span>
+              {/* Cohesive Admission Summary Card */}
+              <div className="bg-slate-50/70 border border-slate-200/90 rounded-xl overflow-hidden shadow-2xs [font-family:'Inter',system-ui,sans-serif]">
+                {/* Card Header: Status, Payer, MRN & Ledger Action */}
+                <div className="px-4 py-3 bg-white border-b border-slate-200/80 flex items-center justify-between flex-wrap gap-2.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* Status Badge */}
+                    <span
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${
+                        detail.status === 'ACTIVE'
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : detail.status === 'DISCHARGE_PENDING'
+                          ? 'bg-amber-50 text-amber-700 border-amber-200'
+                          : detail.status === 'DISCHARGED'
+                          ? 'bg-slate-100 text-slate-700 border-slate-200'
+                          : 'bg-blue-50 text-blue-700 border-blue-200'
+                      }`}
+                    >
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full ${
+                          detail.status === 'ACTIVE'
+                            ? 'bg-emerald-500'
+                            : detail.status === 'DISCHARGE_PENDING'
+                            ? 'bg-amber-500'
+                            : 'bg-slate-400'
+                        }`}
+                      />
+                      {detail.status.replace(/_/g, ' ')}
+                    </span>
+
+                    {/* Payer Badge */}
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200/80">
+                      {detail.payerType === 'Corporate / Panel' ? <PanelBadge /> : 'Self-Pay'}
+                    </span>
+
+                    {/* MR Number - semibold */}
+                    <span className="text-xs text-slate-800 font-semibold px-2.5 py-0.5 rounded bg-slate-100 border border-slate-200">
+                      MRN: {detail.patientMrNumber}
+                    </span>
+                  </div>
+
+                  {/* Integrated View Ledger Button */}
+                  <AdmissionLedgerButton
+                    admissionId={admissionId}
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg text-emerald-700 bg-emerald-50 hover:bg-emerald-100/90 border border-emerald-200/80 inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    <span>View Ledger</span>
+                  </AdmissionLedgerButton>
                 </div>
-                <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
-                  <span className="text-[10px] text-slate-500 uppercase block">Status</span>
-                  <span className="font-bold text-slate-900">{detail.status}</span>
+
+                {/* Card Body: Balanced 4-Column Metadata Layout with semibold values */}
+                <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
+                  <div>
+                    <span className="text-[11px] font-medium text-slate-400 block">Department</span>
+                    <span className="font-semibold text-slate-900 truncate block mt-0.5" title={detail.departmentName}>
+                      {detail.departmentName || 'Not assigned'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[11px] font-medium text-slate-400 block">Ward / Room / Bed</span>
+                    <span className="font-semibold text-slate-900 truncate block mt-0.5" title={detail.bedLabel || ''}>
+                      {detail.bedLabel || 'No bed assigned'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[11px] font-medium text-slate-400 block">Attending Doctor</span>
+                    <span className="font-semibold text-slate-900 truncate block mt-0.5" title={detail.doctorName}>
+                      {detail.doctorName || 'Not assigned'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[11px] font-medium text-slate-400 block">Medication Mode</span>
+                    <span className="font-semibold text-slate-900 truncate block mt-0.5">
+                      {detail.medicationMode === 'HOSPITAL_MANAGED' ? 'Hospital Managed' : 'Self (Patient Arranged)'}
+                    </span>
+                  </div>
                 </div>
-                <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
-                  <span className="text-[10px] text-slate-500 uppercase block">Medication Mode</span>
-                  <span className="font-bold text-slate-900">{detail.medicationMode}</span>
-                </div>
-                <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
-                  <span className="text-[10px] text-slate-500 uppercase block">Department</span>
-                  <span className="font-semibold text-slate-900">{detail.departmentName || 'Not assigned'}</span>
-                </div>
-                <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
-                  <span className="text-[10px] text-slate-500 uppercase block">MR Number</span>
-                  <span className="font-semibold text-slate-900">{detail.patientMrNumber}</span>
+
+                {/* Diagnosis (if provided) */}
+                {detail.diagnosis && (
+                  <div className="px-4 py-2.5 bg-white border-t border-slate-200/80 text-xs flex items-start gap-2">
+                    <span className="text-[11px] font-semibold text-slate-500 shrink-0 mt-0.5">Diagnosis:</span>
+                    <span className="text-slate-800 font-medium leading-relaxed">{detail.diagnosis}</span>
+                  </div>
+                )}
+
+                {/* Card Footer: Clean Timeline */}
+                <div className="px-4 py-2.5 bg-slate-50/90 border-t border-slate-200/80 text-[11px] text-slate-600 flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <span>
+                      <strong className="font-semibold text-slate-700">Expected:</strong> {detail.expectedAt || '—'}
+                    </span>
+                    <span>
+                      <strong className="font-semibold text-slate-700">Admitted:</strong> {detail.admittedAt || '—'}
+                    </span>
+                    <span>
+                      <strong className="font-semibold text-slate-700">Discharged:</strong> {detail.dischargedAt || '—'}
+                    </span>
+                  </div>
                 </div>
               </div>
-              {detail.diagnosis && (
-                <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-xs">
-                  <span className="text-[10px] text-slate-500 uppercase block mb-0.5">Diagnosis</span>
-                  {detail.diagnosis}
-                </div>
-              )}
+
               {detail.status === 'DISCHARGE_PENDING' && isAllClearancesReady && (
-                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between gap-3 text-xs">
+                <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between gap-3 text-xs">
                   <div className="flex items-center gap-2 text-emerald-900 font-semibold">
                     <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
                     <div>
@@ -451,16 +523,13 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                     type="button"
                     onClick={handleFinalDischarge}
                     disabled={isDischarging}
-                    className="px-4 py-2 bg-[#08775A] hover:bg-[#065f46] text-white font-bold rounded-lg shadow-xs flex items-center gap-1.5 shrink-0 cursor-pointer disabled:opacity-60 text-xs"
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-medium rounded-lg shadow-xs flex items-center gap-1.5 shrink-0 cursor-pointer disabled:opacity-60 text-xs transition-colors"
                   >
                     {isDischarging && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                     <span>Complete Final Discharge & Free Bed</span>
                   </button>
                 </div>
               )}
-              <div className="text-[11px] text-slate-500">
-                Expected: {detail.expectedAt || '—'} • Admitted: {detail.admittedAt || '—'} • Discharged: {detail.dischargedAt || '—'}
-              </div>
             </div>
           )}
 
@@ -865,39 +934,81 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                   {pharmLines.map((line, idx) => {
                     const selMed = medicines.find((m) => m.id === line.medicineId);
                     return (
-                      <div key={idx} className="space-y-1.5 p-2.5 bg-white border border-slate-200 rounded-xl">
-                        <div className="grid grid-cols-3 gap-2 items-end">
-                          <Select
-                            label={idx === 0 ? 'Select Medicine from Pharmacy Stock' : undefined}
-                            className="col-span-2"
-                            placeholder="Choose medicine from pharmacy…"
-                            options={medicines.map((m) => ({
-                              label: `${m.name} (${m.code}) — Stock: ${m.currentStock} ${m.unit || 'units'} — ${formatPKR(Number(m.saleRate || 0))}`,
-                              value: m.id,
-                            }))}
-                            value={line.medicineId}
-                            onChange={(e) => {
-                              const next = [...pharmLines];
-                              next[idx] = { ...next[idx], medicineId: e.target.value };
-                              setPharmLines(next);
-                            }}
-                          />
-                          <NumberInput
-                            label={idx === 0 ? 'Requested Qty' : undefined}
-                            min={1}
-                            value={line.requestedQuantity}
-                            onChange={(e) => {
-                              const next = [...pharmLines];
-                              next[idx] = { ...next[idx], requestedQuantity: Number(e.target.value) || 1 };
-                              setPharmLines(next);
-                            }}
-                          />
+                      <div key={idx} className="space-y-2 p-3 bg-white border border-slate-200/90 rounded-xl shadow-2xs">
+                        <div className="flex items-start gap-2.5">
+                          <div className="flex-1">
+                            <Select
+                              label={idx === 0 ? 'Select Medicine from Pharmacy Stock' : undefined}
+                              placeholder="Choose medicine from pharmacy…"
+                              options={medicines.map((m) => ({
+                                label: m.name,
+                                value: m.id,
+                              }))}
+                              value={line.medicineId}
+                              onChange={(e) => {
+                                const next = [...pharmLines];
+                                next[idx] = { ...next[idx], medicineId: e.target.value };
+                                setPharmLines(next);
+                              }}
+                            />
+                          </div>
+                          <div className="w-28 shrink-0">
+                            <NumberInput
+                              label={idx === 0 ? 'Requested Qty' : undefined}
+                              min={1}
+                              value={line.requestedQuantity}
+                              onChange={(e) => {
+                                const next = [...pharmLines];
+                                next[idx] = { ...next[idx], requestedQuantity: Number(e.target.value) || 1 };
+                                setPharmLines(next);
+                              }}
+                            />
+                          </div>
+                          {pharmLines.length > 1 && (
+                            <div className={idx === 0 ? 'pt-6' : 'pt-1'}>
+                              <button
+                                type="button"
+                                title="Remove item"
+                                onClick={() => setPharmLines(pharmLines.filter((_, i) => i !== idx))}
+                                className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
+                            </div>
+                          )}
                         </div>
+
+                        {/* Medicine Details Card Shown Underneath When Selected */}
                         {selMed && (
-                          <div className="flex items-center justify-between text-[10.5px] text-slate-500 px-1 pt-1 border-t border-slate-100">
-                            <span>Category: <strong className="text-slate-700">{selMed.category || 'General'}</strong></span>
-                            <span>Available Stock: <strong className={Number(selMed.currentStock) > 0 ? 'text-emerald-700' : 'text-rose-600'}>{selMed.currentStock} {selMed.unit}</strong></span>
-                            <span>Unit Rate: <strong className="text-slate-800">{formatPKR(Number(selMed.saleRate || 0))}</strong></span>
+                          <div className="mt-2 p-2.5 bg-slate-50/80 rounded-lg border border-slate-200/80 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs animate-in fade-in duration-150">
+                            <div>
+                              <span className="text-[11px] font-medium text-slate-400 block">Unit Price</span>
+                              <span className="font-semibold text-slate-900 block mt-0.5">
+                                {formatPKR(Number(selMed.saleRate || 0))}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-[11px] font-medium text-slate-400 block">Available Stock</span>
+                              <span
+                                className={`font-semibold block mt-0.5 ${
+                                  Number(selMed.currentStock) > 0 ? 'text-emerald-700' : 'text-rose-600'
+                                }`}
+                              >
+                                {selMed.currentStock} {selMed.unit || 'units'}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-[11px] font-medium text-slate-400 block">Category</span>
+                              <span className="font-semibold text-slate-900 block mt-0.5 truncate" title={selMed.category || 'General'}>
+                                {selMed.category || 'General'}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-[11px] font-medium text-slate-400 block">Estimated Subtotal</span>
+                              <span className="font-semibold text-emerald-700 block mt-0.5">
+                                {formatPKR(Number(selMed.saleRate || 0) * (line.requestedQuantity || 1))}
+                              </span>
+                            </div>
                           </div>
                         )}
                       </div>
@@ -907,14 +1018,28 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                   <button
                     type="button"
                     onClick={() => setPharmLines([...pharmLines, { medicineId: '', requestedQuantity: 1 }])}
-                    className="text-[11px] font-bold text-[#08775A] hover:text-[#065f46] hover:underline cursor-pointer"
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:text-emerald-800 hover:underline cursor-pointer"
                   >
-                    + Add another medicine
+                    <Plus className="h-3.5 w-3.5" />
+                    <span>Add another medicine</span>
                   </button>
-                  <Textarea label="Special Clinical Instructions (optional)" rows={2} placeholder="Dosage instructions, route (IV/IM/Oral), emergency priority…" value={pharmNotes} onChange={(e) => setPharmNotes(e.target.value)} />
-                  <div className="flex justify-end">
-                    <button type="submit" disabled={isSaving} className="px-5 py-2 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded-xl shadow-xs disabled:opacity-60 cursor-pointer">
-                      {isSaving ? 'Sending to Pharmacy…' : 'Send Pharmacy Request'}
+
+                  <Textarea
+                    label="Special Clinical Instructions (optional)"
+                    rows={2}
+                    placeholder="Dosage instructions, route (IV/IM/Oral), emergency priority…"
+                    value={pharmNotes}
+                    onChange={(e) => setPharmNotes(e.target.value)}
+                  />
+
+                  <div className="flex justify-end pt-1">
+                    <button
+                      type="submit"
+                      disabled={isSaving}
+                      className="px-5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 rounded-lg shadow-xs disabled:opacity-60 inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      {isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                      <span>{isSaving ? 'Sending to Pharmacy…' : 'Send Pharmacy Request'}</span>
                     </button>
                   </div>
                 </form>

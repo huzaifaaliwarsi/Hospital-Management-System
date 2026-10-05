@@ -162,10 +162,10 @@ export const CANONICAL_HOSPITAL_MANAGEMENT_NAV_GROUPS: NavGroup[] = [
       { id: 'appointments_operations_overview', label: 'Appointments / Operations Overview', icon: 'Activity' },
       { id: 'opd_overview', label: 'OPD Overview', icon: 'Stethoscope' },
       { id: 'observation_overview', label: 'Observation Overview', icon: 'Eye' },
-      { id: 'emergency_overview', label: 'Emergency Overview', icon: 'AlertTriangle', badge: 'Active', badgeVariant: 'danger' },
+      { id: 'emergency_overview', label: 'Emergency Overview', icon: 'AlertTriangle' },
       { id: 'admission_overview', label: 'Admission Overview', icon: 'Bed' },
       { id: 'inventory_overview', label: 'Inventory Overview', icon: 'Boxes' },
-      { id: 'pharmacy_integration', label: 'Pharmacy Integration', icon: 'Pill' },
+      { id: 'pharmacy_integration', label: 'Pharmacy Settlements', icon: 'Landmark' },
     ],
   },
   {
@@ -222,7 +222,7 @@ export const FRONT_DESK_NAV_GROUPS: NavGroup[] = [
     id: 'fd_patient_flow',
     title: 'PATIENT FLOW',
     items: [
-      { id: 'new_admission', label: 'New Admission', icon: 'BedDouble', badge: 'v7.2', badgeVariant: 'success' },
+      { id: 'new_admission', label: 'New Admission', icon: 'BedDouble' },
       { id: 'appointments', label: 'Appointments', icon: 'Clock' },
       { id: 'walk_in_intake', label: 'Walk-In / Encounter Intake', icon: 'Users' },
     ],
@@ -231,10 +231,10 @@ export const FRONT_DESK_NAV_GROUPS: NavGroup[] = [
     id: 'fd_billing',
     title: 'BILLING',
     items: [
-      { id: 'admission_patient_records', label: 'Admission Patient Records', icon: 'ClipboardList', badge: 'New', badgeVariant: 'success' },
-      { id: 'discharged_patients', label: 'Discharged Patients', icon: 'UserCheck', badge: 'History' },
+      { id: 'admission_patient_records', label: 'Admission Patient Records', icon: 'ClipboardList' },
+      { id: 'discharged_patients', label: 'Discharged Patients', icon: 'UserCheck' },
       { id: 'hospital_invoices', label: 'Hospital Invoices', icon: 'FileSpreadsheet' },
-      { id: 'billing_pending_discharges', label: 'Billing Pending Discharges', icon: 'ClipboardCheck', badge: 'v7.2', badgeVariant: 'success' },
+      { id: 'billing_pending_discharges', label: 'Billing Pending Discharges', icon: 'ClipboardCheck' },
       { id: 'admission_payment_requests', label: 'Admission Payment Requests', icon: 'CreditCard' },
       { id: 'payments_receipts', label: 'Payments / Receipts', icon: 'Receipt' },
       { id: 'discounts', label: 'Discounts', icon: 'Tag' },
@@ -287,8 +287,8 @@ export const ADMISSION_NAV_GROUPS: NavGroup[] = [
     title: 'ADMISSION',
     items: [
       { id: 'planned_admissions', label: 'Planned Admissions', icon: 'Clock' },
-      { id: 'admission_check_in', label: 'Admission Check-In', icon: 'Bed', badge: 'New', badgeVariant: 'success' },
-      { id: 'active_admissions', label: 'Active Admissions', icon: 'Users', badge: 'Inpatients' },
+      { id: 'admission_check_in', label: 'Admission Check-In', icon: 'Bed' },
+      { id: 'active_admissions', label: 'Active Admissions', icon: 'Users' },
       { id: 'bed_board_transfers', label: 'Bed Board / Transfers', icon: 'ArrowLeftRight' },
     ],
   },
@@ -308,7 +308,7 @@ export const ADMISSION_NAV_GROUPS: NavGroup[] = [
     items: [
       { id: 'discharge_clearances', label: 'Clearances', icon: 'ShieldCheck' },
       { id: 'final_discharge', label: 'Final Discharge', icon: 'CheckCircle2' },
-      { id: 'discharged_patients', label: 'Discharged Patients', icon: 'UserCheck', badge: 'History' },
+      { id: 'discharged_patients', label: 'Discharged Patients', icon: 'UserCheck' },
     ],
   },
   {
@@ -412,7 +412,7 @@ export const PHARMACY_NAV_GROUPS: NavGroup[] = [
     id: 'ph_sales',
     title: 'SALES',
     items: [
-      { id: 'new_pharmacy_sale', label: 'New Pharmacy Sale', icon: 'ShoppingCart', badge: 'POS', badgeVariant: 'success' },
+      { id: 'new_pharmacy_sale', label: 'New Pharmacy Sale', icon: 'ShoppingCart' },
       { id: 'sales_history', label: 'Sales History', icon: 'Clock' },
       { id: 'pharmacy_invoices', label: 'Pharmacy Invoices', icon: 'Receipt' },
       { id: 'returns', label: 'Returns', icon: 'CornerDownLeft' },
@@ -424,7 +424,7 @@ export const PHARMACY_NAV_GROUPS: NavGroup[] = [
     items: [
       { id: 'prescription_requests', label: 'Prescription Requests', icon: 'Pill' },
       { id: 'inpatient_medicine_requests', label: 'Inpatient Medicine Requests', icon: 'Bed' },
-      { id: 'pending_requests', label: 'Pending Requests', icon: 'ClipboardList', badge: '8 Pending', badgeVariant: 'warning' },
+      { id: 'pending_requests', label: 'Pending Requests', icon: 'ClipboardList' },
       { id: 'approved_requests', label: 'Approved Requests', icon: 'CheckCircle2' },
       { id: 'dispensed_medicines', label: 'Dispensed Medicines', icon: 'Check' },
     ],

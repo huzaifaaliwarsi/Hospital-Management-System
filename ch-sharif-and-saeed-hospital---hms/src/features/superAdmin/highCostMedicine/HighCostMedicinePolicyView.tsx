@@ -96,7 +96,7 @@ export const HighCostMedicinePolicyView: React.FC = () => {
           <div>
             <h1 className="text-xl font-bold text-slate-900">High-Cost Medicine Authorization Policy</h1>
             <p className="text-xs text-slate-500 mt-0.5">
-              Configurable inpatient medicine cost-control policy for Self-Pay and Panel patients (v7.2).
+              Configurable inpatient medicine cost-control policy for Self-Pay and Panel patients.
             </p>
           </div>
         </div>

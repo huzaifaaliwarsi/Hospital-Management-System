@@ -216,11 +216,14 @@ export function printTable<T>({ documentTitle, documentSubtitle, columns, rows, 
       </head>
       <body>
         <div class="header">
-          <div>
-            <div class="hospital-title">${profile.name || 'CH Sharif and Saeed Hospital'}</div>
-            <div class="hospital-subtitle">${documentSubtitle || 'Hospital Finance Control'}</div>
-            <div class="reg-info">
-              Reg: ${getProfileFieldValue(profile.registrationNumber)} | NTN: ${getProfileFieldValue(profile.taxNumber)} | Phone: ${getProfileFieldValue(profile.primaryPhone)}
+          <div style="display: flex; align-items: center; gap: 12px;">
+            ${profile.logo ? `<img src="${profile.logo}" style="height: 48px; width: 48px; object-fit: contain; border-radius: 6px; border: 1px solid #c2e7db; padding: 2px;" />` : ''}
+            <div>
+              <div class="hospital-title">${profile.name || 'CH Sharif and Saeed Hospital'}</div>
+              <div class="hospital-subtitle">${documentSubtitle || 'Hospital Finance Control'}</div>
+              <div class="reg-info">
+                Reg: ${getProfileFieldValue(profile.registrationNumber)} | NTN: ${getProfileFieldValue(profile.taxNumber)} | Phone: ${getProfileFieldValue(profile.primaryPhone)}
+              </div>
             </div>
           </div>
           <div class="badge">

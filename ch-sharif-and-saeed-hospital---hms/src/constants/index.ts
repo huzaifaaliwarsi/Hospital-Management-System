@@ -18,6 +18,9 @@ export const HOSPITAL_INFO = {
   get shortName() {
     return getHospitalProfile().shortName || 'CSS Hospital';
   },
+  get logo() {
+    return getHospitalProfile().logo || null;
+  },
   get city() {
     const p = getHospitalProfile();
     return p.city ? (p.country ? `${p.city}, ${p.country}` : p.city) : 'Not configured';

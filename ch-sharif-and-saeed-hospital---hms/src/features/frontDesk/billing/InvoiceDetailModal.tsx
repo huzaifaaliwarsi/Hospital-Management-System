@@ -16,6 +16,7 @@ import { ServiceRatesService, fetchServices } from '../../../services/serviceRat
 import { StaffUserService } from '../../../services/staffUserService';
 import { DepartmentService, fetchDepartments } from '../../../services/departmentService';
 import { Department } from '../../../types/department';
+import { getHospitalProfile } from '../../../services/hospitalProfileService';
 import { Modal } from '../../../components/common/Modal';
 import { Select, NumberInput, TextInput, ServiceChecklist } from '../../../components/forms/FormControls';
 
@@ -421,7 +422,8 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
         </head>
         <body>
           <div class="header">
-            <h1>CH Sharif and Saeed Hospital</h1>
+            ${getHospitalProfile().logo ? `<img src="${getHospitalProfile().logo}" style="height: 52px; max-width: 140px; object-fit: contain; margin-bottom: 6px; display: block; margin-left: auto; margin-right: auto;" />` : ''}
+            <h1>${getHospitalProfile().name || 'CH Sharif and Saeed Hospital'}</h1>
             <p>Excellence in Clinical Care, Diagnostics &amp; Patient Services</p>
             <p>Official Patient Encounter Invoice / Bill</p>
           </div>

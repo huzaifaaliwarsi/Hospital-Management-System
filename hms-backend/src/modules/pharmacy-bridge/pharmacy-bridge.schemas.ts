@@ -4,21 +4,9 @@ export const idParamsSchema = z.object({
   id: z.string().uuid(),
 });
 
-export const createMedicineRequestSchema = z.object({
-  admissionRecordId: z.string().uuid(),
-  idempotencyKey: z.string().min(1).max(255),
-  lines: z
-    .array(
-      z.object({
-        medicineId: z.string().uuid(),
-        requestedQuantity: z.coerce.number().positive('Requested quantity must be greater than zero'),
-        notes: z.string().optional(),
-      }),
-    )
-    .min(1, 'At least one medicine must be requested'),
+export const admissionIdParamsSchema = z.object({
+  admissionId: z.string().uuid(),
 });
-
-export type CreateMedicineRequestBody = z.infer<typeof createMedicineRequestSchema>;
 
 export const listRequestsQuerySchema = z.object({
   status: z

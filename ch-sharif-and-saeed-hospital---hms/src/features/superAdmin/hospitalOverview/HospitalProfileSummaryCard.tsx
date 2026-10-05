@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import {
   Building2,
   Phone,
@@ -6,8 +6,14 @@ import {
   MapPin,
   CheckCircle2,
   XCircle,
+  Camera,
+  Upload,
+  Trash2,
+  Loader2,
 } from 'lucide-react';
 import { HospitalProfile } from '../../../types/hospital';
+import { updateHospitalLogo } from '../../../services/hospitalProfileService';
+import { useToast } from '../../../context/ToastContext';
 
 interface HospitalProfileSummaryCardProps {
   profile: HospitalProfile;
@@ -15,6 +21,58 @@ interface HospitalProfileSummaryCardProps {
 
 export const HospitalProfileSummaryCard: React.FC<HospitalProfileSummaryCardProps> = ({ profile }) => {
   const isConfigured = (val?: string | null) => Boolean(val && val.trim().length > 0);
+  const logoFileInputRef = useRef<HTMLInputElement>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const toast = useToast();
+
+  const handleDirectLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const validTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/svg+xml'];
+    if (!validTypes.includes(file.type)) {
+      toast.error('Supported image formats: PNG, JPG, JPEG, WEBP, SVG.', 'Invalid Format');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('File size must be under 5 MB.', 'Image Too Large');
+      return;
+    }
+
+    setIsUploading(true);
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const base64 = event.target?.result as string;
+        await updateHospitalLogo(base64);
+        toast.success('Hospital logo updated and deployed across entire system.', 'Logo Updated');
+      } catch (err: any) {
+        toast.error(err?.message || 'Failed to save logo.', 'Upload Error');
+      } finally {
+        setIsUploading(false);
+        if (logoFileInputRef.current) logoFileInputRef.current.value = '';
+      }
+    };
+    reader.onerror = () => {
+      setIsUploading(false);
+      toast.error('Could not read image file.', 'Upload Error');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleDirectRemoveLogo = async () => {
+    if (!window.confirm('Remove custom hospital logo and revert to default initials emblem?')) return;
+    setIsUploading(true);
+    try {
+      await updateHospitalLogo(null);
+      toast.info('Logo removed. System reverted to default emblem.', 'Logo Removed');
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to remove logo.', 'Error');
+    } finally {
+      setIsUploading(false);
+    }
+  };
 
   // Format full address if available
   const addressParts = [
@@ -28,27 +86,81 @@ export const HospitalProfileSummaryCard: React.FC<HospitalProfileSummaryCardProp
 
   return (
     <div className="bg-white rounded-xl border border-[#e2eae5] shadow-2xs overflow-hidden">
+      {/* Hidden file input for direct logo upload */}
+      <input
+        ref={logoFileInputRef}
+        type="file"
+        accept="image/png, image/jpeg, image/jpg, image/webp, image/svg+xml"
+        onChange={handleDirectLogoUpload}
+        className="hidden"
+      />
+
       {/* Top Banner with light mint & emerald styling */}
       <div className="bg-gradient-to-r from-[#effaf5] via-white to-[#effaf5] p-6 border-b border-[#e2eae5]">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
           {/* Identity & Logo */}
           <div className="flex items-start sm:items-center gap-4">
-            {/* Hospital Logo or CSS Monogram */}
-            <div className="shrink-0">
-              {profile.logo ? (
-                <div className="h-16 w-16 rounded-xl border border-[#c2e7db] bg-white p-1.5 shadow-2xs flex items-center justify-center overflow-hidden">
-                  <img
-                    src={profile.logo}
-                    alt={profile.name}
-                    className="h-full w-full object-contain"
-                  />
-                </div>
-              ) : (
-                <div className="h-16 w-16 rounded-xl bg-gradient-to-br from-[#effaf5] to-[#d6f0e4] border border-[#c2e7db] flex flex-col items-center justify-center text-[#08775A] shadow-xs select-none">
-                  <span className="text-lg font-extrabold tracking-wider leading-none">CSS</span>
-                  <span className="text-[9px] font-bold text-[#149e75] tracking-widest mt-0.5">HMS</span>
-                </div>
-              )}
+            {/* Hospital Logo or CSS Monogram with Direct Upload Action */}
+            <div className="shrink-0 flex flex-col items-center gap-1.5">
+              <div
+                onClick={() => !isUploading && logoFileInputRef.current?.click()}
+                title="Click to upload or change hospital logo"
+                className="group relative h-16 w-16 rounded-xl border border-[#c2e7db] bg-white p-1.5 shadow-2xs flex items-center justify-center overflow-hidden cursor-pointer hover:border-[#129b70] hover:shadow-md transition-all"
+              >
+                {isUploading ? (
+                  <div className="flex flex-col items-center justify-center text-[#129b70]">
+                    <Loader2 className="h-6 w-6 animate-spin" />
+                  </div>
+                ) : profile.logo ? (
+                  <>
+                    <img
+                      src={profile.logo}
+                      alt={profile.name}
+                      className="h-full w-full object-contain"
+                    />
+                    <div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center text-white transition-opacity rounded-xl">
+                      <Camera className="h-4 w-4" />
+                      <span className="text-[8px] font-bold uppercase mt-0.5">Change</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="h-full w-full bg-gradient-to-br from-[#effaf5] to-[#d6f0e4] flex flex-col items-center justify-center text-[#08775A] select-none rounded-lg">
+                      <span className="text-lg font-extrabold tracking-wider leading-none">CSS</span>
+                      <span className="text-[9px] font-bold text-[#149e75] tracking-widest mt-0.5">HMS</span>
+                    </div>
+                    <div className="absolute inset-0 bg-[#08775A]/85 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center text-white transition-opacity rounded-xl">
+                      <Upload className="h-4 w-4" />
+                      <span className="text-[8px] font-bold uppercase mt-0.5">Upload</span>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Direct Action Links under Logo */}
+              <div className="flex items-center gap-1.5 text-[10px]">
+                <button
+                  type="button"
+                  onClick={() => logoFileInputRef.current?.click()}
+                  disabled={isUploading}
+                  className="font-semibold text-[#129b70] hover:text-[#08775A] hover:underline cursor-pointer"
+                >
+                  {profile.logo ? 'Change' : 'Upload'}
+                </button>
+                {profile.logo && (
+                  <>
+                    <span className="text-slate-300">•</span>
+                    <button
+                      type="button"
+                      onClick={handleDirectRemoveLogo}
+                      disabled={isUploading}
+                      className="font-semibold text-rose-600 hover:text-rose-800 hover:underline cursor-pointer"
+                    >
+                      Remove
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
 
             {/* Title & Metadata */}

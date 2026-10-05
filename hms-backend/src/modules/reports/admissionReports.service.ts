@@ -391,21 +391,30 @@ export const admissionReportsService = {
       take: 500,
     });
 
-    const totalOutstanding = rows.reduce((s, r) => s.plus(r.total.minus(r.paidTotal)), new Decimal(0));
-    const activeOutstanding = rows.filter((r) => r.admissionRecord?.status !== 'DISCHARGED').reduce((s, r) => s.plus(r.total.minus(r.paidTotal)), new Decimal(0));
+    const totalOutstanding = rows.reduce((s, r) => {
+      const diff = r.total.minus(r.paidTotal);
+      return diff.greaterThan(0) ? s.plus(diff) : s;
+    }, new Decimal(0));
+    const activeOutstanding = rows.filter((r) => r.admissionRecord?.status !== 'DISCHARGED').reduce((s, r) => {
+      const diff = r.total.minus(r.paidTotal);
+      return diff.greaterThan(0) ? s.plus(diff) : s;
+    }, new Decimal(0));
 
     return {
       period: { label, start: start.toISOString(), end: end.toISOString() },
       summary: { totalHospitalOutstanding: totalOutstanding, activeOutstanding, dischargedOutstanding: totalOutstanding.minus(activeOutstanding) },
-      rows: rows.map((r) => ({
-        admissionNumber: r.admissionRecord!.admissionNumber,
-        patient: patientDisplayName(r),
-        hospitalNet: r.total,
-        hospitalPaid: r.paidTotal,
-        hospitalOutstanding: r.total.minus(r.paidTotal),
-        admissionStatus: r.admissionRecord!.status,
-        invoiceStatus: r.status,
-      })),
+      rows: rows.map((r) => {
+        const diff = r.total.minus(r.paidTotal);
+        return {
+          admissionNumber: r.admissionRecord!.admissionNumber,
+          patient: patientDisplayName(r),
+          hospitalNet: r.total,
+          hospitalPaid: r.paidTotal,
+          hospitalOutstanding: diff.greaterThan(0) ? diff : new Decimal(0),
+          admissionStatus: r.admissionRecord!.status,
+          invoiceStatus: r.status,
+        };
+      }),
     };
   },
 

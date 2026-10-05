@@ -84,6 +84,34 @@ export const pharmacyBridgeClient = {
     }
   },
 
+  /**
+   * Manual resync for when `notifyPatientCollected` silently failed (network
+   * blip, Pharmacy backend unreachable at that moment — that call swallows
+   * errors so the Front Desk cashier's payment flow never breaks on it).
+   * Unlike `notifyPatientCollected`, this THROWS on failure — it's invoked
+   * from an explicit "Resync to Pharmacy" action, so the admin needs to see
+   * if it didn't work, not have it silently swallowed again.
+   */
+  async reconcileCollection(payload: {
+    pharmacyInvoiceNumber: string;
+    authoritativeCollectedAmount: number;
+  }) {
+    const url = `${env.PHARMACY_BACKEND_URL}/hms-requests/callback/reconcile-collection`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-bridge-token': env.INTERNAL_BRIDGE_SECRET,
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error((errJson as any)?.error?.message || `Pharmacy returned HTTP ${res.status}`);
+    }
+    return await res.json();
+  },
+
   async releaseSettlement(payload: {
     settlementNumber: string;
     pharmacyInvoiceNumber: string;

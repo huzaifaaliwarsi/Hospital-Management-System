@@ -239,14 +239,16 @@ export const dashboardService = {
       });
     }
 
-    // Build daily performance for the current month
-    const curYear = now.getFullYear();
-    const curMonth = now.getMonth();
-    const daysInCurMonth = new Date(curYear, curMonth + 1, 0).getDate();
+    // Build rolling daily performance for the last 30 days (seamless across month boundaries)
     const dailyTrend = [];
-    for (let day = 1; day <= daysInCurMonth; day++) {
-      const dayStart = new Date(Date.UTC(curYear, curMonth, day, 0, 0, 0));
-      const dayEnd = new Date(Date.UTC(curYear, curMonth, day + 1, 0, 0, 0));
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const y = d.getFullYear();
+      const m = d.getMonth();
+      const dayNum = d.getDate();
+      const dayStart = new Date(Date.UTC(y, m, dayNum, 0, 0, 0));
+      const dayEnd = new Date(Date.UTC(y, m, dayNum + 1, 0, 0, 0));
 
       const dInvoices = recentInvoices.filter((inv) => inv.createdAt >= dayStart && inv.createdAt < dayEnd);
       const dPurchases = recentPurchases.filter((p) => p.createdAt >= dayStart && p.createdAt < dayEnd);
@@ -258,7 +260,8 @@ export const dashboardService = {
       const profit = Math.max(0, rev - pur - exp);
 
       dailyTrend.push({
-        date: `${day} ${monthNames[curMonth]}`,
+        date: i === 0 ? 'Today' : `${dayNum} ${monthNames[m]}`,
+        fullDate: d.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }),
         revenue: rev,
         purchases: pur,
         expenses: exp,

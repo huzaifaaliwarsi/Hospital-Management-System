@@ -117,68 +117,66 @@ export const CheckInAdmissionModal: React.FC<CheckInAdmissionModalProps> = ({ ad
 
         {/* Assigned Bed Banner (if pre-allocated at Front Desk) */}
         {admission.bedId && (
-          <div className="p-3 bg-[#effaf5] border border-[#c2e7db] rounded-xl space-y-2.5">
+          <div className="p-3.5 bg-slate-50/80 border border-slate-200 rounded-lg">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-lg bg-[#08775A]/10 text-[#08775A] flex items-center justify-center shrink-0">
-                  <BedDouble className="h-4 w-4" />
-                </div>
-                <div className="text-xs font-bold text-[#08775A] flex items-center gap-1.5">
-                  <span>Assigned Bed (from Front Desk)</span>
-                  <CheckCircle2 className="h-3.5 w-3.5 text-[#08775A]" />
-                </div>
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                  Assigned Bed
+                </span>
+                <span className="text-[11px] text-slate-400">Pre-allocated at Front Desk</span>
               </div>
 
               <button
                 type="button"
                 onClick={() => { setBedId(showChangeBed ? admission.bedId || '' : ''); setShowChangeBed((prev) => !prev); }}
-                className="px-2.5 py-1 text-xs font-semibold text-[#08775A] hover:text-[#065f46] hover:bg-[#08775A]/10 border border-[#08775A]/30 rounded-lg transition-colors inline-flex items-center gap-1 shrink-0 cursor-pointer"
+                className="text-xs font-medium text-emerald-700 hover:text-emerald-800 hover:underline inline-flex items-center gap-1 cursor-pointer"
               >
-                <ArrowLeftRight className="h-3.5 w-3.5" />
-                <span>{showChangeBed ? 'Hide Bed Selector' : 'Transfer Ward / Room / Bed'}</span>
+                <ArrowLeftRight className="h-3 w-3" />
+                <span>{showChangeBed ? 'Keep assigned bed' : 'Change bed'}</span>
               </button>
             </div>
 
             {parsedBedInfo ? (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                <div className="bg-white rounded-lg p-2 border border-[#c2e7db]">
-                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Department</div>
-                  <div className="text-xs font-bold text-slate-800 break-words mt-0.5" title={admission.departmentName}>
+              <div className="mt-3 pt-3 border-t border-slate-200/80 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div>
+                  <span className="text-[11px] font-normal text-slate-400 block">Department</span>
+                  <span className="font-medium text-slate-800 truncate block mt-0.5" title={admission.departmentName}>
                     {admission.departmentName || '—'}
-                  </div>
+                  </span>
                 </div>
-                <div className="bg-white rounded-lg p-2 border border-[#c2e7db]">
-                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Ward</div>
-                  <div className="text-xs font-bold text-slate-800 break-words mt-0.5" title={parsedBedInfo.ward}>
+                <div>
+                  <span className="text-[11px] font-normal text-slate-400 block">Ward</span>
+                  <span className="font-medium text-slate-800 truncate block mt-0.5" title={parsedBedInfo.ward}>
                     {parsedBedInfo.ward || '—'}
-                  </div>
+                  </span>
                 </div>
-                <div className="bg-white rounded-lg p-2 border border-[#c2e7db]">
-                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Room</div>
-                  <div className="text-xs font-bold text-slate-800 break-words mt-0.5" title={parsedBedInfo.room}>
+                <div>
+                  <span className="text-[11px] font-normal text-slate-400 block">Room</span>
+                  <span className="font-medium text-slate-800 truncate block mt-0.5" title={parsedBedInfo.room}>
                     {parsedBedInfo.room || '—'}
-                  </div>
+                  </span>
                 </div>
-                <div className="bg-white rounded-lg p-2 border border-[#c2e7db]">
-                  <div className="text-[10px] font-bold text-[#08775A] uppercase tracking-wider">Bed</div>
-                  <div className="text-xs font-black text-[#08775A] break-words mt-0.5" title={parsedBedInfo.bed}>
+                <div>
+                  <span className="text-[11px] font-normal text-emerald-600 block">Bed</span>
+                  <span className="font-semibold text-emerald-800 truncate block mt-0.5" title={parsedBedInfo.bed}>
                     {parsedBedInfo.bed ? (parsedBedInfo.bed.startsWith('Bed') ? parsedBedInfo.bed : `Bed ${parsedBedInfo.bed}`) : '—'}
-                  </div>
+                  </span>
                 </div>
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-2">
-                <div className="bg-white rounded-lg p-2 border border-[#c2e7db]">
-                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Department</div>
-                  <div className="text-xs font-bold text-slate-800 break-words mt-0.5" title={admission.departmentName}>
+              <div className="mt-3 pt-3 border-t border-slate-200/80 grid grid-cols-2 gap-3 text-xs">
+                <div>
+                  <span className="text-[11px] font-normal text-slate-400 block">Department</span>
+                  <span className="font-medium text-slate-800 truncate block mt-0.5" title={admission.departmentName}>
                     {admission.departmentName || '—'}
-                  </div>
+                  </span>
                 </div>
-                <div className="bg-white rounded-lg p-2 border border-[#c2e7db]">
-                  <div className="text-[10px] font-bold text-[#08775A] uppercase tracking-wider">Bed</div>
-                  <div className="text-xs font-bold text-slate-800 break-words mt-0.5">
+                <div>
+                  <span className="text-[11px] font-normal text-emerald-600 block">Bed</span>
+                  <span className="font-semibold text-emerald-800 truncate block mt-0.5">
                     {assignedBedLabel}
-                  </div>
+                  </span>
                 </div>
               </div>
             )}
@@ -187,24 +185,24 @@ export const CheckInAdmissionModal: React.FC<CheckInAdmissionModalProps> = ({ ad
 
         {/* Info when no bed was pre-allocated at Front Desk */}
         {!admission.bedId && admission.departmentName && (
-          <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs">
-            <span className="text-slate-500 font-medium">Department (from Front Desk):</span>
-            <span className="font-bold text-slate-800">{admission.departmentName}</span>
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-between text-xs">
+            <span className="text-slate-500 font-normal">Department (from Front Desk):</span>
+            <span className="font-medium text-slate-800">{admission.departmentName}</span>
           </div>
         )}
 
         {/* Bed Selection Dropdown (Shown if changing bed OR if no bed was assigned at Front Desk) */}
         {showChangeBed ? (
-          <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+          <div className="p-3 bg-slate-50/70 border border-slate-200 rounded-lg space-y-2.5">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold text-slate-700">
-                {admission.bedId ? 'Select Different Bed' : 'Assign Bed *'}
+              <label className="text-xs font-medium text-slate-700">
+                {admission.bedId ? 'Select New Bed' : 'Assign Bed *'}
               </label>
               {admission.bedId && bedId !== admission.bedId && (
                 <button
                   type="button"
                   onClick={() => { setBedId(admission.bedId || ''); setShowChangeBed(false); }}
-                  className="text-[11px] font-semibold text-slate-500 hover:text-slate-800 underline cursor-pointer"
+                  className="text-[11px] font-medium text-slate-500 hover:text-slate-800 underline cursor-pointer"
                 >
                   Reset to Assigned Bed
                 </button>
@@ -215,10 +213,10 @@ export const CheckInAdmissionModal: React.FC<CheckInAdmissionModalProps> = ({ ad
             {admission.bedId && bedId !== admission.bedId && <TextInput label="Transfer Reason" required value={transferReason} onChange={(e) => setTransferReason(e.target.value)} />}
 
             {admission.bedId && bedId !== admission.bedId && selectedBedObject && (
-              <div className="text-[11px] font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2 flex items-center gap-1.5">
+              <div className="text-[11px] font-normal text-amber-800 bg-amber-50/80 border border-amber-200/80 rounded-md p-2 flex items-center gap-1.5">
                 <span>
-                  ⚠️ Previous bed will be freed back to Available and{' '}
-                  <strong>
+                  Previous bed will be released back to Available and{' '}
+                  <strong className="font-semibold">
                     {[
                       selectedBedObject.wardName ? `Ward: ${selectedBedObject.wardName}` : '',
                       selectedBedObject.roomName ? `Room: ${selectedBedObject.roomName}` : '',
@@ -227,7 +225,7 @@ export const CheckInAdmissionModal: React.FC<CheckInAdmissionModalProps> = ({ ad
                       .filter(Boolean)
                       .join(' • ')}
                   </strong>{' '}
-                  will be occupied.
+                  will be assigned.
                 </span>
               </div>
             )}
@@ -236,15 +234,18 @@ export const CheckInAdmissionModal: React.FC<CheckInAdmissionModalProps> = ({ ad
 
         <TextInput label="Check-In Notes (optional)" placeholder="Clinical notes, vitals on arrival, attendant info…" value={notes} onChange={(e) => setNotes(e.target.value)} />
 
-        <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-          <button type="button" onClick={onClose} className="px-3 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 cursor-pointer">Cancel</button>
+        <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+          <button type="button" onClick={onClose} className="px-3.5 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-md transition-colors cursor-pointer">
+            Cancel
+          </button>
           <button
             type="submit"
             disabled={isSaving || !bedId}
-            className="px-5 py-2 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg shadow-xs disabled:opacity-60 inline-flex items-center gap-1.5 cursor-pointer"
+            className="px-4 py-1.5 text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 rounded-md shadow-xs disabled:opacity-50 inline-flex items-center gap-1.5 transition-colors cursor-pointer"
           >
             {isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            <BedDouble className="h-3.5 w-3.5" /> Check In
+            <BedDouble className="h-3.5 w-3.5" />
+            <span>Check In</span>
           </button>
         </div>
       </form>

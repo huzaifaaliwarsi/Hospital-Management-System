@@ -142,43 +142,37 @@ export const HmsNotificationProvider: React.FC<{ children: React.ReactNode }> = 
             // Dispatch global event for live table reloading
             window.dispatchEvent(new CustomEvent('hms-request-received', { detail: data }));
 
-            // ── Clean White Toaster Card (react-toastify) matching user reference ──
-            toast(
-              ({ closeToast }) => (
-                <div
-                  className="flex flex-col gap-0.5 w-full cursor-pointer select-none text-left"
-                  onClick={() => {
-                    markAsRead(notifId);
-                    closeToast();
-                    if (onNavigateRef.current) {
-                      onNavigateRef.current();
-                    }
-                  }}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-[12.5px] font-bold text-slate-900 tracking-tight flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                      Ward Requisition
-                    </span>
-                    <span className="text-[10px] text-slate-400 font-medium">now</span>
-                  </div>
-                  <div className="text-[12px] font-semibold text-slate-800 leading-snug mt-0.5">
-                    {data.patientName || 'Admitted Patient'}{' '}
-                    <span className="text-slate-400 font-normal">({data.admissionRef || 'IPD'})</span>
-                  </div>
-                  <div className="text-[11.5px] text-slate-500 truncate mt-0.5">
-                    {data.medicinesSummary || 'New medicine requisition'}
-                  </div>
+            // ── Standard Green Toaster Card (matching the rest of the application) ──
+            toast.success(
+              <div
+                className="flex flex-col gap-0.5 w-full cursor-pointer select-none text-left"
+                onClick={() => {
+                  markAsRead(notifId);
+                  if (onNavigateRef.current) {
+                    onNavigateRef.current();
+                  }
+                }}
+              >
+                <div className="flex items-center justify-between text-white">
+                  <span className="text-[13px] font-bold tracking-tight">
+                    Ward Requisition
+                  </span>
+                  <span className="text-[10px] text-white/80 font-medium">now</span>
                 </div>
-              ),
+                <div className="text-[12px] font-semibold text-white leading-snug mt-0.5">
+                  {data.patientName || 'Admitted Patient'}{' '}
+                  <span className="text-white/80 font-normal">({data.admissionRef || 'IPD'})</span>
+                </div>
+                <div className="text-[11.5px] text-white/90 truncate mt-0.5">
+                  {data.medicinesSummary || 'New medicine requisition'}
+                </div>
+              </div>,
               {
-                className: 'hms-white-toast',
                 autoClose: 7000,
                 hideProgressBar: false,
-                closeOnClick: false,
+                closeOnClick: true,
                 pauseOnHover: true,
                 draggable: true,
-                icon: false,
               }
             );
           }

@@ -2,6 +2,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '@/db/client';
 import { resolveDateRange } from './dashboard.service';
 import type { BillingSummaryQuery } from './frontdeskReports.schemas';
+import { patientBalanceDue } from '@/shared/invoicePaymentStatus';
 
 /**
  * Front Desk / Billing Reports (HMS_V7.2_NEW_REQUIREMENTS.md §3.3) — real
@@ -37,7 +38,7 @@ export const frontdeskBillingReportService = {
           ...(query.cashierId ? { createdById: query.cashierId } : {}),
           ...(query.departmentId ? { departmentId: query.departmentId } : {}),
         },
-        select: { status: true, subtotal: true, discountTotal: true, total: true, paidTotal: true },
+        select: { status: true, subtotal: true, discountTotal: true, total: true, paidTotal: true, patientShare: true, panelPatientId: true, panelReceivable: true },
       }),
     ]);
 
@@ -54,7 +55,10 @@ export const frontdeskBillingReportService = {
     const totalDiscounts = invoices.reduce((sum, inv) => sum.plus(inv.discountTotal), new Decimal(0));
     const totalGross = invoices.reduce((sum, inv) => sum.plus(inv.subtotal), new Decimal(0));
     const totalNet = invoices.reduce((sum, inv) => sum.plus(inv.total), new Decimal(0));
-    const totalOutstanding = invoices.reduce((sum, inv) => sum.plus(inv.total.minus(inv.paidTotal)), new Decimal(0));
+    const totalOutstanding = invoices.reduce((sum, inv) => {
+      if (inv.status === 'VOID' || inv.status === 'PAID') return sum;
+      return sum.plus(patientBalanceDue(inv, inv.paidTotal));
+    }, new Decimal(0));
 
     const invoiceCountsByStatus: Record<string, number> = {};
     for (const inv of invoices) {

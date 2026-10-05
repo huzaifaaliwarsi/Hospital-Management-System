@@ -89,29 +89,14 @@ export const pharmacyApiService = {
     return res.data.data;
   },
 
-  // HMS Pharmacy Bridge (Inpatient medicine requests)
+  // HMS Pharmacy Bridge — read-only here (§ pharmacy-bridge.routes.ts).
+  // Requests are created via admissionService's pharmacy-requests endpoint,
+  // which dispatches to the standalone Pharmacy system; dispensing happens
+  // there too and lands back on the admission invoice via webhook.
   async getInpatientRequests(status?: string, admissionRecordId?: string) {
     const res = await apiClient.get<{ data: any[] }>('/pharmacy-bridge/requests', {
       params: { status, admissionRecordId },
     });
-    return res.data.data;
-  },
-
-  async createInpatientRequest(data: {
-    admissionRecordId: string;
-    idempotencyKey: string;
-    lines: Array<{
-      medicineId: string;
-      requestedQuantity: number;
-      notes?: string;
-    }>;
-  }) {
-    const res = await apiClient.post<{ data: any }>('/pharmacy-bridge/requests', data);
-    return res.data.data;
-  },
-
-  async dispenseInpatientRequest(requestId: string) {
-    const res = await apiClient.post<{ data: any }>(`/pharmacy-bridge/requests/${requestId}/dispense`);
     return res.data.data;
   },
 };

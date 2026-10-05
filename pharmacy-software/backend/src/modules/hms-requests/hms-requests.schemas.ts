@@ -66,6 +66,21 @@ export const createSettlementRequestBodySchema = z.object({
 });
 export type CreateSettlementRequestBody = z.infer<typeof createSettlementRequestBodySchema>;
 
+/**
+ * Idempotent reconciliation — HMS is the source of truth for how much it has
+ * actually collected from the patient (`HmsPharmacyCharge.patientPaid`); this
+ * SETS `hmsCollectedAmount` to that authoritative value rather than adding a
+ * delta (unlike `patientCollectedCallbackSchema`'s callback), so it's safe to
+ * call repeatedly after a `notifyPatientCollected` webhook that silently
+ * failed (network blip, server down at that moment, etc.) without ever
+ * double-counting.
+ */
+export const reconcileCollectionBodySchema = z.object({
+  pharmacyInvoiceNumber: z.string().min(1),
+  authoritativeCollectedAmount: z.coerce.number().nonnegative(),
+});
+export type ReconcileCollectionBody = z.infer<typeof reconcileCollectionBodySchema>;
+
 export const releaseSettlementCallbackSchema = z.object({
   settlementNumber: z.string().min(1),
   pharmacyInvoiceNumber: z.string().min(1),

@@ -15,6 +15,7 @@ import {
   AdmissionLedger,
   PaymentMethod,
 } from '../../../services/admissionBillingService';
+import { getHospitalProfile } from '../../../services/hospitalProfileService';
 
 const PAYMENT_METHODS: { label: string; value: PaymentMethod }[] = [
   { label: 'Cash', value: 'CASH' },
@@ -95,7 +96,8 @@ function openPrintWindow(title: string, bodyHtml: string) {
 function ledgerHeaderHtml(ledger: AdmissionLedger, bannerText: string, docLabel: string, docNumber?: string | null) {
   return `
     <div class="header">
-      <h1>CH Sharif and Saeed Hospital</h1>
+      ${getHospitalProfile().logo ? `<img src="${getHospitalProfile().logo}" style="height: 48px; max-width: 130px; object-fit: contain; margin-bottom: 6px; display: block; margin-left: auto; margin-right: auto;" />` : ''}
+      <h1>${getHospitalProfile().name || 'CH Sharif and Saeed Hospital'}</h1>
       <p>${docLabel}${docNumber ? ` — ${docNumber}` : ''}</p>
     </div>
     <div class="banner">${bannerText}</div>

@@ -79,6 +79,7 @@ export interface ManagementDashboard {
   }>;
   dailyTrend?: Array<{
     date: string;
+    fullDate?: string;
     revenue: number;
     purchases: number;
     expenses: number;
@@ -237,6 +238,14 @@ export const pharmacyApi = {
   rejectHmsRequest: (id: string, reason: string) => apiClient.post(`/hms-requests/${id}/reject`, { reason }).then((r) => r.data.data),
   fulfillHmsRequest: (id: string, lines: { requestLineId: string; dispenseQuantity: number }[]) =>
     apiClient.post(`/hms-requests/${id}/fulfill`, { lines }).then((r) => r.data.data),
+
+  // HMS Receivables & Settlement Requests — money HMS collected from the
+  // patient on Pharmacy's behalf (admission-linked dispenses) that Pharmacy
+  // still needs HMS to hand back. Request only; release happens on the HMS
+  // side (Super Admin / Admin) and arrives here via `settlementReleaseCallback`.
+  listHmsReceivables: () => apiClient.get('/hms-requests/receivables/list').then((r) => r.data.data),
+  requestHmsSettlement: (body: { invoiceNumber: string; amountRequested: number; remarks?: string }) =>
+    apiClient.post('/hms-requests/settlements/request', body).then((r) => r.data.data),
 
   // Settings (pharmacy.md §3)
   getPharmacySettings: () => apiClient.get<{ data: PharmacySettings }>('/settings').then((r) => r.data.data),

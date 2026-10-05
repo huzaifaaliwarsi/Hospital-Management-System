@@ -1,11 +1,10 @@
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '@/db/client';
-import { NotFoundError, ValidationError } from '@/shared/errors/AppError';
-import { generateInvoiceNumber } from '@/shared/idGenerator';
-import { pharmacyService } from '../pharmacy/pharmacy.service';
+import { NotFoundError, ValidationError, AuthorizationError } from '@/shared/errors/AppError';
+import { generateInvoiceNumber, generateExpenseNumber } from '@/shared/idGenerator';
 import { pharmacyBridgeClient } from '@/shared/pharmacyBridgeClient';
+import { resolvePanelCoverage } from '@/shared/panelCoverage';
 import type {
-  CreateMedicineRequestBody,
   ListRequestsQuery,
   DispensedCallbackBody,
   SettlementRequestBody,
@@ -13,87 +12,11 @@ import type {
 } from './pharmacy-bridge.schemas';
 
 export const pharmacyBridgeService = {
-  // ── Create Inpatient Medicine Request ─────────────────────────────────────
-  async createRequest(body: CreateMedicineRequestBody, actorId: string) {
-    // Idempotency check: if key already exists, return existing request (§6.10, D16 p.14)
-    const existing = await prisma.pharmacyClearance.findUnique({
-      where: { idempotencyKey: body.idempotencyKey },
-      include: {
-        lines: { include: { medicine: true, batch: true } },
-        admissionRecord: true,
-      },
-    });
-    if (existing) {
-      return existing;
-    }
-
-    const admission = await prisma.admissionRecord.findUnique({
-      where: { id: body.admissionRecordId },
-    });
-    if (!admission) {
-      throw new NotFoundError('Admission record not found');
-    }
-    if (admission.status === 'DISCHARGED' || admission.status === 'CANCELLED') {
-      throw new ValidationError(`Cannot request medicines for admission in status ${admission.status}`);
-    }
-
-    // Verify all requested medicines exist and are active
-    for (const line of body.lines) {
-      const med = await prisma.medicineMaster.findUnique({ where: { id: line.medicineId } });
-      if (!med || !med.isActive) {
-        throw new NotFoundError(`Medicine ${line.medicineId} not found or inactive`);
-      }
-    }
-
-    const medicineRequestNumber = `MED-REQ-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
-
-    return prisma.$transaction(async (tx) => {
-      const clearance = await tx.pharmacyClearance.create({
-        data: {
-          medicineRequestNumber,
-          admissionRecordId: admission.id,
-          status: 'REQUESTED',
-          idempotencyKey: body.idempotencyKey,
-          requestedById: actorId,
-          lines: {
-            create: body.lines.map((l) => ({
-              medicineId: l.medicineId,
-              requestedQuantity: new Decimal(l.requestedQuantity),
-              notes: l.notes,
-            })),
-          },
-        },
-        include: {
-          lines: { include: { medicine: true } },
-          admissionRecord: true,
-        },
-      });
-
-      // Ensure pharmacy discharge clearance status is PENDING while active requests are open
-      await tx.dualDischargeClearance.upsert({
-        where: {
-          admissionRecordId_clearanceType: {
-            admissionRecordId: admission.id,
-            clearanceType: 'PHARMACY',
-          },
-        },
-        update: {
-          status: 'PENDING',
-          clearedById: null,
-          clearedAt: null,
-        },
-        create: {
-          admissionRecordId: admission.id,
-          clearanceType: 'PHARMACY',
-          status: 'PENDING',
-        },
-      });
-
-      return clearance;
-    });
-  },
-
   // ── List & Get Medicine Requests ──────────────────────────────────────────
+  // Read-only. Requests are created via admission.service.ts's
+  // `createPharmacyRequest` (dispatches to the standalone Pharmacy system);
+  // a local create-and-dispense pair used to live here too — removed
+  // 2026-10-05, see pharmacy-bridge.routes.ts's comment for why.
   async listRequests(query: ListRequestsQuery) {
     return prisma.pharmacyClearance.findMany({
       where: {
@@ -138,161 +61,6 @@ export const pharmacyBridgeService = {
     return req;
   },
 
-  // ── Fulfill Request via FEFO & Trigger Admission Clearance Callback ───────
-  /**
-   * 1. Dispenses medicines via FEFO engine.
-   * 2. Posts -OUT movement to MedicineStockLedger.
-   * 3. Creates PharmacyDispense (channel: HMS_LINKED).
-   * 4. Updates PharmacyClearance status to DISPENSED.
-   * 5. Automatically updates DualDischargeClearance (PHARMACY) to CLEARED.
-   */
-  async fulfillAndDispense(id: string, actorId: string) {
-    return prisma.$transaction(async (tx) => {
-      const clearance = await tx.pharmacyClearance.findUnique({
-        where: { id },
-        include: {
-          lines: { include: { medicine: true } },
-          admissionRecord: true,
-          pharmacyDispenses: true,
-        },
-      });
-
-      if (!clearance) {
-        throw new NotFoundError('Pharmacy clearance request not found');
-      }
-
-      // Idempotent: if already fulfilled, return existing dispenses
-      if (clearance.status === 'DISPENSED' || clearance.status === 'CLEARANCE_SENT') {
-        return {
-          clearance,
-          dispenses: clearance.pharmacyDispenses,
-          alreadyFulfilled: true,
-        };
-      }
-
-      let subtotal = new Decimal(0);
-      const dispenseLinesToCreate: {
-        medicineId: string;
-        batchId: string | null;
-        quantity: Decimal;
-        rateSnapshot: Decimal;
-        discountAmount: Decimal;
-        lineNet: Decimal;
-      }[] = [];
-
-      const stockDeductions: {
-        medicineId: string;
-        batchId: string | null;
-        quantity: Decimal;
-      }[] = [];
-
-      for (const line of clearance.lines) {
-        const medicine = line.medicine;
-        const requestedQty = line.requestedQuantity;
-        const saleRate = medicine.saleRate ?? new Decimal(0);
-
-        // Run FEFO batch allocation within the transaction
-        const allocations = await pharmacyService.allocateFefoBatches(
-          medicine.id,
-          requestedQty,
-          tx,
-        );
-
-        // Update the clearance line with the primary batch and quantities
-        await tx.pharmacyClearanceLine.update({
-          where: { id: line.id },
-          data: {
-            approvedQuantity: requestedQty,
-            dispensedQuantity: requestedQty,
-            batchId: allocations[0]?.batchId ?? null,
-          },
-        });
-
-        for (const alloc of allocations) {
-          const allocGross = alloc.quantity.mul(saleRate);
-          subtotal = subtotal.plus(allocGross);
-
-          dispenseLinesToCreate.push({
-            medicineId: medicine.id,
-            batchId: alloc.batchId,
-            quantity: alloc.quantity,
-            rateSnapshot: saleRate,
-            discountAmount: new Decimal(0),
-            lineNet: allocGross,
-          });
-
-          stockDeductions.push({
-            medicineId: medicine.id,
-            batchId: alloc.batchId,
-            quantity: alloc.quantity,
-          });
-        }
-      }
-
-      const invoiceNumber = `HMS-MED-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
-
-      // Create PharmacyDispense
-      const dispense = await tx.pharmacyDispense.create({
-        data: {
-          invoiceNumber,
-          channel: 'HMS_LINKED',
-          pharmacyClearanceId: clearance.id,
-          panelPatientId: clearance.admissionRecord.panelPatientId,
-          selfPayEncounterId: clearance.admissionRecord.selfPayEncounterId,
-          subtotal,
-          discountTotal: new Decimal(0),
-          total: subtotal,
-          paidTotal: subtotal,
-          status: 'PAID',
-          dispensedById: actorId,
-          lines: {
-            create: dispenseLinesToCreate,
-          },
-        },
-        include: {
-          lines: {
-            include: { medicine: true, batch: true },
-          },
-        },
-      });
-
-      // Post stock deductions to MedicineStockLedger (-OUT)
-      for (const deduction of stockDeductions) {
-        await tx.medicineStockLedger.create({
-          data: {
-            medicineId: deduction.medicineId,
-            batchId: deduction.batchId,
-            movementType: 'DISPENSE',
-            quantityDelta: deduction.quantity.negated(), // -OUT
-            referenceTable: 'pharmacy_clearances',
-            referenceId: clearance.id,
-            actorId,
-          },
-        });
-      }
-
-      // Mark PharmacyClearance as DISPENSED
-      const updatedClearance = await tx.pharmacyClearance.update({
-        where: { id: clearance.id },
-        data: {
-          status: 'DISPENSED',
-          fulfilledById: actorId,
-          fulfilledAt: new Date(),
-        },
-        include: {
-          lines: { include: { medicine: true, batch: true } },
-          admissionRecord: true,
-        },
-      });
-
-      return {
-        clearance: updatedClearance,
-        dispense,
-        admissionPharmacyCleared: false,
-      };
-    });
-  },
-
   // ── Dispense Callback from Pharmacy Backend (Webhook) ────────────────────
   async handleDispensedCallback(body: DispensedCallbackBody) {
     return prisma.$transaction(async (tx) => {
@@ -308,7 +76,7 @@ export const pharmacyBridgeService = {
           ],
         },
         include: {
-          panelPatient: true,
+          panelPatient: { include: { corporatePanel: { include: { discountRules: true } } } },
           selfPayEncounter: true,
         },
       });
@@ -418,31 +186,68 @@ export const pharmacyBridgeService = {
       const taxDecimal = new Decimal(body.taxTotal);
       const discountDecimal = new Decimal(body.discountTotal);
 
+      // Panel (corporate) patients get the SAME coverage-rule treatment as
+      // every other hospital-service line (`admission.service.ts`'s
+      // `addAdmissionService`) — a panel's discount rule, if one is matched
+      // for the Pharmacy service/department, now also splits pharmacy
+      // charges into patientShare/panelReceivable (or writes off a
+      // LEGACY_DISCOUNT amount) instead of always billing the patient 100%.
+      // Self-pay admissions (no panelPatientId) are unaffected: no rule can
+      // match without discount rules, so patientShare stays the full net.
+      const panelDiscountRules = admission.panelPatient?.corporatePanel?.discountRules;
+      const applyCoverage = (gross: Decimal, quantity: Decimal, reasonPrefix: string) => {
+        if (!admission.panelPatientId) {
+          return { discountAmount: new Decimal(0), discountReason: reasonPrefix, lineNet: gross, patientShare: gross, panelReceivable: new Decimal(0), coverageSnapshot: undefined as any };
+        }
+        const coverage = resolvePanelCoverage(gross, panelDiscountRules, serviceRate.id, new Date(), serviceRate.departmentId, quantity, admission.panelPatient);
+        return {
+          discountAmount: coverage.discountAmount,
+          discountReason: coverage.discountReason ? `${reasonPrefix} — ${coverage.discountReason}` : reasonPrefix,
+          lineNet: gross.minus(coverage.discountAmount),
+          patientShare: coverage.patientShare,
+          panelReceivable: coverage.panelReceivable,
+          coverageSnapshot: coverage.coverageSnapshot,
+        };
+      };
+
       // Prepare itemized lines from dispensed medicines
       const linesToCreate = (body.lines && body.lines.length > 0)
-        ? body.lines.map((l) => ({
-            serviceRateId: serviceRate.id,
-            rateSnapshot: new Decimal(l.rate),
-            quantity: new Decimal(l.quantity),
-            lineGross: new Decimal(l.lineNet),
-            discountAmount: new Decimal(0),
-            discountReason: `Pharmacy: ${l.medicineName}${l.batchNumber ? ` [Batch: ${l.batchNumber}]` : ''}${l.externalRequestRef ? ` [Req: ${l.externalRequestRef}]` : ''}`,
-            lineNet: new Decimal(l.lineNet),
-            patientShare: new Decimal(l.lineNet),
-            panelReceivable: new Decimal(0),
-          }))
-        : [
-            {
+        ? body.lines.map((l) => {
+            const gross = new Decimal(l.lineNet);
+            const coverage = applyCoverage(
+              gross,
+              new Decimal(l.quantity),
+              `Pharmacy: ${l.medicineName}${l.batchNumber ? ` [Batch: ${l.batchNumber}]` : ''}${l.externalRequestRef ? ` [Req: ${l.externalRequestRef}]` : ''}`,
+            );
+            return {
               serviceRateId: serviceRate.id,
-              rateSnapshot: totalDecimal,
-              quantity: new Decimal(1),
-              lineGross: totalDecimal,
-              discountAmount: new Decimal(0),
-              discountReason: `Pharmacy Medication Charges${body.externalRequestRef ? ` [Req: ${body.externalRequestRef}]` : ''}`,
-              lineNet: totalDecimal,
-              patientShare: totalDecimal,
-              panelReceivable: new Decimal(0),
-            },
+              rateSnapshot: new Decimal(l.rate),
+              quantity: new Decimal(l.quantity),
+              lineGross: gross,
+              discountAmount: coverage.discountAmount,
+              discountReason: coverage.discountReason,
+              lineNet: coverage.lineNet,
+              patientShare: coverage.patientShare,
+              panelReceivable: coverage.panelReceivable,
+              coverageSnapshot: coverage.coverageSnapshot,
+            };
+          })
+        : [
+            (() => {
+              const coverage = applyCoverage(totalDecimal, new Decimal(1), `Pharmacy Medication Charges${body.externalRequestRef ? ` [Req: ${body.externalRequestRef}]` : ''}`);
+              return {
+                serviceRateId: serviceRate.id,
+                rateSnapshot: totalDecimal,
+                quantity: new Decimal(1),
+                lineGross: totalDecimal,
+                discountAmount: coverage.discountAmount,
+                discountReason: coverage.discountReason,
+                lineNet: coverage.lineNet,
+                patientShare: coverage.patientShare,
+                panelReceivable: coverage.panelReceivable,
+                coverageSnapshot: coverage.coverageSnapshot,
+              };
+            })(),
           ];
 
       // 8. Update Pharmacy Section on the SAME Hospital Invoice:
@@ -685,7 +490,18 @@ export const pharmacyBridgeService = {
     });
   },
 
-  async releaseSettlement(settlementId: string, body: ReleaseSettlementBody, actorId: string) {
+  /**
+   * Releasing money to Pharmacy is restricted to SUPER_ADMIN / ADMIN only —
+   * a deliberately tighter rule than the `pharmacy-bridge:edit` module grant
+   * (which PHARMACY_SUPER_ADMIN / PHARMACY_MANAGER also hold for managing
+   * their own requests), because this one action actually moves money out
+   * of the hospital.
+   */
+  async releaseSettlement(settlementId: string, body: ReleaseSettlementBody, actorId: string, actorRole: string) {
+    if (!['SUPER_ADMIN', 'ADMIN'].includes(actorRole)) {
+      throw new AuthorizationError('Only Super Admin or Admin can release a settlement payment to Pharmacy.');
+    }
+
     const settlement = await prisma.hmsPharmacySettlement.findUnique({
       where: { id: settlementId },
       include: { pharmacyCharge: true },
@@ -726,6 +542,27 @@ export const pharmacyBridgeService = {
         },
       });
 
+      // Record this as real money leaving the hospital — without this, the
+      // release updated HMS's own internal receivable tracking but never
+      // showed up anywhere HMS's own cash/expense reporting looks (Expense
+      // Report, Management Summary), so Admin had no visibility into how
+      // much had actually been paid out to Pharmacy.
+      const pharmacyServiceRate = await tx.serviceRate.findFirst({ where: { code: 'SRV-PHARMACY' } });
+      await tx.expense.create({
+        data: {
+          expenseNumber: await generateExpenseNumber(tx),
+          expenseDate: new Date(),
+          category: 'MEDICAL_SUPPLIES',
+          amount: releaseAmt,
+          paymentMethod: body.paymentMethod,
+          paidTo: 'Standalone Pharmacy',
+          reference: body.paymentReference,
+          description: `Pharmacy settlement release — ${settlement.pharmacyInvoiceNumber} (Settlement ${settlement.settlementNumber})${body.remarks ? `: ${body.remarks}` : ''}`,
+          departmentId: pharmacyServiceRate?.departmentId ?? null,
+          createdById: actorId,
+        },
+      });
+
       return updatedSettlement;
     });
 
@@ -743,6 +580,29 @@ export const pharmacyBridgeService = {
     });
 
     return result;
+  },
+
+  /**
+   * Manual "Resync to Pharmacy" — re-sends the already-correct
+   * `HmsPharmacyCharge.patientPaid` (confirmed on this side) to Pharmacy's
+   * `PharmacyInvoice.hmsCollectedAmount`, for when the automatic webhook
+   * fired inside `collectPayment` silently failed (that call only logs and
+   * moves on, so a Front Desk cashier's payment is never blocked by it).
+   * Safe to click more than once — `reconcileCollection` sets the
+   * authoritative total rather than adding to it.
+   */
+  async resyncPatientCollected(admissionId: string) {
+    const charge = await prisma.hmsPharmacyCharge.findFirst({
+      where: { admissionRecordId: admissionId },
+    });
+    if (!charge) throw new NotFoundError('No pharmacy charge found for this admission');
+
+    await pharmacyBridgeClient.reconcileCollection({
+      pharmacyInvoiceNumber: charge.pharmacyInvoiceNumber,
+      authoritativeCollectedAmount: Number(charge.patientPaid),
+    });
+
+    return charge;
   },
 
   async listCharges(admissionRecordId?: string) {

@@ -22,6 +22,7 @@ vi.mock('@/db/client', () => {
     },
     serviceRate: {
       findUnique: vi.fn(),
+      findFirst: vi.fn(),
     },
     hospitalInvoice: {
       findUnique: vi.fn(),

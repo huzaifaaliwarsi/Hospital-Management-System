@@ -49,6 +49,7 @@ import { SuperAdminCorporatePanelsView } from './corporatePanels/SuperAdminCorpo
 import { SuperAdminOutsourcedProvidersView } from './outsourcedProviders/SuperAdminOutsourcedProvidersView';
 import { HighCostMedicinePolicyView } from './highCostMedicine/HighCostMedicinePolicyView';
 import { ProviderSettlementsView } from './providerSettlements/ProviderSettlementsView';
+import { PharmacySettlementsView } from './pharmacySettlements/PharmacySettlementsView';
 import { DoctorCommissionView } from './doctorCommission/DoctorCommissionView';
 import { HospitalInvoicesView } from '../frontDesk/billing/HospitalInvoicesView';
 import { SuperAdminPanelBillingView } from './corporatePanels/SuperAdminPanelBillingView';
@@ -327,6 +328,14 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
   // 1k. v7.2 — Department Payables / Provider Settlements (§2.8)
   if (activeModuleId === 'provider_settlements') {
     return <ProviderSettlementsView />;
+  }
+
+  // Pharmacy Integration — settlement release for money HMS Front Desk
+  // collected on Pharmacy's behalf (admission-linked dispenses). Restricted
+  // to Super Admin / Admin by this portal's own routing, enforced again
+  // server-side in `pharmacy-bridge.service.ts`'s `releaseSettlement`.
+  if (activeModuleId === 'pharmacy_integration') {
+    return <PharmacySettlementsView />;
   }
 
   // 1l. v7.2 — Doctor Commission (§2.7)
@@ -844,14 +853,6 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
           actionLabel: undefined,
           enableImport: false,
           importEntity: 'Inventory',
-        };
-      case 'pharmacy_integration':
-        return {
-          title: 'Pharmacy Integration',
-          desc: 'Integration status, dispensing sync, and requisition linkage with the standalone Pharmacy system.',
-          actionLabel: undefined,
-          enableImport: false,
-          importEntity: 'Pharmacy Integration',
         };
       case 'general_settings':
         return {

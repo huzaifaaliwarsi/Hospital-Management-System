@@ -14,6 +14,7 @@ export interface ResetSummary {
   panelPatients: number;
   corporatePanels: number;
   pharmacyClearances: number;
+  pharmacyCharges: number;
   pharmacyDispenses: number;
   pharmacyDispenseLines: number;
   resetBeds: number;
@@ -70,6 +71,13 @@ export const dataResetService = {
       const deletedPharmacyDispenses = await tx.pharmacyDispense.deleteMany();
       const deletedPharmacyClearances = await tx.pharmacyClearance.deleteMany();
       await tx.medicineStockLedger.deleteMany();
+
+      // 5a. HMS↔Pharmacy inter-entity settlement tracking (pharmacy-bridge
+      // module) — settlements reference charges (RESTRICT), charges
+      // reference the admission record itself (RESTRICT), so both must go
+      // before admissions are deleted in step 8.
+      await tx.hmsPharmacySettlement.deleteMany();
+      const deletedPharmacyCharges = await tx.hmsPharmacyCharge.deleteMany();
 
       // 5b. Admission room charge logs (references both admission records and invoice line items)
       await tx.admissionRoomChargeLog.deleteMany();
@@ -205,6 +213,7 @@ export const dataResetService = {
           panelPatients: deletedPanelPatients.count,
           corporatePanels: deletedCorporatePanels.count,
           pharmacyClearances: deletedPharmacyClearances.count,
+          pharmacyCharges: deletedPharmacyCharges.count,
           pharmacyDispenses: deletedPharmacyDispenses.count,
           pharmacyDispenseLines: deletedPharmacyDispenseLines.count,
           resetBeds: deletedBeds.count,

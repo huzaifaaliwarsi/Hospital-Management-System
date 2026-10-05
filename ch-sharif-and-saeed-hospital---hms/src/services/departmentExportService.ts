@@ -65,13 +65,24 @@ export async function downloadDepartmentPDF(
   const phone = getProfileFieldValue(profile.primaryPhone);
 
   // 1. Hospital Header
-  // Logo placeholder crest
-  doc.setFillColor(8, 119, 90); // #08775A
-  doc.roundedRect(14, 12, 11, 11, 2, 2, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(7.5);
-  doc.setFont('helvetica', 'bold');
-  doc.text('CHSS', 19.5, 18.5, { align: 'center' });
+  // Logo placeholder crest or uploaded image
+  let logoDrawn = false;
+  if (profile.logo) {
+    try {
+      doc.addImage(profile.logo, 14, 12, 11, 11);
+      logoDrawn = true;
+    } catch {
+      logoDrawn = false;
+    }
+  }
+  if (!logoDrawn) {
+    doc.setFillColor(8, 119, 90); // #08775A
+    doc.roundedRect(14, 12, 11, 11, 2, 2, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(7.5);
+    doc.setFont('helvetica', 'bold');
+    doc.text('CHSS', 19.5, 18.5, { align: 'center' });
+  }
 
   // Hospital Name & Governance
   doc.setTextColor(15, 23, 42); // slate-900

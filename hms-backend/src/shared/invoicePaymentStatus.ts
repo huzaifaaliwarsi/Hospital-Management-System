@@ -30,3 +30,11 @@ export function patientResponsibility(inv: PayerSplit): Decimal {
 export function patientPaymentStatus(inv: PayerSplit, paidTotal: Decimal) {
   return invoicePaymentStatus(patientResponsibility(inv), paidTotal);
 }
+
+/** Balance due from the patient on an invoice (Decimal >= 0). */
+export function patientBalanceDue(inv: PayerSplit, paidTotal: Decimal): Decimal {
+  const resp = patientResponsibility(inv);
+  const diff = resp.minus(paidTotal);
+  return diff.greaterThan(0) ? diff : new Decimal(0);
+}
+

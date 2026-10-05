@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Loader2, Wallet, Pill, Eye, X, CheckCircle2, Clock } from 'lucide-react';
+import { AlertCircle, Loader2, Wallet, Pill, Eye, X, CheckCircle2, Clock, Percent, RefreshCw } from 'lucide-react';
 import { Modal } from '../../../components/common/Modal';
 import { NumberInput, Select, TextInput, Toggle } from '../../../components/forms/FormControls';
 import { formatPKR } from '../../../utils/formatters';
@@ -7,6 +7,8 @@ import { useToast } from '../../../context/ToastContext';
 import {
   fetchAdmissionStatement,
   collectAdmissionPayment,
+  applyAdmissionDiscount,
+  resyncPharmacyCollection,
   AdmissionStatement,
   PaymentMethod,
 } from '../../../services/admissionBillingService';
@@ -38,6 +40,7 @@ export const AdmissionStatementModal: React.FC<AdmissionStatementModalProps> = (
 
   const [showPharmacyModal, setShowPharmacyModal] = useState(false);
   const [pharmacyViewTab, setPharmacyViewTab] = useState<'aggregated' | 'granular'>('aggregated');
+  const [isResyncingPharmacy, setIsResyncingPharmacy] = useState(false);
 
   const [amount, setAmount] = useState<number | ''>('');
   const [method, setMethod] = useState<PaymentMethod>('CASH');
@@ -46,6 +49,13 @@ export const AdmissionStatementModal: React.FC<AdmissionStatementModalProps> = (
   const [manualAmounts, setManualAmounts] = useState<Record<string, number | ''>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+
+  const [discLineId, setDiscLineId] = useState(''); // '' = whole eligible Hospital Services total
+  const [discPercent, setDiscPercent] = useState<number | ''>('');
+  const [discAmount, setDiscAmount] = useState<number | ''>('');
+  const [discReason, setDiscReason] = useState('');
+  const [discError, setDiscError] = useState<string | null>(null);
+  const [isSavingDiscount, setIsSavingDiscount] = useState(false);
 
   const load = async () => {
     setIsLoading(true);
@@ -67,6 +77,22 @@ export const AdmissionStatementModal: React.FC<AdmissionStatementModalProps> = (
   const outstandingInvoices = useMemo(
     () => (statement?.departmentInvoices || []).filter((inv) => inv.outstanding > 0),
     [statement],
+  );
+
+  // Discounts are strictly Hospital Services only — Pharmacy / Outsourced
+  // Lab & Radiology lines are never eligible (server-computed per line, see
+  // `applyAdmissionDiscount`'s `isDiscountEligible` on each invoice line).
+  const discountEligibleInvoice = useMemo(
+    () => (statement?.departmentInvoices || []).find((inv) => inv.isDiscountEligibleInvoice),
+    [statement],
+  );
+  const eligibleDiscountLines = useMemo(
+    () => discountEligibleInvoice?.lines.filter((l) => l.isDiscountEligible) ?? [],
+    [discountEligibleInvoice],
+  );
+  const eligibleDiscountGross = useMemo(
+    () => eligibleDiscountLines.reduce((s, l) => s + l.lineGross, 0),
+    [eligibleDiscountLines],
   );
 
   const manualSum = useMemo(
@@ -133,6 +159,57 @@ export const AdmissionStatementModal: React.FC<AdmissionStatementModalProps> = (
     }
   };
 
+  const handleApplyDiscount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setDiscError(null);
+
+    if (!discReason.trim()) {
+      setDiscError('Enter a reason for the discount.');
+      return;
+    }
+    if (!discPercent && !discAmount) {
+      setDiscError('Enter a discount percent or amount.');
+      return;
+    }
+    if (!discountEligibleInvoice) {
+      setDiscError('This admission has no eligible Hospital Services charges (only Outsourced Lab / Pharmacy) to discount.');
+      return;
+    }
+
+    setIsSavingDiscount(true);
+    try {
+      await applyAdmissionDiscount(admissionId, {
+        lineItemId: discLineId || undefined,
+        discountPercent: discPercent === '' ? undefined : discPercent,
+        discountAmount: discAmount === '' ? undefined : discAmount,
+        discountReason: discReason.trim(),
+      });
+      toast.success('Discount applied to Hospital Services charges.');
+      setDiscLineId('');
+      setDiscPercent('');
+      setDiscAmount('');
+      setDiscReason('');
+      load();
+      onChanged?.();
+    } catch (err: any) {
+      setDiscError(err?.message || 'Failed to apply discount.');
+    } finally {
+      setIsSavingDiscount(false);
+    }
+  };
+
+  const handleResyncPharmacy = async () => {
+    setIsResyncingPharmacy(true);
+    try {
+      await resyncPharmacyCollection(admissionId);
+      toast.success('Resynced — Pharmacy\'s Receivable should now reflect the collected amount.');
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to resync with Pharmacy.');
+    } finally {
+      setIsResyncingPharmacy(false);
+    }
+  };
+
   return (
     <Modal isOpen onClose={onClose} title="Running Bill / Interim Statement" subtitle="Not the final discharge invoice — department invoices shown separately." maxWidth="4xl">
       {isLoading ? (
@@ -192,8 +269,8 @@ export const AdmissionStatementModal: React.FC<AdmissionStatementModalProps> = (
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {statement.departmentInvoices.map((inv) => {
-                  const isPharm = inv.departmentName === 'Pharmacy Department' || inv.invoiceNumber.startsWith('INV-PHARM-');
-                  const pharmInvoiceNum = inv.pharmacyDetails?.pharmacyInvoiceNumber || statement.pharmacyCharge?.pharmacyInvoiceNumber || inv.invoiceNumber.replace('INV-PHARM-', '');
+                  const isPharm = !!inv.pharmacyDetails || inv.departmentName === 'Pharmacy Department';
+                  const pharmInvoiceNum = inv.pharmacyDetails?.pharmacyInvoiceNumber || statement.pharmacyCharge?.pharmacyInvoiceNumber || inv.invoiceNumber;
 
                   return (
                     <tr key={inv.id} className={isPharm ? 'bg-emerald-50/20' : ''}>
@@ -261,6 +338,18 @@ export const AdmissionStatementModal: React.FC<AdmissionStatementModalProps> = (
                   }`}>
                     {statement.pharmacyCharge.patientOutstanding === 0 ? 'CLEARED' : 'PENDING'}
                   </span>
+                  {statement.pharmacyCharge.patientPaid > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleResyncPharmacy}
+                      disabled={isResyncingPharmacy}
+                      title="Re-send the collected amount to Pharmacy's system — use if their Receivable still shows 0/wrong after you've already collected payment here."
+                      className="px-2.5 py-1 text-xs font-semibold text-[#08775A] bg-white border border-[#08775A]/40 hover:bg-emerald-50 rounded-lg shadow-2xs inline-flex items-center gap-1 cursor-pointer transition-colors disabled:opacity-60"
+                    >
+                      {isResyncingPharmacy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                      Resync to Pharmacy
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setShowPharmacyModal(true)}
@@ -292,6 +381,55 @@ export const AdmissionStatementModal: React.FC<AdmissionStatementModalProps> = (
               </div>
             </div>
           )}
+
+          {discountEligibleInvoice ? (
+            <form onSubmit={handleApplyDiscount} className="border-t border-slate-200 pt-4 space-y-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-[#08775A] flex items-center gap-1.5">
+                <Percent className="h-3.5 w-3.5" /> Apply Discount
+              </h4>
+              <p className="text-[11px] text-slate-500">
+                Discounts apply to Hospital Services only (Max {formatPKR(eligibleDiscountGross)}). Outsourced Lab, Radiology, and Pharmacy charges cannot be discounted.
+              </p>
+
+              {discError && (
+                <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg flex items-center gap-2 text-xs text-rose-700 font-medium">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  <span>{discError}</span>
+                </div>
+              )}
+
+              <Select
+                label="Apply To"
+                options={[
+                  { label: `Whole eligible total (${formatPKR(eligibleDiscountGross)})`, value: '' },
+                  ...eligibleDiscountLines.map((l) => ({ label: `${l.serviceName} (${formatPKR(l.lineGross)})`, value: l.id })),
+                ]}
+                value={discLineId}
+                onChange={(e) => setDiscLineId(e.target.value)}
+              />
+
+              <div className="grid grid-cols-2 gap-3">
+                <NumberInput label="Discount %" min={0} max={100} value={discPercent} onChange={(e) => setDiscPercent(e.target.value === '' ? '' : Number(e.target.value))} />
+                <NumberInput label="OR Discount Amount (PKR)" min={0} value={discAmount} onChange={(e) => setDiscAmount(e.target.value === '' ? '' : Number(e.target.value))} />
+              </div>
+              <TextInput label="Reason" required placeholder="e.g. Administrative / Patient Relief Discount" value={discReason} onChange={(e) => setDiscReason(e.target.value)} />
+
+              <div className="flex justify-end pt-1">
+                <button
+                  type="submit"
+                  disabled={isSavingDiscount}
+                  className="px-5 py-2 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 rounded-lg shadow-xs disabled:opacity-60 inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  {isSavingDiscount && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Apply Discount
+                </button>
+              </div>
+            </form>
+          ) : statement.departmentInvoices.length > 0 ? (
+            <p className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-2.5">
+              No discount available — this admission has only Panel, Outsourced Lab/Radiology, or Pharmacy charges, which cannot be discounted at Front Desk.
+            </p>
+          ) : null}
 
           {outstandingInvoices.length > 0 && (
             <form onSubmit={handleSubmit} className="border-t border-slate-200 pt-4 space-y-3">

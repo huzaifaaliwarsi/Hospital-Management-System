@@ -11,9 +11,10 @@ import {
   PhoneCall,
   CheckCircle2,
 } from 'lucide-react';
-import { HOSPITAL_INFO, SOFTWARE_PROVIDER, DEFAULT_MOCK_USER } from '../../constants';
 import { Modal } from '../../components/common/Modal';
 import { useToast } from '../../context/ToastContext';
+import { useHospitalProfile, fetchPublicHospitalProfile } from '../../services/hospitalProfileService';
+import { HOSPITAL_INFO, SOFTWARE_PROVIDER, DEFAULT_MOCK_USER } from '../../constants';
 
 interface LoginScreenProps {
   onLoginSuccess: () => void;
@@ -28,6 +29,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [resetEmail, setResetEmail] = useState('');
   const [resetSent, setResetSent] = useState(false);
+  const hospitalProfile = useHospitalProfile();
+
+  React.useEffect(() => {
+    fetchPublicHospitalProfile().catch(() => {});
+  }, []);
 
   const toast = useToast();
 
@@ -63,12 +69,20 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
       {/* Hospital Top Bar */}
       <header className="relative z-10 w-full px-6 py-4 flex items-center justify-between border-b border-slate-800 bg-slate-950/60 backdrop-blur-xs">
         <div className="flex items-center gap-3">
-          <div className="h-9 w-9 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-sm shadow-md">
-            CSS
-          </div>
+          {hospitalProfile.logo ? (
+            <img
+              src={hospitalProfile.logo}
+              alt="Logo"
+              className="h-9 w-9 rounded-lg object-contain bg-white p-1 shadow-md border border-slate-700"
+            />
+          ) : (
+            <div className="h-9 w-9 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-sm shadow-md">
+              CSS
+            </div>
+          )}
           <div>
             <h1 className="text-xs font-bold text-white tracking-wide">
-              {HOSPITAL_INFO.name}
+              {hospitalProfile.name || HOSPITAL_INFO.name}
             </h1>
             <p className="text-[10px] text-slate-400">
               Hospital Management Information System (HMIS)
@@ -93,11 +107,15 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
           {/* Card Header with Hospital Banner */}
           <div className="px-8 pt-8 pb-6 bg-gradient-to-b from-blue-50/70 to-white border-b border-slate-100 text-center">
             {/* Hospital Logo Emblem */}
-            <div className="mx-auto mb-3 h-14 w-14 rounded-2xl bg-blue-900 text-white flex items-center justify-center shadow-lg ring-4 ring-blue-100">
-              <HeartPulse className="h-8 w-8 text-blue-300" />
+            <div className="mx-auto mb-3 h-14 w-14 rounded-2xl bg-white border border-slate-200 text-white flex items-center justify-center shadow-lg ring-4 ring-blue-100 overflow-hidden p-1.5">
+              {hospitalProfile.logo ? (
+                <img src={hospitalProfile.logo} alt="Logo" className="h-full w-full object-contain" />
+              ) : (
+                <HeartPulse className="h-8 w-8 text-blue-600" />
+              )}
             </div>
 
-            <h2 className="text-xl font-bold text-slate-900">Hospital Portal Sign In</h2>
+            <h2 className="text-xl font-bold text-slate-900">{hospitalProfile.shortName || 'Hospital'} Portal Sign In</h2>
             <p className="text-xs text-slate-500 mt-1">
               Authorized access for clinical, administrative, and operational personnel
             </p>

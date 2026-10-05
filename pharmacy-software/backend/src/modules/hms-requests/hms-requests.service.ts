@@ -13,6 +13,7 @@ import type {
   RejectRequestBody,
   UpdateSettingsBody,
   PatientCollectedCallbackBody,
+  ReconcileCollectionBody,
   CreateSettlementRequestBody,
   ReleaseSettlementCallbackBody,
 } from './hms-requests.schemas';
@@ -382,6 +383,49 @@ export const hmsRequestsService = {
         paidTotal: newCollectedTotal,
         outstanding: Decimal.max(0, invoice.total.minus(newCollectedTotal)),
         status: isFullyCollected ? 'PAID' : 'PARTIALLY_PAID',
+      },
+    });
+  },
+
+  // ── Reconcile HMS Collection (manual resync, idempotent) ──────────────────
+  /**
+   * `handlePatientCollected` above is additive (delta per collection event) —
+   * fine for the normal webhook path, but if that webhook silently fails
+   * (Pharmacy backend unreachable at that moment, a transient network error,
+   * etc.) there is no automatic retry, and `hmsCollectedAmount`/`hmsReceivable`
+   * are stuck wrong forever even though HMS already correctly recorded the
+   * collection on its own side (`HmsPharmacyCharge.patientPaid`). This SETS
+   * `hmsCollectedAmount` to that authoritative value instead of adding to it,
+   * so HMS's "Resync to Pharmacy" action can be retried safely any number of
+   * times without double-counting.
+   */
+  async reconcileHmsCollected(body: ReconcileCollectionBody) {
+    const invoice = await prisma.pharmacyInvoice.findUnique({
+      where: { invoiceNumber: body.pharmacyInvoiceNumber },
+    });
+    if (!invoice) throw new NotFoundError(`Invoice ${body.pharmacyInvoiceNumber} not found`);
+
+    const authoritative = new Decimal(body.authoritativeCollectedAmount);
+    const newReceivable = authoritative.minus(invoice.hmsSettledAmount);
+    const isFullyCollected = authoritative.greaterThanOrEqualTo(invoice.total);
+
+    return prisma.pharmacyInvoice.update({
+      where: { id: invoice.id },
+      data: {
+        hmsCollectedAmount: authoritative,
+        hmsReceivable: Decimal.max(0, newReceivable),
+        // Never clobber an in-flight settlement request/release with this
+        // resync — only move status when nothing is already being tracked.
+        internalSettlementStatus:
+          invoice.internalSettlementStatus === 'REQUESTED' || invoice.internalSettlementStatus === 'PARTIALLY_RELEASED'
+            ? invoice.internalSettlementStatus
+            : newReceivable.greaterThan(0)
+              ? 'PENDING'
+              : 'SETTLED',
+        clearanceStatus: isFullyCollected ? 'CLEARED' : 'OUTSTANDING',
+        paidTotal: authoritative,
+        outstanding: Decimal.max(0, invoice.total.minus(authoritative)),
+        status: isFullyCollected ? 'PAID' : authoritative.greaterThan(0) ? 'PARTIALLY_PAID' : 'UNPAID',
       },
     });
   },

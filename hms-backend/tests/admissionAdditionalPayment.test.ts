@@ -5,6 +5,9 @@ const { tx } = vi.hoisted(() => ({ tx: {
   hospitalInvoice: { findUnique: vi.fn(), update: vi.fn() },
   paymentReceipt: { create: vi.fn() },
   userCashBalance: { create: vi.fn() },
+  // No pharmacy charges on these test invoices — findFirst resolving
+  // undefined short-circuits `collectPayment`'s pharmacy-notification block.
+  serviceRate: { findFirst: vi.fn() },
 } }));
 vi.mock('@/db/client', () => ({ prisma: { $transaction: (fn: any) => fn(tx) } }));
 vi.mock('@/shared/idGenerator', () => ({ generateReceiptNumber: () => 'RECEIPT-TEST' }));

@@ -69,14 +69,18 @@ export const settingsService = {
   // ── Testing Data Reset ────────────────────────────────────────────────
   async resetData(scope: 'transactions_only' | 'complete', actorId: string) {
     return prisma.$transaction(async (tx) => {
-      // 1. Invoices & Payments & Dispenses
-      await tx.pharmacyPayment.deleteMany({});
-      await tx.pharmacyInvoiceLine.deleteMany({});
-      const invoices = await tx.pharmacyInvoice.deleteMany({});
-
-      // 2. HMS Requests
+      // 1. HMS Requests — `MedicineRequest.invoiceId` references the
+      // invoice (RESTRICT), so these must go before the invoice itself.
       await tx.medicineRequestLine.deleteMany({});
       await tx.medicineRequest.deleteMany({});
+
+      // 2. Invoices & Payments & Dispenses
+      await tx.pharmacyPayment.deleteMany({});
+      await tx.pharmacyInvoiceLine.deleteMany({});
+      // HMS↔Pharmacy inter-entity settlement requests also reference the
+      // invoice (RESTRICT) — must go before the invoice too.
+      await tx.hmsReceivableSettlement.deleteMany({});
+      const invoices = await tx.pharmacyInvoice.deleteMany({});
 
       // 3. Purchases, Purchase Orders & Vendor Ledgers
       await tx.purchaseOrderLine.deleteMany({});

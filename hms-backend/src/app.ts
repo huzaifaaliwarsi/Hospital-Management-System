@@ -31,6 +31,8 @@ import cashRoutes from '@/modules/cash/cash.routes';
 import reportsRoutes from '@/modules/reports/reports.routes';
 import expensesRoutes from '@/modules/expenses/expenses.routes';
 import notificationsRoutes from '@/modules/notifications/notifications.routes';
+import { setupController } from '@/modules/setup/setup.controller';
+import { asyncHandler } from '@/shared/asyncHandler';
 
 
 export function createApp() {
@@ -48,7 +50,8 @@ export function createApp() {
     }),
   );
   app.use(requestContext);
-  app.use(express.json({ limit: '2mb' }));
+  app.use(express.json({ limit: '10mb' }));
+  app.use(express.urlencoded({ limit: '10mb', extended: true }));
   app.use(cookieParser());
   app.use(globalRateLimiter);
 
@@ -66,6 +69,7 @@ export function createApp() {
   // Public routes — must be mounted before the blanket `authenticate` below.
   app.use('/api/v1/health', healthRoutes);
   app.use('/api/v1/auth', authRoutes);
+  app.get('/api/v1/public/hospital-profile', asyncHandler(setupController.getHospitalPublicProfile));
 
   // Everything from here on requires a valid access token; mutating verbs
   // are captured to `audit_logs` (§7.14).

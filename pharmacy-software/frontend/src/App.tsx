@@ -15,6 +15,7 @@ import { PurchaseOrdersPage } from './pages/PurchaseOrdersPage';
 import { StockInPage, StockInPrefill } from './pages/StockInPage';
 import { BalanceSheetPage } from './pages/BalanceSheetPage';
 import { SettlementsPage } from './pages/SettlementsPage';
+import { HmsReceivablesPage } from './pages/HmsReceivablesPage';
 import { ExpensesPage } from './pages/ExpensesPage';
 import { UsersPage } from './pages/UsersPage';
 import { StockMovementsPage } from './pages/StockMovementsPage';
@@ -46,7 +47,7 @@ const REPORT_PAGES: { page: string; type: import('./components/ReportView').Repo
 // restructuring how any individual page renders.
 const VALID_PAGES = [
   'dashboard', 'medicines', 'pos', 'invoices', 'hms-requests', 'stock-movements',
-  'vendors', 'purchases', 'stock-in', 'balance-sheet', 'settlements', 'expenses',
+  'vendors', 'purchases', 'stock-in', 'balance-sheet', 'settlements', 'hms-receivables', 'expenses',
   'users', 'settings', ...REPORT_PAGES.map((r) => r.page),
 ];
 
@@ -129,6 +130,8 @@ const App: React.FC = () => {
         return <BalanceSheetPage />;
       case 'settlements':
         return <SettlementsPage canReview={!isSales} />;
+      case 'hms-receivables':
+        return <HmsReceivablesPage />;
       case 'expenses':
         return <ExpensesPage canApprove={!isSales} />;
       case 'users':

@@ -13,6 +13,9 @@ export const setupController = {
   getHospitalProfile: async (_req: Request, res: Response) => {
     res.json({ data: await setupService.getHospitalProfile() });
   },
+  getHospitalPublicProfile: async (_req: Request, res: Response) => {
+    res.json({ data: await setupService.getHospitalPublicProfile() });
+  },
   getHospitalSummary: async (_req: Request, res: Response) => {
     res.json({ data: await setupService.getHospitalSummary() });
   },

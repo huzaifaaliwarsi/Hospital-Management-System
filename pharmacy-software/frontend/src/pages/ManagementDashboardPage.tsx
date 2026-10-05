@@ -31,6 +31,15 @@ import {
 import { pharmacyApi, ManagementDashboard } from '../services/pharmacyApi';
 import { useAuth } from '../context/AuthContext';
 import { formatPKR } from '../utils/format';
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+} from 'recharts';
 
 interface Props {
   onNavigate?: (pageId: string) => void;
@@ -71,7 +80,7 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tableSearch, setTableSearch] = useState('');
-  const [timeframe, setTimeframe] = useState<'6m' | 'this_month'>('6m');
+  const [timeframe, setTimeframe] = useState<'7d' | '14d' | '30d' | '6m'>('7d');
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
 
   const fetchDashboard = () => {
@@ -104,42 +113,41 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
     );
   }, [data?.inventoryOverview, tableSearch]);
 
-  // Active trend items based on selected timeframe ('6m' vs 'this_month')
+  // Active trend items based on selected timeframe ('7d', '14d', '30d', '6m')
   const activeTrendItems = useMemo(() => {
-    if (timeframe === 'this_month' && data?.dailyTrend && data.dailyTrend.length > 0) {
-      const todayDate = new Date().getDate();
-      return data.dailyTrend.slice(0, Math.min(todayDate, data.dailyTrend.length)).map((d) => ({
-        label: d.date,
-        revenue: d.revenue,
-        purchases: d.purchases,
-        expenses: d.expenses,
-        profit: d.profit,
-        orders: d.orders,
+    if (timeframe === '6m') {
+      const months = data?.monthlyTrend && data.monthlyTrend.length > 0 ? data.monthlyTrend : [];
+      return months.map((m) => ({
+        label: m.month,
+        fullDate: m.month,
+        revenue: m.revenue,
+        purchases: m.purchases,
+        expenses: m.expenses,
+        profit: m.profit,
+        orders: m.orders,
       }));
     }
-    const months = data?.monthlyTrend && data.monthlyTrend.length > 0 ? data.monthlyTrend : [
-      { month: 'May 26', revenue: 0, profit: 0, expenses: 0, orders: 0 },
-      { month: 'Jun 26', revenue: 0, profit: 0, expenses: 0, orders: 0 },
-      { month: 'Jul 26', revenue: 0, profit: 0, expenses: 0, orders: 0 },
-      { month: 'Aug 26', revenue: 0, profit: 0, expenses: 0, orders: 0 },
-      { month: 'Sep 26', revenue: Number(data?.totalRevenueAllTime) || 552, profit: 0, expenses: 0, orders: 3 },
-      { month: 'Oct 26', revenue: Number(data?.salesToday) || 0, profit: 0, expenses: 0, orders: data?.salesCountToday || 0 },
-    ];
-    return months.map((m) => ({
-      label: m.month,
-      revenue: m.revenue,
-      purchases: m.purchases,
-      expenses: m.expenses,
-      profit: m.profit,
-      orders: m.orders,
+
+    const daily = data?.dailyTrend || [];
+    const count = timeframe === '30d' ? 30 : timeframe === '14d' ? 14 : 7;
+    const slice = daily.slice(-count);
+
+    return slice.map((d) => ({
+      label: d.date,
+      fullDate: d.fullDate || d.date,
+      revenue: d.revenue,
+      purchases: d.purchases,
+      expenses: d.expenses,
+      profit: d.profit,
+      orders: d.orders,
     }));
-  }, [timeframe, data?.monthlyTrend, data?.dailyTrend, data?.salesToday, data?.salesCountToday, data?.totalRevenueAllTime]);
+  }, [timeframe, data?.monthlyTrend, data?.dailyTrend]);
 
   if (loading) {
     return (
       <div className="min-h-[75vh] flex flex-col items-center justify-center text-slate-500 gap-3">
         <Loader2 className="h-8 w-8 animate-spin text-[#0e7d5a]" />
-        <p className="text-sm font-medium">Loading live pharmacy analytics…</p>
+        <p className="text-sm font-medium">Loading live pharmacy analytics...</p>
       </div>
     );
   }
@@ -176,31 +184,6 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
   const momGrowth = prevPt && prevPt.revenue > 0
     ? Math.round(((lastPt.revenue - prevPt.revenue) / prevPt.revenue) * 100)
     : (lastPt?.revenue > 0 ? 100 : 0);
-
-  // Calculate SVG curve coordinates for Monthly Revenue Chart
-  const maxRev = Math.max(...activeTrendItems.map((m) => m.revenue), 100);
-  const chartW = 600;
-  const chartH = 150;
-  const stepX = chartW / Math.max(1, activeTrendItems.length - 1);
-
-  const points = activeTrendItems.map((m, idx) => {
-    const x = idx * stepX;
-    const y = chartH - (m.revenue / maxRev) * (chartH - 30) - 15;
-    return { x, y, ...m };
-  });
-
-  // Bezier curve string
-  let pathD = `M${points[0]?.x ?? 0},${points[0]?.y ?? chartH - 20}`;
-  for (let i = 0; i < points.length - 1; i++) {
-    const p0 = points[i];
-    const p1 = points[i + 1];
-    const cp1x = p0.x + (p1.x - p0.x) / 2;
-    const cp1y = p0.y;
-    const cp2x = p0.x + (p1.x - p0.x) / 2;
-    const cp2y = p1.y;
-    pathD += ` C${cp1x},${cp1y} ${cp2x},${cp2y} ${p1.x},${p1.y}`;
-  }
-  const areaD = `${pathD} L${chartW},${chartH} L0,${chartH} Z`;
 
   // Categories distribution with palette
   const categoryPalette = ['#0e7d5a', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'];
@@ -445,22 +428,31 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
             {/* Header */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
               <div>
-                <h3 className="text-base font-bold text-slate-900">Monthly Revenue Performance</h3>
-                <p className="text-xs text-slate-400 mt-0.5">Revenue, profit and operational expenses overview</p>
+                <h3 className="text-base font-bold text-slate-900">
+                  {timeframe === '6m' ? 'Monthly Revenue Performance' : 'Daily Revenue & Inflow Performance'}
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {timeframe === '6m'
+                    ? 'Monthly revenue, stock purchases, and operational margin overview'
+                    : 'Day-by-day dispensed sales, stock purchases, and net margin'}
+                </p>
               </div>
               <div className="flex items-center gap-2">
                 <select
                   value={timeframe}
                   onChange={(e) => setTimeframe(e.target.value as any)}
-                  className="text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
+                  className="text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer shadow-sm hover:border-slate-300 transition-colors"
                 >
-                  <option value="6m">Last 6 months</option>
-                  <option value="this_month">This month</option>
+                  <option value="7d">Last 7 Days (Daily Trend)</option>
+                  <option value="14d">Last 14 Days (Daily Trend)</option>
+                  <option value="30d">Last 30 Days (Daily Trend)</option>
+                  <option value="6m">Last 6 Months (Monthly)</option>
                 </select>
                 <button
                   type="button"
                   onClick={() => onNavigate && onNavigate('reports')}
                   className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+                  title="View full reports"
                 >
                   <MoreVertical className="h-4 w-4" />
                 </button>
@@ -471,17 +463,17 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 py-4">
               <div>
                 <div className="flex items-center gap-1.5 text-xs text-slate-400">
-                  <span className="h-2 w-2 rounded-full bg-blue-500" /> Period Revenue
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" /> Period Revenue
                 </div>
                 <div className="text-lg font-bold text-slate-900 mt-1">{formatPKR(periodRevenue)}</div>
-                <div className="text-[10px] text-emerald-600 font-semibold">{periodOrders} orders</div>
+                <div className="text-[10px] text-emerald-600 font-semibold">{periodOrders} invoices</div>
               </div>
               <div>
                 <div className="flex items-center gap-1.5 text-xs text-slate-400">
-                  <span className="h-2 w-2 rounded-full bg-emerald-500" /> Stock Value
+                  <span className="h-2 w-2 rounded-full bg-teal-500" /> Stock Value
                 </div>
                 <div className="text-lg font-bold text-slate-900 mt-1">{formatPKR(data.currentStockValue)}</div>
-                <div className="text-[10px] text-emerald-600 font-semibold">{data.totalStockUnits || 0} units</div>
+                <div className="text-[10px] text-teal-600 font-semibold">{data.totalStockUnits || 0} units in stock</div>
               </div>
               <div>
                 <div className="flex items-center gap-1.5 text-xs text-slate-400">
@@ -494,170 +486,130 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
               </div>
               <div>
                 <div className="flex items-center gap-1.5 text-xs text-slate-400">
-                  <span className="h-2 w-2 rounded-full bg-purple-500" /> Net Profit
+                  <span className="h-2 w-2 rounded-full bg-blue-500" /> Net Margin
                 </div>
                 <div className="text-lg font-bold text-slate-900 mt-1">{formatPKR(periodProfit)}</div>
-                <div className="text-[10px] text-slate-400 font-medium">
-                  {periodRevenue > 0 ? `${Math.round((periodProfit / periodRevenue) * 100)}% margin` : 'Real-time'}
+                <div className="text-[10px] text-blue-600 font-medium">
+                  {periodRevenue > 0 ? `${Math.round((periodProfit / periodRevenue) * 100)}% margin` : '0% margin'}
                 </div>
               </div>
             </div>
 
-            {/* SVG Area Chart with interactive hover report card */}
-            <div className="relative pt-6 pb-2">
-              {/* Floating Report Card on Hover */}
-              {hoveredIdx !== null && points[hoveredIdx] && (
-                <div
-                  className="absolute z-30 pointer-events-none transition-all duration-150 ease-out"
-                  style={{
-                    left: `${Math.min(Math.max(18, (points[hoveredIdx].x / chartW) * 100), 82)}%`,
-                    top: '20px',
-                    transform: 'translate(-50%, -100%)',
-                  }}
-                >
-                  <div className="bg-white text-slate-800 rounded-xl p-3.5 shadow-[0_12px_32px_rgba(0,0,0,0.12)] border border-slate-200/90 w-64 text-xs ring-1 ring-slate-900/5">
-                    <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-2.5">
-                      <div className="flex items-center gap-1.5 font-bold text-slate-900">
-                        <Calendar className="h-3.5 w-3.5 text-[#0e7d5a]" />
-                        <span>{points[hoveredIdx].label}</span>
-                      </div>
-                      <span className="text-[10px] font-semibold bg-emerald-50 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-200/80">
-                        {points[hoveredIdx].orders} invoices
-                      </span>
-                    </div>
-                    <div className="space-y-1.5 text-[11px]">
-                      <div className="flex items-center justify-between">
-                        <span className="text-slate-500 flex items-center gap-1.5">
-                          <span className="h-2 w-2 rounded-full bg-blue-500 shrink-0" /> Gross Revenue:
-                        </span>
-                        <span className="font-bold text-slate-900 font-mono text-xs">{formatPKR(points[hoveredIdx].revenue)}</span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-slate-500 flex items-center gap-1.5">
-                          <span className="h-2 w-2 rounded-full bg-amber-500 shrink-0" /> Stock Inflow:
-                        </span>
-                        <span className="font-semibold text-slate-800 font-mono text-xs">{formatPKR(points[hoveredIdx].purchases)}</span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-slate-500 flex items-center gap-1.5">
-                          <span className="h-2 w-2 rounded-full bg-rose-500 shrink-0" /> Expenses:
-                        </span>
-                        <span className="font-semibold text-slate-800 font-mono text-xs">{formatPKR(points[hoveredIdx].expenses)}</span>
-                      </div>
-                      <div className="flex items-center justify-between pt-2 border-t border-slate-100 font-semibold bg-emerald-50/60 -mx-3.5 -mb-3.5 px-3.5 py-2.5 rounded-b-xl">
-                        <span className="text-[#0e7d5a] flex items-center gap-1.5 font-bold">
-                          <span className="h-2 w-2 rounded-full bg-[#0e7d5a] shrink-0" /> Net Profit:
-                        </span>
-                        <span className="text-[#0e7d5a] font-mono font-extrabold text-xs">{formatPKR(points[hoveredIdx].profit)}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <svg
-                className="w-full h-44 overflow-visible cursor-crosshair"
-                viewBox={`0 0 ${chartW} ${chartH}`}
-                preserveAspectRatio="none"
-                onMouseMove={(e) => {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const xPos = ((e.clientX - rect.left) / rect.width) * chartW;
-                  let closest = 0;
-                  let minD = Infinity;
-                  points.forEach((pt, i) => {
-                    const d = Math.abs(pt.x - xPos);
-                    if (d < minD) {
-                      minD = d;
-                      closest = i;
-                    }
-                  });
-                  setHoveredIdx(closest);
-                }}
-                onMouseLeave={() => setHoveredIdx(null)}
-              >
-                <defs>
-                  <linearGradient id="revenueGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#0e7d5a" stopOpacity="0.35" />
-                    <stop offset="100%" stopColor="#0e7d5a" stopOpacity="0.0" />
-                  </linearGradient>
-                </defs>
-
-                {/* Grid guidelines */}
-                <line x1="0" y1={chartH * 0.25} x2={chartW} y2={chartH * 0.25} stroke="#f1f5f9" strokeDasharray="3 3" />
-                <line x1="0" y1={chartH * 0.5} x2={chartW} y2={chartH * 0.5} stroke="#f1f5f9" strokeDasharray="3 3" />
-                <line x1="0" y1={chartH * 0.75} x2={chartW} y2={chartH * 0.75} stroke="#f1f5f9" strokeDasharray="3 3" />
-
-                {/* Area and Line */}
-                <path d={areaD} fill="url(#revenueGrad)" />
-                <path d={pathD} fill="none" stroke="#0e7d5a" strokeWidth="3" strokeLinecap="round" />
-
-                {/* Hover vertical crosshair */}
-                {hoveredIdx !== null && points[hoveredIdx] && (
-                  <line
-                    x1={points[hoveredIdx].x}
-                    y1={0}
-                    x2={points[hoveredIdx].x}
-                    y2={chartH}
-                    stroke="#0e7d5a"
-                    strokeWidth="1.5"
-                    strokeDasharray="4 4"
-                  />
-                )}
-
-                {/* Points */}
-                {points.map((pt, i) => {
-                  const isHovered = hoveredIdx === i;
-                  return (
-                    <g key={i}>
-                      {isHovered && (
-                        <circle cx={pt.x} cy={pt.y} r="10" fill="#0e7d5a" fillOpacity="0.25" className="animate-ping" />
-                      )}
-                      <circle
-                        cx={pt.x}
-                        cy={pt.y}
-                        r={isHovered ? '6' : '4.5'}
-                        fill={isHovered ? '#0e7d5a' : '#ffffff'}
-                        stroke="#0e7d5a"
-                        strokeWidth={isHovered ? '3' : '2.5'}
-                        className="transition-all duration-150 cursor-pointer"
-                        onMouseEnter={() => setHoveredIdx(i)}
-                      />
-                    </g>
-                  );
-                })}
-              </svg>
-
-              {/* X-Axis labels */}
-              <div className="flex justify-between text-[11px] text-slate-400 pt-2 font-medium">
-                {activeTrendItems.map((m, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => setHoveredIdx(idx)}
-                    className={`text-center cursor-pointer transition-colors ${
-                      hoveredIdx === idx ? 'text-[#0e7d5a] font-bold' : 'hover:text-slate-600'
-                    }`}
-                  >
-                    {m.label}
-                  </button>
-                ))}
+            {/* Recharts Area Chart */}
+            <div className="relative pt-2 pb-2">
+              <div className="h-56 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={activeTrendItems} margin={{ top: 12, right: 12, left: -15, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="pharmacyRevGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#0e7d5a" stopOpacity={0.35} />
+                        <stop offset="95%" stopColor="#0e7d5a" stopOpacity={0.0} />
+                      </linearGradient>
+                      <linearGradient id="pharmacyPurGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.25} />
+                        <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                    <XAxis
+                      dataKey="label"
+                      tickLine={false}
+                      axisLine={{ stroke: '#e2e8f0' }}
+                      tick={{ fontSize: 11, fill: '#64748b', fontWeight: 500 }}
+                    />
+                    <YAxis
+                      tickLine={false}
+                      axisLine={false}
+                      tick={{ fontSize: 11, fill: '#94a3b8' }}
+                      tickFormatter={(val) => (val >= 1000 ? `${(val / 1000).toFixed(val % 1000 === 0 ? 0 : 1)}k` : `${val}`)}
+                      domain={[0, (dataMax) => Math.max(dataMax * 1.15, 1000)]}
+                    />
+                    <RechartsTooltip
+                      content={({ active, payload }) => {
+                        if (active && payload && payload.length) {
+                          const item = payload[0].payload;
+                          return (
+                            <div className="bg-white text-slate-800 rounded-xl p-3 shadow-xl border border-slate-200/90 w-64 text-xs ring-1 ring-slate-900/5">
+                              <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-2">
+                                <div className="flex items-center gap-1.5 font-bold text-slate-900">
+                                  <Calendar className="h-3.5 w-3.5 text-emerald-600" />
+                                  <span>{item.fullDate || item.label}</span>
+                                </div>
+                                <span className="text-[10px] font-semibold bg-emerald-50 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-200/80">
+                                  {item.orders} {item.orders === 1 ? 'invoice' : 'invoices'}
+                                </span>
+                              </div>
+                              <div className="space-y-1.5 text-[11px]">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-slate-500 flex items-center gap-1.5">
+                                    <span className="h-2 w-2 rounded-full bg-emerald-600 shrink-0" /> Sales Revenue:
+                                  </span>
+                                  <span className="font-bold text-emerald-700 font-mono text-xs">{formatPKR(item.revenue)}</span>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-slate-500 flex items-center gap-1.5">
+                                    <span className="h-2 w-2 rounded-full bg-amber-500 shrink-0" /> Stock Inflow:
+                                  </span>
+                                  <span className="font-semibold text-slate-800 font-mono text-xs">{formatPKR(item.purchases)}</span>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-slate-500 flex items-center gap-1.5">
+                                    <span className="h-2 w-2 rounded-full bg-rose-500 shrink-0" /> Expenses:
+                                  </span>
+                                  <span className="font-semibold text-slate-800 font-mono text-xs">{formatPKR(item.expenses)}</span>
+                                </div>
+                                <div className="flex items-center justify-between pt-2 border-t border-slate-100 font-semibold bg-emerald-50/60 -mx-3 -mb-3 px-3 py-2 rounded-b-xl">
+                                  <span className="text-[#0e7d5a] flex items-center gap-1.5 font-bold">
+                                    Net Profit:
+                                  </span>
+                                  <span className="text-[#0e7d5a] font-mono font-extrabold text-xs">{formatPKR(item.profit)}</span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="purchases"
+                      name="Stock Inflow"
+                      stroke="#f59e0b"
+                      strokeWidth={2}
+                      fillOpacity={1}
+                      fill="url(#pharmacyPurGrad)"
+                      activeDot={{ r: 5, fill: '#f59e0b', stroke: '#fff', strokeWidth: 2 }}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="revenue"
+                      name="Sales Revenue"
+                      stroke="#0e7d5a"
+                      strokeWidth={2.5}
+                      fillOpacity={1}
+                      fill="url(#pharmacyRevGrad)"
+                      activeDot={{ r: 6, fill: '#0e7d5a', stroke: '#fff', strokeWidth: 2 }}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
               </div>
 
-              {/* Real Interactive Inspection Bar below chart */}
+              {/* Inspection Bar / Legend */}
               <div className="mt-3 py-2 px-3 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-between text-xs text-slate-600">
-                {hoveredIdx !== null && points[hoveredIdx] ? (
-                  <div className="flex items-center gap-4 flex-wrap">
-                    <span className="font-bold text-slate-900">{points[hoveredIdx].label} Report:</span>
-                    <span>Revenue: <strong className="text-blue-600">{formatPKR(points[hoveredIdx].revenue)}</strong></span>
-                    <span>Inflow: <strong className="text-amber-600">{formatPKR(points[hoveredIdx].purchases)}</strong></span>
-                    <span>Profit: <strong className="text-emerald-700">{formatPKR(points[hoveredIdx].profit)}</strong></span>
-                    <span>Transactions: <strong className="text-slate-800">{points[hoveredIdx].orders}</strong></span>
-                  </div>
-                ) : (
-                  <div className="text-slate-400 text-[11px]">
-                    Graph point par hover karein detailed revenue, stock inflow aur profit report dekhne ke liye.
-                  </div>
-                )}
+                <div className="flex items-center gap-3 text-[11px] flex-wrap">
+                  <span className="flex items-center gap-1.5 font-medium text-slate-700">
+                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-600" />
+                    Sales Revenue
+                  </span>
+                  <span className="flex items-center gap-1.5 font-medium text-slate-700">
+                    <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
+                    Stock Purchases
+                  </span>
+                  <span className="text-slate-400 hidden sm:inline">
+                    • Din ke mutabiq graph amount ke sath proportionally upar jaye ga.
+                  </span>
+                </div>
                 <span className="text-[10.5px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full shrink-0">
                   Live DB Trend
                 </span>

@@ -1,11 +1,16 @@
 import type { Request, Response } from 'express';
 import { admissionBillingService } from './admissionBilling.service';
 import { AuthenticationError } from '@/shared/errors/AppError';
-import type { CollectAdmissionPaymentBody } from './admissionBilling.schemas';
+import type { CollectAdmissionPaymentBody, ApplyAdmissionDiscountBody } from './admissionBilling.schemas';
 
 function actorId(req: Request): string {
   if (!req.user) throw new AuthenticationError();
   return req.user.sub;
+}
+
+function actorRole(req: Request): string {
+  if (!req.user) throw new AuthenticationError();
+  return req.user.role;
 }
 
 export const admissionBillingController = {
@@ -27,6 +32,16 @@ export const admissionBillingController = {
   getReadOnlyLedger: async (req: Request, res: Response) => {
     const ledger = await admissionBillingService.getLedger(req.params.id as string, true);
     res.json({ data: ledger });
+  },
+
+  applyDiscount: async (req: Request, res: Response) => {
+    const updated = await admissionBillingService.applyDiscount(
+      req.params.id as string,
+      req.body as ApplyAdmissionDiscountBody,
+      actorId(req),
+      actorRole(req),
+    );
+    res.json({ data: updated });
   },
 
   collectPayment: async (req: Request, res: Response) => {

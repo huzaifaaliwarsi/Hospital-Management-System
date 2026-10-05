@@ -155,7 +155,6 @@ export const ProviderSettlementsView: React.FC = () => {
         <div>
           <div className="flex items-center gap-2.5">
             <h1 className="text-xl font-bold text-slate-900">Department Payables &amp; Provider Settlements</h1>
-            <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200">v7.2</span>
           </div>
           <p className="text-xs text-slate-500 mt-1 max-w-2xl">
             Full/Partial settlement against Outsourced Providers, settled from realized collections only. Each row is a voucher —

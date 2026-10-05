@@ -17,6 +17,7 @@ import {
   FileText,
   Settings,
   Undo2,
+  Landmark,
 } from 'lucide-react';
 
 export interface NavItem {
@@ -53,6 +54,7 @@ export const MANAGEMENT_NAV: NavGroup[] = [
     items: [
       { id: 'balance-sheet', label: 'Balance Sheet', icon: Wallet },
       { id: 'settlements', label: 'Account Settlement', icon: Coins },
+      { id: 'hms-receivables', label: 'HMS Receivables', icon: Landmark },
       { id: 'expenses', label: 'Operating Expenses', icon: CreditCard },
     ],
   },

@@ -95,7 +95,6 @@ vi.mock('@/db/client', () => {
 import { prisma } from '@/db/client';
 import { inventoryService } from '@/modules/inventory/inventory.service';
 import { pharmacyService } from '@/modules/pharmacy/pharmacy.service';
-import { pharmacyBridgeService } from '@/modules/pharmacy-bridge/pharmacy-bridge.service';
 
 describe('Phase 6: General Inventory, FEFO Pharmacy & HMS Bridge', () => {
   const actorId = 'actor-user-uuid-1';
@@ -473,159 +472,12 @@ describe('Phase 6: General Inventory, FEFO Pharmacy & HMS Bridge', () => {
     });
   });
 
-  // ── 3. HMS Pharmacy Bridge & Automated Discharge Clearance ───────────────
-  describe('HMS Pharmacy Bridge & Dual Discharge Clearance Callback', () => {
-    it('creates inpatient medicine request with idempotency protection and sets clearance PENDING', async () => {
-      vi.mocked(prisma.pharmacyClearance.findUnique).mockResolvedValue(null);
-      vi.mocked(prisma.admissionRecord.findUnique).mockResolvedValue({
-        id: 'adm-1',
-        status: 'ADMITTED',
-      } as any);
-      vi.mocked(prisma.medicineMaster.findUnique).mockResolvedValue({
-        id: 'med-1',
-        name: 'Ceftriaxone 1g IV',
-        isActive: true,
-      } as any);
-
-      vi.mocked(prisma.pharmacyClearance.create).mockResolvedValue({
-        id: 'pc-1',
-        medicineRequestNumber: 'MED-REQ-101',
-        status: 'REQUESTED',
-        idempotencyKey: 'idem-key-abc',
-      } as any);
-
-      const req = await pharmacyBridgeService.createRequest(
-        {
-          admissionRecordId: 'adm-1',
-          idempotencyKey: 'idem-key-abc',
-          lines: [{ medicineId: 'med-1', requestedQuantity: 2 }],
-        },
-        actorId,
-      );
-
-      expect(req.id).toBe('pc-1');
-      // Dual clearance set to PENDING
-      expect(prisma.dualDischargeClearance.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: {
-            admissionRecordId_clearanceType: {
-              admissionRecordId: 'adm-1',
-              clearanceType: 'PHARMACY',
-            },
-          },
-          update: expect.objectContaining({ status: 'PENDING' }),
-        }),
-      );
-    });
-
-    it('returns existing request on idempotent retry without duplicating', async () => {
-      const existing = {
-        id: 'pc-existing',
-        medicineRequestNumber: 'MED-REQ-101',
-        idempotencyKey: 'idem-key-abc',
-      };
-      vi.mocked(prisma.pharmacyClearance.findUnique).mockResolvedValue(existing as any);
-
-      const req = await pharmacyBridgeService.createRequest(
-        {
-          admissionRecordId: 'adm-1',
-          idempotencyKey: 'idem-key-abc',
-          lines: [{ medicineId: 'med-1', requestedQuantity: 2 }],
-        },
-        actorId,
-      );
-
-      expect(req.id).toBe('pc-existing');
-      expect(prisma.pharmacyClearance.create).not.toHaveBeenCalled();
-    });
-
-    it('fulfills inpatient request via FEFO, marks status DISPENSED, and auto-clears DualDischargeClearance', async () => {
-      const futureDate = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
-
-      const medData = {
-        id: 'med-1',
-        name: 'Ceftriaxone 1g IV',
-        saleRate: new Decimal(450),
-        unit: 'VIAL',
-        batchManaged: true,
-        isActive: true,
-        batches: [
-          {
-            id: 'batch-cef',
-            batchNumber: 'CEF-001',
-            expiryDate: futureDate,
-            costRate: new Decimal(300),
-            stockLedgerEntries: [{ quantityDelta: new Decimal(20) }],
-          },
-        ],
-      };
-
-      vi.mocked(prisma.medicineMaster.findUnique).mockResolvedValue(medData as any);
-
-      vi.mocked(prisma.pharmacyClearance.findUnique).mockResolvedValue({
-        id: 'pc-1',
-        admissionRecordId: 'adm-1',
-        status: 'REQUESTED',
-        admissionRecord: {
-          id: 'adm-1',
-          panelPatientId: null,
-          selfPayEncounterId: 'enc-1',
-        },
-        lines: [
-          {
-            id: 'line-1',
-            medicineId: 'med-1',
-            requestedQuantity: new Decimal(2),
-            medicine: medData,
-          },
-        ],
-      } as any);
-
-      vi.mocked(prisma.pharmacyDispense.create).mockResolvedValue({
-        id: 'disp-ipd-1',
-        invoiceNumber: 'HMS-MED-12345',
-        subtotal: new Decimal(900),
-      } as any);
-
-      vi.mocked(prisma.pharmacyClearance.update).mockResolvedValue({
-        id: 'pc-1',
-        status: 'DISPENSED',
-      } as any);
-
-      // No other pending requests remaining
-      vi.mocked(prisma.pharmacyClearance.count).mockResolvedValue(0);
-
-      const result = await pharmacyBridgeService.fulfillAndDispense('pc-1', actorId);
-
-      expect(result.clearance.status).toBe('DISPENSED');
-      expect(result.admissionPharmacyCleared).toBe(true);
-
-      // Verify stock was deducted via FEFO
-      expect(prisma.medicineStockLedger.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            medicineId: 'med-1',
-            movementType: 'DISPENSE',
-            quantityDelta: new Decimal(-2),
-          }),
-        }),
-      );
-
-      // Verify automated DualDischargeClearance callback to CLEARED
-      expect(prisma.dualDischargeClearance.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: {
-            admissionRecordId_clearanceType: {
-              admissionRecordId: 'adm-1',
-              clearanceType: 'PHARMACY',
-            },
-          },
-          update: expect.objectContaining({
-            status: 'CLEARED',
-            clearedById: actorId,
-          }),
-        }),
-      );
-    });
-  });
+  // `pharmacyBridgeService.createRequest`/`fulfillAndDispense` (and their
+  // tests here) were removed 2026-10-05 — that local create-and-dispense
+  // path bypassed the HospitalInvoice entirely and marked itself PAID,
+  // making a request through it free to the patient. Confirmed unused by
+  // any caller before removal; see pharmacy-bridge.routes.ts's comment.
+  // Inpatient requests/dispensing now only happen via
+  // admission.service.ts's `createPharmacyRequest` → standalone Pharmacy →
+  // `pharmacy-bridge.service.ts`'s `handleDispensedCallback` webhook.
 });

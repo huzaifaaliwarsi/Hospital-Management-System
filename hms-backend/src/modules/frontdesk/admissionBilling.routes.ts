@@ -16,6 +16,13 @@ router.get('/:id/statement', view, validate({ params: s.admissionIdParamsSchema 
 router.get('/:id/ledger', view, validate({ params: s.admissionIdParamsSchema }), asyncHandler(c.getLedger));
 
 router.post(
+  '/:id/discounts',
+  create,
+  validate({ params: s.admissionIdParamsSchema, body: s.applyAdmissionDiscountSchema }),
+  asyncHandler(c.applyDiscount),
+);
+
+router.post(
   '/:id/collect-payment',
   create,
   validate({ params: s.admissionIdParamsSchema, body: s.collectAdmissionPaymentSchema }),

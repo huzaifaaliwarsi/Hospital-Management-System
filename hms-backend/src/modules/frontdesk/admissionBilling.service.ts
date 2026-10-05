@@ -1,16 +1,22 @@
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '@/db/client';
-import { NotFoundError, ValidationError } from '@/shared/errors/AppError';
-import type { CollectAdmissionPaymentBody } from './admissionBilling.schemas';
+import { NotFoundError, ValidationError, AuthorizationError } from '@/shared/errors/AppError';
+import type { CollectAdmissionPaymentBody, ApplyAdmissionDiscountBody } from './admissionBilling.schemas';
 import { admissionService } from '@/modules/admission/admission.service';
+import { commissionService } from '@/modules/commission/commission.service';
 
 import { generateReceiptNumber, generateFinalBillNumber } from '@/shared/idGenerator';
 import { patientPaymentStatus, patientResponsibility } from '@/shared/invoicePaymentStatus';
 import { pharmacyBridgeClient } from '@/shared/pharmacyBridgeClient';
+import {
+  isEligibleHospitalService,
+  DISCOUNT_APPROVAL_PERCENT_THRESHOLD,
+  DISCOUNT_APPROVAL_AMOUNT_THRESHOLD,
+} from '@/shared/discountEligibility';
 
 const invoiceInclude = {
   department: { select: { id: true, name: true, code: true } },
-  lines: { include: { serviceRate: true, performedBy: true } },
+  lines: { include: { serviceRate: { include: { department: true } }, performedBy: true } },
   paymentReceipts: { where: { isReversed: false } },
 } as const;
 
@@ -108,12 +114,25 @@ export const admissionBillingService = {
       const creditApplied = Decimal.min(remainingCredit, rawOutstanding);
       remainingCredit = remainingCredit.minus(creditApplied);
 
-      const isPharmacy = inv.invoiceNumber.startsWith('INV-PHARM-') || inv.department?.code === 'PHARM' || inv.department?.code === 'PHARMACY';
+      // No separate "INV-PHARM-..." invoice exists anymore — pharmacy charges
+      // are lines (serviceRate code SRV-PHARMACY) on this SAME consolidated
+      // admission invoice (see the collectPayment FIFO note below), so detect
+      // by line content instead of the now-dead invoice-number prefix.
+      const isPharmacy =
+        inv.lines?.some((l: any) => l.serviceRate?.code === 'SRV-PHARMACY') ||
+        inv.department?.code === 'PHARM' ||
+        inv.department?.code === 'PHARMACY';
 
       return {
         ...inv,
         outstanding: rawOutstanding.minus(creditApplied),
         creditApplied,
+        // Single source of truth for "can this line be discounted" — same
+        // helper `applyDiscount` enforces server-side — so the Front Desk UI
+        // never has to re-derive (and risk drifting from) the eligibility rule.
+        lines: inv.lines?.map((l: any) => ({ ...l, isDiscountEligible: isEligibleHospitalService(l.serviceRate) })),
+        panelPatientId: inv.panelPatientId,
+        isDiscountEligibleInvoice: !inv.panelPatientId && (inv.lines ?? []).some((l: any) => isEligibleHospitalService(l.serviceRate)),
         pharmacyDetails: isPharmacy && pharmacyCharge ? {
           pharmacyInvoiceNumber: pharmacyCharge.pharmacyInvoiceNumber,
           items: pharmacyCharge.itemsJson,
@@ -563,6 +582,188 @@ export const admissionBillingService = {
   },
 
   /**
+   * Front Desk discretionary discount on an admission's running bill —
+   * strictly restricted to Hospital Services lines (ward/room, doctor fee,
+   * procedures). Pharmacy (`SRV-PHARMACY`) and Outsourced Lab/Radiology
+   * lines living on this same consolidated invoice (addAdmissionService's
+   * "1 Admission = 1 Single Master Invoice", pharmacy-bridge.service.ts's
+   * §8) are never eligible — same rule, same `isEligibleHospitalService`
+   * helper, as `invoices.service.ts`'s OPD-invoice `applyDiscount`, so the
+   * two call sites can't drift apart on what counts as discountable.
+   *
+   * Panel-patient admissions are blocked entirely, same as the OPD
+   * counterpart: panel charges are governed by the corporate contract's
+   * discount rules, not front-desk discretion.
+   */
+  async applyDiscount(admissionId: string, body: ApplyAdmissionDiscountBody, actorId: string, actorRole: string) {
+    return prisma.$transaction(async (tx) => {
+      const invoice = await tx.hospitalInvoice.findFirst({
+        where: { admissionRecordId: admissionId, sourceType: 'ADMISSION', status: { not: 'VOID' } },
+        orderBy: { createdAt: 'asc' },
+        include: {
+          lines: { include: { serviceRate: { include: { department: true } } } },
+        },
+      });
+
+      if (!invoice) throw new NotFoundError('No invoice found for this admission yet');
+      if (invoice.panelPatientId) {
+        throw new ValidationError('Posted panel charges cannot be manually repriced; use an audited contract adjustment');
+      }
+      if (invoice.lines.length === 0) throw new ValidationError('Cannot discount an empty invoice');
+
+      if (body.lineItemId) {
+        const line = invoice.lines.find((l) => l.id === body.lineItemId);
+        if (!line) throw new NotFoundError('Invoice line item not found');
+
+        if (!isEligibleHospitalService(line.serviceRate)) {
+          throw new ValidationError(
+            `Discounts are strictly restricted to Hospital Services. '${line.serviceRate?.name || 'This service'}' (Outsourced Lab / Radiology / Pharmacy) cannot receive discounts.`,
+          );
+        }
+
+        let discAmt = new Decimal(0);
+        if (body.discountPercent !== undefined) {
+          discAmt = line.lineGross.mul(body.discountPercent).div(100);
+        } else if (body.discountAmount !== undefined) {
+          discAmt = new Decimal(body.discountAmount);
+        }
+
+        if (discAmt.greaterThan(line.lineGross)) {
+          throw new ValidationError(`Discount of PKR ${discAmt.toFixed(2)} exceeds line gross of PKR ${line.lineGross.toFixed(2)}.`);
+        }
+
+        const discPct = line.lineGross.greaterThan(0) ? discAmt.mul(100).div(line.lineGross).toNumber() : 0;
+
+        if (
+          (discPct > DISCOUNT_APPROVAL_PERCENT_THRESHOLD || discAmt.toNumber() > DISCOUNT_APPROVAL_AMOUNT_THRESHOLD) &&
+          !['SUPER_ADMIN', 'ADMIN'].includes(actorRole)
+        ) {
+          throw new AuthorizationError(`Discount of PKR ${discAmt.toFixed(2)} (${discPct.toFixed(1)}%) requires Admin approval.`);
+        }
+
+        const newLineNet = line.lineGross.minus(discAmt);
+
+        await tx.invoiceLineItem.update({
+          where: { id: line.id },
+          data: {
+            discountAmount: discAmt,
+            discountReason: body.discountReason,
+            lineNet: newLineNet,
+            // Self-pay admission lines always have panelReceivable = 0, so
+            // patientShare must track lineNet 1:1 for the ledger/statement
+            // (patientResponsibility) totals to stay correct after a manual discount.
+            patientShare: newLineNet,
+          },
+        });
+      } else {
+        // Invoice-wide discount distributed across eligible Hospital Services lines ONLY
+        const eligibleLines = invoice.lines.filter((l) => isEligibleHospitalService(l.serviceRate));
+        const nonEligibleLines = invoice.lines.filter((l) => !isEligibleHospitalService(l.serviceRate));
+
+        if (eligibleLines.length === 0) {
+          throw new ValidationError(
+            'Discounts are strictly restricted to Hospital Services. This admission has no eligible Hospital Services charges (only Outsourced Lab / Pharmacy) to discount.',
+          );
+        }
+
+        const eligibleGross = eligibleLines.reduce((acc, l) => acc.plus(l.lineGross), new Decimal(0));
+        let totalDiscAmt = new Decimal(0);
+        if (body.discountPercent !== undefined) {
+          totalDiscAmt = eligibleGross.mul(body.discountPercent).div(100);
+        } else if (body.discountAmount !== undefined) {
+          totalDiscAmt = new Decimal(body.discountAmount);
+        }
+
+        if (totalDiscAmt.greaterThan(eligibleGross)) {
+          throw new ValidationError(
+            `Discount of PKR ${totalDiscAmt.toFixed(2)} exceeds total eligible Hospital Services charges of PKR ${eligibleGross.toFixed(2)}. Outsourced Lab, Radiology, and Pharmacy services cannot receive discounts.`,
+          );
+        }
+
+        const discPct = eligibleGross.greaterThan(0) ? totalDiscAmt.mul(100).div(eligibleGross).toNumber() : 0;
+
+        if (
+          (discPct > DISCOUNT_APPROVAL_PERCENT_THRESHOLD || totalDiscAmt.toNumber() > DISCOUNT_APPROVAL_AMOUNT_THRESHOLD) &&
+          !['SUPER_ADMIN', 'ADMIN'].includes(actorRole)
+        ) {
+          throw new AuthorizationError(`Total discount of PKR ${totalDiscAmt.toFixed(2)} requires Admin approval.`);
+        }
+
+        // Distribute proportionally across eligible lines, largest-remainder on the last line
+        let remainingDiscAmt = totalDiscAmt;
+        for (let i = 0; i < eligibleLines.length; i++) {
+          const line = eligibleLines[i];
+          if (!line) continue;
+          let lineDisc: Decimal;
+          if (i === eligibleLines.length - 1) {
+            lineDisc = remainingDiscAmt;
+          } else {
+            const ratio = eligibleGross.greaterThan(0) ? line.lineGross.div(eligibleGross) : new Decimal(0);
+            lineDisc = totalDiscAmt.mul(ratio).round();
+            remainingDiscAmt = remainingDiscAmt.minus(lineDisc);
+          }
+          const lineNet = line.lineGross.minus(lineDisc);
+          await tx.invoiceLineItem.update({
+            where: { id: line.id },
+            data: {
+              discountAmount: lineDisc,
+              discountReason: body.discountReason,
+              lineNet,
+              patientShare: lineNet,
+            },
+          });
+        }
+
+        // Non-eligible lines (Lab / Radiology / Pharmacy) never carry a discount
+        for (const line of nonEligibleLines) {
+          if (!line.discountAmount.isZero()) {
+            await tx.invoiceLineItem.update({
+              where: { id: line.id },
+              data: { discountAmount: new Decimal(0), lineNet: line.lineGross, patientShare: line.lineGross },
+            });
+          }
+        }
+      }
+
+      // Recalculate invoice totals + reprice any doctor commission affected
+      const refreshedLines = await tx.invoiceLineItem.findMany({ where: { hospitalInvoiceId: invoice.id } });
+
+      for (const line of refreshedLines) {
+        const original = invoice.lines.find((l) => l.id === line.id);
+        if (original && !original.lineNet.equals(line.lineNet)) {
+          await commissionService.repriceCommission(tx, line.id, original.lineNet, line.lineNet, actorId, `Service discount: ${body.discountReason}`);
+        }
+      }
+
+      const newSubtotal = refreshedLines.reduce((acc, l) => acc.plus(l.lineGross), new Decimal(0));
+      const newDiscountTotal = refreshedLines.reduce((acc, l) => acc.plus(l.discountAmount), new Decimal(0));
+      const newTotal = refreshedLines.reduce((acc, l) => acc.plus(l.lineNet), new Decimal(0));
+      const newPatientShare = refreshedLines.reduce((acc, l) => acc.plus(l.patientShare), new Decimal(0));
+      const newOutstanding = Decimal.max(0, newPatientShare.minus(invoice.paidTotal));
+      const newStatus = newOutstanding.equals(0)
+        ? 'PAID'
+        : invoice.paidTotal.greaterThan(0)
+        ? 'PARTIALLY_PAID'
+        : 'UNPAID';
+
+      return tx.hospitalInvoice.update({
+        where: { id: invoice.id },
+        data: {
+          subtotal: newSubtotal,
+          discountTotal: newDiscountTotal,
+          total: newTotal,
+          patientShare: newPatientShare,
+          status: newStatus,
+        },
+        include: {
+          lines: { include: { serviceRate: true, performedBy: true } },
+          paymentReceipts: true,
+        },
+      });
+    });
+  },
+
+  /**
    * Payment Allocation (§2.11) — one physical collection, split across
    * however many department invoices the amount is allocated to. Explicit
    * `allocations` wins; otherwise auto-allocated proportional to each
@@ -697,10 +898,21 @@ export const admissionBillingService = {
       // Update paidTotal & status for each allocated invoice
       const pharmacyNotifications: Array<{ pharmacyInvoiceNumber: string; amount: number; receiptNumber: string }> = [];
 
+      // Pharmacy charges are appended as `SRV-PHARMACY` line items directly
+      // onto the admission's one consolidated invoice (pharmacy-bridge.service.ts
+      // §8's "ONE ACTIVE ADMISSION = ONE PATIENT BILL") — there is no longer a
+      // separate "INV-PHARM-..." invoice to detect by invoice number (that
+      // legacy shape is actively deleted on sight, see pharmacy-bridge.service.ts
+      // §"Clean up any legacy erroneous INV-PHARM-... invoices"). Resolve the
+      // pharmacy service rate once so every allocation below can tell whether
+      // the invoice it's paying actually carries pharmacy lines.
+      const pharmacyServiceRate = await tx.serviceRate.findFirst({ where: { code: 'SRV-PHARMACY' } });
+
       for (const alloc of allocations) {
         if (alloc.amount.lessThanOrEqualTo(0) || !alloc.invoiceId) continue;
         const invoice = invoices.find((i) => i.id === alloc.invoiceId);
         if (invoice) {
+          const previousPaidTotal = invoice.paidTotal;
           const newPaidTotal = invoice.paidTotal.plus(alloc.amount);
           const newStatus = patientPaymentStatus(invoice, newPaidTotal);
           await tx.hospitalInvoice.update({
@@ -708,39 +920,59 @@ export const admissionBillingService = {
             data: { paidTotal: newPaidTotal, status: newStatus },
           });
 
-          // Check if this invoice is an HMS-linked pharmacy charge (INV-PHARM-...)
-          if (invoice.invoiceNumber.startsWith('INV-PHARM-')) {
-            const pharmInvNum = invoice.invoiceNumber.replace('INV-PHARM-', '');
-            const charge = await tx.hmsPharmacyCharge.findFirst({
-              where: {
-                OR: [
-                  { admissionRecordId: admissionId },
-                  { pharmacyInvoiceNumber: pharmInvNum },
-                ],
-              },
+          // Figure out how much of THIS payment lands on pharmacy lines.
+          // Charges on the invoice are settled FIFO by posting order (same
+          // convention `getLedger` uses), so walk the lines in that order and
+          // take the overlap between [previousPaidTotal, newPaidTotal) and
+          // each pharmacy line's own patient-share span.
+          if (pharmacyServiceRate) {
+            const invoiceLines = await tx.invoiceLineItem.findMany({
+              where: { hospitalInvoiceId: invoice.id },
+              orderBy: { createdAt: 'asc' },
+              select: { serviceRateId: true, patientShare: true },
             });
-            if (charge) {
-              const newPatientPaid = charge.patientPaid.plus(alloc.amount);
-              const newPatientOutstanding = Decimal.max(0, charge.totalAmount.minus(newPatientPaid));
-              const chargePaidInFull = newPatientOutstanding.equals(0);
-              const patientPaymentStatus = chargePaidInFull ? 'CLEARED' : 'PARTIALLY_COLLECTED';
-              const settlementStatus = chargePaidInFull && charge.settlementStatus === 'NOT_DUE' ? 'PENDING' : charge.settlementStatus;
 
-              await tx.hmsPharmacyCharge.update({
-                where: { id: charge.id },
-                data: {
-                  patientPaid: newPatientPaid,
-                  patientOutstanding: newPatientOutstanding,
-                  patientPaymentStatus,
-                  settlementStatus,
-                },
-              });
+            let cursor = new Decimal(0);
+            let pharmacyPortion = new Decimal(0);
+            for (const line of invoiceLines) {
+              const lineStart = cursor;
+              const lineEnd = cursor.plus(line.patientShare);
+              cursor = lineEnd;
+              if (line.serviceRateId !== pharmacyServiceRate.id) continue;
+              const overlapStart = Decimal.max(lineStart, previousPaidTotal);
+              const overlapEnd = Decimal.min(lineEnd, newPaidTotal);
+              if (overlapEnd.greaterThan(overlapStart)) {
+                pharmacyPortion = pharmacyPortion.plus(overlapEnd.minus(overlapStart));
+              }
+            }
 
-              pharmacyNotifications.push({
-                pharmacyInvoiceNumber: pharmInvNum,
-                amount: Number(alloc.amount),
-                receiptNumber: receipt.receiptNumber,
+            if (pharmacyPortion.greaterThan(0)) {
+              const charge = await tx.hmsPharmacyCharge.findFirst({
+                where: { admissionRecordId: admissionId },
               });
+              if (charge) {
+                const newPatientPaid = charge.patientPaid.plus(pharmacyPortion);
+                const newPatientOutstanding = Decimal.max(0, charge.totalAmount.minus(newPatientPaid));
+                const chargePaidInFull = newPatientOutstanding.equals(0);
+                const newPatientPaymentStatus = chargePaidInFull ? 'CLEARED' : 'PARTIALLY_COLLECTED';
+                const settlementStatus = chargePaidInFull && charge.settlementStatus === 'NOT_DUE' ? 'PENDING' : charge.settlementStatus;
+
+                await tx.hmsPharmacyCharge.update({
+                  where: { id: charge.id },
+                  data: {
+                    patientPaid: newPatientPaid,
+                    patientOutstanding: newPatientOutstanding,
+                    patientPaymentStatus: newPatientPaymentStatus,
+                    settlementStatus,
+                  },
+                });
+
+                pharmacyNotifications.push({
+                  pharmacyInvoiceNumber: charge.pharmacyInvoiceNumber,
+                  amount: Number(pharmacyPortion),
+                  receiptNumber: receipt.receiptNumber,
+                });
+              }
             }
           }
         }

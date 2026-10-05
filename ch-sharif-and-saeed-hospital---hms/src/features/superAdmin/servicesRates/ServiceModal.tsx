@@ -500,7 +500,7 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({ isOpen, onClose, onS
                   <div className="flex items-center justify-between">
                     <div>
                       <span className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider block">
-                        Front Desk Intake Mapping (V7.2)
+                        Front Desk Intake Mapping
                       </span>
                       <p className="text-[11px] text-slate-500 mt-0.5">
                         Link this service to automatic fee charging at Front Desk walk-in intake.

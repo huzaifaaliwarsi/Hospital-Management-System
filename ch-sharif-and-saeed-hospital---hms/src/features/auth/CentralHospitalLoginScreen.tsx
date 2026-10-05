@@ -20,6 +20,7 @@ import { useAuth, MOCK_STAFF_ACCOUNTS } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { useRouter } from '../../context/RouterContext';
 import { Modal } from '../../components/common/Modal';
+import { useHospitalProfile, fetchPublicHospitalProfile } from '../../services/hospitalProfileService';
 
 export interface CentralHospitalLoginScreenProps {
   onLoginSuccess?: (portal: PortalKey) => void;
@@ -60,6 +61,11 @@ export const CentralHospitalLoginScreen: React.FC<CentralHospitalLoginScreenProp
   const { login } = useAuth();
   const { navigate } = useRouter();
   const toast = useToast();
+  const hospitalProfile = useHospitalProfile();
+
+  React.useEffect(() => {
+    fetchPublicHospitalProfile().catch(() => {});
+  }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.getModifierState && e.getModifierState('CapsLock')) {
@@ -202,15 +208,25 @@ export const CentralHospitalLoginScreen: React.FC<CentralHospitalLoginScreenProp
         {/* Top: Hospital Logo / Initials Icon */}
         <div className="relative z-10">
           <div className="flex items-center gap-3.5">
-            <div className="h-12 w-12 rounded-xl bg-white/15 border border-white/25 backdrop-blur-xs flex items-center justify-center font-bold text-white text-lg tracking-wider shadow-sm shrink-0">
-              <Building2 className="h-6 w-6 text-white" />
-            </div>
+            {hospitalProfile.logo ? (
+              <div className="h-12 w-12 rounded-xl bg-white p-1 border border-white/40 shadow-sm shrink-0 flex items-center justify-center overflow-hidden">
+                <img
+                  src={hospitalProfile.logo}
+                  alt={hospitalProfile.name || 'Hospital Logo'}
+                  className="h-full w-full object-contain"
+                />
+              </div>
+            ) : (
+              <div className="h-12 w-12 rounded-xl bg-white/15 border border-white/25 backdrop-blur-xs flex items-center justify-center font-bold text-white text-lg tracking-wider shadow-sm shrink-0">
+                <Building2 className="h-6 w-6 text-white" />
+              </div>
+            )}
             <div>
               <span className="text-xs font-semibold tracking-wider text-emerald-100 uppercase block">
                 Healthcare Excellence
               </span>
               <span className="text-sm font-bold text-white tracking-tight">
-                CH Sharif & Saeed Hospital
+                {hospitalProfile.name || 'CH Sharif & Saeed Hospital'}
               </span>
             </div>
           </div>
@@ -219,7 +235,7 @@ export const CentralHospitalLoginScreen: React.FC<CentralHospitalLoginScreenProp
         {/* Middle Content: Title, Subtitle, Description & Three Checkmarks */}
         <div className="relative z-10 my-10 lg:my-auto max-w-xl">
           <h1 className="text-3xl sm:text-4xl xl:text-5xl font-bold tracking-tight text-white leading-tight">
-            CH Sharif & Saeed Hospital
+            {hospitalProfile.name || 'CH Sharif & Saeed Hospital'}
           </h1>
           <p className="text-lg sm:text-xl font-medium text-emerald-100 mt-2 tracking-tight">
             Hospital Management System

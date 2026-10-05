@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { SidebarTrigger } from '../ui/sidebar-trigger';
+import { useHospitalProfile } from '../../services/hospitalProfileService';
 import {
   LayoutDashboard,
   Users,
@@ -173,6 +174,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // Collapsed sections tracking (default open)
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [navSearch, setNavSearch] = useState('');
+  const hospitalProfile = useHospitalProfile();
 
   const portalConfig = PORTAL_CONFIGS[activePortal] || PORTAL_CONFIGS['super-admin'];
   const portalGroups = PORTAL_NAVIGATION_MAP[activePortal] || PORTAL_NAVIGATION_MAP['super-admin'];
@@ -219,13 +221,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Brand Header */}
         <div className="h-14 flex items-center justify-between px-4 border-b border-[#e2eae5] bg-white shrink-0">
           <div className="flex items-center gap-3 overflow-hidden">
-            <div className="w-8 h-8 bg-[#129b70] rounded-lg flex items-center justify-center font-bold text-white text-xs shrink-0 shadow-xs">
-              CSS
-            </div>
+            {hospitalProfile.logo ? (
+              <img
+                src={hospitalProfile.logo}
+                alt={hospitalProfile.shortName || 'Logo'}
+                className="w-8 h-8 rounded-lg object-contain bg-white border border-[#c2e7db] shrink-0 p-0.5 shadow-xs"
+              />
+            ) : (
+              <div className="w-8 h-8 bg-[#129b70] rounded-lg flex items-center justify-center font-bold text-white text-xs shrink-0 shadow-xs">
+                {hospitalProfile.shortName ? hospitalProfile.shortName.slice(0, 3).toUpperCase() : 'CSS'}
+              </div>
+            )}
             {(!isCollapsed || isMobileOpen) && (
               <div className="leading-tight truncate">
                 <div className="text-xs font-bold text-[#111827] uppercase tracking-wider truncate">
-                  CH Sharif & Saeed
+                  {hospitalProfile.name || 'CH Sharif & Saeed'}
                 </div>
                 <div className="text-[10px] text-[#52665e] font-medium truncate">
                   Hospital Management System
@@ -251,22 +261,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
         </div>
 
-        {/* Portal Visual Identifier Banner */}
-        {(!isCollapsed || isMobileOpen) && (
-          <div className="px-3 pt-3 pb-1 shrink-0">
-            <div className="px-2.5 py-1.5 rounded-lg border border-[#c2e7db] bg-[#effaf5] text-center flex items-center justify-between">
-              <div className="flex items-center gap-2 truncate">
-                <span className="h-2 w-2 rounded-full bg-[#10b981] shrink-0 animate-pulse" />
-                <span className="text-[10px] font-bold tracking-wider uppercase text-[#0e7d5a] truncate">
-                  {portalConfig.portalCode}
-                </span>
-              </div>
-              <span className="text-[9px] text-[#52665e] uppercase font-mono shrink-0 ml-1 font-semibold">
-                Portal
-              </span>
-            </div>
-          </div>
-        )}
+
 
         {/* Quick Menu Search (when expanded) */}
         {(!isCollapsed || isMobileOpen) && (
@@ -367,23 +362,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           )}
 
                           {(!isCollapsed || isMobileOpen) && (
-                            <>
-                              <span className="truncate text-left flex-1 text-xs">{item.label}</span>
-                              {item.badge && (
-                                <span
-                                  className={cn(
-                                    'text-[10px] px-1.5 py-0.5 rounded font-mono',
-                                    item.badgeVariant === 'danger'
-                                      ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                                      : item.badgeVariant === 'warning'
-                                      ? 'bg-amber-50 text-amber-800 border border-amber-200'
-                                      : 'bg-[#effaf5] text-[#0e7d5a] border border-[#c2e7db]'
-                                  )}
-                                >
-                                  {item.badge}
-                                </span>
-                              )}
-                            </>
+                            <span className="truncate text-left flex-1 text-xs">{item.label}</span>
                           )}
                         </button>
                       );

@@ -174,7 +174,7 @@ export const FrontDeskBillingReportsView: React.FC = () => {
   const totalGross = report?.billing.totalGross ?? 0;
   const totalDiscounts = report?.billing.totalDiscounts ?? 0;
   const totalNet = report?.billing.totalNet ?? 0;
-  const totalOutstanding = report?.billing.totalOutstanding ?? 0;
+  const totalOutstanding = Math.max(0, report?.billing.totalOutstanding ?? 0);
   const totalRefunds = report?.refunds.total ?? 0;
   const totalInvoices = report?.billing.invoiceCount ?? 0;
   const netIntake = totalCollections - totalRefunds;

@@ -53,6 +53,8 @@ export interface DepartmentInvoiceLine {
   patientShare: number;
   panelReceivable: number;
   performedByName: string;
+  /** Hospital Services only — Pharmacy / Outsourced Lab & Radiology lines are never eligible (computed server-side, see `applyDiscount`). */
+  isDiscountEligible: boolean;
 }
 
 export interface DepartmentInvoiceRow {
@@ -67,6 +69,9 @@ export interface DepartmentInvoiceRow {
   patientShare: number;
   panelReceivable: number;
   status: string;
+  panelPatientId: string | null;
+  /** Whether this invoice has at least one Hospital Services line AND isn't a panel-patient invoice — i.e. discounting is possible at all. */
+  isDiscountEligibleInvoice: boolean;
   lines: DepartmentInvoiceLine[];
   pharmacyDetails?: {
     pharmacyInvoiceNumber: string;
@@ -136,6 +141,8 @@ function normalize(raw: Record<string, any>): AdmissionStatement {
       patientShare: toNumber(inv.patientShare),
       panelReceivable: toNumber(inv.panelReceivable),
       status: inv.status,
+      panelPatientId: inv.panelPatientId ?? null,
+      isDiscountEligibleInvoice: !!inv.isDiscountEligibleInvoice,
       pharmacyDetails: inv.pharmacyDetails || null,
       lines: (inv.lines || []).map((l: any) => ({
         id: l.id,
@@ -147,6 +154,7 @@ function normalize(raw: Record<string, any>): AdmissionStatement {
         patientShare: toNumber(l.patientShare),
         panelReceivable: toNumber(l.panelReceivable),
         performedByName: l.performedBy?.fullName || '',
+        isDiscountEligible: !!l.isDiscountEligible,
       })),
     })),
     consolidated: {
@@ -182,6 +190,43 @@ export async function fetchAdmissionStatement(admissionId: string): Promise<Admi
   try {
     const res = await apiClient.get<{ data: Record<string, any> }>(`/admission-billing/${admissionId}/statement`);
     return normalize(res.data.data);
+  } catch (err) {
+    throw new Error(toErrorMessage(err));
+  }
+}
+
+/**
+ * Manual "Resync to Pharmacy" — for when the automatic webhook inside
+ * `collectPayment` silently failed to tell the standalone Pharmacy system
+ * how much of this admission's bill was actually collected (network blip,
+ * Pharmacy backend unreachable at that moment). Re-sends the already-correct
+ * amount HMS has on file; safe to click more than once.
+ */
+export async function resyncPharmacyCollection(admissionId: string): Promise<void> {
+  try {
+    await apiClient.post(`/pharmacy-bridge/charges/${admissionId}/resync`);
+  } catch (err) {
+    throw new Error(toErrorMessage(err));
+  }
+}
+
+/**
+ * Front Desk discretionary discount on an admission's running bill —
+ * strictly Hospital Services only (ward/room, doctor fee, procedures);
+ * Pharmacy and Outsourced Lab/Radiology lines are never eligible (enforced
+ * server-side in `admissionBilling.service.ts`'s `applyDiscount`).
+ */
+export async function applyAdmissionDiscount(
+  admissionId: string,
+  values: {
+    lineItemId?: string;
+    discountPercent?: number;
+    discountAmount?: number;
+    discountReason: string;
+  },
+): Promise<void> {
+  try {
+    await apiClient.post(`/admission-billing/${admissionId}/discounts`, values);
   } catch (err) {
     throw new Error(toErrorMessage(err));
   }

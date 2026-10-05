@@ -9,6 +9,7 @@ import type {
   RejectRequestBody,
   UpdateSettingsBody,
   PatientCollectedCallbackBody,
+  ReconcileCollectionBody,
   CreateSettlementRequestBody,
   ReleaseSettlementCallbackBody,
 } from './hms-requests.schemas';
@@ -64,6 +65,10 @@ export const hmsRequestsController = {
   // ── Callbacks & Inter-Entity Settlements ─────────────────────────────────
   async patientCollectedCallback(req: Request, res: Response) {
     const data = await hmsRequestsService.handlePatientCollected(req.body as PatientCollectedCallbackBody);
+    res.json({ data });
+  },
+  async reconcileCollection(req: Request, res: Response) {
+    const data = await hmsRequestsService.reconcileHmsCollected(req.body as ReconcileCollectionBody);
     res.json({ data });
   },
   async createSettlementRequest(req: Request, res: Response) {
