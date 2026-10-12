@@ -289,10 +289,11 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
 
   const handleExportCsv = () => {
     if (filteredInvoices.length === 0) return;
-    const headers = ['#', 'Invoice Number', 'MR #', 'Patient Name', 'Care Type', 'Payer', 'Gross', 'Discount', 'Net Payable', 'Paid', 'Due', 'Status', 'Date'];
+    const headers = ['#', 'Invoice Number', 'Service ID', 'MR #', 'Patient Name', 'Care Type', 'Payer', 'Gross', 'Discount', 'Net Payable', 'Paid', 'Due', 'Status', 'Date'];
     const rows = filteredInvoices.map((inv, idx) => [
       idx + 1,
       `"${inv.invoiceNumber}"`,
+      `"${inv.queueNumber || '—'}"`,
       `"${inv.patientMr || ''}"`,
       `"${inv.patientName}"`,
       `"${getInvoiceCareQueue(inv)}"`,
@@ -316,7 +317,7 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
 
   const handleExportExcel = () => {
     if (filteredInvoices.length === 0) return;
-    const headers = ['#', 'Invoice Number', 'Token / Queue #', 'MR #', 'Patient Name', 'Care Type', 'Payer', 'Gross', 'Discount', 'Net Payable', 'Paid', 'Due', 'Status', 'Date'];
+    const headers = ['#', 'Invoice Number', 'Service ID', 'MR #', 'Patient Name', 'Care Type', 'Payer', 'Gross', 'Discount', 'Net Payable', 'Paid', 'Due', 'Status', 'Date'];
     const rowsHtml = filteredInvoices.map((inv, idx) => `
       <tr>
         <td>${idx + 1}</td>
@@ -686,6 +687,7 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
               <tr>
                 <th className="w-12 py-3 px-3 text-center border-r border-slate-300 font-bold text-slate-700">#</th>
                 <th className="py-3 px-3.5 border-r border-slate-300 whitespace-nowrap">Invoice #</th>
+                <th className="py-3 px-3.5 border-r border-slate-300 whitespace-nowrap">Service ID</th>
                 <th className="py-3 px-3.5 border-r border-slate-300 whitespace-nowrap">Date</th>
                 <th className="py-3 px-3.5 border-r border-slate-300 whitespace-nowrap">Patient</th>
                 <th className="py-3 px-3.5 border-r border-slate-300 whitespace-nowrap">Source</th>
@@ -718,13 +720,19 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
                       {globalIdx}
                     </td>
 
-                    {/* Invoice # with Token */}
+                    {/* Invoice # */}
                     <td className="py-2.5 px-3.5 border-r border-slate-200 font-mono font-semibold text-[#08775A] whitespace-nowrap">
                       <span>{inv.invoiceNumber}</span>
-                      {inv.queueNumber && (
-                        <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold font-mono bg-emerald-50 text-emerald-800 border border-emerald-200">
+                    </td>
+
+                    {/* Service ID (Token / Encounter Queue Number) */}
+                    <td className="py-2.5 px-3.5 border-r border-slate-200 whitespace-nowrap">
+                      {inv.queueNumber ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-emerald-50 text-emerald-800 border border-emerald-200">
                           {inv.queueNumber}
                         </span>
+                      ) : (
+                        <span className="text-slate-400 font-mono text-xs">—</span>
                       )}
                     </td>
 
@@ -824,7 +832,7 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
 
               {filteredInvoices.length === 0 && (
                 <tr>
-                  <td colSpan={13} className="py-16 text-center text-slate-500">
+                  <td colSpan={14} className="py-16 text-center text-slate-500">
                     <Receipt className="h-9 w-9 text-slate-300 mx-auto mb-2" />
                     <h4 className="text-sm font-semibold text-slate-800">No Invoices Found</h4>
                     <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
@@ -849,7 +857,7 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
               <tfoot>
                 <tr className="bg-[#f1f5f9] border-t-2 border-slate-300 font-bold text-slate-900 sticky bottom-0">
                   <td className="py-2.5 px-3 text-center border-r border-slate-300 text-[10.5px] uppercase tracking-wider text-slate-600 font-bold">Total</td>
-                  <td colSpan={5} className="py-2.5 px-3.5 border-r border-slate-300 text-slate-600 text-xs font-semibold">
+                  <td colSpan={6} className="py-2.5 px-3.5 border-r border-slate-300 text-slate-600 text-xs font-semibold">
                     Total for {filteredInvoices.length} {filteredInvoices.length === 1 ? 'record' : 'records'}
                   </td>
                   <td className="py-2.5 px-3.5 border-r border-slate-300 whitespace-nowrap text-right font-mono">{formatPKR(metrics.totalGross)}</td>

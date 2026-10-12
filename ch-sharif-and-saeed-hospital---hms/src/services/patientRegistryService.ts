@@ -83,10 +83,13 @@ function formatIsoDate(iso?: string | null): string {
 
 /** Maps a backend `PanelPatient` row onto the frontend `Patient` shape. */
 function toPatientFromPanel(raw: Record<string, any>): Patient {
-  const cnicOrPassport: string = raw.cnicOrPassport || '';
-  const looksLikeCnic = isValidCnic(cnicOrPassport);
+  const rawCnicOrPassport: string = raw.cnicOrPassport || '';
+  const normalizedCnic = normalizeCnic(rawCnicOrPassport);
+  const looksLikeCnic = isValidCnic(normalizedCnic) && normalizedCnic.length === 15;
   const phoneCnicMatch = (raw.emergencyContactPhone || '').match(/CNIC:\s*([0-9-]{13,15})/i);
-  const guardianCnic = phoneCnicMatch ? phoneCnicMatch[1] : undefined;
+  const guardianCnic = phoneCnicMatch ? normalizeCnic(phoneCnicMatch[1]) : undefined;
+  const effectiveCnic = looksLikeCnic ? normalizedCnic : (guardianCnic || undefined);
+
   return {
     id: raw.id,
     mrNumber: raw.mrNumber,
@@ -98,8 +101,8 @@ function toPatientFromPanel(raw: Record<string, any>): Patient {
     age: raw.dob ? calculateAgeFromDob(raw.dob) : 0,
     ageIsEstimated: !raw.dob,
     gender: (raw.gender as PatientGender) || 'Other / Not Specified',
-    cnic: cnicOrPassport && looksLikeCnic ? cnicOrPassport : undefined,
-    passportNumber: cnicOrPassport && !looksLikeCnic ? cnicOrPassport : undefined,
+    cnic: effectiveCnic,
+    passportNumber: !looksLikeCnic && rawCnicOrPassport && !guardianCnic ? rawCnicOrPassport : undefined,
     primaryPhone: raw.phone || '',
     alternatePhone: raw.alternatePhone || undefined,
     email: raw.email || undefined,
@@ -135,14 +138,16 @@ function toPatientFromPanel(raw: Record<string, any>): Patient {
 
 /** Maps a backend `SelfPayEncounter` row — with its real, permanent MR number (assigned server-side, never recomputed). */
 function toPatientFromSelfPay(raw: Record<string, any>): Patient {
-  const cnicOrPassport: string = raw.cnicOrPassport || '';
-  const looksLikeCnic = isValidCnic(cnicOrPassport);
+  const rawCnicOrPassport: string = raw.cnicOrPassport || '';
+  const normalizedCnic = normalizeCnic(rawCnicOrPassport);
+  const looksLikeCnic = isValidCnic(normalizedCnic) && normalizedCnic.length === 15;
   const mrNumber = raw.mrNumber || '';
 
   const rawGuardian: string = raw.guardianName || '';
   const cnicMatch = rawGuardian.match(/\[CNIC:\s*([0-9-]{13,15})\]/i);
-  const guardianCnic = cnicMatch ? cnicMatch[1] : undefined;
+  const guardianCnic = cnicMatch ? normalizeCnic(cnicMatch[1]) : undefined;
   const cleanGuardianName = rawGuardian.replace(/\s*\[CNIC:.*?\]/i, '').trim();
+  const effectiveCnic = looksLikeCnic ? normalizedCnic : (guardianCnic || undefined);
 
   return {
     id: raw.id,
@@ -155,8 +160,8 @@ function toPatientFromSelfPay(raw: Record<string, any>): Patient {
     age: raw.dob ? calculateAgeFromDob(raw.dob) : 0,
     ageIsEstimated: !raw.dob,
     gender: (raw.gender as PatientGender) || 'Other / Not Specified',
-    cnic: cnicOrPassport && looksLikeCnic ? cnicOrPassport : undefined,
-    passportNumber: cnicOrPassport && !looksLikeCnic ? cnicOrPassport : undefined,
+    cnic: effectiveCnic,
+    passportNumber: !looksLikeCnic && rawCnicOrPassport && !guardianCnic ? rawCnicOrPassport : undefined,
     primaryPhone: raw.phone || '',
     city: '',
     province: '',
@@ -375,12 +380,13 @@ function toBackendSelfPayPayload(formData: PatientFormData): Record<string, unkn
   if (guardianName && formData.guardianCnic) {
     guardianName = `${guardianName} [CNIC: ${normalizeCnic(formData.guardianCnic)}]`;
   }
+  const resolvedCnic = normalizeCnic(formData.cnic) || (formData.guardianCnic ? normalizeCnic(formData.guardianCnic) : undefined);
   return {
     fullName: formData.fullName.trim(),
     guardianName,
     gender: formData.gender || undefined,
     dob: formData.dateOfBirth || undefined,
-    cnicOrPassport: normalizeCnic(formData.cnic) || formData.passportNumber?.trim() || undefined,
+    cnicOrPassport: resolvedCnic || formData.passportNumber?.trim() || undefined,
     phone: formData.primaryPhone ? normalizePhone(formData.primaryPhone) : undefined,
     address: address || undefined,
   };
@@ -436,7 +442,7 @@ export async function createPatient(
   }
 }
 
-/** `PATCH /patients/panel/:id` — self-pay encounters have no update endpoint (per-visit, non-editable by design). */
+/** `PATCH /patients/panel/:id` or `PATCH /patients/encounters/:id` */
 export async function updatePatient(
   id: string,
   formData: PatientFormData,
@@ -444,9 +450,6 @@ export async function updatePatient(
 ): Promise<{ success: boolean; patient?: Patient; error?: string; duplicateInfo?: DuplicateCheckResult }> {
   const existing = getPatientById(id);
   if (!existing) return { success: false, error: 'Patient record not found.' };
-  if (existing.payerType === 'Self Pay') {
-    return { success: false, error: 'Self-pay records are per-visit and managed at Front Desk — they cannot be edited from this registry.' };
-  }
 
   const validationError = validateCommonFields(formData);
   if (validationError) return { success: false, error: validationError };
@@ -468,11 +471,17 @@ export async function updatePatient(
   }
 
   try {
+    if (existing.payerType === 'Self Pay') {
+      await apiClient.patch(`/patients/encounters/${id}`, toBackendSelfPayPayload(formData));
+      await fetchPatients();
+      return { success: true, patient: getPatientById(id) };
+    }
+
     await apiClient.patch(`/patients/panel/${id}`, toBackendPanelPayload(formData));
     await fetchPatients();
     return { success: true, patient: getPatientById(id) };
   } catch (err: any) {
-    return { success: false, error: err?.message || 'Failed to update patient.' };
+    return { success: false, error: err?.response?.data?.message || err?.message || 'Failed to update patient.' };
   }
 }
 

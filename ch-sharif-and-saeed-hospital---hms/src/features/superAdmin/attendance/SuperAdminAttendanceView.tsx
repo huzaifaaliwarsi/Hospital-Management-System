@@ -212,7 +212,7 @@ const MarkAttendanceTab: React.FC<{ departments: Department[]; toast: ReturnType
     toast.info('All editable staff reset to Unmarked in draft.');
   };
 
-  const editableRows = roster.filter((r) => !r.attendance?.isApproved);
+  const editableRows = roster;
 
   const kpis: KpiItem[] = useMemo(() => {
     const presentCount = Object.values(drafts).filter((d) => d.status === 'PRESENT').length;
@@ -259,15 +259,15 @@ const MarkAttendanceTab: React.FC<{ departments: Department[]; toast: ReturnType
   }, [drafts, roster]);
 
   const handleSaveAll = async () => {
-    if (editableRows.length === 0) {
-      toast.error('Nothing to save — every row for this date is already approved.', 'Nothing to Save');
+    if (roster.length === 0) {
+      toast.error('No staff members available for this date.', 'Nothing to Save');
       return;
     }
 
     const recordsToSave: { staffId: string; status: AttendanceStatus; actualIn?: string; actualOut?: string; notes?: string }[] = [];
     const idsToDelete: string[] = [];
 
-    editableRows.forEach((r) => {
+    roster.forEach((r) => {
       const d = drafts[r.staff.id];
       if (d && d.status) {
         recordsToSave.push({
@@ -277,7 +277,7 @@ const MarkAttendanceTab: React.FC<{ departments: Department[]; toast: ReturnType
           actualOut: combineDateTime(date, d.actualOut),
           notes: d.notes || undefined,
         });
-      } else if (r.attendance && !r.attendance.isApproved) {
+      } else if (r.attendance) {
         // Staff was previously saved in DB, but is now set to unmarked
         idsToDelete.push(r.attendance.id);
       }
@@ -305,8 +305,8 @@ const MarkAttendanceTab: React.FC<{ departments: Department[]; toast: ReturnType
         }
       }
       toast.success(
-        `Attendance updated: ${saved} saved to database${idsToDelete.length > 0 ? `, ${idsToDelete.length} unapproved record(s) removed` : ''}.`,
-        'Attendance Saved'
+        `Attendance updated: ${saved} saved & approved for payroll${idsToDelete.length > 0 ? `, ${idsToDelete.length} record(s) removed` : ''}.`,
+        'Attendance Saved & Approved'
       );
       await loadRoster();
     } catch (err: any) {
@@ -412,29 +412,29 @@ const MarkAttendanceTab: React.FC<{ departments: Department[]; toast: ReturnType
         <button
           type="button"
           onClick={markAllPresent}
-          disabled={isLoading || editableRows.length === 0}
+          disabled={isLoading || roster.length === 0}
           className="px-3.5 py-2 text-xs font-semibold text-[#08775A] bg-[#e7f6f1] hover:bg-[#d0efe5] border border-[#c2e7db] rounded-lg cursor-pointer disabled:opacity-50 transition-colors shadow-2xs"
-          title="Mark all unapproved staff as Present in draft"
+          title="Mark all staff as Present in draft"
         >
           Mark All Present
         </button>
         <button
           type="button"
           onClick={resetAllToUnmarked}
-          disabled={isLoading || editableRows.length === 0}
+          disabled={isLoading || roster.length === 0}
           className="px-3 py-2 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg cursor-pointer disabled:opacity-50 transition-colors shadow-2xs"
-          title="Reset all editable staff to Unmarked"
+          title="Reset all staff to Unmarked"
         >
           Reset Unmarked
         </button>
         <button
           type="button"
           onClick={handleSaveAll}
-          disabled={isLoading || isSaving || editableRows.length === 0}
+          disabled={isLoading || isSaving || roster.length === 0}
           className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg shadow-2xs cursor-pointer disabled:opacity-50 transition-colors"
         >
           {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-          Save Attendance
+          Save &amp; Approve Attendance
         </button>
       </div>
 
@@ -524,16 +524,7 @@ const MarkAttendanceTab: React.FC<{ departments: Department[]; toast: ReturnType
                         {r.staff.department?.name || '—'}
                       </td>
                       <td className="py-2.5 px-4 border-r border-[#e2eae5]">
-                        {locked ? (
-                          <span
-                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
-                              STATUS_STYLES[draft?.status || ''] || STATUS_STYLES.PRESENT
-                            }`}
-                          >
-                            <Lock className="h-3 w-3" />{' '}
-                            {draft?.status ? ATTENDANCE_STATUS_LABELS[draft.status] : 'Approved'}
-                          </span>
-                        ) : (
+                        <div className="flex items-center gap-2">
                           <select
                             value={draft?.status || ''}
                             onChange={(e) => setDraft(r.staff.id, { status: e.target.value as AttendanceStatus | '' })}
@@ -552,34 +543,53 @@ const MarkAttendanceTab: React.FC<{ departments: Department[]; toast: ReturnType
                               </option>
                             ))}
                           </select>
-                        )}
+                          {draft?.status === 'ABSENT' && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200 whitespace-nowrap">
+                              −1 Day Cut
+                            </span>
+                          )}
+                          {draft?.status === 'HALF_DAY' && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200 whitespace-nowrap">
+                              −0.5 Day Cut
+                            </span>
+                          )}
+                          {draft?.status === 'UNPAID_LEAVE' && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 text-slate-800 border border-slate-300 whitespace-nowrap">
+                              −1 Day Cut
+                            </span>
+                          )}
+                          {draft?.status === 'PRESENT' && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 whitespace-nowrap">
+                              Full Pay
+                            </span>
+                          )}
+                          {draft?.status === 'PAID_LEAVE' && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200 whitespace-nowrap">
+                              Paid Leave
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="py-2.5 px-3 border-r border-[#e2eae5]">
                         <input
                           type="time"
-                          disabled={locked}
                           value={draft?.actualIn || ''}
                           onChange={(e) => setDraft(r.staff.id, { actualIn: e.target.value })}
-                          className="w-full px-2 py-1 border border-[#c2e7db] rounded-lg text-xs bg-white disabled:bg-slate-100 disabled:text-slate-400 font-mono"
+                          className="w-full px-2 py-1 border border-[#c2e7db] rounded-lg text-xs bg-white font-mono"
                         />
                       </td>
                       <td className="py-2.5 px-3 border-r border-[#e2eae5]">
                         <input
                           type="time"
-                          disabled={locked}
                           value={draft?.actualOut || ''}
                           onChange={(e) => setDraft(r.staff.id, { actualOut: e.target.value })}
-                          className="w-full px-2 py-1 border border-[#c2e7db] rounded-lg text-xs bg-white disabled:bg-slate-100 disabled:text-slate-400 font-mono"
+                          className="w-full px-2 py-1 border border-[#c2e7db] rounded-lg text-xs bg-white font-mono"
                         />
                       </td>
                       <td className="py-2.5 px-3 text-center border-r border-[#e2eae5]">
-                        {locked ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-                            <Lock className="h-2.5 w-2.5" /> Approved
-                          </span>
-                        ) : isSavedInDb && !isDraftModified ? (
+                        {isSavedInDb && !isDraftModified ? (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#effaf5] text-[#08775A] border border-[#c2e7db]">
-                            <CheckCircle2 className="h-2.5 w-2.5" /> Saved
+                            <CheckCircle2 className="h-2.5 w-2.5" /> Approved
                           </span>
                         ) : draft?.status ? (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
@@ -592,41 +602,37 @@ const MarkAttendanceTab: React.FC<{ departments: Department[]; toast: ReturnType
                         )}
                       </td>
                       <td className="py-2.5 px-3 text-center">
-                        {locked ? (
-                          <span className="text-[10px] text-slate-400 font-mono">Locked</span>
-                        ) : (
-                          <div className="inline-flex items-center justify-center gap-1">
-                            {draft?.status && isDraftModified && (
-                              <button
-                                type="button"
-                                onClick={() => handleSaveSingleRow(r.staff.id)}
-                                disabled={isSaving}
-                                className="p-1 text-[#08775A] hover:bg-[#e7f6f1] rounded border border-[#c2e7db] text-[10px] font-semibold cursor-pointer disabled:opacity-50 transition-colors"
-                                title="Save this staff member's attendance to DB"
-                              >
-                                <Save className="h-3.5 w-3.5" />
-                              </button>
-                            )}
-                            {(isSavedInDb || draft?.status) && (
-                              <button
-                                type="button"
-                                onClick={() => handleUnmarkSingleRow(r.staff.id, r.attendance?.id)}
-                                disabled={isSaving}
-                                className="p-1 text-rose-600 hover:bg-rose-50 rounded border border-rose-200 text-[10px] font-semibold cursor-pointer disabled:opacity-50 transition-colors"
-                                title={
-                                  isSavedInDb
-                                    ? 'Delete attendance record from DB (reset to Unmarked)'
-                                    : 'Clear draft selection'
-                                }
-                              >
-                                <RotateCw className="h-3.5 w-3.5" />
-                              </button>
-                            )}
-                            {!draft?.status && !isSavedInDb && (
-                              <span className="text-[11px] text-slate-300">—</span>
-                            )}
-                          </div>
-                        )}
+                        <div className="inline-flex items-center justify-center gap-1">
+                          {draft?.status && isDraftModified && (
+                            <button
+                              type="button"
+                              onClick={() => handleSaveSingleRow(r.staff.id)}
+                              disabled={isSaving}
+                              className="p-1 text-[#08775A] hover:bg-[#e7f6f1] rounded border border-[#c2e7db] text-[10px] font-semibold cursor-pointer disabled:opacity-50 transition-colors"
+                              title="Save this staff member's attendance to DB"
+                            >
+                              <Save className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          {(isSavedInDb || draft?.status) && (
+                            <button
+                              type="button"
+                              onClick={() => handleUnmarkSingleRow(r.staff.id, r.attendance?.id)}
+                              disabled={isSaving}
+                              className="p-1 text-rose-600 hover:bg-rose-50 rounded border border-rose-200 text-[10px] font-semibold cursor-pointer disabled:opacity-50 transition-colors"
+                              title={
+                                isSavedInDb
+                                  ? 'Delete attendance record from DB (reset to Unmarked)'
+                                  : 'Clear draft selection'
+                              }
+                            >
+                              <RotateCw className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          {!draft?.status && !isSavedInDb && (
+                            <span className="text-[11px] text-slate-300">—</span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );

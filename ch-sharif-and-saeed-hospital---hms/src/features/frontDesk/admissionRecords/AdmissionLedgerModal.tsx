@@ -460,51 +460,80 @@ export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admi
         </div>
       ) : ledger ? (
         <div className="space-y-4">
-          {/* Header info */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs bg-slate-50 rounded-xl border border-slate-200 p-3.5">
-            <div className="space-y-1">
-              <div className="flex justify-between"><span className="text-slate-500 font-semibold">Patient</span><span className="font-bold text-slate-900">{ledger.patientName}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500 font-semibold">MR #</span><span className="font-semibold text-slate-800">{ledger.patientMrNumber || '—'}</span></div>
-              <div className="flex justify-between items-center"><span className="text-slate-500 font-semibold">Payer</span>
-                {ledger.payerType === 'PANEL' ? <PanelBadge label={ledger.panelName || 'Panel'} /> : <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-600">Self-Pay</span>}
+          {/* Header Info Banner */}
+          <div className="bg-slate-50/90 rounded-xl border border-slate-200/90 p-4 shadow-2xs">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
+              <div className="space-y-1">
+                <span className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wider block">Patient</span>
+                <span className="font-bold text-slate-900 text-sm block truncate" title={ledger.patientName}>{ledger.patientName}</span>
+                <span className="font-mono text-[11px] font-semibold text-slate-600 block">MR: {ledger.patientMrNumber || '—'}</span>
               </div>
-            </div>
-            <div className="space-y-1">
-              <div className="flex justify-between"><span className="text-slate-500 font-semibold">Admission Department</span><span className="font-semibold text-slate-800">{ledger.departmentName || 'Not assigned'}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500 font-semibold">Admission Date</span><span className="font-semibold text-slate-800">{formatTimestamp(ledger.admittedAt)}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500 font-semibold">Ward / Room / Bed</span><span className="font-semibold text-slate-800">{wardRoomBed}</span></div>
-              <div className="flex justify-between items-center">
-                <span className="text-slate-500 font-semibold">Current Status</span>
-                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                  ledger.status === 'DISCHARGED'
-                    ? 'bg-emerald-100 text-emerald-800'
-                    : ledger.status === 'DISCHARGE_PENDING'
-                      ? 'bg-amber-100 text-amber-800'
-                      : 'bg-blue-100 text-blue-800'
-                }`}>
-                  {ledger.status.replace(/_/g, ' ')}
+              <div className="space-y-1">
+                <span className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wider block">Payer / Coverage</span>
+                <div>
+                  {ledger.payerType === 'PANEL' ? (
+                    <PanelBadge label={ledger.panelName || 'Panel'} />
+                  ) : (
+                    <span className="inline-block px-2.5 py-0.5 rounded text-[10px] font-bold bg-slate-200/80 text-slate-700 border border-slate-300">
+                      Self-Pay
+                    </span>
+                  )}
+                </div>
+                <div className="pt-0.5">
+                  <span className={`inline-block px-2.5 py-0.5 rounded text-[10px] font-bold ${
+                    ledger.status === 'DISCHARGED'
+                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                      : ledger.status === 'DISCHARGE_PENDING'
+                        ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                        : 'bg-blue-100 text-blue-800 border border-blue-200'
+                  }`}>
+                    {ledger.status.replace(/_/g, ' ')}
+                  </span>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <span className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wider block">Department</span>
+                <span className="font-semibold text-slate-800 text-xs block">{ledger.departmentName || 'Not assigned'}</span>
+                <span className="text-[10.5px] text-slate-500 block">
+                  Admitted: {formatTimestamp(ledger.admittedAt)}
                 </span>
+              </div>
+              <div className="space-y-1">
+                <span className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wider block">Ward / Room / Bed</span>
+                <span className="font-semibold text-slate-800 text-xs block leading-snug">{wardRoomBed}</span>
               </div>
             </div>
           </div>
 
-          {/* Summary strip */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
-            <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
-              <span className="text-[10px] text-slate-500 uppercase block">Total Charges</span>
-              <span className="font-bold text-slate-800">{formatPKR(ledger.summary.totalCharges)}</span>
+          {/* Summary KPI Strip */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+            <div className="p-3.5 bg-white rounded-xl border border-slate-200 shadow-2xs hover:border-slate-300 transition-colors">
+              <span className="text-[10.5px] text-slate-500 font-bold uppercase tracking-wider block">Total Charges</span>
+              <span className="text-lg font-bold font-mono text-slate-900 mt-1 block">{formatPKR(ledger.summary.totalCharges)}</span>
             </div>
-            <div className="p-2.5 bg-emerald-50 rounded-lg border border-emerald-200">
-              <span className="text-[10px] text-emerald-700 uppercase block">Total Paid</span>
-              <span className="font-bold text-emerald-800">{formatPKR(ledger.summary.totalPaid)}</span>
+            <div className="p-3.5 bg-emerald-50/60 rounded-xl border border-emerald-200/90 shadow-2xs">
+              <span className="text-[10.5px] text-emerald-700 font-bold uppercase tracking-wider block">Total Paid</span>
+              <span className="text-lg font-bold font-mono text-emerald-800 mt-1 block">{formatPKR(ledger.summary.totalPaid)}</span>
             </div>
-            <div className="p-2.5 bg-[#effaf5] rounded-lg border border-[#c2e7db]">
-              <span className="text-[10px] text-[#08775A] uppercase block">Available Credit</span>
-              <span className="font-bold text-[#08775A]">{formatPKR(ledger.summary.availableCredit)}</span>
+            <div className="p-3.5 bg-[#effaf5] rounded-xl border border-[#c2e7db] shadow-2xs">
+              <span className="text-[10.5px] text-[#08775A] font-bold uppercase tracking-wider block">Available Credit</span>
+              <span className="text-lg font-bold font-mono text-[#08775A] mt-1 block">{formatPKR(ledger.summary.availableCredit)}</span>
             </div>
-            <div className="p-2.5 bg-amber-50 rounded-lg border border-amber-200">
-              <span className="text-[10px] text-amber-700 uppercase block">Outstanding</span>
-              <span className="font-bold text-amber-800">{formatPKR(ledger.summary.outstandingBalance)}</span>
+            <div className={`p-3.5 rounded-xl border shadow-2xs ${
+              ledger.summary.outstandingBalance > 0
+                ? 'bg-amber-50/80 border-amber-300/90'
+                : 'bg-slate-50 border-slate-200'
+            }`}>
+              <span className={`text-[10.5px] font-bold uppercase tracking-wider block ${
+                ledger.summary.outstandingBalance > 0 ? 'text-amber-800' : 'text-slate-500'
+              }`}>
+                Outstanding Balance
+              </span>
+              <span className={`text-lg font-bold font-mono mt-1 block ${
+                ledger.summary.outstandingBalance > 0 ? 'text-amber-900' : 'text-slate-700'
+              }`}>
+                {formatPKR(ledger.summary.outstandingBalance)}
+              </span>
             </div>
           </div>
 
@@ -553,22 +582,22 @@ export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admi
 
           {/* Panel figures */}
           {ledger.panel && (
-            <div className="border border-purple-200 bg-purple-50/50 rounded-lg p-3">
+            <div className="border border-purple-200 bg-purple-50/50 rounded-xl p-3.5">
               <h4 className="text-[11px] font-bold uppercase tracking-wider text-purple-800 mb-2">Panel Figures</h4>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
-                <div><span className="text-purple-700 block">Gross Charges</span><span className="font-bold text-purple-900">{formatPKR(ledger.panel.grossCharges)}</span></div>
-                <div><span className="text-purple-700 block">Patient Share</span><span className="font-bold text-purple-900">{formatPKR(ledger.panel.patientShare)}</span></div>
-                <div><span className="text-purple-700 block">Panel Receivable</span><span className="font-bold text-purple-900">{formatPKR(ledger.panel.panelReceivable)}</span></div>
-                <div><span className="text-purple-700 block">Patient Paid</span><span className="font-bold text-purple-900">{formatPKR(ledger.panel.patientPaid)}</span></div>
-                <div><span className="text-purple-700 block">Panel Realized</span><span className="font-bold text-purple-900">{formatPKR(ledger.panel.panelRealized)}</span></div>
-                <div><span className="text-purple-700 block">Patient Outstanding</span><span className="font-bold text-purple-900">{formatPKR(ledger.panel.patientOutstanding)}</span></div>
-                <div><span className="text-purple-700 block">Panel Outstanding</span><span className="font-bold text-purple-900">{formatPKR(ledger.panel.panelOutstanding)}</span></div>
+                <div><span className="text-purple-700 block">Gross Charges</span><span className="font-bold font-mono text-purple-900">{formatPKR(ledger.panel.grossCharges)}</span></div>
+                <div><span className="text-purple-700 block">Patient Share</span><span className="font-bold font-mono text-purple-900">{formatPKR(ledger.panel.patientShare)}</span></div>
+                <div><span className="text-purple-700 block">Panel Receivable</span><span className="font-bold font-mono text-purple-900">{formatPKR(ledger.panel.panelReceivable)}</span></div>
+                <div><span className="text-purple-700 block">Patient Paid</span><span className="font-bold font-mono text-purple-900">{formatPKR(ledger.panel.patientPaid)}</span></div>
+                <div><span className="text-purple-700 block">Panel Realized</span><span className="font-bold font-mono text-purple-900">{formatPKR(ledger.panel.panelRealized)}</span></div>
+                <div><span className="text-purple-700 block">Patient Outstanding</span><span className="font-bold font-mono text-purple-900">{formatPKR(ledger.panel.patientOutstanding)}</span></div>
+                <div><span className="text-purple-700 block">Panel Outstanding</span><span className="font-bold font-mono text-purple-900">{formatPKR(ledger.panel.panelOutstanding)}</span></div>
               </div>
             </div>
           )}
 
           {/* Itemized Services & Charges Table */}
-          <div className="space-y-2.5">
+          <div className="space-y-3">
             {/* Date Filtering Toolbar */}
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -673,11 +702,11 @@ export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admi
                       <strong>{filteredEntries.length}</strong> {filteredEntries.length === 1 ? 'entry' : 'entries'}
                     </span>
                     <span className="text-slate-400">•</span>
-                    <span className="text-slate-700">Charges: <strong className="text-slate-900">{formatPKR(filteredTotals.periodCharges)}</strong></span>
+                    <span className="text-slate-700">Charges: <strong className="text-slate-900 font-mono">{formatPKR(filteredTotals.periodCharges)}</strong></span>
                     <span className="text-slate-400">•</span>
-                    <span className="text-slate-700">Paid: <strong className="text-emerald-700">{formatPKR(filteredTotals.periodPaid)}</strong></span>
+                    <span className="text-slate-700">Paid: <strong className="text-emerald-700 font-mono">{formatPKR(filteredTotals.periodPaid)}</strong></span>
                     <span className="text-slate-400">•</span>
-                    <span className="text-slate-700">Due: <strong className={filteredTotals.periodDue > 0 ? 'text-rose-700' : 'text-slate-700'}>{formatPKR(filteredTotals.periodDue)}</strong></span>
+                    <span className="text-slate-700">Due: <strong className={`font-mono ${filteredTotals.periodDue > 0 ? 'text-rose-700' : 'text-slate-700'}`}>{formatPKR(filteredTotals.periodDue)}</strong></span>
                   </div>
                   <button
                     type="button"
@@ -690,17 +719,26 @@ export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admi
               )}
             </div>
 
-            <div className="border border-slate-200 rounded-lg overflow-hidden">
+            {/* Table with proper bordered grid lines & matching header/cell alignment */}
+            <div className="border border-slate-300 rounded-lg overflow-hidden shadow-2xs bg-white">
               <div className="overflow-x-auto max-h-72 overflow-y-auto">
-                <table className="w-full text-xs">
-                  <thead className="bg-slate-50 border-b border-slate-200 sticky top-0">
+                <table className="w-full text-xs border-collapse text-left">
+                  <thead className="bg-[#f1f5f9] border-b border-slate-300 sticky top-0 z-10 text-slate-800 text-[11px] font-bold uppercase tracking-wider">
                     <tr>
-                      {['Date/Time', 'Service / Procedure', 'Department', 'Qty', 'Rate', 'Total Amount', 'Paid', 'Due', 'Status', 'Invoice #', 'Performed By'].map((h) => (
-                        <th key={h} className="text-left px-3 py-2 font-semibold text-slate-600 whitespace-nowrap">{h}</th>
-                      ))}
+                      <th className="text-left py-2.5 px-3 border-r border-slate-300 whitespace-nowrap">Date/Time</th>
+                      <th className="text-left py-2.5 px-3 border-r border-slate-300 whitespace-nowrap">Service / Procedure</th>
+                      <th className="text-left py-2.5 px-3 border-r border-slate-300 whitespace-nowrap">Department</th>
+                      <th className="text-center py-2.5 px-3 border-r border-slate-300 whitespace-nowrap">Qty</th>
+                      <th className="text-right py-2.5 px-3 border-r border-slate-300 whitespace-nowrap">Rate</th>
+                      <th className="text-right py-2.5 px-3 border-r border-slate-300 whitespace-nowrap">Total Amount</th>
+                      <th className="text-right py-2.5 px-3 border-r border-slate-300 whitespace-nowrap">Paid</th>
+                      <th className="text-right py-2.5 px-3 border-r border-slate-300 whitespace-nowrap">Due</th>
+                      <th className="text-center py-2.5 px-3 border-r border-slate-300 whitespace-nowrap">Status</th>
+                      <th className="text-left py-2.5 px-3 border-r border-slate-300 whitespace-nowrap">Invoice #</th>
+                      <th className="text-left py-2.5 px-3 whitespace-nowrap">Performed By</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
+                  <tbody className="divide-y divide-slate-200">
                     {filteredEntries.map((e, idx) => {
                       const isSelf =
                         e.status === 'SELF' ||
@@ -715,19 +753,19 @@ export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admi
                           key={idx}
                           className={
                             isSelf
-                              ? 'bg-slate-50/40 hover:bg-slate-50/80'
+                              ? 'bg-slate-50/50 hover:bg-slate-100/60 transition-colors'
                               : isPaid
-                              ? 'bg-emerald-50/20 hover:bg-emerald-50/40'
-                              : 'hover:bg-slate-50/50'
+                              ? 'bg-emerald-50/20 hover:bg-emerald-50/40 transition-colors'
+                              : 'hover:bg-slate-50/70 transition-colors'
                           }
                         >
-                          <td className="px-3 py-2 whitespace-nowrap text-slate-500">{formatTimestamp(e.date)}</td>
-                          <td className="px-3 py-2 whitespace-nowrap font-semibold text-slate-800">
+                          <td className="py-2.5 px-3 whitespace-nowrap text-slate-600 border-r border-slate-200 font-mono text-[11px]">{formatTimestamp(e.date)}</td>
+                          <td className="py-2.5 px-3 whitespace-nowrap font-semibold text-slate-800 border-r border-slate-200">
                             <div>
                               <div className="flex items-center gap-1.5">
                                 <span>{e.type}</span>
                                 {isSelf && (
-                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-slate-200/80 text-slate-700">
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-slate-200/80 text-slate-700">
                                     Self Arranged
                                   </span>
                                 )}
@@ -737,18 +775,18 @@ export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admi
                               )}
                             </div>
                           </td>
-                          <td className="px-3 py-2 whitespace-nowrap text-slate-600">{e.department || '—'}</td>
-                          <td className="px-3 py-2 text-right text-slate-600">{e.qty ?? 1}</td>
-                          <td className="px-3 py-2 text-right text-slate-600">{e.rate != null ? formatPKR(e.rate) : '—'}</td>
-                          <td className="px-3 py-2 text-right">
-                            <span className="font-semibold text-slate-900">{formatPKR(e.debit)}</span>
+                          <td className="py-2.5 px-3 whitespace-nowrap text-slate-600 border-r border-slate-200">{e.department || '—'}</td>
+                          <td className="py-2.5 px-3 text-center text-slate-700 border-r border-slate-200 font-mono">{e.qty ?? 1}</td>
+                          <td className="py-2.5 px-3 text-right text-slate-700 border-r border-slate-200 font-mono">{e.rate != null ? formatPKR(e.rate) : '—'}</td>
+                          <td className="py-2.5 px-3 text-right border-r border-slate-200 font-mono">
+                            <span className="font-bold text-slate-900">{formatPKR(e.debit)}</span>
                             {e.discountAmount != null && e.discountAmount > 0 && (
                               <span className="block text-[10px] text-amber-700 font-medium">
                                 (-{formatPKR(e.discountAmount)} disc)
                               </span>
                             )}
                           </td>
-                          <td className="px-3 py-2 text-right font-bold">
+                          <td className="py-2.5 px-3 text-right font-mono font-bold border-r border-slate-200">
                             {isSelf ? (
                               <span className="text-slate-500 font-medium text-xs">Self Managed</span>
                             ) : paidVal > 0 ? (
@@ -757,7 +795,7 @@ export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admi
                               <span className="text-rose-600">PKR 0</span>
                             )}
                           </td>
-                          <td className="px-3 py-2 text-right font-bold">
+                          <td className="py-2.5 px-3 text-right font-mono font-bold border-r border-slate-200">
                             {isSelf ? (
                               <span className="text-slate-400 font-normal">PKR 0</span>
                             ) : dueVal > 0 ? (
@@ -766,37 +804,37 @@ export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admi
                               <span className="text-slate-400 font-normal">PKR 0</span>
                             )}
                           </td>
-                          <td className="px-3 py-2 whitespace-nowrap">
+                          <td className="py-2.5 px-3 text-center whitespace-nowrap border-r border-slate-200">
                             {isSelf ? (
-                              <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                              <span className="inline-block px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
                                 SELF ARRANGED
                               </span>
                             ) : e.status === 'REQUESTED' ? (
-                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-300">
+                              <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-300">
                                 REQUESTED
                               </span>
                             ) : isPaid ? (
-                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                              <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
                                 PAID
                               </span>
                             ) : isPartial ? (
-                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                              <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
                                 PARTIAL
                               </span>
                             ) : (
-                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-700 border border-rose-200">
+                              <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-700 border border-rose-200">
                                 UNPAID
                               </span>
                             )}
                           </td>
-                          <td className="px-3 py-2 whitespace-nowrap font-mono text-[10.5px] text-slate-500">{e.reference}</td>
-                          <td className="px-3 py-2 whitespace-nowrap text-slate-500">{e.postedBy || '—'}</td>
+                          <td className="py-2.5 px-3 whitespace-nowrap font-mono text-[11px] font-semibold text-[#08775A] border-r border-slate-200">{e.reference || '—'}</td>
+                          <td className="py-2.5 px-3 whitespace-nowrap text-slate-600">{e.postedBy || '—'}</td>
                         </tr>
                       );
                     })}
                     {filteredEntries.length === 0 && (
                       <tr>
-                        <td colSpan={11} className="px-3 py-6 text-center text-slate-400">
+                        <td colSpan={11} className="py-10 text-center text-slate-400">
                           {dateFilter === 'ALL'
                             ? 'No charges or services posted yet.'
                             : `No charges or services recorded for ${filterPeriodLabel}.`}
@@ -804,23 +842,46 @@ export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admi
                       </tr>
                     )}
                   </tbody>
+                  {filteredEntries.length > 0 && (
+                    <tfoot className="bg-[#f1f5f9] border-t-2 border-slate-300 font-bold text-slate-900 sticky bottom-0">
+                      <tr>
+                        <td colSpan={3} className="py-2.5 px-3 border-r border-slate-300 text-[11px] uppercase tracking-wider text-slate-600 text-left font-bold">
+                          Total ({filteredEntries.length} {filteredEntries.length === 1 ? 'Item' : 'Items'})
+                        </td>
+                        <td className="py-2.5 px-3 border-r border-slate-300 text-center font-mono">
+                          {filteredEntries.reduce((acc, e) => acc + (e.qty ?? 1), 0)}
+                        </td>
+                        <td className="py-2.5 px-3 border-r border-slate-300 text-right font-mono text-slate-400">—</td>
+                        <td className="py-2.5 px-3 border-r border-slate-300 text-right font-mono font-bold text-slate-900">
+                          {formatPKR(filteredTotals.periodCharges)}
+                        </td>
+                        <td className="py-2.5 px-3 border-r border-slate-300 text-right font-mono font-bold text-emerald-700">
+                          {formatPKR(filteredTotals.periodPaid)}
+                        </td>
+                        <td className={`py-2.5 px-3 border-r border-slate-300 text-right font-mono font-bold ${filteredTotals.periodDue > 0 ? 'text-rose-700' : 'text-slate-700'}`}>
+                          {formatPKR(filteredTotals.periodDue)}
+                        </td>
+                        <td colSpan={3} className="py-2.5 px-3 text-slate-400"></td>
+                      </tr>
+                    </tfoot>
+                  )}
                 </table>
               </div>
             </div>
 
             {/* Payment Receipts History */}
             {filteredReceipts && filteredReceipts.length > 0 && (
-              <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5 flex flex-wrap items-center gap-2 text-xs">
-                <span className="font-bold text-slate-700 flex items-center gap-1.5">
-                  <Receipt className="h-3.5 w-3.5 text-[#08775A]" /> Receipts Collected ({filteredReceipts.length}{dateFilter !== 'ALL' ? ` in ${filterPeriodLabel}` : ''}):
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-wrap items-center gap-2 text-xs">
+                <span className="font-bold text-slate-700 flex items-center gap-1.5 mr-1">
+                  <Receipt className="h-4 w-4 text-[#08775A]" /> Receipts Collected ({filteredReceipts.length}{dateFilter !== 'ALL' ? ` in ${filterPeriodLabel}` : ''}):
                 </span>
                 {filteredReceipts.map((r) => (
                   <span
                     key={r.id}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white border border-slate-200 text-[11px]"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-xs shadow-2xs"
                   >
                     <span className="font-mono font-bold text-[#08775A]">{r.receiptNumber}</span>
-                    <span className="font-semibold text-slate-800">{formatPKR(r.amount)}</span>
+                    <span className="font-semibold text-slate-800 font-mono">{formatPKR(r.amount)}</span>
                     <span className="text-slate-400 font-medium">• {r.method}</span>
                   </span>
                 ))}

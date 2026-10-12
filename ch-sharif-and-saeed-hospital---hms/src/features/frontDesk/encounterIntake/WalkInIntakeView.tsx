@@ -22,12 +22,15 @@ import {
   X,
   FlaskConical,
   Calendar,
+  Check,
 } from 'lucide-react';
 import { formatDisplayDate } from '../../../utils/dateConstants';
 import { PatientGender, PayerType, GuardianRelation, GUARDIAN_RELATIONS } from '../../../types/patient';
 import {
   normalizePhone,
   isValidPhone,
+  normalizeCnic,
+  isValidCnic,
   calculateAgeFromDob,
   PanelPatientSearchResult,
 } from '../../../services/patientRegistryService';
@@ -482,6 +485,10 @@ export const WalkInIntakeView: React.FC = () => {
       showValidationError('Please enter a valid age in years (0 - 130).');
       return;
     }
+    if (cnic.trim() && !isValidCnic(normalizeCnic(cnic))) {
+      showValidationError('CNIC must follow the Pakistani format: XXXXX-XXXXXXX-X (13 digits).');
+      return;
+    }
 
     // 2. Panel Details Validation
     if (payerType === 'Corporate / Panel') {
@@ -566,7 +573,9 @@ export const WalkInIntakeView: React.FC = () => {
             guardianName: fatherGuardianName.trim(),
             gender,
             dob,
+            cnicOrPassport: cnic.trim() ? normalizeCnic(cnic) : undefined,
             phone: normalizePhone(primaryPhone),
+            address: address.trim() || undefined,
           },
           departmentId: effectiveDeptId || undefined,
           doctorStaffId: doctorId || undefined,
@@ -741,51 +750,61 @@ export const WalkInIntakeView: React.FC = () => {
             )}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
             {/* 1. OPD Consultation Button */}
             <button
               type="button"
               onClick={() => setEncounterType('OPD')}
-              className={`p-3.5 rounded-xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${
+              className={`p-3.5 rounded-2xl text-left transition-all flex items-start gap-3 cursor-pointer group ${
                 encounterType === 'OPD'
-                  ? 'border-[#08775A] bg-[#effaf5] shadow-xs ring-1 ring-[#08775A]/20'
-                  : 'border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 text-slate-700'
+                  ? 'border-t-[4px] border-t-emerald-600 border-x-2 border-b-2 border-emerald-600 bg-gradient-to-b from-emerald-50/80 to-white shadow-md ring-2 ring-emerald-600/20 -translate-y-0.5'
+                  : 'border-t-[4px] border-t-emerald-600 border-x border-b border-slate-200/90 bg-white hover:border-emerald-400 hover:bg-emerald-50/20 hover:shadow-md hover:-translate-y-0.5'
               }`}
             >
               <div
-                className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
+                className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5 transition-all ${
                   encounterType === 'OPD'
-                    ? 'bg-[#08775A] text-white shadow-xs'
-                    : 'bg-slate-100 text-slate-500'
+                    ? 'bg-emerald-600 text-white shadow-xs scale-105'
+                    : 'bg-emerald-50 text-emerald-700 border border-emerald-200/70 group-hover:bg-emerald-600 group-hover:text-white'
                 }`}
               >
                 <Stethoscope className="h-5 w-5" />
               </div>
               <div className="grow min-w-0">
                 <div className="flex items-center justify-between gap-1">
-                  <span className="text-xs font-bold text-slate-900">OPD Consultation</span>
-                  <div className="flex items-center gap-1.5">
+                  <span
+                    className={`text-xs font-bold transition-colors ${
+                      encounterType === 'OPD' ? 'text-emerald-950 font-extrabold' : 'text-slate-900 group-hover:text-emerald-800'
+                    }`}
+                  >
+                    OPD Consultation
+                  </span>
+                  <div className="flex items-center gap-1.5 shrink-0">
                     {opdCoreService && (
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
-                        opdCoreService.status === 'Active'
-                          ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                          : 'bg-amber-50 text-amber-800 border-amber-200'
-                      }`}>
+                      <span
+                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded border transition-colors ${
+                          opdCoreService.status === 'Active'
+                            ? encounterType === 'OPD'
+                              ? 'bg-emerald-100 text-emerald-900 border-emerald-300 font-extrabold'
+                              : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                            : 'bg-amber-50 text-amber-800 border-amber-200'
+                        }`}
+                      >
                         {opdCoreService.status === 'Active' ? formatPKR(opdCoreService.standardRate) : 'Inactive'}
                       </span>
                     )}
                     <div
-                      className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 ${
+                      className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 transition-colors ${
                         encounterType === 'OPD'
-                          ? 'border-[#08775A] bg-[#08775A]'
-                          : 'border-slate-300'
+                          ? 'border-emerald-600 bg-emerald-600 text-white shadow-2xs'
+                          : 'border-slate-300 bg-white group-hover:border-emerald-500'
                       }`}
                     >
-                      {encounterType === 'OPD' && <div className="h-1.5 w-1.5 rounded-full bg-white" />}
+                      {encounterType === 'OPD' && <Check className="h-2.5 w-2.5 stroke-[3]" />}
                     </div>
                   </div>
                 </div>
-                <p className="text-[11px] text-slate-500 mt-0.5 leading-tight">
+                <p className="text-[11px] text-slate-500 mt-1 leading-snug">
                   Outpatient clinic, specialist consult &amp; prescriptions
                 </p>
               </div>
@@ -795,46 +814,56 @@ export const WalkInIntakeView: React.FC = () => {
             <button
               type="button"
               onClick={() => setEncounterType('OBSERVATION')}
-              className={`p-3.5 rounded-xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${
+              className={`p-3.5 rounded-2xl text-left transition-all flex items-start gap-3 cursor-pointer group ${
                 encounterType === 'OBSERVATION'
-                  ? 'border-indigo-600 bg-indigo-50/70 shadow-xs ring-1 ring-indigo-500/20'
-                  : 'border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 text-slate-700'
+                  ? 'border-t-[4px] border-t-indigo-600 border-x-2 border-b-2 border-indigo-600 bg-gradient-to-b from-indigo-50/80 to-white shadow-md ring-2 ring-indigo-600/20 -translate-y-0.5'
+                  : 'border-t-[4px] border-t-indigo-600 border-x border-b border-slate-200/90 bg-white hover:border-indigo-400 hover:bg-indigo-50/20 hover:shadow-md hover:-translate-y-0.5'
               }`}
             >
               <div
-                className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
+                className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5 transition-all ${
                   encounterType === 'OBSERVATION'
-                    ? 'bg-indigo-600 text-white shadow-xs'
-                    : 'bg-slate-100 text-slate-500'
+                    ? 'bg-indigo-600 text-white shadow-xs scale-105'
+                    : 'bg-indigo-50 text-indigo-700 border border-indigo-200/70 group-hover:bg-indigo-600 group-hover:text-white'
                 }`}
               >
                 <Eye className="h-5 w-5" />
               </div>
               <div className="grow min-w-0">
                 <div className="flex items-center justify-between gap-1">
-                  <span className="text-xs font-bold text-slate-900">Observation Care</span>
-                  <div className="flex items-center gap-1.5">
+                  <span
+                    className={`text-xs font-bold transition-colors ${
+                      encounterType === 'OBSERVATION' ? 'text-indigo-950 font-extrabold' : 'text-slate-900 group-hover:text-indigo-800'
+                    }`}
+                  >
+                    Observation Care
+                  </span>
+                  <div className="flex items-center gap-1.5 shrink-0">
                     {obsCoreService && (
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
-                        obsCoreService.status === 'Active'
-                          ? 'bg-indigo-50 text-indigo-800 border-indigo-200'
-                          : 'bg-amber-50 text-amber-800 border-amber-200'
-                      }`}>
+                      <span
+                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded border transition-colors ${
+                          obsCoreService.status === 'Active'
+                            ? encounterType === 'OBSERVATION'
+                              ? 'bg-indigo-100 text-indigo-900 border-indigo-300 font-extrabold'
+                              : 'bg-indigo-50 text-indigo-800 border-indigo-200'
+                            : 'bg-amber-50 text-amber-800 border-amber-200'
+                        }`}
+                      >
                         {obsCoreService.status === 'Active' ? formatPKR(obsCoreService.standardRate) : 'Inactive'}
                       </span>
                     )}
                     <div
-                      className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 ${
+                      className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 transition-colors ${
                         encounterType === 'OBSERVATION'
-                          ? 'border-indigo-600 bg-indigo-600'
-                          : 'border-slate-300'
+                          ? 'border-indigo-600 bg-indigo-600 text-white shadow-2xs'
+                          : 'border-slate-300 bg-white group-hover:border-indigo-500'
                       }`}
                     >
-                      {encounterType === 'OBSERVATION' && <div className="h-1.5 w-1.5 rounded-full bg-white" />}
+                      {encounterType === 'OBSERVATION' && <Check className="h-2.5 w-2.5 stroke-[3]" />}
                     </div>
                   </div>
                 </div>
-                <p className="text-[11px] text-slate-500 mt-0.5 leading-tight">
+                <p className="text-[11px] text-slate-500 mt-1 leading-snug">
                   Short-stay monitoring, IV drip therapy &amp; vitals check
                 </p>
               </div>
@@ -844,46 +873,56 @@ export const WalkInIntakeView: React.FC = () => {
             <button
               type="button"
               onClick={() => setEncounterType('EMERGENCY')}
-              className={`p-3.5 rounded-xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${
+              className={`p-3.5 rounded-2xl text-left transition-all flex items-start gap-3 cursor-pointer group ${
                 encounterType === 'EMERGENCY'
-                  ? 'border-rose-600 bg-rose-50/70 shadow-xs ring-1 ring-rose-500/20'
-                  : 'border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 text-slate-700'
+                  ? 'border-t-[4px] border-t-rose-600 border-x-2 border-b-2 border-rose-600 bg-gradient-to-b from-rose-50/80 to-white shadow-md ring-2 ring-rose-600/20 -translate-y-0.5'
+                  : 'border-t-[4px] border-t-rose-600 border-x border-b border-slate-200/90 bg-white hover:border-rose-400 hover:bg-rose-50/20 hover:shadow-md hover:-translate-y-0.5'
               }`}
             >
               <div
-                className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
+                className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5 transition-all ${
                   encounterType === 'EMERGENCY'
-                    ? 'bg-rose-600 text-white shadow-xs'
-                    : 'bg-slate-100 text-slate-500'
+                    ? 'bg-rose-600 text-white shadow-xs scale-105'
+                    : 'bg-rose-50 text-rose-700 border border-rose-200/70 group-hover:bg-rose-600 group-hover:text-white'
                 }`}
               >
                 <AlertTriangle className="h-5 w-5" />
               </div>
               <div className="grow min-w-0">
                 <div className="flex items-center justify-between gap-1">
-                  <span className="text-xs font-bold text-slate-900">Emergency Triage</span>
-                  <div className="flex items-center gap-1.5">
+                  <span
+                    className={`text-xs font-bold transition-colors ${
+                      encounterType === 'EMERGENCY' ? 'text-rose-950 font-extrabold' : 'text-slate-900 group-hover:text-rose-800'
+                    }`}
+                  >
+                    Emergency Triage
+                  </span>
+                  <div className="flex items-center gap-1.5 shrink-0">
                     {erCoreService && (
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
-                        erCoreService.status === 'Active'
-                          ? 'bg-rose-50 text-rose-800 border-rose-200'
-                          : 'bg-amber-50 text-amber-800 border-amber-200'
-                      }`}>
+                      <span
+                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded border transition-colors ${
+                          erCoreService.status === 'Active'
+                            ? encounterType === 'EMERGENCY'
+                              ? 'bg-rose-100 text-rose-900 border-rose-300 font-extrabold'
+                              : 'bg-rose-50 text-rose-800 border-rose-200'
+                            : 'bg-amber-50 text-amber-800 border-amber-200'
+                        }`}
+                      >
                         {erCoreService.status === 'Active' ? formatPKR(erCoreService.standardRate) : 'Inactive'}
                       </span>
                     )}
                     <div
-                      className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 ${
+                      className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 transition-colors ${
                         encounterType === 'EMERGENCY'
-                          ? 'border-rose-600 bg-rose-600'
-                          : 'border-slate-300'
+                          ? 'border-rose-600 bg-rose-600 text-white shadow-2xs'
+                          : 'border-slate-300 bg-white group-hover:border-rose-500'
                       }`}
                     >
-                      {encounterType === 'EMERGENCY' && <div className="h-1.5 w-1.5 rounded-full bg-white" />}
+                      {encounterType === 'EMERGENCY' && <Check className="h-2.5 w-2.5 stroke-[3]" />}
                     </div>
                   </div>
                 </div>
-                <p className="text-[11px] text-slate-500 mt-0.5 leading-tight">
+                <p className="text-[11px] text-slate-500 mt-1 leading-snug">
                   24/7 urgent resuscitation, acute trauma &amp; triage care
                 </p>
               </div>
@@ -893,37 +932,43 @@ export const WalkInIntakeView: React.FC = () => {
             <button
               type="button"
               onClick={() => setEncounterType('CUSTOM')}
-              className={`p-3.5 rounded-xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${
+              className={`p-3.5 rounded-2xl text-left transition-all flex items-start gap-3 cursor-pointer group ${
                 encounterType === 'CUSTOM'
-                  ? 'border-amber-600 bg-amber-50/70 shadow-xs ring-1 ring-amber-500/20'
-                  : 'border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 text-slate-700'
+                  ? 'border-t-[4px] border-t-amber-500 border-x-2 border-b-2 border-amber-500 bg-gradient-to-b from-amber-50/80 to-white shadow-md ring-2 ring-amber-500/20 -translate-y-0.5'
+                  : 'border-t-[4px] border-t-amber-500 border-x border-b border-slate-200/90 bg-white hover:border-amber-400 hover:bg-amber-50/20 hover:shadow-md hover:-translate-y-0.5'
               }`}
             >
               <div
-                className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
+                className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5 transition-all ${
                   encounterType === 'CUSTOM'
-                    ? 'bg-amber-600 text-white shadow-xs'
-                    : 'bg-slate-100 text-slate-500'
+                    ? 'bg-amber-600 text-white shadow-xs scale-105'
+                    : 'bg-amber-50 text-amber-700 border border-amber-200/70 group-hover:bg-amber-600 group-hover:text-white'
                 }`}
               >
                 <FlaskConical className="h-5 w-5" />
               </div>
               <div className="grow min-w-0">
                 <div className="flex items-center justify-between gap-1">
-                  <span className="text-xs font-bold text-slate-900">Custom Billing</span>
-                  <div className="flex items-center gap-1.5">
+                  <span
+                    className={`text-xs font-bold transition-colors ${
+                      encounterType === 'CUSTOM' ? 'text-amber-950 font-extrabold' : 'text-slate-900 group-hover:text-amber-800'
+                    }`}
+                  >
+                    Custom Billing
+                  </span>
+                  <div className="flex items-center gap-1.5 shrink-0">
                     <div
-                      className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 ${
+                      className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 transition-colors ${
                         encounterType === 'CUSTOM'
-                          ? 'border-amber-600 bg-amber-600'
-                          : 'border-slate-300'
+                          ? 'border-amber-600 bg-amber-600 text-white shadow-2xs'
+                          : 'border-slate-300 bg-white group-hover:border-amber-500'
                       }`}
                     >
-                      {encounterType === 'CUSTOM' && <div className="h-1.5 w-1.5 rounded-full bg-white" />}
+                      {encounterType === 'CUSTOM' && <Check className="h-2.5 w-2.5 stroke-[3]" />}
                     </div>
                   </div>
                 </div>
-                <p className="text-[11px] text-slate-500 mt-0.5 leading-tight">
+                <p className="text-[11px] text-slate-500 mt-1 leading-snug">
                   Lab / Radiology / any service only — no doctor required
                 </p>
               </div>
@@ -941,7 +986,7 @@ export const WalkInIntakeView: React.FC = () => {
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
               1. Patient Category &amp; Billing
             </label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               {/* New Patient (Self Pay) Card */}
               <button
                 type="button"
@@ -951,25 +996,29 @@ export const WalkInIntakeView: React.FC = () => {
                     handleClearExistingPatient();
                   }
                 }}
-                className={`p-3 rounded-xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${payerType === 'Self Pay'
-                  ? 'border-[#08775A] bg-[#effaf5] shadow-xs ring-1 ring-[#08775A]/20'
-                  : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
-                  }`}
+                className={`p-3.5 rounded-2xl text-left transition-all flex items-start gap-3 cursor-pointer group ${
+                  payerType === 'Self Pay'
+                    ? 'border-t-[3.5px] border-t-emerald-600 border-x-2 border-b-2 border-emerald-600 bg-gradient-to-b from-emerald-50/70 to-white shadow-md ring-1 ring-emerald-600/20'
+                    : 'border-t-[3.5px] border-t-emerald-600 border-x border-b border-slate-200/90 bg-white hover:border-emerald-400 hover:bg-emerald-50/20 hover:shadow-sm'
+                }`}
               >
                 <div
-                  className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${payerType === 'Self Pay' ? 'bg-[#08775A] text-white shadow-xs' : 'bg-slate-100 text-slate-500'
-                    }`}
+                  className={`h-9 w-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 transition-all ${
+                    payerType === 'Self Pay'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'bg-emerald-50 text-emerald-700 border border-emerald-200/60 group-hover:bg-emerald-600 group-hover:text-white'
+                  }`}
                 >
-                  <UserPlus className="h-4 w-4" />
+                  <UserPlus className="h-4.5 w-4.5" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
                     <span className="font-bold text-xs text-slate-900">New Patient</span>
                     {payerType === 'Self Pay' && (
-                      <CheckCircle2 className="h-4 w-4 text-[#08775A] shrink-0" />
+                      <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
                     )}
                   </div>
-                  <p className="text-[11px] font-semibold text-[#08775A] mt-0.5">Self Pay / General Walk-In</p>
+                  <p className="text-[11px] font-semibold text-emerald-700 mt-0.5">Self Pay / General Walk-In</p>
                   <span className="text-[10px] text-slate-500 block mt-0.5 leading-tight">
                     Cash or Card. Immediate invoice shell.
                   </span>
@@ -980,25 +1029,29 @@ export const WalkInIntakeView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setPayerType('Corporate / Panel')}
-                className={`p-3 rounded-xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${payerType === 'Corporate / Panel'
-                  ? 'border-amber-500 bg-amber-50/70 shadow-xs ring-1 ring-amber-500/20'
-                  : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
-                  }`}
+                className={`p-3.5 rounded-2xl text-left transition-all flex items-start gap-3 cursor-pointer group ${
+                  payerType === 'Corporate / Panel'
+                    ? 'border-t-[3.5px] border-t-blue-600 border-x-2 border-b-2 border-blue-600 bg-gradient-to-b from-blue-50/70 to-white shadow-md ring-1 ring-blue-600/20'
+                    : 'border-t-[3.5px] border-t-blue-600 border-x border-b border-slate-200/90 bg-white hover:border-blue-400 hover:bg-blue-50/20 hover:shadow-sm'
+                }`}
               >
                 <div
-                  className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${payerType === 'Corporate / Panel' ? 'bg-amber-600 text-white shadow-xs' : 'bg-slate-100 text-slate-500'
-                    }`}
+                  className={`h-9 w-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 transition-all ${
+                    payerType === 'Corporate / Panel'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'bg-blue-50 text-blue-700 border border-blue-200/60 group-hover:bg-blue-600 group-hover:text-white'
+                  }`}
                 >
-                  <Building2 className="h-4 w-4" />
+                  <Building2 className="h-4.5 w-4.5" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
                     <span className="font-bold text-xs text-slate-900">Panel Patient</span>
                     {payerType === 'Corporate / Panel' && (
-                      <CheckCircle2 className="h-4 w-4 text-amber-600 shrink-0" />
+                      <CheckCircle2 className="h-4 w-4 text-blue-600 shrink-0" />
                     )}
                   </div>
-                  <p className="text-[11px] font-semibold text-amber-800 mt-0.5">Corporate / Insurance</p>
+                  <p className="text-[11px] font-semibold text-blue-700 mt-0.5">Corporate / Insurance</p>
                   <span className="text-[10px] text-slate-500 block mt-0.5 leading-tight">
                     Credit encounter backed by company tariff.
                   </span>
@@ -1072,8 +1125,8 @@ export const WalkInIntakeView: React.FC = () => {
               />
             </div>
 
-            {/* Contact, Age, Weight */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {/* Contact, CNIC */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <TextInput
                 label="Contact Phone"
                 required
@@ -1083,6 +1136,18 @@ export const WalkInIntakeView: React.FC = () => {
                 onChange={(e) => setPrimaryPhone(e.target.value)}
                 onKeyDown={handleEnterNext}
               />
+              <CNICInput
+                label="CNIC (optional)"
+                disabled={payerType === 'Corporate / Panel' && !!selectedExistingPatient}
+                placeholder="XXXXX-XXXXXXX-X"
+                value={cnic}
+                onChange={(e) => setCnic(e.target.value)}
+                onKeyDown={handleEnterNext}
+              />
+            </div>
+
+            {/* Age, Weight, Guardian Relation */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <TextInput
                 label="Age (Years)"
                 required
@@ -1104,6 +1169,14 @@ export const WalkInIntakeView: React.FC = () => {
                 placeholder="e.g. 68"
                 value={weight}
                 onChange={(e) => setWeight(e.target.value)}
+                onKeyDown={handleEnterNext}
+              />
+              <Select
+                label="Guardian Relation (optional)"
+                disabled={payerType === 'Corporate / Panel' && !!selectedExistingPatient}
+                options={GUARDIAN_RELATIONS.map((r) => ({ label: r, value: r }))}
+                value={guardianRelation}
+                onChange={(e) => setGuardianRelation(e.target.value as GuardianRelation)}
                 onKeyDown={handleEnterNext}
               />
             </div>
@@ -1191,24 +1264,6 @@ export const WalkInIntakeView: React.FC = () => {
                       />
                     </>
                   )}
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <CNICInput
-                    label="CNIC (optional)"
-                    disabled={!!selectedExistingPatient}
-                    placeholder="XXXXX-XXXXXXX-X"
-                    value={cnic}
-                    onChange={(e) => setCnic(e.target.value)}
-                    onKeyDown={handleEnterNext}
-                  />
-                  <Select
-                    label="Guardian Relation (optional)"
-                    disabled={!!selectedExistingPatient}
-                    options={GUARDIAN_RELATIONS.map((r) => ({ label: r, value: r }))}
-                    value={guardianRelation}
-                    onChange={(e) => setGuardianRelation(e.target.value as GuardianRelation)}
-                    onKeyDown={handleEnterNext}
-                  />
                 </div>
               </div>
             )}

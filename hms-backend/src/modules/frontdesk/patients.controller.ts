@@ -6,6 +6,7 @@ import type {
   CreatePanelPatientBody,
   UpdatePanelPatientBody,
   CreateSelfPayEncounterBody,
+  UpdateSelfPayEncounterBody,
   ListPanelPatientsQuery,
 } from './patients.schemas';
 
@@ -48,5 +49,8 @@ export const patientsController = {
     res
       .status(201)
       .json({ data: await patientsService.createSelfPayEncounter(req.body as CreateSelfPayEncounterBody, actorId(req)) });
+  },
+  updateSelfPayEncounter: async (req: Request, res: Response) => {
+    res.json({ data: await patientsService.updateSelfPayEncounter(req.params.id as string, req.body as UpdateSelfPayEncounterBody) });
   },
 };

@@ -13,12 +13,14 @@ export const markAttendanceBodySchema = z.object({
   actualIn: timeOfDay,
   actualOut: timeOfDay,
   notes: z.string().max(500).optional(),
+  autoApprove: z.boolean().optional(),
 });
 export type MarkAttendanceBody = z.infer<typeof markAttendanceBodySchema>;
 
 /** Marking a whole day's roster at once — the real Front Desk/HR workflow. */
 export const bulkMarkAttendanceBodySchema = z.object({
   attendanceDate: z.coerce.date(),
+  autoApprove: z.boolean().optional(),
   records: z
     .array(
       z.object({

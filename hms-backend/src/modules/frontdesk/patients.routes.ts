@@ -20,5 +20,6 @@ router.patch('/panel/:id', write, validate({ params: s.idParamsSchema, body: s.u
 
 router.get('/encounters', view, asyncHandler(c.listSelfPayEncounters));
 router.post('/encounters', create, validate({ body: s.createSelfPayEncounterSchema }), asyncHandler(c.createSelfPayEncounter));
+router.patch('/encounters/:id', write, validate({ params: s.idParamsSchema, body: s.updateSelfPayEncounterSchema }), asyncHandler(c.updateSelfPayEncounter));
 
 export default router;

@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { cn } from '../../utils/formatters';
 
@@ -56,11 +57,11 @@ export const Modal: React.FC<ModalProps> = ({
     '5xl': 'max-w-5xl',
   }[maxWidth];
 
-  return (
+  const modalContent = (
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-50 overflow-y-auto bg-black/55 backdrop-blur-sm flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/65 flex items-center justify-center p-4 text-left"
       onMouseDown={(e) => {
         mouseDownTargetRef.current = e.target;
       }}
@@ -76,12 +77,12 @@ export const Modal: React.FC<ModalProps> = ({
     >
       <div
         className={cn(
-          'relative w-full bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-150',
+          'relative w-full bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-150 text-left',
           maxWidthClasses
         )}
       >
         {/* Modal Header */}
-        <div className="flex items-start justify-between px-6 sm:px-8 pt-6 pb-5 border-b border-slate-200/90 bg-slate-50/70">
+        <div className="flex items-start justify-between px-6 sm:px-8 pt-6 pb-5 border-b border-slate-200/90 bg-slate-50/70 text-left">
           <div className="flex-1 min-w-0 pr-4">
             <div className="text-base font-bold text-slate-900 leading-snug">{title}</div>
             {subtitle && <div className="text-xs text-slate-500 mt-1.5">{subtitle}</div>}
@@ -111,4 +112,6 @@ export const Modal: React.FC<ModalProps> = ({
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalContent, document.body) : modalContent;
 };

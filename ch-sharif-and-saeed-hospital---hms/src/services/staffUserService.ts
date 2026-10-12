@@ -46,14 +46,18 @@ const apiError = (err: any, fallback: string): string => {
 const hasSalary = (v: StaffUserFormValues) => v.salaryEnabled && v.baseSalary !== '' && Number(v.baseSalary) > 0;
 
 function toSchedulePayload(v: StaffUserFormValues) {
-  return v.weeklySchedule.map((d) => ({
-    dayOfWeek: d.dayOfWeek,
-    isWorking: d.isWorking,
-    useShiftDefault: d.useShiftDefault,
-    startTime: d.isWorking && !d.useShiftDefault ? d.startTime : null,
-    endTime: d.isWorking && !d.useShiftDefault ? d.endTime : null,
-    breakMinutes: num(d.breakMinutes),
-  }));
+  const hasShift = Boolean(v.assignedShiftId);
+  return v.weeklySchedule.map((d) => {
+    const useShiftDefault = Boolean(hasShift && d.useShiftDefault);
+    return {
+      dayOfWeek: d.dayOfWeek,
+      isWorking: d.isWorking,
+      useShiftDefault,
+      startTime: d.isWorking && (!useShiftDefault || d.startTime) ? d.startTime || null : null,
+      endTime: d.isWorking && (!useShiftDefault || d.endTime) ? d.endTime || null : null,
+      breakMinutes: num(d.breakMinutes),
+    };
+  });
 }
 
 function toSalaryPayload(v: StaffUserFormValues) {

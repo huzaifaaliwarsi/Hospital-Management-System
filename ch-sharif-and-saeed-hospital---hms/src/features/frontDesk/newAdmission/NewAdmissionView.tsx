@@ -444,7 +444,7 @@ export const NewAdmissionView: React.FC = () => {
             age: ageNum,
             ageIsEstimated: true,
             gender,
-            cnic: '',
+            cnic: guardianCnic.trim() ? normalizeCnic(guardianCnic) : '',
             passportNumber: '',
             primaryPhone: normalizePhone(primaryPhone),
             alternatePhone: '',
@@ -896,6 +896,7 @@ export const NewAdmissionView: React.FC = () => {
                 <thead>
                   <tr className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200 uppercase text-[10.5px] tracking-wide">
                     <th className="py-2.5 px-4 w-12 text-center">#</th>
+                    <th className="py-2.5 px-4 w-28">Service ID</th>
                     <th className="py-2.5 px-4">Service Description</th>
                     <th className="py-2.5 px-4 text-center w-28">Category</th>
                     <th className="py-2.5 px-4 text-right w-16">Qty</th>
@@ -907,13 +908,17 @@ export const NewAdmissionView: React.FC = () => {
                   {effectiveLines.map((l: any, idx: number) => (
                     <tr key={l.id || idx}>
                       <td className="py-2.5 px-4 text-center text-slate-400 font-semibold">{idx + 1}</td>
+                      <td className="py-2.5 px-4">
+                        {formatServiceCode(l.serviceCode) ? (
+                          <span className="font-mono font-bold text-[11px] text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded">
+                            {formatServiceCode(l.serviceCode)}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 text-xs">—</span>
+                        )}
+                      </td>
                       <td className="py-2.5 px-4 font-semibold text-slate-900">
                         <span>{formatServiceName(l.serviceName)}</span>
-                        {formatServiceCode(l.serviceCode) && (
-                          <span className="text-slate-400 font-mono text-[11px] ml-1.5 font-normal">
-                            ({formatServiceCode(l.serviceCode)})
-                          </span>
-                        )}
                       </td>
                       <td className="py-2.5 px-4 text-center text-slate-500 font-medium">
                         {l.serviceCategory || l.departmentName || 'Inpatient Care'}
@@ -1122,25 +1127,28 @@ export const NewAdmissionView: React.FC = () => {
                   setPayerType('Self Pay');
                   if (selectedExistingPatient) handleClearExistingPatient();
                 }}
-                className={`p-3 rounded-xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${
+                className={`p-3.5 rounded-2xl text-left transition-all flex items-start gap-3 cursor-pointer group ${
                   payerType === 'Self Pay'
-                    ? 'border-[#08775A] bg-[#effaf5] shadow-xs ring-1 ring-[#08775A]/20'
-                    : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                    ? 'border-t-[3.5px] border-t-emerald-600 border-x-2 border-b-2 border-emerald-600 bg-gradient-to-b from-emerald-50/70 to-white shadow-md ring-1 ring-emerald-600/20'
+                    : 'border-t-[3.5px] border-t-emerald-600 border-x border-b border-slate-200/90 bg-white hover:border-emerald-400 hover:bg-emerald-50/20 hover:shadow-sm'
                 }`}
               >
                 <div
-                  className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
-                    payerType === 'Self Pay' ? 'bg-[#08775A] text-white shadow-xs' : 'bg-slate-100 text-slate-500'
+                  className={`h-9 w-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 transition-all ${
+                    payerType === 'Self Pay'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'bg-emerald-50 text-emerald-700 border border-emerald-200/60 group-hover:bg-emerald-600 group-hover:text-white'
                   }`}
                 >
-                  <DollarSign className="h-4 w-4" />
+                  <DollarSign className="h-4.5 w-4.5" />
                 </div>
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-bold text-xs">Self Pay (Direct Patient)</span>
-                    {payerType === 'Self Pay' && <CheckCircle2 className="h-3.5 w-3.5 text-[#08775A]" />}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs text-slate-900">Self Pay (Direct Patient)</span>
+                    {payerType === 'Self Pay' && <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />}
                   </div>
-                  <span className="text-[11px] text-slate-500 block mt-0.5">
+                  <p className="text-[11px] font-semibold text-emerald-700 mt-0.5">Self-financed Inpatient</p>
+                  <span className="text-[10px] text-slate-500 block mt-0.5 leading-tight">
                     Self-financed inpatient admission.
                   </span>
                 </div>
@@ -1150,25 +1158,28 @@ export const NewAdmissionView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setPayerType('Corporate / Panel')}
-                className={`p-3 rounded-xl border-2 text-left transition-all flex items-start gap-3 cursor-pointer ${
+                className={`p-3.5 rounded-2xl text-left transition-all flex items-start gap-3 cursor-pointer group ${
                   payerType === 'Corporate / Panel'
-                    ? 'border-blue-600 bg-blue-50/50 shadow-xs ring-1 ring-blue-600/20'
-                    : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                    ? 'border-t-[3.5px] border-t-blue-600 border-x-2 border-b-2 border-blue-600 bg-gradient-to-b from-blue-50/70 to-white shadow-md ring-1 ring-blue-600/20'
+                    : 'border-t-[3.5px] border-t-blue-600 border-x border-b border-slate-200/90 bg-white hover:border-blue-400 hover:bg-blue-50/20 hover:shadow-sm'
                 }`}
               >
                 <div
-                  className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
-                    payerType === 'Corporate / Panel' ? 'bg-blue-600 text-white shadow-xs' : 'bg-slate-100 text-slate-500'
+                  className={`h-9 w-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 transition-all ${
+                    payerType === 'Corporate / Panel'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'bg-blue-50 text-blue-700 border border-blue-200/60 group-hover:bg-blue-600 group-hover:text-white'
                   }`}
                 >
-                  <Building2 className="h-4 w-4" />
+                  <Building2 className="h-4.5 w-4.5" />
                 </div>
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-bold text-xs">Corporate / Panel</span>
-                    {payerType === 'Corporate / Panel' && <CheckCircle2 className="h-3.5 w-3.5 text-blue-600" />}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs text-slate-900">Corporate / Panel</span>
+                    {payerType === 'Corporate / Panel' && <CheckCircle2 className="h-4 w-4 text-blue-600 shrink-0" />}
                   </div>
-                  <span className="text-[11px] text-slate-500 block mt-0.5">
+                  <p className="text-[11px] font-semibold text-blue-700 mt-0.5">Corporate / Insurance</p>
+                  <span className="text-[10px] text-slate-500 block mt-0.5 leading-tight">
                     Company/Insurance credit guarantee admission.
                   </span>
                 </div>

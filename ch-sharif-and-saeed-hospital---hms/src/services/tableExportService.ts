@@ -20,6 +20,7 @@ export interface ExportColumn<T> {
   header: string;
   align?: 'left' | 'right' | 'center';
   width?: number;
+  wrap?: boolean;
   /** PDF/Print cell text. */
   cell: (row: T) => string;
   /** Excel cell value (defaults to `cell` if omitted) — pass a raw number here to keep it numeric in the spreadsheet. */

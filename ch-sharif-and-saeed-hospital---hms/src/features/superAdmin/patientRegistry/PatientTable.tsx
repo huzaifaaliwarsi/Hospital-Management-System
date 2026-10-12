@@ -179,7 +179,7 @@ export const PatientTable: React.FC<PatientTableProps> = ({
 
                   {/* CNIC */}
                   <td className="py-2.5 px-3.5 whitespace-nowrap font-mono text-xs text-slate-700 border-r border-[#e2eae5]">
-                    {patient.cnic || <span className="text-slate-300 font-sans">—</span>}
+                    {patient.cnic || patient.guardianCnic || <span className="text-slate-300 font-sans">—</span>}
                   </td>
 
                   {/* Payer Type */}

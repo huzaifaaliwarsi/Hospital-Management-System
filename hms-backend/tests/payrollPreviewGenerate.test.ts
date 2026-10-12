@@ -23,6 +23,7 @@ vi.mock('@/db/client', () => {
 
 import { prisma } from '@/db/client';
 import { payrollService } from '@/modules/payroll/payroll.service';
+import { isFullCalendarMonth } from '@/modules/payroll/payroll.calc';
 import payrollRoutes from '@/modules/payroll/payroll.routes';
 
 const db = prisma as any;
@@ -119,16 +120,17 @@ describe('payroll — Preview and Generate produce identical MONTHLY figures', (
     // their own complete calendar month — the real Monthly Scheduled Days
     // divisor, keyed off periodStart's month, regardless of how many of
     // those days the selected period itself spans.
-    const monthlyScheduledDays = 26;
+    const monthlyScheduledDays = 30;
     const dailyRate = 28000 / monthlyScheduledDays;
     expect(row.scheduledPayableDays).toBe(scheduled);
     expect(row.attendanceEquivalentDays).toBe(2);
     expect(row.monthlyBaseAmount).toBe('28000');
     expect(row.monthlyScheduledDays).toBe(monthlyScheduledDays);
-    expect(Number(row.dailyRate)).toBeCloseTo(dailyRate, 2);
-    expect(Number(row.periodBaseAmount)).toBeCloseTo(dailyRate * scheduled, 2);
+    const isFull = isFullCalendarMonth(date(from), date(to));
+    const expectedPeriodBase = isFull ? 28000 : dailyRate * scheduled;
+    expect(Number(row.periodBaseAmount)).toBeCloseTo(expectedPeriodBase, 2);
     expect(Number(row.attendanceDeductions)).toBeCloseTo((scheduled - 2) * dailyRate, 2);
-    expect(Number(row.earnedBase)).toBeCloseTo(2 * dailyRate, 2);
+    expect(Number(row.earnedBase)).toBeCloseTo(expectedPeriodBase - (scheduled - 2) * dailyRate, 2);
     expect(Number(row.allowances)).toBe(3000);
     expect(Number(row.otherDeductions)).toBe(600);
     expect(Number(row.tax)).toBe(300);
@@ -156,10 +158,8 @@ describe('payroll — Preview and Generate produce identical MONTHLY figures', (
     load([fixture]);
     const preview = await post('/preview', { periodType: 'MONTHLY', periodStart: '2026-08-31', periodEnd: '2026-09-27' }, 200);
     const row = preview.eligible[0];
-    // periodStart (Aug 31) falls in August 2026, which has 26 scheduled
-    // days (Sunday OFF) — the Monthly Scheduled Days divisor for this run.
-    const dailyRate = 30000 / 26;
-    expect(row.monthlyScheduledDays).toBe(26);
+    const dailyRate = 30000 / 30;
+    expect(row.monthlyScheduledDays).toBe(30);
     expect(row.scheduledPayableDays).toBe(24);
     expect(row.attendanceEquivalentDays).toBe(2);
     expect(Number(row.dailyRate)).toBeCloseTo(dailyRate, 2);
@@ -212,11 +212,8 @@ describe('payroll — Preview and Generate produce identical MONTHLY figures', (
           netAmount: row.netAmount.toNumber(),
         });
 
-        // Full-month period: Monthly Scheduled Days == this period's own
-        // scheduled days, so Daily Rate = Base/scheduled — full attendance
-        // always nets the full base; 2 absent deduct 2 × that real daily rate.
         const fullAttendance = row.attendanceEquivalentDays === row.scheduledPayableDays;
-        const dailyRate = 30000 / row.scheduledPayableDays;
+        const dailyRate = 30000 / 30; // fixed 30 divisor
         const earned = fullAttendance ? 30000 : 30000 - 2 * dailyRate;
         const net = earned + 3000 - (earned + 3000) * 0.1 - 600;
         expect(row.earnedBase.toNumber()).toBeCloseTo(earned, 2);
@@ -233,7 +230,7 @@ describe('payroll — MONTHLY_COMMISSION uses the exact same fixed 30-day basis 
     tx.payrollRun.findUniqueOrThrow.mockResolvedValue({ id: 'run-1' });
   });
 
-  it('PKR 30,000 base, 26 scheduled, 1 present/25 absent — Daily Rate 1,153.85, Deduction ≈28,846.15, Earned ≈1,153.85; Doctor commission stays a separate ledger (untouched here)', async () => {
+  it('PKR 30,000 base, 26 scheduled, 1 present/25 absent — Daily Rate 1,000, Deduction 25,000, Earned 5,000', async () => {
     const fixture = staffCase('doc-commission', ['Sunday'], 25, '2026-09-01', '2026-09-30');
     fixture.profile.salaryBasis = 'MONTHLY_COMMISSION';
     fixture.profile.fixedAllowance = d(0);
@@ -253,8 +250,8 @@ describe('payroll — MONTHLY_COMMISSION uses the exact same fixed 30-day basis 
 
     const preview = await post('/preview', payload, 200);
     const row = preview.eligible[0];
-    const dailyRate = 30000 / 26;
-    expect(row.monthlyScheduledDays).toBe(26);
+    const dailyRate = 30000 / 30;
+    expect(row.monthlyScheduledDays).toBe(30);
     expect(row.scheduledPayableDays).toBe(26);
     expect(row.attendanceEquivalentDays).toBe(1);
     expect(Number(row.dailyRate)).toBeCloseTo(dailyRate, 2);

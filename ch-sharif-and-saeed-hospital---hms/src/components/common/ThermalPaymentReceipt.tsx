@@ -1,9 +1,10 @@
-import React from 'react';
-import { Printer, X } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Printer, X, CheckCircle2, RefreshCw, Zap } from 'lucide-react';
 import { formatAmount } from '../../utils/formatters';
 import { getHospitalProfile } from '../../services/hospitalProfileService';
 import { HospitalProfile } from '../../types/hospital';
 import { InvoiceDetail, PaymentReceiptRow } from '../../services/invoiceService';
+import { printViaQzTray, connectQzTray, getPreferredThermalPrinter } from '../../services/qzTrayService';
 
 export interface ThermalReceiptData {
   receiptNumber: string;
@@ -186,6 +187,10 @@ export function buildThermalReceiptData(
 /**
  * Generates compact 80mm thermal receipt HTML with authentic POS monospace typography.
  */
+/**
+ * Generates compact 80mm thermal receipt HTML with authentic POS monospace dot-matrix typography.
+ * Strictly monochrome black & white without colorful ink (just like real thermal POS printers).
+ */
 export function generateThermalReceiptHtml(
   data: ThermalReceiptData,
   profile?: HospitalProfile
@@ -203,44 +208,57 @@ export function generateThermalReceiptHtml(
   <title>Receipt - ${data.invoiceNumber || data.receiptNumber}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
   <style>
     @page {
-      size: 80mm auto;
-      margin: 0;
+      size: auto;
+      margin: 0mm;
     }
     @media print {
       html, body {
-        width: 80mm;
-        margin: 0;
-        padding: 0;
-        background: #fff;
-        color: #000;
+        width: 76mm !important;
+        max-width: 76mm !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #fff !important;
+        color: #000 !important;
+        overflow: hidden !important;
+        height: auto !important;
       }
       .no-print { display: none !important; }
+      * {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
     }
     * {
       box-sizing: border-box;
       margin: 0;
       padding: 0;
+      color: #000 !important;
     }
     body {
-      font-family: 'Roboto Mono', 'Consolas', 'Courier New', Monaco, monospace;
-      width: 74mm;
-      max-width: 80mm;
+      font-family: 'Share Tech Mono', 'Space Mono', 'Consolas', 'Courier New', monospace;
+      width: 72mm;
+      max-width: 74mm;
       margin: 0 auto;
-      padding: 3mm 2.5mm 4mm 2.5mm;
+      padding: 2mm 1mm 3mm 1mm;
       color: #000;
       background: #fff;
-      font-size: 11.5px;
-      line-height: 1.35;
+      font-size: 11px;
+      line-height: 1.3;
+      letter-spacing: 0.2px;
       -webkit-font-smoothing: antialiased;
+      height: auto;
+      overflow: hidden;
     }
     .text-center { text-align: center; }
     .text-right { text-align: right; }
     .text-left { text-align: left; }
+    .medium { font-weight: 600; }
     .bold { font-weight: 700; }
-    .extrabold { font-weight: 800; }
     .uppercase { text-transform: uppercase; }
 
     .header {
@@ -249,24 +267,27 @@ export function generateThermalReceiptHtml(
     }
     .hospital-title {
       font-size: 13.5px;
-      font-weight: 800;
+      font-weight: 700;
       letter-spacing: 0.5px;
       text-transform: uppercase;
       line-height: 1.25;
+      color: #000;
       margin-bottom: 2px;
     }
     .doc-type {
       font-size: 11px;
-      font-weight: 700;
+      font-weight: 600;
       letter-spacing: 1px;
+      color: #000;
       margin-top: 2px;
       text-transform: uppercase;
     }
     .reprint-badge {
       display: inline-block;
       font-size: 9px;
-      font-weight: 800;
+      font-weight: 700;
       border: 1px dashed #000;
+      color: #000;
       padding: 1px 5px;
       margin-top: 3px;
     }
@@ -278,22 +299,24 @@ export function generateThermalReceiptHtml(
     }
 
     .token-box {
-      border: 2px solid #000;
-      padding: 4px 4px;
-      margin: 4px 0;
+      border: 1.5px solid #000;
+      padding: 4px 6px;
+      margin: 5px 0;
       text-align: center;
       background: #fff;
     }
     .token-title {
       font-size: 9.5px;
-      font-weight: 700;
+      font-weight: 600;
       letter-spacing: 0.8px;
       text-transform: uppercase;
+      color: #000;
     }
     .token-num {
       font-size: 22px;
-      font-weight: 800;
+      font-weight: 700;
       letter-spacing: 1.5px;
+      color: #000;
       margin-top: 1px;
     }
 
@@ -306,37 +329,64 @@ export function generateThermalReceiptHtml(
       padding: 1.5px 0;
       vertical-align: top;
       word-break: break-word;
+      color: #000;
+      font-weight: 600;
     }
     .label {
-      width: 34%;
-      font-weight: 500;
+      width: 35%;
+      font-weight: 600;
+      color: #000;
     }
     .val {
-      width: 66%;
+      width: 65%;
+      font-weight: 600;
+      color: #000;
+      text-align: right;
+    }
+    .val-patient {
+      width: 65%;
       font-weight: 700;
+      color: #000;
       text-align: right;
     }
 
     .charges-table td {
-      padding: 2px 0;
+      padding: 1.5px 0;
+      font-weight: 600;
+      color: #000;
       word-break: break-word;
+    }
+    .total-val {
+      font-weight: 700;
+      color: #000;
+    }
+    .paid-val {
+      font-weight: 700;
+      color: #000;
+    }
+    .out-val {
+      font-weight: 700;
+      color: #000;
     }
 
     .footer {
       text-align: center;
-      font-size: 10.5px;
+      font-size: 11px;
+      color: #000;
       margin-top: 6px;
       line-height: 1.3;
     }
     .footer-msg {
-      font-weight: 700;
+      font-weight: 600;
       font-size: 11px;
+      color: #000;
     }
     .tear-line {
       margin-top: 8px;
       border-top: 1px dashed #000;
       text-align: center;
-      font-size: 8.5px;
+      font-size: 9px;
+      font-weight: 600;
       color: #000;
       padding-top: 3px;
       letter-spacing: 1px;
@@ -375,7 +425,7 @@ export function generateThermalReceiptHtml(
     </tr>
     <tr>
       <td class="label">Patient:</td>
-      <td class="val">${data.patientName}</td>
+      <td class="val-patient">${data.patientName}</td>
     </tr>
   </table>
 
@@ -384,26 +434,26 @@ export function generateThermalReceiptHtml(
   <table class="charges-table">
     <tr>
       <td class="text-left">Fees</td>
-      <td class="text-right bold">${formatAmount(data.fees)}</td>
+      <td class="text-right">${formatAmount(data.fees)}</td>
     </tr>
     <tr>
       <td class="text-left">Others</td>
-      <td class="text-right bold">${formatAmount(data.others)}</td>
+      <td class="text-right">${formatAmount(data.others)}</td>
     </tr>
     <tr>
       <td colspan="2"><div class="divider"></div></td>
     </tr>
     <tr>
-      <td class="text-left bold">TOTAL</td>
-      <td class="text-right extrabold">${formatAmount(data.total)}</td>
+      <td class="text-left total-val">TOTAL</td>
+      <td class="text-right total-val">${formatAmount(data.total)}</td>
     </tr>
     <tr>
-      <td class="text-left bold">PAID</td>
-      <td class="text-right extrabold">${formatAmount(data.paid ?? data.receivedNow)}</td>
+      <td class="text-left paid-val">PAID</td>
+      <td class="text-right paid-val">${formatAmount(data.paid ?? data.receivedNow)}</td>
     </tr>
     <tr>
-      <td class="text-left bold">OUTSTANDING</td>
-      <td class="text-right extrabold">${formatAmount(data.outstanding)}</td>
+      <td class="text-left out-val">OUTSTANDING</td>
+      <td class="text-right out-val">${formatAmount(data.outstanding)}</td>
     </tr>
   </table>
 
@@ -417,7 +467,13 @@ export function generateThermalReceiptHtml(
 
   <script>
     window.onload = function() {
-      window.print();
+      setTimeout(function() {
+        window.focus();
+        window.print();
+        window.onafterprint = function() {
+          window.close();
+        };
+      }, 200);
     };
   </script>
 </body>
@@ -425,21 +481,72 @@ export function generateThermalReceiptHtml(
 }
 
 /**
- * Triggers direct 80mm thermal receipt printing in a clean popup window.
+ * Prints thermal receipt via an isolated hidden iframe.
+ * Never blocked by popup blockers and ONLY prints the pure receipt (no modals, no buttons, no UI chrome).
  */
-export function printThermalReceipt(
+export function printThermalReceiptViaIframe(
   data: ThermalReceiptData,
   profile?: HospitalProfile
-): string | void {
-  const printWindow = window.open('', '_blank', 'width=380,height=600');
-  if (!printWindow) {
+): void {
+  const html = generateThermalReceiptHtml(data, profile);
+  const existing = document.getElementById('thermal-print-iframe');
+  if (existing) {
+    existing.remove();
+  }
+
+  const iframe = document.createElement('iframe');
+  iframe.id = 'thermal-print-iframe';
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  iframe.style.visibility = 'hidden';
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentWindow?.document || iframe.contentDocument;
+  if (!doc) {
     window.print();
     return;
   }
-  const html = generateThermalReceiptHtml(data, profile);
-  printWindow.document.open();
-  printWindow.document.write(html);
-  printWindow.document.close();
+  doc.open();
+  doc.write(html);
+  doc.close();
+
+  setTimeout(() => {
+    try {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+    } catch (e) {
+      console.error('Iframe thermal print error:', e);
+    }
+  }, 250);
+}
+
+/**
+ * Triggers direct 80mm thermal receipt printing.
+ * Seamlessly checks QZ Tray first for direct ESC/POS hardware print (auto-cut, 0 blank feed).
+ * Automatically falls back to clean isolated iframe thermal print if QZ Tray is not running.
+ */
+export async function printThermalReceipt(
+  data: ThermalReceiptData,
+  profile?: HospitalProfile,
+  preferredPrinter?: string
+): Promise<{ method: 'qz' | 'browser'; success: boolean }> {
+  // 1. Check if QZ Tray is active for direct zero-dialog hardware print
+  try {
+    const qzRes = await printViaQzTray(data, profile, preferredPrinter);
+    if (qzRes.success) {
+      return { method: 'qz', success: true };
+    }
+  } catch (err) {
+    console.warn('QZ Tray direct hardware print skipped:', err);
+  }
+
+  // 2. Fallback to clean isolated iframe thermal print (isolated from main UI)
+  printThermalReceiptViaIframe(data, profile);
+  return { method: 'browser', success: true };
 }
 
 export interface ThermalPaymentReceiptProps {
@@ -451,7 +558,10 @@ export interface ThermalPaymentReceiptProps {
 }
 
 /**
- * One reusable 80mm Thermal Payment Receipt preview component with authentic POS thermal typography.
+ * Authentic 80mm Thermal Receipt Preview component:
+ * - 100% Monochrome Black & White (No colorful ink)
+ * - POS Thermal Printer Font ('Share Tech Mono' / 'bitMatrix-A4')
+ * - Bold enough to be clearly legible and authentic.
  */
 export const ThermalPaymentReceipt: React.FC<ThermalPaymentReceiptProps> = ({
   encounterType,
@@ -465,99 +575,134 @@ export const ThermalPaymentReceipt: React.FC<ThermalPaymentReceiptProps> = ({
   const isIpd = activeEncounterType === 'ADMISSION' || (activeEncounterType as string) === 'IPD';
   const showToken = !isIpd && !!receipt.tokenNumber;
 
-  const handleTriggerPrint = () => {
-    if (onPrint) {
-      onPrint();
-    } else {
-      printThermalReceipt(receipt, hp);
+  const [qzStatus, setQzStatus] = useState<{
+    connected: boolean;
+    checking: boolean;
+    printerName: string | null;
+  }>({
+    connected: false,
+    checking: true,
+    printerName: null,
+  });
+  const [isPrinting, setIsPrinting] = useState(false);
+
+  const checkQz = async () => {
+    setQzStatus(prev => ({ ...prev, checking: true }));
+    try {
+      const ok = await connectQzTray();
+      if (ok) {
+        const printer = await getPreferredThermalPrinter();
+        setQzStatus({ connected: true, checking: false, printerName: printer });
+      } else {
+        setQzStatus({ connected: false, checking: false, printerName: null });
+      }
+    } catch {
+      setQzStatus({ connected: false, checking: false, printerName: null });
+    }
+  };
+
+  useEffect(() => {
+    checkQz();
+  }, []);
+
+  const handleTriggerPrint = async () => {
+    setIsPrinting(true);
+    try {
+      if (onPrint) {
+        onPrint();
+      } else {
+        await printThermalReceipt(receipt, hp, qzStatus.printerName || undefined);
+      }
+    } finally {
+      setIsPrinting(false);
     }
   };
 
   return (
-    <div className={`bg-slate-100 p-4 rounded-xl flex flex-col items-center ${className}`}>
-      {/* 80mm Visual Representation Container with Authentic Monospace Receipt Styling */}
+    <div className={`bg-slate-100 p-3.5 rounded-xl flex flex-col items-center border border-slate-200 ${className}`}>
+      {/* 80mm Monochrome Visual Receipt Paper Container */}
       <div
         id="thermal-receipt-container"
-        className="bg-white text-black border border-slate-300 shadow-md p-4 w-[280px] max-w-[300px] text-xs select-none relative"
+        className="bg-white text-black border border-slate-300 shadow-[0_4px_16px_rgba(0,0,0,0.12)] rounded-xs p-4 w-[285px] max-w-[295px] select-none relative"
         style={{
-          fontFamily: "'Roboto Mono', 'Consolas', 'Courier New', Monaco, monospace",
-          boxShadow: '0 4px 14px rgba(0,0,0,0.08)',
+          fontFamily: "'Share Tech Mono', 'Space Mono', 'Consolas', 'Courier New', monospace",
+          color: '#000000',
         }}
       >
-        {/* Header Strip */}
+        {/* Header */}
         <div className="text-center pb-1">
-          <div className="font-extrabold text-[13px] tracking-wide text-black uppercase leading-tight">
+          <div className="font-bold text-[13px] tracking-wide text-black uppercase leading-tight">
             {hp.name || 'CH SHARIF AND SAEED HOSPITAL'}
           </div>
-          <div className="font-bold text-[11px] uppercase tracking-widest mt-1 border-t border-b border-black py-0.5">
+          <div className="font-bold text-[10.5px] text-black uppercase tracking-wider mt-1 border-t border-b border-dashed border-black py-0.5">
             Payment Receipt
           </div>
           {receipt.isReprint && (
-            <div className="inline-block border border-dashed border-black px-1.5 py-0.5 text-[9px] font-bold uppercase mt-1">
+            <div className="inline-block border border-dashed border-black text-black px-1.5 py-0.5 text-[9px] font-bold uppercase mt-1">
               *** Reprint / Duplicate ***
             </div>
           )}
         </div>
 
-        {/* Token Number Box (OPD / ER / Observation only) */}
+        {/* Token Number Box (OPD / ER / Observation only) - Prominent & Bold */}
         {showToken && (
-          <div className="border-2 border-black bg-white p-1.5 my-2 text-center rounded-none">
-            <div className="text-[9.5px] font-bold uppercase tracking-wider text-black">
+          <div className="border-2 border-black bg-white p-2 my-2.5 text-center">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-black">
               Queue / Token Number
             </div>
-            <div className="text-2xl font-black tracking-widest text-black mt-0.5">
+            <div className="text-2xl font-bold tracking-widest text-black mt-0.5">
               {receipt.tokenNumber}
             </div>
           </div>
         )}
 
-        {/* 4 Clean Meta Fields */}
-        <div className="border-t border-dashed border-black pt-2 pb-2 space-y-1 text-[11.5px]">
-          <div className="flex justify-between">
-            <span className="font-medium text-black">Invoice No:</span>
+        {/* 4 Clean Meta Fields - Crisp legible black text */}
+        <div className="border-t border-dashed border-black pt-2 pb-2 space-y-1 text-[11.5px] font-semibold text-black">
+          <div className="flex justify-between items-center">
+            <span className="font-semibold text-black">Invoice No:</span>
             <span className="font-bold text-black">{receipt.invoiceNumber || receipt.receiptNumber}</span>
           </div>
-          <div className="flex justify-between">
-            <span className="font-medium text-black">Date:</span>
-            <span className="font-bold text-black text-[10.5px]">{receipt.dateTime}</span>
+          <div className="flex justify-between items-center">
+            <span className="font-semibold text-black">Date:</span>
+            <span className="font-semibold text-black">{receipt.dateTime}</span>
           </div>
-          <div className="flex justify-between">
-            <span className="font-medium text-black">Doctor:</span>
+          <div className="flex justify-between items-center">
+            <span className="font-semibold text-black">Doctor:</span>
             <span className="font-bold text-black text-right max-w-[170px] truncate" title={receipt.doctorName || 'Consultant'}>
               {receipt.doctorName || 'Consultant'}
             </span>
           </div>
-          <div className="flex justify-between">
-            <span className="font-medium text-black">Patient:</span>
+          <div className="flex justify-between items-center">
+            <span className="font-semibold text-black">Patient:</span>
             <span className="font-bold text-black text-right max-w-[170px] truncate" title={receipt.patientName}>
               {receipt.patientName}
             </span>
           </div>
         </div>
 
-        {/* Charges Table */}
-        <div className="border-t border-dashed border-black pt-2 pb-2 text-[11.5px]">
+        {/* Charges Table - 100% Monochrome Black (No colors) */}
+        <div className="border-t border-dashed border-black pt-2 pb-2 text-[11.5px] font-semibold text-black">
           <div className="flex justify-between py-0.5">
-            <span className="font-medium text-black">Fees</span>
-            <span className="font-bold text-black">{formatAmount(receipt.fees)}</span>
+            <span className="font-semibold text-black">Fees</span>
+            <span className="font-bold text-black tabular-nums">{formatAmount(receipt.fees)}</span>
           </div>
           <div className="flex justify-between py-0.5">
-            <span className="font-medium text-black">Others</span>
-            <span className="font-bold text-black">{formatAmount(receipt.others)}</span>
+            <span className="font-semibold text-black">Others</span>
+            <span className="font-bold text-black tabular-nums">{formatAmount(receipt.others)}</span>
           </div>
 
           <div className="border-t border-dashed border-black pt-1.5 mt-1 space-y-1">
-            <div className="flex justify-between font-extrabold text-xs">
+            <div className="flex justify-between text-[12px] font-bold text-black">
               <span>TOTAL</span>
-              <span className="text-sm font-bold">{formatAmount(receipt.total)}</span>
+              <span className="tabular-nums">{formatAmount(receipt.total)}</span>
             </div>
-            <div className="flex justify-between font-bold text-xs text-[#08775A]">
+            <div className="flex justify-between text-[12px] font-bold text-black">
               <span>PAID</span>
-              <span className="text-sm font-bold">{formatAmount(receipt.paid ?? receipt.receivedNow)}</span>
+              <span className="tabular-nums">{formatAmount(receipt.paid ?? receipt.receivedNow)}</span>
             </div>
-            <div className="flex justify-between font-bold text-xs text-rose-700">
+            <div className="flex justify-between text-[12px] font-bold text-black">
               <span>OUTSTANDING</span>
-              <span className="text-sm font-bold">{formatAmount(receipt.outstanding)}</span>
+              <span className="tabular-nums">{formatAmount(receipt.outstanding)}</span>
             </div>
           </div>
         </div>
@@ -565,27 +710,86 @@ export const ThermalPaymentReceipt: React.FC<ThermalPaymentReceiptProps> = ({
         {/* Footer */}
         <div className="border-t border-dashed border-black pt-2 text-center text-[10.5px] text-black leading-tight">
           <div className="font-bold text-[11px] text-black">Thank You</div>
-          <div className="text-[9px] text-black mt-2 border-t border-dashed border-black pt-1 tracking-wider">
+          <div className="text-[9px] font-semibold text-black mt-2 border-t border-dashed border-black pt-1 tracking-wider">
             ---------------- TEAR HERE ----------------
           </div>
         </div>
       </div>
 
+      {/* Print isolation styles when printed from parent window */}
+      <style>{`
+        @media print {
+          body * {
+            visibility: hidden !important;
+          }
+          #thermal-receipt-container, #thermal-receipt-container * {
+            visibility: visible !important;
+          }
+          #thermal-receipt-container {
+            position: fixed !important;
+            left: 0 !important;
+            top: 0 !important;
+            margin: 0 !important;
+            padding: 2mm 1mm 3mm 1mm !important;
+            box-shadow: none !important;
+            border: none !important;
+            width: 74mm !important;
+            max-width: 76mm !important;
+          }
+        }
+      `}</style>
+
+      {/* QZ Tray Hardware Status Bar */}
+      <div className="mt-2.5 w-full max-w-[285px] px-1 flex items-center justify-between text-[11px] font-sans print:hidden">
+        <div className="flex items-center gap-1.5 truncate">
+          {qzStatus.checking ? (
+            <span className="flex items-center gap-1 text-slate-500 text-[10px]">
+              <RefreshCw className="h-2.5 w-2.5 animate-spin" /> Detecting QZ Tray…
+            </span>
+          ) : qzStatus.connected ? (
+            <span className="inline-flex items-center gap-1 text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded text-[10px] font-semibold truncate" title={`Direct printing to ${qzStatus.printerName || 'default thermal printer'}`}>
+              <Zap className="h-2.5 w-2.5 text-emerald-600 fill-emerald-600 shrink-0" />
+              <span className="truncate">QZ: {qzStatus.printerName || 'Ready'}</span>
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-slate-500 bg-slate-200/70 px-2 py-0.5 rounded text-[10px] font-medium" title="QZ Tray not running on PC; printing via browser print dialog">
+              <span className="w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0"></span>
+              <span>Browser Print Mode</span>
+            </span>
+          )}
+        </div>
+        {!qzStatus.connected && !qzStatus.checking && (
+          <button
+            type="button"
+            onClick={checkQz}
+            className="text-[10.5px] text-slate-500 hover:text-slate-800 underline flex items-center gap-0.5 cursor-pointer ml-2 shrink-0 font-medium"
+            title="Check if QZ Tray app was started"
+          >
+            <RefreshCw className="h-2.5 w-2.5" /> Recheck QZ
+          </button>
+        )}
+      </div>
+
       {/* Action Buttons Toolbar */}
-      <div className="mt-4 flex items-center gap-2">
+      <div className="mt-3 flex items-center gap-2 print:hidden">
         <button
           type="button"
           onClick={handleTriggerPrint}
-          className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#08775A] hover:bg-[#065f46] text-white text-xs font-bold rounded-lg shadow-sm transition-colors cursor-pointer font-sans"
+          disabled={isPrinting}
+          className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-900 hover:bg-black disabled:opacity-60 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors cursor-pointer"
         >
-          <Printer className="h-4 w-4" />
-          <span>Print 80mm Receipt</span>
+          {isPrinting ? (
+            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Printer className="h-3.5 w-3.5" />
+          )}
+          <span>{isPrinting ? 'Printing…' : 'Print 80mm Receipt'}</span>
         </button>
         {onClose && (
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex items-center gap-1 px-3 py-2 bg-white hover:bg-slate-200 text-slate-700 border border-slate-300 text-xs font-semibold rounded-lg transition-colors cursor-pointer font-sans"
+            className="inline-flex items-center gap-1 px-3 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
           >
             <X className="h-3.5 w-3.5" />
             <span>Close</span>
@@ -604,6 +808,7 @@ export interface ThermalReceiptModalProps {
 
 /**
  * Modal wrapper for displaying and printing the 80mm thermal receipt.
+ * Clean, high-contrast backdrop (z-[70]) without cheap stacked blur distortion.
  */
 export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
   isOpen,
@@ -613,10 +818,10 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
   if (!isOpen || !receipt) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-100">
-      <div className="relative bg-white rounded-2xl shadow-2xl max-w-sm w-full p-4 overflow-y-auto max-h-[95vh]">
-        <div className="flex items-center justify-between pb-2 border-b border-slate-200 mb-2">
-          <div className="text-xs font-bold text-slate-800 uppercase tracking-wider font-sans">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-950/75 animate-in fade-in duration-150 print:p-0 print:bg-transparent print:static">
+      <div className="relative bg-white rounded-2xl shadow-2xl border border-slate-200/90 max-w-sm w-full p-4 overflow-y-auto max-h-[95vh] print:p-0 print:border-none print:shadow-none print:max-w-none print:w-auto">
+        <div className="flex items-center justify-between pb-2.5 border-b border-slate-100 mb-2.5 print:hidden">
+          <div className="text-xs font-semibold text-slate-700 uppercase tracking-wider font-sans">
             80mm Thermal Receipt Preview
           </div>
           <button

@@ -481,6 +481,7 @@ ${invoice?.sourceType === 'ADMISSION' ? `<div class="meta-row"><span class="meta
             <thead>
               <tr>
                 <th class="text-center" style="width: 30px;">#</th>
+                <th style="width: 85px;">Service ID</th>
                 <th>Service / Description</th>
                 <th class="text-right" style="width: 60px;">Qty</th>
                 <th class="text-right" style="width: 90px;">Rate</th>
@@ -492,7 +493,10 @@ ${invoice?.sourceType === 'ADMISSION' ? `<div class="meta-row"><span class="meta
                 <tr>
                   <td class="text-center" style="color: #64748b;">${i + 1}</td>
                   <td>
-                    <strong>${formatServiceName(l.serviceName)}</strong> ${formatServiceCode(l.serviceCode) ? `<span style="color: #64748b; font-size: 11px; font-weight: 500;">(${formatServiceCode(l.serviceCode)})</span>` : ''}
+                    ${formatServiceCode(l.serviceCode) ? `<span style="font-family: monospace; font-weight: 700; color: #334155;">${formatServiceCode(l.serviceCode)}</span>` : '—'}
+                  </td>
+                  <td>
+                    <strong>${formatServiceName(l.serviceName)}</strong>
                     ${l.discountReason ? `<div style="font-size: 11px; color: #475569; font-weight: 500; margin-top: 2px;">${l.discountReason}</div>` : ''}
                   </td>
                   <td class="text-right">${l.quantity}</td>
@@ -660,6 +664,7 @@ ${invoice?.sourceType === 'ADMISSION' ? `<div class="meta-row"><span class="meta
               <thead>
                 <tr className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200 uppercase text-[11px] tracking-wide">
                   <th className="py-2.5 px-3.5 w-12 text-center">#</th>
+                  <th className="py-2.5 px-3.5 w-28">Service ID</th>
                   <th className="py-2.5 px-3.5">Service Description</th>
                   <th className="py-2.5 px-3.5 text-right w-20">Qty</th>
                   <th className="py-2.5 px-3.5 text-right w-28">Rate</th>
@@ -668,17 +673,23 @@ ${invoice?.sourceType === 'ADMISSION' ? `<div class="meta-row"><span class="meta
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white">
                 {invoice.lines.length === 0 ? (
-                  <tr><td colSpan={5} className="py-6 text-center text-slate-400 font-medium">No service lines on invoice.</td></tr>
+                  <tr><td colSpan={6} className="py-6 text-center text-slate-400 font-medium">No service lines on invoice.</td></tr>
                 ) : (
                   invoice.lines.map((l, idx) => (
                     <tr key={l.id}>
                       <td className="py-2.5 px-3.5 text-center text-slate-500 font-semibold">{idx + 1}</td>
+                      <td className="py-2.5 px-3.5">
+                        {formatServiceCode(l.serviceCode) ? (
+                          <span className="font-mono font-bold text-[11px] text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded">
+                            {formatServiceCode(l.serviceCode)}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 text-xs">—</span>
+                        )}
+                      </td>
                       <td className="py-2.5 px-3.5 font-semibold text-slate-900">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span>{formatServiceName(l.serviceName)}</span>
-                          {formatServiceCode(l.serviceCode) && (
-                            <span className="text-slate-400 font-semibold text-[11px]">({formatServiceCode(l.serviceCode)})</span>
-                          )}
                           {l.billingSource === 'PHARMACY' && (
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200">
                               Pharmacy

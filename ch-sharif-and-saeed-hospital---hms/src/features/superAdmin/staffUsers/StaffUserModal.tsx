@@ -90,6 +90,12 @@ const emptyForm = (): StaffUserFormValues => ({
   salaryTaxValue: '',
   salaryEffectiveFrom: today(),
   ...defaultWizardExtras(),
+  weeklySchedule: defaultWeeklySchedule().map((d) => ({
+    ...d,
+    useShiftDefault: false,
+    startTime: d.isWorking ? '09:00' : '',
+    endTime: d.isWorking ? '17:00' : '',
+  })),
   scheduleEnabled: true,
   bankEnabled: true,
 });
@@ -210,7 +216,25 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
     StaffUserService.fetchFullProfile(editingStaff.id)
       .then((profile) => {
         const next: StaffUserFormValues = { ...base };
-        if (profile?.overview?.joiningDate) next.joiningDate = String(profile.overview.joiningDate).slice(0, 10);
+        if (profile?.overview) {
+          const ov = profile.overview;
+          if (ov.joiningDate) next.joiningDate = String(ov.joiningDate).slice(0, 10);
+          if (ov.fatherGuardianName) next.fatherGuardianName = ov.fatherGuardianName;
+          if (ov.cnic) next.cnic = ov.cnic;
+          if (ov.dateOfBirth) next.dateOfBirth = String(ov.dateOfBirth).slice(0, 10);
+          if (ov.phone) next.phone = ov.phone;
+          if (ov.alternatePhone) next.alternatePhone = ov.alternatePhone;
+          if (ov.email) next.email = ov.email;
+          if (ov.designation) next.designation = ov.designation;
+          if (ov.assignedShiftId || ov.assignedShift?.id) {
+            next.assignedShiftId = ov.assignedShiftId || ov.assignedShift?.id;
+          }
+        }
+
+        if (profile?.clinicalAuthorization?.username) {
+          next.clinicalUsername = profile.clinicalAuthorization.username;
+          next.clinicalExistingUsername = profile.clinicalAuthorization.username;
+        }
 
         const salary = profile?.salary?.current;
         if (salary) {
@@ -233,12 +257,13 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
 
         const schedule = (profile?.weeklySchedule ?? []) as any[];
         if (schedule.length === 7) {
+          const shiftId = next.assignedShiftId;
           next.weeklySchedule = schedule.map((d) => ({
             dayOfWeek: d.dayOfWeek,
             isWorking: d.isWorking,
-            useShiftDefault: d.useShiftDefault,
-            startTime: d.startTime || '',
-            endTime: d.endTime || '',
+            useShiftDefault: Boolean(d.useShiftDefault && shiftId),
+            startTime: d.startTime || (d.isWorking && !shiftId ? '09:00' : ''),
+            endTime: d.endTime || (d.isWorking && !shiftId ? '17:00' : ''),
             breakMinutes: d.breakMinutes ?? 0,
           }));
         }
@@ -424,7 +449,17 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
     set({ [key]: formData[key].includes(id) ? formData[key].filter((x) => x !== id) : [...formData[key], id] } as Partial<StaffUserFormValues>);
 
   const updateDay = (day: WeeklyDayForm['dayOfWeek'], patch: Partial<WeeklyDayForm>) =>
-    set({ weeklySchedule: formData.weeklySchedule.map((d) => (d.dayOfWeek === day ? { ...d, ...patch } : d)) });
+    set({
+      weeklySchedule: formData.weeklySchedule.map((d) =>
+        d.dayOfWeek === day
+          ? {
+              ...d,
+              ...patch,
+              ...(patch.startTime !== undefined || patch.endTime !== undefined ? { useShiftDefault: false } : {}),
+            }
+          : d,
+      ),
+    });
 
   const updateRule = (serviceRateId: string | null, patch: Partial<CommissionRuleForm>) =>
     set({ commissionRules: formData.commissionRules.map((r) => (r.serviceRateId === serviceRateId ? { ...r, ...patch } : r)) });
@@ -631,12 +666,23 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
               value={formData.assignedShiftId}
               onChange={(e) => {
                 const shift = activeShifts.find((s) => s.id === e.target.value);
-                // Adopt the shift's weekly OFF days so the timing table starts from the shift default.
                 set({
                   assignedShiftId: e.target.value,
                   weeklySchedule: shift
-                    ? defaultWeeklySchedule().map((d) => ({ ...d, isWorking: !shift.defaultWeeklyOffDays.includes(d.dayOfWeek) }))
-                    : formData.weeklySchedule.map((d) => ({ ...d, useShiftDefault: false })),
+                    ? defaultWeeklySchedule().map((d) => ({
+                        ...d,
+                        isWorking: !shift.defaultWeeklyOffDays.includes(d.dayOfWeek),
+                        useShiftDefault: true,
+                        startTime: shift.startTime,
+                        endTime: shift.endTime,
+                        breakMinutes: shift.breakMinutes ?? 0,
+                      }))
+                    : formData.weeklySchedule.map((d) => ({
+                        ...d,
+                        useShiftDefault: false,
+                        startTime: d.startTime || (d.isWorking ? '09:00' : ''),
+                        endTime: d.endTime || (d.isWorking ? '17:00' : ''),
+                      })),
                 });
               }}
             >

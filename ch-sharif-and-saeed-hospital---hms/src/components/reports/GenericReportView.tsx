@@ -344,7 +344,7 @@ export function GenericReportView<T>({
                           key={c.header}
                           onClick={sortable ? () => toggleSort(c.header) : undefined}
                           aria-sort={active ? (sort!.dir === 'asc' ? 'ascending' : 'descending') : undefined}
-                          className={`${compact ? 'py-2 px-2 whitespace-normal leading-tight' : 'py-3 px-3.5 whitespace-nowrap'} border-r border-slate-300 last:border-r-0 ${sortable ? 'cursor-pointer select-none hover:bg-slate-200/70' : ''} ${
+                          className={`${compact ? 'py-2 px-3' : 'py-3 px-3.5'} ${c.wrap ? 'whitespace-normal leading-tight' : 'whitespace-nowrap'} border-r border-slate-300 last:border-r-0 ${sortable ? 'cursor-pointer select-none hover:bg-slate-200/70' : ''} ${
                             c.align === 'right' ? 'text-right' : c.align === 'center' ? 'text-center' : 'text-left'
                           }`}
                           title={sortable ? 'Click to sort' : undefined}
@@ -385,7 +385,7 @@ export function GenericReportView<T>({
                           return (
                             <td
                               key={c.header}
-                              className={`${compact ? (c.align === 'right' ? 'py-2 px-2 whitespace-nowrap' : 'py-2 px-2 whitespace-normal') : 'py-2.5 px-3.5 whitespace-nowrap'} border-r border-slate-200 last:border-r-0 ${
+                              className={`${compact ? 'py-2 px-3' : 'py-2.5 px-3.5'} ${c.wrap ? 'whitespace-normal' : 'whitespace-nowrap'} border-r border-slate-200 last:border-r-0 ${
                                 c.align === 'right'
                                   ? `text-right font-mono ${compact ? 'font-semibold text-slate-900' : ''}`
                                   : c.align === 'center'
@@ -411,7 +411,7 @@ export function GenericReportView<T>({
                     <tr className="bg-[#f1f5f9] border-t-2 border-slate-300 font-bold text-slate-900 sticky bottom-0">
                       <td className="py-2.5 px-3 text-center border-r border-slate-300 text-[10.5px] uppercase tracking-wider text-slate-600">Total</td>
                       {columns.map((c, i) => (
-                        <td key={c.header} className={`${compact ? 'py-2 px-2' : 'py-2.5 px-3.5'} border-r border-slate-300 last:border-r-0 whitespace-nowrap text-right font-mono`}>
+                        <td key={c.header} className={`${compact ? 'py-2 px-3' : 'py-2.5 px-3.5'} border-r border-slate-300 last:border-r-0 whitespace-nowrap text-right font-mono`}>
                           {totals[i] === null ? '' : COUNT_HEADER.test(c.header) ? String(totals[i]) : compact ? formatAmount(totals[i] as number) : formatPKR(totals[i] as number)}
                         </td>
                       ))}

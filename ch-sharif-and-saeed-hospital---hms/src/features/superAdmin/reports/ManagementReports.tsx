@@ -100,7 +100,7 @@ const InvoiceLink: React.FC<{ number: string; onClick: () => void }> = ({ number
     type="button"
     onClick={onClick}
     title="View invoice"
-    className="inline-flex items-center gap-1 font-semibold text-[#08775A] hover:underline text-left"
+    className="inline-flex items-center gap-1 font-semibold text-[#08775A] hover:underline text-left whitespace-nowrap"
   >
     <Eye className="h-3 w-3 shrink-0" /> {number}
   </button>

@@ -94,5 +94,7 @@ export const createSelfPayEncounterSchema = z.object({
   address: z.string().optional(),
 });
 export type CreateSelfPayEncounterBody = z.infer<typeof createSelfPayEncounterSchema>;
+export const updateSelfPayEncounterSchema = createSelfPayEncounterSchema.partial();
+export type UpdateSelfPayEncounterBody = z.infer<typeof updateSelfPayEncounterSchema>;
 
 export const idParamsSchema = z.object({ id: z.string().uuid() });

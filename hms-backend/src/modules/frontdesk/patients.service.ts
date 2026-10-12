@@ -9,6 +9,7 @@ import type {
   CreatePanelPatientBody,
   UpdatePanelPatientBody,
   CreateSelfPayEncounterBody,
+  UpdateSelfPayEncounterBody,
   ListPanelPatientsQuery,
 } from './patients.schemas';
 
@@ -282,5 +283,14 @@ export const patientsService = {
       }
       throw error;
     }
+  },
+
+  async updateSelfPayEncounter(id: string, body: UpdateSelfPayEncounterBody) {
+    const existing = await prisma.selfPayEncounter.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundError('Self-pay patient record not found');
+    return prisma.selfPayEncounter.update({
+      where: { id },
+      data: body,
+    });
   },
 };

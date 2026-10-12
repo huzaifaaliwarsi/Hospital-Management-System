@@ -66,20 +66,30 @@ async function assertServicesActive(serviceIds: string[]): Promise<void> {
 type Tx = Prisma.TransactionClient;
 
 /** Replaces the 7 weekday rows (one current schedule per staff member). */
-async function writeWeeklySchedule(tx: Tx, staffId: string, days: WeeklyScheduleInput, effectiveFrom: Date, actorLabel: string) {
+async function writeWeeklySchedule(
+  tx: Tx,
+  staffId: string,
+  days: WeeklyScheduleInput,
+  effectiveFrom: Date,
+  actorLabel: string,
+  assignedShiftId?: string | null,
+) {
   await tx.staffWeeklySchedule.deleteMany({ where: { staffId } });
   await tx.staffWeeklySchedule.createMany({
-    data: days.map((d) => ({
-      staffId,
-      dayOfWeek: d.dayOfWeek,
-      isWorking: d.isWorking,
-      useShiftDefault: d.isWorking ? d.useShiftDefault : true,
-      startTime: d.isWorking && !d.useShiftDefault ? d.startTime ?? null : null,
-      endTime: d.isWorking && !d.useShiftDefault ? d.endTime ?? null : null,
-      breakMinutes: d.isWorking ? d.breakMinutes : 0,
-      effectiveFrom,
-      createdBy: actorLabel,
-    })),
+    data: days.map((d) => {
+      const useShiftDefault = d.isWorking ? Boolean(d.useShiftDefault && assignedShiftId) : true;
+      return {
+        staffId,
+        dayOfWeek: d.dayOfWeek,
+        isWorking: d.isWorking,
+        useShiftDefault,
+        startTime: d.isWorking ? (d.startTime ?? null) : null,
+        endTime: d.isWorking ? (d.endTime ?? null) : null,
+        breakMinutes: d.isWorking ? d.breakMinutes : 0,
+        effectiveFrom,
+        createdBy: actorLabel,
+      };
+    }),
   });
 }
 
@@ -249,7 +259,7 @@ export const staffService = {
         const created = await prisma.$transaction(async (tx) => {
           const staff = await tx.staff.create({ data, select: { id: true } });
           const effectiveFrom = body.joiningDate ?? new Date();
-          if (body.weeklySchedule) await writeWeeklySchedule(tx, staff.id, body.weeklySchedule, effectiveFrom, actorLabel);
+          if (body.weeklySchedule) await writeWeeklySchedule(tx, staff.id, body.weeklySchedule, effectiveFrom, actorLabel, body.assignedShiftId);
           if (body.salaryProfile) await writeSalaryProfile(tx, staff.id, body.salaryProfile, createdById);
           if (body.commission) await writeCommissionRules(tx, staff.id, body.commission, createdById);
           if (body.bankAccount) await writeBankAccount(tx, staff.id, body.bankAccount, actorLabel);
@@ -450,11 +460,16 @@ export const staffService = {
         id: profile.id,
         employeeId: profile.employeeId,
         fullName: profile.fullName,
+        fatherGuardianName: profile.fatherGuardianName,
+        cnic: profile.cnic,
+        dateOfBirth: profile.dateOfBirth,
         category: profile.category,
         designation: profile.designation,
         department: profile.department,
         assignedShift: profile.assignedShift,
+        assignedShiftId: profile.assignedShiftId,
         phone: profile.phone,
+        alternatePhone: profile.alternatePhone,
         email: profile.email,
         joiningDate: profile.joiningDate,
         employmentStatus: profile.employmentStatus,
@@ -561,9 +576,9 @@ export const staffService = {
 
   /** Edit-mode counterpart of wizard step 6. */
   async replaceWeeklySchedule(staffId: string, body: ReplaceWeeklyScheduleBody, actorId: string) {
-    await this.getById(staffId);
+    const staff = await this.getById(staffId);
     const actorLabel = await resolveActorLabel(actorId);
-    await prisma.$transaction((tx) => writeWeeklySchedule(tx, staffId, body.days, body.effectiveFrom, actorLabel));
+    await prisma.$transaction((tx) => writeWeeklySchedule(tx, staffId, body.days, body.effectiveFrom, actorLabel, staff.assignedShiftId));
     return prisma.staffWeeklySchedule.findMany({ where: { staffId } });
   },
 

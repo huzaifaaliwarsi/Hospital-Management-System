@@ -40,6 +40,10 @@ function firstOfMonthISO(): string {
   const d = new Date();
   return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
 }
+function lastOfMonthISO(): string {
+  const d = new Date();
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().slice(0, 10);
+}
 
 const STATUS_STYLES: Record<string, string> = {
   DRAFT: 'bg-slate-100 text-slate-600 border-slate-200',
@@ -229,7 +233,7 @@ const GenerateTab: React.FC<{
 }> = ({ departments, toast, onGenerated }) => {
   const [periodType, setPeriodType] = useState<PayrollPeriodType>('MONTHLY');
   const [periodStart, setPeriodStart] = useState(firstOfMonthISO());
-  const [periodEnd, setPeriodEnd] = useState(todayISO());
+  const [periodEnd, setPeriodEnd] = useState(lastOfMonthISO());
   const [departmentId, setDepartmentId] = useState('');
   const [category, setCategory] = useState('');
   const [staffId, setStaffId] = useState('');
@@ -242,6 +246,17 @@ const GenerateTab: React.FC<{
   const [preview, setPreview] = useState<PayrollPreview | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+
+  const handlePeriodTypeChange = (nextType: PayrollPeriodType) => {
+    setPeriodType(nextType);
+    if (nextType === 'MONTHLY') {
+      setPeriodStart(firstOfMonthISO());
+      setPeriodEnd(lastOfMonthISO());
+    } else if (nextType === 'DAILY') {
+      setPeriodStart(todayISO());
+      setPeriodEnd(todayISO());
+    }
+  };
 
   const filters: PayrollFilters = useMemo(
     () => ({
@@ -295,12 +310,14 @@ const GenerateTab: React.FC<{
     key:
       | 'periodBaseAmount'
       | 'attendanceDeductions'
+      | 'lateDeduction'
+      | 'earlyExitDeduction'
       | 'allowances'
       | 'grossAmount'
       | 'tax'
       | 'otherDeductions'
       | 'netAmount'
-  ) => (preview?.eligible ?? []).reduce((s, r) => s + Number(r[key]), 0);
+  ) => (preview?.eligible ?? []).reduce((s, r) => s + (Number((r as any)[key]) || 0), 0);
 
   const kpis: KpiItem[] = useMemo(() => {
     if (!preview) {
@@ -360,7 +377,7 @@ const GenerateTab: React.FC<{
       {
         category: 'STATUTORY & LEAVE DEDUCTIONS',
         title: 'Total Deductions',
-        value: formatPKR(sum('attendanceDeductions') + sum('tax') + sum('otherDeductions')),
+        value: formatPKR(sum('attendanceDeductions') + sum('lateDeduction') + sum('earlyExitDeduction') + sum('tax') + sum('otherDeductions')),
         icon: AlertTriangle,
         subtitle: 'Attendance, taxes & other',
         tone: 'warning',
@@ -396,7 +413,7 @@ const GenerateTab: React.FC<{
             label="Period Type"
             options={PERIOD_TYPE_OPTIONS}
             value={periodType}
-            onChange={(e) => setPeriodType(e.target.value as PayrollPeriodType)}
+            onChange={(e) => handlePeriodTypeChange(e.target.value as PayrollPeriodType)}
           />
         </div>
         <div className="min-w-0">
@@ -496,7 +513,9 @@ const GenerateTab: React.FC<{
                   <TotalLabel />
                   <td className={TD} colSpan={5} />
                   <td className={`${TD} ${AMT}`}>{formatPKR(sum('periodBaseAmount'))}</td>
-                  <td className={`${TD} ${AMT} text-rose-700`}>({formatPKR(sum('attendanceDeductions'))})</td>
+                  <td className={`${TD} ${AMT} text-rose-700`}>
+                    ({formatPKR(sum('attendanceDeductions') + sum('lateDeduction') + sum('earlyExitDeduction'))})
+                  </td>
                   <td className={`${TD} ${AMT}`}>{formatPKR(sum('allowances'))}</td>
                   <td className={`${TD} ${AMT}`}>{formatPKR(sum('grossAmount'))}</td>
                   <td className={`${TD} ${AMT} text-amber-700`}>({formatPKR(sum('tax'))})</td>
@@ -511,6 +530,7 @@ const GenerateTab: React.FC<{
             ) : (
               preview.eligible.map((r, i) => {
                 const isEven = i % 2 === 0;
+                const totalAttDed = Number(r.attendanceDeductions) + (Number(r.lateDeduction) || 0) + (Number(r.earlyExitDeduction) || 0);
                 return (
                   <tr key={r.staffId} className={`transition-colors ${isEven ? 'bg-white' : 'bg-[#fbfdfc]'} hover:bg-[#e7f6f1]/40 border-b border-[#e2eae5]`}>
                     <td className={TD_NUM}>{i + 1}</td>
@@ -520,7 +540,7 @@ const GenerateTab: React.FC<{
                       {basisLabel(r.salaryBasis)}
                       {r.salaryBasis.startsWith('MONTHLY') && r.monthlyBaseAmount != null && (
                         <div className="text-[10px] text-[#52665e] font-mono">
-                          {formatPKR(Number(r.monthlyBaseAmount))}/mo (÷ {r.monthlyScheduledDays} days)
+                          {formatPKR(Number(r.monthlyBaseAmount))}/mo (÷ 30 days)
                         </div>
                       )}
                     </td>
@@ -528,7 +548,15 @@ const GenerateTab: React.FC<{
                     <td className={`${TD} text-center font-mono font-semibold text-[#08775A]`}>{r.attendanceEquivalentDays}</td>
                     <td className={`${TD} ${AMT}`}>{formatPKR(Number(r.dailyRate))}</td>
                     <td className={`${TD} ${AMT}`}>{formatPKR(Number(r.periodBaseAmount))}</td>
-                    <td className={`${TD} ${AMT} text-rose-700`}>({formatPKR(Number(r.attendanceDeductions))})</td>
+                    <td className={`${TD} ${AMT} text-rose-700`}>
+                      ({formatPKR(totalAttDed)})
+                      {(Number(r.lateDeduction) > 0 || Number(r.earlyExitDeduction) > 0) && (
+                        <div className="text-[10px] text-slate-500 font-mono">
+                          {Number(r.lateDeduction) > 0 ? `Late: −${formatPKR(Number(r.lateDeduction))}` : ''}
+                          {Number(r.earlyExitDeduction) > 0 ? ` Early: −${formatPKR(Number(r.earlyExitDeduction))}` : ''}
+                        </div>
+                      )}
+                    </td>
                     <td className={`${TD} ${AMT}`}>{formatPKR(Number(r.allowances))}</td>
                     <td className={`${TD} ${AMT}`}>{formatPKR(Number(r.grossAmount))}</td>
                     <td className={`${TD} ${AMT} text-amber-700`}>({formatPKR(Number(r.tax))})</td>

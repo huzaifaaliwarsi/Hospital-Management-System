@@ -23,6 +23,8 @@ export interface EligibleRow {
   periodBaseAmount: string;
   earnedBase: string;
   attendanceDeductions: string;
+  lateDeduction?: string;
+  earlyExitDeduction?: string;
   allowances: string;
   grossAmount: string;
   tax: string;

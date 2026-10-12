@@ -256,21 +256,69 @@ export const setupService = {
     >,
   ) {
     const departmentIds = rows.map((r) => r.id);
-    const doctorCounts =
-      departmentIds.length === 0
-        ? []
-        : await prisma.staff.groupBy({
-            by: ['departmentId'],
-            where: { departmentId: { in: departmentIds }, category: 'Doctor', isActive: true },
-            _count: { _all: true },
-          });
-    const doctorCountMap = new Map(doctorCounts.map((d) => [d.departmentId, d._count._all]));
+
+    const doctorCountMap = new Map<string, number>();
+    const staffCountMap = new Map<string, number>();
+    const countedStaffPerDept = new Map<string, Set<string>>();
+
+    for (const id of departmentIds) {
+      doctorCountMap.set(id, 0);
+      staffCountMap.set(id, 0);
+      countedStaffPerDept.set(id, new Set());
+    }
+
+    if (departmentIds.length > 0) {
+      // 1. Count from cross-department assignments (StaffDepartment)
+      const staffDeptLinks = await prisma.staffDepartment.findMany({
+        where: {
+          departmentId: { in: departmentIds },
+          staff: { isActive: true },
+        },
+        select: {
+          departmentId: true,
+          staff: { select: { id: true, category: true } },
+        },
+      });
+
+      for (const link of staffDeptLinks) {
+        const set = countedStaffPerDept.get(link.departmentId);
+        if (set && !set.has(link.staff.id)) {
+          set.add(link.staff.id);
+          staffCountMap.set(link.departmentId, (staffCountMap.get(link.departmentId) ?? 0) + 1);
+          if (link.staff.category === 'Doctor') {
+            doctorCountMap.set(link.departmentId, (doctorCountMap.get(link.departmentId) ?? 0) + 1);
+          }
+        }
+      }
+
+      // 2. Fallback to primary departmentId if staff has no StaffDepartment row
+      const primaryStaff = await prisma.staff.findMany({
+        where: {
+          departmentId: { in: departmentIds },
+          isActive: true,
+        },
+        select: { id: true, departmentId: true, category: true },
+      });
+
+      for (const s of primaryStaff) {
+        if (s.departmentId) {
+          const set = countedStaffPerDept.get(s.departmentId);
+          if (set && !set.has(s.id)) {
+            set.add(s.id);
+            staffCountMap.set(s.departmentId, (staffCountMap.get(s.departmentId) ?? 0) + 1);
+            if (s.category === 'Doctor') {
+              doctorCountMap.set(s.departmentId, (doctorCountMap.get(s.departmentId) ?? 0) + 1);
+            }
+          }
+        }
+      }
+    }
 
     return rows.map((row) => ({
       ...row,
       headName: row.headStaff?.fullName || 'Not Assigned',
       doctorCount: doctorCountMap.get(row.id) ?? 0,
-      staffCount: row._count.staff,
+      staffCount: staffCountMap.get(row.id) ?? row._count.staff,
       serviceCount: row._count.serviceRates,
       wardCount: row._count.wards,
       createdByLabel: formatActorFromRelation(row.createdByUser),

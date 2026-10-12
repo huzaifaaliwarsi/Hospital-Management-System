@@ -31,18 +31,6 @@ function countWorkingDays(from: number, to: number, working: Set<string>): numbe
   return n;
 }
 
-/**
- * Monthly Scheduled Days: this employee's own scheduled working days across
- * the *complete* calendar month that `anchor` falls in — their real weekly
- * schedule/shift, never a flat constant — the true denominator for a per-day
- * rate (PDF §11, "Monthly Scheduled Working Days").
- */
-function countMonthlyScheduledDays(anchor: Date, working: Set<string>): number {
-  const monthStart = Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), 1);
-  const monthEnd = Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() + 1, 0);
-  return countWorkingDays(monthStart, monthEnd, working);
-}
-
 export interface SalaryProfileLike {
   salaryBasis: string;
   baseAmount: Decimal;
@@ -99,28 +87,44 @@ function computeTimingDeduction(rule: DeductionRule, totalMinutes: number, occur
 }
 
 /**
+ * Detects if [start, end] covers a complete calendar month (e.g. 1st to last day of month,
+ * or 1st to 30th for 30/31-day months).
+ */
+export function isFullCalendarMonth(start: Date, end: Date): boolean {
+  const s = new Date(start);
+  const e = new Date(end);
+  const sYear = s.getUTCFullYear();
+  const sMonth = s.getUTCMonth();
+  const sDate = s.getUTCDate();
+  const eYear = e.getUTCFullYear();
+  const eMonth = e.getUTCMonth();
+  const eDate = e.getUTCDate();
+  if (sYear !== eYear || sMonth !== eMonth || sDate !== 1) return false;
+  const lastDayOfMonth = new Date(Date.UTC(sYear, sMonth + 1, 0)).getUTCDate();
+  return eDate === lastDayOfMonth || (lastDayOfMonth === 31 && eDate === 30);
+}
+
+/**
  * Attendance-based salary for one staff member over the period.
  *
  *   Attendance Equivalent = Present + Half×0.5 + Paid Leave
  *
- *   MONTHLY and MONTHLY_COMMISSION (identical basis — Doctor commission is
- *   always a fully separate ledger, never blended into this figure):
- *     Monthly Scheduled Days = employee's scheduled working days across the
- *                              *complete* calendar month the period falls in
- *     Daily Rate          = Monthly Base / Monthly Scheduled Days
- *     Period Scheduled Days = scheduled working days inside the selected From/To
- *     Period Base          = Daily Rate × Period Scheduled Days
- *     Attendance Deduction = Daily Rate × (Period Scheduled Days − Attendance Equivalent)  — weekly OFFs stay paid
- *     Earned Base          = Period Base − Attendance Deduction
+ *   MONTHLY and MONTHLY_COMMISSION (Doctor commission is always a fully separate ledger):
+ *     Daily Rate          = Monthly Base / 30 (always fixed 30-day divisor)
+ *     Schedule decides whether employee was supposed to work (scheduled working days)
+ *     Weekly Off / unscheduled days do NOT become absence deductions
+ *     Full monthly payroll:
+ *       If attendance rules satisfied, reconciles to full Monthly Base (PKR 30,000)
+ *       Period Base = Monthly Base
+ *       Attendance Deduction = Daily Rate × Unpaid Scheduled Days
+ *       Earned Base = Period Base − Attendance Deduction
+ *     Partial period (e.g. 1 day):
+ *       Period Base = Daily Rate × Scheduled Payable Days
+ *       Attendance Deduction = Daily Rate × Unpaid Scheduled Days
+ *       Earned Base = Period Base − Attendance Deduction
  *   PER_DAY(_COMMISSION): Earned = Daily Rate × equivalent
  *
  *   Gross = Earned Base + Allowance;  Tax% = Gross × %;  Net = Gross − Tax − Deduction
- *
- * A selected period is NEVER credited the full monthly salary regardless of
- * its length — Period Base always scales to however many of the month's
- * scheduled days actually fall inside the selected range. Fixed allowance /
- * deduction / fixed tax retain their configured amounts, unprorated. Daily
- * types retain their existing per-run fixed components.
  *
  * Returns null when the period has no scheduled working days.
  */
@@ -163,15 +167,31 @@ export function computeSalaryAmounts(
   let earnedBase = zero;
   let attendanceDeductions = zero;
   if (isMonthly) {
-    // MONTHLY and MONTHLY_COMMISSION share this exact formula — Doctor
-    // commission (DoctorCommissionRule) is always computed and accrued
-    // completely separately, never blended into this figure.
-    monthlyScheduledDays = countMonthlyScheduledDays(periodStart, working);
-    dailyRate = monthlyScheduledDays > 0 ? base.div(monthlyScheduledDays) : zero;
+    // For MONTHLY salary staff:
+    // Daily Rate = Monthly Salary / 30 (always fixed 30-day divisor).
+    // Schedule only decides whether employee was supposed to work that day (Present / Absent / Leave / Off).
+    // Weekly Off / unscheduled days must NOT become absence deductions.
+    const FIXED_MONTHLY_DIVISOR = 30;
+    monthlyScheduledDays = FIXED_MONTHLY_DIVISOR;
+    dailyRate = base.div(FIXED_MONTHLY_DIVISOR);
+
+    const isFullMonth = isFullCalendarMonth(periodStart, periodEnd);
     const unpaidEquivalent = Decimal.max(new Decimal(scheduledPayableDays).minus(attendanceEquivalentDays), zero);
-    periodBaseAmount = dailyRate.mul(scheduledPayableDays);
-    attendanceDeductions = dailyRate.mul(unpaidEquivalent);
-    earnedBase = periodBaseAmount.minus(attendanceDeductions);
+
+    if (isFullMonth) {
+      periodBaseAmount = base;
+      if (attendanceEquivalentDays === 0) {
+        attendanceDeductions = periodBaseAmount;
+        earnedBase = zero;
+      } else {
+        attendanceDeductions = Decimal.min(dailyRate.mul(unpaidEquivalent), periodBaseAmount);
+        earnedBase = Decimal.max(periodBaseAmount.minus(attendanceDeductions), zero);
+      }
+    } else {
+      periodBaseAmount = dailyRate.mul(scheduledPayableDays);
+      attendanceDeductions = dailyRate.mul(unpaidEquivalent);
+      earnedBase = Decimal.max(periodBaseAmount.minus(attendanceDeductions), zero);
+    }
   } else {
     dailyRate = base;
     periodBaseAmount = base.mul(scheduledPayableDays);

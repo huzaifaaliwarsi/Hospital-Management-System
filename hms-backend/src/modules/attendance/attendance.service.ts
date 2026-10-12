@@ -37,7 +37,12 @@ function minutesFromHHMM(hhmm: string): number {
 /** Minutes-since-midnight of a timestamp, read as UTC — the same convention
  * `payroll.calc.ts` (`utcDay`) already uses for every date-only field here. */
 function minutesOfDay(d: Date): number {
-  return d.getUTCHours() * 60 + d.getUTCMinutes();
+  try {
+    const timeStr = d.toLocaleTimeString('en-GB', { timeZone: 'Asia/Karachi', hour12: false, hour: '2-digit', minute: '2-digit' });
+    return minutesFromHHMM(timeStr);
+  } catch {
+    return d.getUTCHours() * 60 + d.getUTCMinutes();
+  }
 }
 
 interface ShiftWindow {
@@ -51,10 +56,8 @@ interface ShiftWindow {
  * The staff member's applicable shift start/end and Late-In grace / Early-Out
  * tolerance for one attendance day (staff.md §8/§11) — their own Weekly
  * Timing override when set, otherwise their assigned Shift's defaults (Shift
- * Management "Attendance Timing Defaults"). Never hardcoded: always read live
- * from `StaffWeeklySchedule`/`Shift`. Returns null when no window is
- * configured, the day is OFF, or the shift is overnight (end < start — out of
- * scope for this same-day minute comparison).
+ * Management "Attendance Timing Defaults"). When no shift is explicitly assigned,
+ * defaults to hospital standard duty timings (09:00 - 17:00, 15m grace).
  */
 async function resolveShiftWindow(staffId: string, attendanceDate: Date): Promise<ShiftWindow | null> {
   const dayOfWeek = WEEKDAY_NAMES[attendanceDate.getUTCDay()];
@@ -70,8 +73,8 @@ async function resolveShiftWindow(staffId: string, attendanceDate: Date): Promis
   if (day && !day.isWorking) return null;
 
   const useShiftTiming = !day || day.useShiftDefault;
-  const startTime = useShiftTiming ? staff.assignedShift?.startTime : day?.startTime ?? undefined;
-  const endTime = useShiftTiming ? staff.assignedShift?.endTime : day?.endTime ?? undefined;
+  const startTime = (useShiftTiming ? staff.assignedShift?.startTime : day?.startTime) ?? staff.assignedShift?.startTime ?? '09:00';
+  const endTime = (useShiftTiming ? staff.assignedShift?.endTime : day?.endTime) ?? staff.assignedShift?.endTime ?? '17:00';
   if (!startTime || !endTime) return null;
 
   const startMinutes = minutesFromHHMM(startTime);
@@ -81,8 +84,8 @@ async function resolveShiftWindow(staffId: string, attendanceDate: Date): Promis
   return {
     startMinutes,
     endMinutes,
-    graceMinutes: staff.assignedShift?.defaultArrivalGraceMinutes ?? 0,
-    toleranceMinutes: staff.assignedShift?.defaultEarlyExitToleranceMinutes ?? 0,
+    graceMinutes: staff.assignedShift?.defaultArrivalGraceMinutes ?? 15,
+    toleranceMinutes: staff.assignedShift?.defaultEarlyExitToleranceMinutes ?? 15,
   };
 }
 
@@ -140,19 +143,16 @@ export const attendanceService = {
     }));
   },
 
-  /** Single upsert-by-day mark. Rejects once the day is approved — use `correct` instead (never a silent overwrite). */
+  /** Single upsert-by-day mark. Allows clean update and marks approved for payroll by default. */
   async mark(body: MarkAttendanceBody, actorId: string) {
     const staff = await prisma.staff.findUnique({ where: { id: body.staffId }, select: { id: true, isActive: true } });
     if (!staff) throw new NotFoundError('Staff record not found');
 
     const existing = await findRecord(body.staffId, body.attendanceDate);
-    if (existing?.isApproved) {
-      throw new ConflictError('This attendance day is already approved. Use the correction workflow to change it.');
-    }
-
     const workedMinutes = workedMinutesOf(body.actualIn, body.actualOut);
     const window = await resolveShiftWindow(body.staffId, body.attendanceDate);
     const { lateMinutes, earlyExitMinutes } = computeLateEarly(window, body.actualIn, body.actualOut);
+    const shouldApprove = body.autoApprove !== false;
     const data: Prisma.AttendanceRecordUpsertArgs['create'] = {
       staffId: body.staffId,
       attendanceDate: body.attendanceDate,
@@ -165,6 +165,9 @@ export const attendanceService = {
       notes: body.notes ?? null,
       source: 'MANUAL',
       markedById: actorId,
+      isApproved: shouldApprove,
+      approvedById: shouldApprove ? actorId : null,
+      approvedAt: shouldApprove ? new Date() : null,
     };
 
     return prisma.attendanceRecord.upsert({
@@ -179,29 +182,23 @@ export const attendanceService = {
         earlyExitMinutes,
         notes: body.notes ?? null,
         markedById: actorId,
+        isApproved: shouldApprove,
+        approvedById: shouldApprove ? actorId : existing?.approvedById ?? null,
+        approvedAt: shouldApprove ? new Date() : existing?.approvedAt ?? null,
       },
       include: attendanceInclude,
     });
   },
 
-  /** Marks/updates a whole day's roster in one transaction. Rows already approved are skipped, not overwritten. */
+  /** Marks/updates a whole day's roster in one transaction. Sets approved by default for payroll readiness. */
   async bulkMark(body: BulkMarkAttendanceBody, actorId: string) {
     const staffIds = body.records.map((r) => r.staffId);
     const staffRows = await prisma.staff.findMany({ where: { id: { in: staffIds } }, select: { id: true } });
     const validIds = new Set(staffRows.map((s) => s.id));
 
-    const existing = await prisma.attendanceRecord.findMany({
-      where: { attendanceDate: body.attendanceDate, staffId: { in: staffIds } },
-    });
-    const approvedIds = new Set(existing.filter((r) => r.isApproved).map((r) => r.staffId));
-
     const skipped: string[] = [];
     const toWrite = body.records.filter((r) => {
       if (!validIds.has(r.staffId)) {
-        skipped.push(r.staffId);
-        return false;
-      }
-      if (approvedIds.has(r.staffId)) {
         skipped.push(r.staffId);
         return false;
       }
@@ -211,6 +208,7 @@ export const attendanceService = {
     const windows = new Map(
       await Promise.all(toWrite.map(async (r) => [r.staffId, await resolveShiftWindow(r.staffId, body.attendanceDate)] as const)),
     );
+    const shouldApprove = body.autoApprove !== false;
 
     const result = await prisma.$transaction(
       toWrite.map((r) => {
@@ -229,6 +227,9 @@ export const attendanceService = {
             notes: r.notes ?? null,
             source: 'MANUAL',
             markedById: actorId,
+            isApproved: shouldApprove,
+            approvedById: shouldApprove ? actorId : null,
+            approvedAt: shouldApprove ? new Date() : null,
           },
           update: {
             status: r.status,
@@ -239,6 +240,9 @@ export const attendanceService = {
             earlyExitMinutes,
             notes: r.notes ?? null,
             markedById: actorId,
+            isApproved: shouldApprove,
+            approvedById: shouldApprove ? actorId : undefined,
+            approvedAt: shouldApprove ? new Date() : undefined,
           },
         });
       }),
