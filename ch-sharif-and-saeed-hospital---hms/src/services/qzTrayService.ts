@@ -148,12 +148,26 @@ export function buildEscPosReceiptCommands(
     out += LINE_SEPARATOR;
   }
 
-  // Meta rows
+  // Section 1: Patient Information (First)
   out += ALIGN_LEFT;
+  out += BOLD_ON + 'PATIENT INFORMATION\n' + BOLD_OFF;
+  out += padRow('Patient:', data.patientName);
+  out += padRow('MR No:', data.mrNumber || '—');
+  if (data.patientAge || data.patientGender) {
+    const ageSex = [data.patientAge ? `${data.patientAge} Y` : '', data.patientGender].filter(Boolean).join(' / ');
+    out += padRow('Age / Sex:', ageSex);
+  }
+  const weightStr = data.patientWeight ? (String(data.patientWeight).toLowerCase().includes('kg') ? String(data.patientWeight) : `${data.patientWeight} kg`) : '—';
+  out += padRow('Weight:', weightStr);
+  out += padRow('Doctor:', data.doctorName || 'Consultant');
+  out += LINE_SEPARATOR;
+
+  // Section 2: Invoice & Payment (Second)
+  out += BOLD_ON + 'INVOICE & PAYMENT\n' + BOLD_OFF;
   out += padRow('Invoice No:', data.invoiceNumber || data.receiptNumber);
   out += padRow('Date:', data.dateTime);
-  out += padRow('Doctor:', data.doctorName || 'Consultant');
-  out += padRow('Patient:', data.patientName);
+  out += padRow('Pay Mode:', data.paymentMethod || 'CASH');
+  out += padRow('Encounter:', data.encounterType);
   out += LINE_SEPARATOR;
 
   // Charges

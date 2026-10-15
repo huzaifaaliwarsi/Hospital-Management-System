@@ -444,6 +444,7 @@ model Staff {
   commissionAccruals           DoctorCommissionAccrual[] @relation("CommissionAccrualDoctor")
   attendanceRecords            AttendanceRecord[]        @relation("AttendanceStaff")
   attendanceRawPunches         BiometricRawPunch[]       @relation("RawPunchStaff")
+  biometricIdentities          StaffBiometricIdentity[]  @relation("StaffBiometricIdentities")
   salarySlips                  SalarySlip[]              @relation("SalarySlipStaff")
   employmentHistory            StaffEmploymentHistory[]  @relation("EmploymentHistoryStaff")
   salaryProfiles               StaffSalaryProfile[]      @relation("SalaryProfileStaff")
@@ -2385,17 +2386,76 @@ model HmsPharmacySettlement {
 // ═══════════════════════════════════════════════════════════════════════
 
 model BiometricRawPunch {
-  id           String      @id @default(uuid())
-  staffId      String      @map("staff_id")
-  staff        Staff       @relation("RawPunchStaff", fields: [staffId], references: [id])
-  deviceSource String      @map("device_source") // adapter identifier — api/sdk/lan_sync/file_import (§16 Q-03)
-  punchAt      DateTime    @map("punch_at")
-  rawPayload   Json?       @map("raw_payload")
-  importedById String?     @map("imported_by")
-  importedBy   PortalUser? @relation("RawPunchImportedBy", fields: [importedById], references: [id])
-  importedAt   DateTime    @default(now()) @map("imported_at")
+  id               String           @id @default(uuid())
+  deviceId         String?          @map("device_id")
+  device           BiometricDevice? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  deviceSerial     String?          @map("device_serial")
+  enrollNumber     String?          @map("enroll_number")
+  staffId          String?          @map("staff_id")
+  staff            Staff?           @relation("RawPunchStaff", fields: [staffId], references: [id], onDelete: SetNull)
+  deviceSource     String           @default("HTTP_ADMS") @map("device_source") // HTTP_ADMS / USB_IMPORT / MANUAL
+  punchAt          DateTime         @map("punch_at")
+  punchType        String?          @map("punch_type") // CHECK_IN | CHECK_OUT | BREAK_OUT | BREAK_IN | AUTO
+  verificationType String?          @map("verification_type") // FINGERPRINT | FACE | CARD | PASSWORD
+  rawPayload       Json?            @map("raw_payload")
+  eventHash        String?          @unique @map("event_hash")
+  processingStatus String           @default("RECEIVED") @map("processing_status") // RECEIVED | UNMAPPED | NORMALIZED | DUPLICATE | INVALID | ERROR
+  errorMessage     String?          @map("error_message")
+  importedById     String?          @map("imported_by")
+  importedBy       PortalUser?      @relation("RawPunchImportedBy", fields: [importedById], references: [id])
+  importedAt       DateTime         @default(now()) @map("imported_at")
+  receivedAt       DateTime         @default(now()) @map("received_at")
 
+  @@index([deviceId])
+  @@index([staffId])
+  @@index([punchAt])
+  @@index([processingStatus])
   @@map("biometric_raw_punches")
+}
+
+model BiometricDevice {
+  id                    String                   @id @default(uuid())
+  name                  String                   @map("name")
+  brandModel            String?                  @map("brand_model")
+  deviceSerial          String                   @unique @map("device_serial")
+  protocol              String                   @default("HTTP_ADMS") @map("protocol")
+  timezone              String                   @default("Asia/Karachi") @map("timezone")
+  isEnabled             Boolean                  @default(true) @map("is_enabled")
+
+  // Authentication/registration metadata
+  authMode              String                   @default("DEVICE_SERIAL") @map("auth_mode")
+  sharedSecretEncrypted String?                  @map("shared_secret_encrypted")
+
+  lastSeenAt            DateTime?                @map("last_seen_at")
+  lastPushAt            DateTime?                @map("last_push_at")
+  lastPushStatus        String                   @default("NEVER") @map("last_push_status") // SUCCESS | FAILED | NEVER
+  lastPushMessage       String?                  @map("last_push_message")
+
+  createdAt             DateTime                 @default(now()) @map("created_at")
+  updatedAt             DateTime                 @updatedAt @map("updated_at")
+
+  staffMappings         StaffBiometricIdentity[]
+  rawPunches            BiometricRawPunch[]
+
+  @@map("biometric_devices")
+}
+
+model StaffBiometricIdentity {
+  id            String          @id @default(uuid())
+  staffId       String          @map("staff_id")
+  staff         Staff           @relation("StaffBiometricIdentities", fields: [staffId], references: [id], onDelete: Cascade)
+  deviceId      String          @map("device_id")
+  device        BiometricDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  enrollNumber  String          @map("enroll_number")
+  isActive      Boolean         @default(true) @map("is_active")
+  effectiveFrom DateTime?       @map("effective_from")
+  effectiveTo   DateTime?       @map("effective_to")
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+
+  @@unique([deviceId, enrollNumber])
+  @@index([staffId])
+  @@map("staff_biometric_identities")
 }
 
 model AttendanceRecord {

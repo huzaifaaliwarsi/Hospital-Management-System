@@ -18,6 +18,7 @@ import { HospitalContactSection } from './hospitalOverview/HospitalContactSectio
 import { HospitalAddressSection } from './hospitalOverview/HospitalAddressSection';
 import { HospitalOperationsSection } from './hospitalOverview/HospitalOperationsSection';
 import { RoomChargeDayCloseSection } from './hospitalOverview/RoomChargeDayCloseSection';
+import { BiometricDeviceSection } from './hospitalOverview/BiometricDeviceSection';
 import { HospitalBillingSection } from './hospitalOverview/HospitalBillingSection';
 import { HospitalSystemSummarySection } from './hospitalOverview/HospitalSystemSummarySection';
 import { ProfileAuditSection } from './hospitalOverview/ProfileAuditSection';
@@ -41,6 +42,7 @@ export const SuperAdminHospitalOverview: React.FC = () => {
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
   const [floors, setFloors] = useState<HospitalFloor[]>([]);
   const [isManageFloorsOpen, setIsManageFloorsOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<'identity' | 'operations' | 'biometric' | 'floors' | 'system'>('identity');
 
   const loadProfile = React.useCallback(async () => {
     setIsLoading(true);
@@ -117,7 +119,7 @@ export const SuperAdminHospitalOverview: React.FC = () => {
             )}
           </div>
           <p className="text-xs sm:text-sm text-[#52665e]">
-            Manage hospital identity, contact information, operational settings and billing profile.
+            Institutional identity, operational schedules, building infrastructure, and hardware terminal settings.
           </p>
         </div>
 
@@ -129,7 +131,7 @@ export const SuperAdminHospitalOverview: React.FC = () => {
             className="inline-flex items-center gap-2 px-3.5 py-2 bg-white hover:bg-[#f6faf8] text-[#52665e] hover:text-[#111827] border border-[#e2eae5] text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer"
           >
             <Printer className="h-4 w-4 text-[#149e75]" />
-            <span>Print Hospital Profile</span>
+            <span>Print Profile</span>
           </button>
 
           <button
@@ -138,93 +140,177 @@ export const SuperAdminHospitalOverview: React.FC = () => {
             className="inline-flex items-center gap-2 px-4 py-2 bg-[#129b70] hover:bg-[#08775A] text-white text-xs font-semibold rounded-lg shadow-xs transition-colors cursor-pointer"
           >
             <Edit3 className="h-4 w-4" />
-            <span>Edit Hospital Profile</span>
+            <span>Edit Profile</span>
           </button>
         </div>
       </div>
 
-      {/* Hospital Profile Summary Card */}
+      {/* Master Hospital Profile Summary Card */}
       <HospitalProfileSummaryCard profile={profile} />
 
-      {/* Section 1: Hospital Identity */}
-      <HospitalIdentitySection profile={profile} />
+      {/* Modern Segmented Navigation Tabs */}
+      <div className="flex items-center gap-1.5 p-1 bg-slate-100/90 rounded-xl border border-slate-200/90 overflow-x-auto no-scrollbar">
+        <button
+          type="button"
+          onClick={() => setActiveTab('identity')}
+          className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all shrink-0 cursor-pointer ${
+            activeTab === 'identity'
+              ? 'bg-white text-[#08775A] shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+          }`}
+        >
+          <Building2 className="w-4 h-4 text-[#149e75]" />
+          <span>Identity & Location</span>
+        </button>
 
-      {/* Section 2: Contact Information */}
-      <HospitalContactSection profile={profile} />
+        <button
+          type="button"
+          onClick={() => setActiveTab('operations')}
+          className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all shrink-0 cursor-pointer ${
+            activeTab === 'operations'
+              ? 'bg-white text-[#08775A] shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+          }`}
+        >
+          <FileCheck2 className="w-4 h-4 text-[#149e75]" />
+          <span>Operations & Schedules</span>
+        </button>
 
-      {/* Section 3: Address & Location */}
-      <HospitalAddressSection profile={profile} />
+        <button
+          type="button"
+          onClick={() => setActiveTab('biometric')}
+          className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all shrink-0 cursor-pointer ${
+            activeTab === 'biometric'
+              ? 'bg-white text-[#08775A] shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+          }`}
+        >
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+          <span>Biometric Terminal</span>
+        </button>
 
-      {/* Section 3b: Hospital Floors Directory & Infrastructure */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-xs">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-start sm:items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-emerald-50 text-[#08775A] flex items-center justify-center font-bold shrink-0">
-              <Building2 className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold text-slate-800">
-                  Hospital Floors &amp; Infrastructure
-                </h3>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                  {floors.length} {floors.length === 1 ? 'Floor' : 'Floors'} Configured
-                </span>
-              </div>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Define and manage building levels and hospital floors. Configured active floors dynamically populate location selectors across Departments and Wards.
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => setIsManageFloorsOpen(true)}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#08775A] hover:bg-[#065f46] text-white text-xs font-bold rounded-lg shadow-xs transition-colors cursor-pointer shrink-0"
-          >
-            <Building2 className="w-3.5 h-3.5" />
-            <span>Manage Floors</span>
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => setActiveTab('floors')}
+          className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all shrink-0 cursor-pointer ${
+            activeTab === 'floors'
+              ? 'bg-white text-[#08775A] shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+          }`}
+        >
+          <Building2 className="w-4 h-4 text-[#149e75]" />
+          <span>Floors & Facility</span>
+          <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-[#08775A]">
+            {floors.length}
+          </span>
+        </button>
 
-        {/* Floor Badges List */}
-        <div className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap items-center gap-2">
-          {floors.map((fl) => (
-            <span
-              key={fl.id}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-50 border border-slate-200 text-slate-700"
-            >
-              <span className="h-2 w-2 rounded-full bg-emerald-500" />
-              <span>{fl.name}</span>
-              {fl.building && (
-                <span className="text-[10px] text-slate-400 font-normal">({fl.building})</span>
-              )}
-            </span>
-          ))}
-          {floors.length === 0 && (
-            <p className="text-xs text-slate-400 italic">
-              No hospital floors configured yet. Click &quot;Manage Floors&quot; to define building levels.
-            </p>
-          )}
-        </div>
+        <button
+          type="button"
+          onClick={() => setActiveTab('system')}
+          className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all shrink-0 cursor-pointer ${
+            activeTab === 'system'
+              ? 'bg-white text-[#08775A] shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+          }`}
+        >
+          <ShieldCheck className="w-4 h-4 text-[#149e75]" />
+          <span>System & Maintenance</span>
+        </button>
       </div>
 
-      {/* Section 4: Operational Settings & Working Hours */}
-      <HospitalOperationsSection profile={profile} />
+      {/* Tab 1: Identity & Location */}
+      {activeTab === 'identity' && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+            <HospitalIdentitySection profile={profile} />
+            <HospitalContactSection profile={profile} />
+          </div>
+          <HospitalAddressSection profile={profile} />
+          <HospitalBillingSection profile={profile} />
+        </div>
+      )}
 
-      {/* Section 4b: Room/Bed Accommodation Charge — Close Day action */}
-      <RoomChargeDayCloseSection profile={profile} />
+      {/* Tab 2: Operations & Schedules */}
+      {activeTab === 'operations' && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          <HospitalOperationsSection profile={profile} />
+          <RoomChargeDayCloseSection profile={profile} />
+        </div>
+      )}
 
-      {/* Section 5: Billing & Legal Information + Document Identity Preview */}
-      <HospitalBillingSection profile={profile} />
+      {/* Tab 3: Biometric Terminal Settings */}
+      {activeTab === 'biometric' && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          <BiometricDeviceSection />
+        </div>
+      )}
 
-      {/* Section 6: Hospital System Summary */}
-      <HospitalSystemSummarySection aggregates={aggregates} />
+      {/* Tab 4: Hospital Floors & Infrastructure */}
+      {activeTab === 'floors' && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-5 sm:p-6 shadow-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-start sm:items-center gap-3.5">
+                <div className="w-11 h-11 rounded-xl bg-emerald-50 text-[#08775A] flex items-center justify-center font-bold shrink-0 border border-[#c2e7db]">
+                  <Building2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-bold text-slate-800">
+                      Hospital Floors &amp; Building Infrastructure
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                      {floors.length} {floors.length === 1 ? 'Floor' : 'Floors'} Configured
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5 max-w-2xl">
+                    Define building levels and medical floors. Configured active floors dynamically populate location selectors across Departments and Wards.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsManageFloorsOpen(true)}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#129b70] hover:bg-[#08775A] text-white text-xs font-bold rounded-lg shadow-xs transition-colors cursor-pointer shrink-0"
+              >
+                <Building2 className="w-3.5 h-3.5" />
+                <span>Manage Floors</span>
+              </button>
+            </div>
 
-      {/* Section 7: Profile Information & Audit Trace */}
-      <ProfileAuditSection profile={profile} />
+            {/* Floor Badges List */}
+            <div className="mt-5 pt-4 border-t border-slate-100 flex flex-wrap items-center gap-2.5">
+              {floors.map((fl) => (
+                <span
+                  key={fl.id}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 transition"
+                >
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                  <span>{fl.name}</span>
+                  {fl.building && (
+                    <span className="text-[10px] text-slate-400 font-normal">({fl.building})</span>
+                  )}
+                </span>
+              ))}
+              {floors.length === 0 && (
+                <p className="text-xs text-slate-400 italic">
+                  No hospital floors configured yet. Click &quot;Manage Floors&quot; to define building levels.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
-      {/* Section 8: Danger Zone (System Maintenance & Test Data Purge) */}
-      <DangerZoneSection onOpenResetModal={() => setIsResetModalOpen(true)} />
+      {/* Tab 5: System & Maintenance */}
+      {activeTab === 'system' && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          <HospitalSystemSummarySection aggregates={aggregates} />
+          <ProfileAuditSection profile={profile} />
+          <DangerZoneSection onOpenResetModal={() => setIsResetModalOpen(true)} />
+        </div>
+      )}
 
       {/* Edit Hospital Profile Modal */}
       <EditHospitalProfileModal

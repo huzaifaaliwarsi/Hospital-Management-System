@@ -14,7 +14,11 @@ import {
   UserX,
   AlertTriangle,
   RotateCw,
+  Upload,
+  Fingerprint,
+  HardDrive,
 } from 'lucide-react';
+import { UploadPunchFileModal } from './UploadPunchFileModal';
 import {
   fetchRoster,
   bulkMarkAttendance,
@@ -665,6 +669,7 @@ const AttendanceHistoryTab: React.FC<{ departments: Department[]; toast: ReturnT
   const [correctReason, setCorrectReason] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isBulkApproving, setIsBulkApproving] = useState(false);
+  const [isUploadOpen, setIsUploadOpen] = useState(false);
 
   const load = async () => {
     setIsLoading(true);
@@ -826,6 +831,14 @@ const AttendanceHistoryTab: React.FC<{ departments: Department[]; toast: ReturnT
         <div className="flex-1" />
         <button
           type="button"
+          onClick={() => setIsUploadOpen(true)}
+          className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-2xs transition-colors cursor-pointer"
+        >
+          <HardDrive className="h-3.5 w-3.5 text-emerald-600" />
+          <span>Import USB File</span>
+        </button>
+        <button
+          type="button"
           onClick={handleApproveAllPending}
           disabled={isBulkApproving || pendingRows.length === 0}
           className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg shadow-2xs cursor-pointer disabled:opacity-50 transition-colors"
@@ -891,6 +904,8 @@ const AttendanceHistoryTab: React.FC<{ departments: Department[]; toast: ReturnT
                   <th className="py-2.5 px-4 border-r border-[#c2e7db]/60">Date</th>
                   <th className="py-2.5 px-4 border-r border-[#c2e7db]/60">Staff Member</th>
                   <th className="py-2.5 px-4 border-r border-[#c2e7db]/60">Status</th>
+                  <th className="py-2.5 px-4 border-r border-[#c2e7db]/60">Time In / Out</th>
+                  <th className="py-2.5 px-4 border-r border-[#c2e7db]/60">Source</th>
                   <th className="py-2.5 px-4 border-r border-[#c2e7db]/60">Marked By</th>
                   <th className="py-2.5 px-4 border-r border-[#c2e7db]/60">Approval Status</th>
                   <th className="py-2.5 px-4 text-right">Actions</th>
@@ -925,8 +940,40 @@ const AttendanceHistoryTab: React.FC<{ departments: Department[]; toast: ReturnT
                           {ATTENDANCE_STATUS_LABELS[r.status]}
                         </span>
                       </td>
+                      <td className="py-2.5 px-4 border-r border-[#e2eae5] font-mono text-[11px]">
+                        {r.actualIn ? (
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-slate-800 font-semibold">
+                              {new Date(r.actualIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              {r.actualOut ? ` – ${new Date(r.actualOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}
+                            </span>
+                            {r.lateMinutes > 0 && (
+                              <span className="text-[10px] text-amber-700 font-medium">Late: {r.lateMinutes}m</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-4 border-r border-[#e2eae5]">
+                        {r.source === 'DEVICE' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                            <Fingerprint className="h-3 w-3 text-blue-600" />
+                            Biometric
+                          </span>
+                        ) : r.source === 'IMPORTED' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                            <HardDrive className="h-3 w-3 text-amber-600" />
+                            USB File
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            Manual
+                          </span>
+                        )}
+                      </td>
                       <td className="py-2.5 px-4 text-[#52665e] border-r border-[#e2eae5]">
-                        {r.markedByUser?.username || '—'}
+                        {r.markedByUser?.username || (r.source === 'DEVICE' ? 'Terminal' : '—')}
                       </td>
                       <td className="py-2.5 px-4 border-r border-[#e2eae5]">
                         {r.isApproved ? (
@@ -1022,6 +1069,13 @@ const AttendanceHistoryTab: React.FC<{ departments: Department[]; toast: ReturnT
           </div>
         </div>
       )}
+
+      {/* Offline USB Punch File Import Modal */}
+      <UploadPunchFileModal
+        isOpen={isUploadOpen}
+        onClose={() => setIsUploadOpen(false)}
+        onSuccess={load}
+      />
     </div>
   );
 };

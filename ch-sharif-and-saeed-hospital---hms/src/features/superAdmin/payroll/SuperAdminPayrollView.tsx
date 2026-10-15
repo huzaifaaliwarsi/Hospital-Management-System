@@ -123,8 +123,8 @@ const EmptyRow: React.FC<{ colSpan: number; children: React.ReactNode }> = ({ co
   </tr>
 );
 
-const TotalLabel = () => (
-  <td className="py-2.5 px-3 text-center border-r border-[#c2e7db] text-[11px] font-bold uppercase tracking-wider text-[#08775A] bg-[#effaf5]/30">Total</td>
+const TotalLabel: React.FC<{ colSpan?: number }> = ({ colSpan = 1 }) => (
+  <td colSpan={colSpan} className="py-2.5 px-3 text-center border-r border-[#c2e7db] text-[11px] font-bold uppercase tracking-wider text-[#08775A] bg-[#effaf5]/30">Total</td>
 );
 
 const SkippedList: React.FC<{ skipped: { staffId: string; fullName: string; employeeId?: string; reason: string }[] }> = ({ skipped }) =>
@@ -308,6 +308,7 @@ const GenerateTab: React.FC<{
 
   const sum = (
     key:
+      | 'dailyRate'
       | 'periodBaseAmount'
       | 'attendanceDeductions'
       | 'lateDeduction'
@@ -510,8 +511,12 @@ const GenerateTab: React.FC<{
             foot={
               preview.eligible.length > 0 ? (
                 <>
-                  <TotalLabel />
-                  <td className={TD} colSpan={5} />
+                  <TotalLabel colSpan={2} />
+                  <td className={TD} />
+                  <td className={TD} />
+                  <td className={`${TD} text-center font-mono`} />
+                  <td className={`${TD} text-center font-mono`} />
+                  <td className={`${TD} ${AMT}`}>{formatPKR(sum('dailyRate'))}</td>
                   <td className={`${TD} ${AMT}`}>{formatPKR(sum('periodBaseAmount'))}</td>
                   <td className={`${TD} ${AMT} text-rose-700`}>
                     ({formatPKR(sum('attendanceDeductions') + sum('lateDeduction') + sum('earlyExitDeduction'))})
@@ -759,7 +764,7 @@ const RunsTab: React.FC<{
           foot={
             runs.length > 0 ? (
               <>
-                <TotalLabel />
+                <TotalLabel colSpan={2} />
                 <td className={TD} colSpan={5} />
                 <td className={`${TD} ${AMT} text-sm text-[#08775A]`}>{formatPKR(runsTotal)}</td>
                 <td className={TD} />
@@ -844,8 +849,8 @@ const RunsTab: React.FC<{
             foot={
               detail.lines.length > 0 ? (
                 <>
-                  <TotalLabel />
-                  <td className={TD} colSpan={1} />
+                  <TotalLabel colSpan={2} />
+                  <td className={TD} />
                   <td className={`${TD} ${AMT}`}>{formatPKR(slipTotals.base)}</td>
                   <td className={`${TD} ${AMT} text-rose-700`}>({formatPKR(slipTotals.ded)})</td>
                   <td className={`${TD} ${AMT}`}>{formatPKR(slipTotals.allow)}</td>

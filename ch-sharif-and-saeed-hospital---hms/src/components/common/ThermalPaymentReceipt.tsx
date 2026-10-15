@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Printer, X, CheckCircle2, RefreshCw, Zap } from 'lucide-react';
+import { Printer, X, RefreshCw } from 'lucide-react';
 import { formatAmount } from '../../utils/formatters';
 import { getHospitalProfile } from '../../services/hospitalProfileService';
 import { HospitalProfile } from '../../types/hospital';
 import { InvoiceDetail, PaymentReceiptRow } from '../../services/invoiceService';
-import { printViaQzTray, connectQzTray, getPreferredThermalPrinter } from '../../services/qzTrayService';
 
 export interface ThermalReceiptData {
   receiptNumber: string;
@@ -14,6 +13,9 @@ export interface ThermalReceiptData {
   tokenNumber?: string | null;
   mrNumber?: string;
   patientName: string;
+  patientAge?: number | string | null;
+  patientGender?: string | null;
+  patientWeight?: number | string | null;
   doctorName?: string | null;
   serviceName?: string;
   fees: number;
@@ -67,6 +69,9 @@ export function buildThermalReceiptData(
     paymentMethod?: string;
     collectedBy?: string;
     isReprint?: boolean;
+    patientWeight?: number | string | null;
+    patientAge?: number | string | null;
+    patientGender?: string | null;
   }
 ): ThermalReceiptData {
   const encType = invoice.encounterType || 'OPD';
@@ -168,6 +173,13 @@ export function buildThermalReceiptData(
     tokenNumber: isIpd ? null : (invoice.queueNumber || null),
     mrNumber: invoice.patientMr || '—',
     patientName: invoice.patientName || 'Patient',
+    patientAge: options?.patientAge ?? invoice.patientAge ?? null,
+    patientGender: options?.patientGender ?? invoice.patientGender ?? null,
+    patientWeight: options?.patientWeight ?? (invoice as any).patientWeight ?? (invoice as any).weightKg ?? (invoice as any).admissionRecord?.weightKg ?? (() => {
+      const allNotes = String((invoice as any).notes || (invoice as any).admissionRecord?.notes || '');
+      const m = allNotes.match(/weight[:\s]+([0-9]+(?:\.[0-9]+)?(?:\s*kg)?)/i);
+      return m ? m[1] : null;
+    })(),
     doctorName: docName,
     serviceName,
     fees,
@@ -391,6 +403,17 @@ export function generateThermalReceiptHtml(
       padding-top: 3px;
       letter-spacing: 1px;
     }
+    .section-title {
+      font-size: 9.5px;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      color: #000;
+      margin-top: 3px;
+      margin-bottom: 2px;
+      border-bottom: 1px dotted #000;
+      padding-bottom: 1px;
+    }
   </style>
 </head>
 <body>
@@ -410,6 +433,36 @@ export function generateThermalReceiptHtml(
   <div class="divider"></div>
   ` : ''}
 
+  <!-- SECTION 1: PATIENT INFORMATION -->
+  <div class="section-title">PATIENT INFORMATION</div>
+  <table class="info-table">
+    <tr>
+      <td class="label">Patient:</td>
+      <td class="val-patient">${data.patientName}</td>
+    </tr>
+    <tr>
+      <td class="label">MR No:</td>
+      <td class="val">${data.mrNumber || '—'}</td>
+    </tr>
+    ${(data.patientAge || data.patientGender) ? `
+    <tr>
+      <td class="label">Age / Sex:</td>
+      <td class="val">${[data.patientAge ? `${data.patientAge} Y` : '', data.patientGender].filter(Boolean).join(' / ')}</td>
+    </tr>` : ''}
+    <tr>
+      <td class="label">Weight:</td>
+      <td class="val">${data.patientWeight ? (String(data.patientWeight).toLowerCase().includes('kg') ? data.patientWeight : `${data.patientWeight} kg`) : '—'}</td>
+    </tr>
+    <tr>
+      <td class="label">Doctor:</td>
+      <td class="val">${data.doctorName || 'Consultant'}</td>
+    </tr>
+  </table>
+
+  <div class="divider"></div>
+
+  <!-- SECTION 2: INVOICE & PAYMENT -->
+  <div class="section-title">INVOICE &amp; PAYMENT</div>
   <table class="info-table">
     <tr>
       <td class="label">Invoice No:</td>
@@ -420,12 +473,12 @@ export function generateThermalReceiptHtml(
       <td class="val">${data.dateTime}</td>
     </tr>
     <tr>
-      <td class="label">Doctor:</td>
-      <td class="val">${data.doctorName || 'Consultant'}</td>
+      <td class="label">Pay Mode:</td>
+      <td class="val">${data.paymentMethod || 'CASH'}</td>
     </tr>
     <tr>
-      <td class="label">Patient:</td>
-      <td class="val-patient">${data.patientName}</td>
+      <td class="label">Encounter:</td>
+      <td class="val">${data.encounterType}</td>
     </tr>
   </table>
 
@@ -466,15 +519,15 @@ export function generateThermalReceiptHtml(
   <div class="tear-line">---------------- TEAR HERE ----------------</div>
 
   <script>
-    window.onload = function() {
-      setTimeout(function() {
-        window.focus();
-        window.print();
-        window.onafterprint = function() {
-          window.close();
-        };
-      }, 200);
-    };
+    // In case opened in a new tab or window directly
+    if (window.name !== 'thermal-print-iframe') {
+      window.onload = function() {
+        setTimeout(function() {
+          window.focus();
+          window.print();
+        }, 150);
+      };
+    }
   </script>
 </body>
 </html>`;
@@ -496,6 +549,7 @@ export function printThermalReceiptViaIframe(
 
   const iframe = document.createElement('iframe');
   iframe.id = 'thermal-print-iframe';
+  iframe.name = 'thermal-print-iframe';
   iframe.style.position = 'fixed';
   iframe.style.right = '0';
   iframe.style.bottom = '0';
@@ -510,43 +564,40 @@ export function printThermalReceiptViaIframe(
     window.print();
     return;
   }
-  doc.open();
-  doc.write(html);
-  doc.close();
 
-  setTimeout(() => {
+  let printed = false;
+  const doPrint = () => {
+    if (printed) return;
+    printed = true;
     try {
       iframe.contentWindow?.focus();
       iframe.contentWindow?.print();
     } catch (e) {
-      console.error('Iframe thermal print error:', e);
+      console.error('Thermal print error:', e);
     }
-  }, 250);
+  };
+
+  iframe.onload = () => {
+    setTimeout(doPrint, 150);
+  };
+
+  doc.open();
+  doc.write(html);
+  doc.close();
+
+  // Safety fallback if iframe.onload does not fire in some browsers
+  setTimeout(doPrint, 350);
 }
 
 /**
- * Triggers direct 80mm thermal receipt printing.
- * Seamlessly checks QZ Tray first for direct ESC/POS hardware print (auto-cut, 0 blank feed).
- * Automatically falls back to clean isolated iframe thermal print if QZ Tray is not running.
+ * Triggers direct 80mm thermal receipt printing via isolated iframe.
  */
-export async function printThermalReceipt(
+export function printThermalReceipt(
   data: ThermalReceiptData,
-  profile?: HospitalProfile,
-  preferredPrinter?: string
-): Promise<{ method: 'qz' | 'browser'; success: boolean }> {
-  // 1. Check if QZ Tray is active for direct zero-dialog hardware print
-  try {
-    const qzRes = await printViaQzTray(data, profile, preferredPrinter);
-    if (qzRes.success) {
-      return { method: 'qz', success: true };
-    }
-  } catch (err) {
-    console.warn('QZ Tray direct hardware print skipped:', err);
-  }
-
-  // 2. Fallback to clean isolated iframe thermal print (isolated from main UI)
+  profile?: HospitalProfile
+): { success: boolean } {
   printThermalReceiptViaIframe(data, profile);
-  return { method: 'browser', success: true };
+  return { success: true };
 }
 
 export interface ThermalPaymentReceiptProps {
@@ -575,46 +626,18 @@ export const ThermalPaymentReceipt: React.FC<ThermalPaymentReceiptProps> = ({
   const isIpd = activeEncounterType === 'ADMISSION' || (activeEncounterType as string) === 'IPD';
   const showToken = !isIpd && !!receipt.tokenNumber;
 
-  const [qzStatus, setQzStatus] = useState<{
-    connected: boolean;
-    checking: boolean;
-    printerName: string | null;
-  }>({
-    connected: false,
-    checking: true,
-    printerName: null,
-  });
   const [isPrinting, setIsPrinting] = useState(false);
 
-  const checkQz = async () => {
-    setQzStatus(prev => ({ ...prev, checking: true }));
-    try {
-      const ok = await connectQzTray();
-      if (ok) {
-        const printer = await getPreferredThermalPrinter();
-        setQzStatus({ connected: true, checking: false, printerName: printer });
-      } else {
-        setQzStatus({ connected: false, checking: false, printerName: null });
-      }
-    } catch {
-      setQzStatus({ connected: false, checking: false, printerName: null });
-    }
-  };
-
-  useEffect(() => {
-    checkQz();
-  }, []);
-
-  const handleTriggerPrint = async () => {
+  const handleTriggerPrint = () => {
     setIsPrinting(true);
     try {
       if (onPrint) {
         onPrint();
       } else {
-        await printThermalReceipt(receipt, hp, qzStatus.printerName || undefined);
+        printThermalReceipt(receipt, hp);
       }
     } finally {
-      setIsPrinting(false);
+      setTimeout(() => setIsPrinting(false), 500);
     }
   };
 
@@ -656,27 +679,67 @@ export const ThermalPaymentReceipt: React.FC<ThermalPaymentReceiptProps> = ({
           </div>
         )}
 
-        {/* 4 Clean Meta Fields - Crisp legible black text */}
-        <div className="border-t border-dashed border-black pt-2 pb-2 space-y-1 text-[11.5px] font-semibold text-black">
-          <div className="flex justify-between items-center">
-            <span className="font-semibold text-black">Invoice No:</span>
-            <span className="font-bold text-black">{receipt.invoiceNumber || receipt.receiptNumber}</span>
+        {/* SECTION 1: PATIENT INFORMATION */}
+        <div className="border-t border-dashed border-black pt-2 pb-1.5">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-black border-b border-dotted border-black pb-0.5 mb-1.5">
+            Patient Information
           </div>
-          <div className="flex justify-between items-center">
-            <span className="font-semibold text-black">Date:</span>
-            <span className="font-semibold text-black">{receipt.dateTime}</span>
+          <div className="space-y-1 text-[11.5px] font-semibold text-black">
+            <div className="flex justify-between items-center">
+              <span className="font-semibold text-black">Patient:</span>
+              <span className="font-bold text-black text-right max-w-[170px] truncate" title={receipt.patientName}>
+                {receipt.patientName}
+              </span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="font-semibold text-black">MR No:</span>
+              <span className="font-bold text-black">{receipt.mrNumber || '—'}</span>
+            </div>
+            {(receipt.patientAge || receipt.patientGender) && (
+              <div className="flex justify-between items-center">
+                <span className="font-semibold text-black">Age / Sex:</span>
+                <span className="font-semibold text-black">
+                  {[receipt.patientAge ? `${receipt.patientAge} Y` : '', receipt.patientGender].filter(Boolean).join(' / ')}
+                </span>
+              </div>
+            )}
+            <div className="flex justify-between items-center">
+              <span className="font-semibold text-black">Weight:</span>
+              <span className="font-bold text-black font-mono">
+                {receipt.patientWeight ? (String(receipt.patientWeight).toLowerCase().includes('kg') ? receipt.patientWeight : `${receipt.patientWeight} kg`) : '—'}
+              </span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="font-semibold text-black">Doctor:</span>
+              <span className="font-bold text-black text-right max-w-[170px] truncate" title={receipt.doctorName || 'Consultant'}>
+                {receipt.doctorName || 'Consultant'}
+              </span>
+            </div>
           </div>
-          <div className="flex justify-between items-center">
-            <span className="font-semibold text-black">Doctor:</span>
-            <span className="font-bold text-black text-right max-w-[170px] truncate" title={receipt.doctorName || 'Consultant'}>
-              {receipt.doctorName || 'Consultant'}
-            </span>
+        </div>
+
+        {/* SECTION 2: INVOICE & PAYMENT */}
+        <div className="border-t border-dashed border-black pt-2 pb-1.5">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-black border-b border-dotted border-black pb-0.5 mb-1.5">
+            Invoice &amp; Payment
           </div>
-          <div className="flex justify-between items-center">
-            <span className="font-semibold text-black">Patient:</span>
-            <span className="font-bold text-black text-right max-w-[170px] truncate" title={receipt.patientName}>
-              {receipt.patientName}
-            </span>
+          <div className="space-y-1 text-[11.5px] font-semibold text-black">
+            <div className="flex justify-between items-center">
+              <span className="font-semibold text-black">Invoice No:</span>
+              <span className="font-bold text-black">{receipt.invoiceNumber || receipt.receiptNumber}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="font-semibold text-black">Date:</span>
+              <span className="font-semibold text-black">{receipt.dateTime}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="font-semibold text-black">Pay Mode:</span>
+              <span className="font-bold text-black">{receipt.paymentMethod || 'CASH'}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="font-semibold text-black">Encounter:</span>
+              <span className="font-semibold text-black">{receipt.encounterType}</span>
+            </div>
           </div>
         </div>
 
@@ -738,37 +801,6 @@ export const ThermalPaymentReceipt: React.FC<ThermalPaymentReceiptProps> = ({
           }
         }
       `}</style>
-
-      {/* QZ Tray Hardware Status Bar */}
-      <div className="mt-2.5 w-full max-w-[285px] px-1 flex items-center justify-between text-[11px] font-sans print:hidden">
-        <div className="flex items-center gap-1.5 truncate">
-          {qzStatus.checking ? (
-            <span className="flex items-center gap-1 text-slate-500 text-[10px]">
-              <RefreshCw className="h-2.5 w-2.5 animate-spin" /> Detecting QZ Tray…
-            </span>
-          ) : qzStatus.connected ? (
-            <span className="inline-flex items-center gap-1 text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded text-[10px] font-semibold truncate" title={`Direct printing to ${qzStatus.printerName || 'default thermal printer'}`}>
-              <Zap className="h-2.5 w-2.5 text-emerald-600 fill-emerald-600 shrink-0" />
-              <span className="truncate">QZ: {qzStatus.printerName || 'Ready'}</span>
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1 text-slate-500 bg-slate-200/70 px-2 py-0.5 rounded text-[10px] font-medium" title="QZ Tray not running on PC; printing via browser print dialog">
-              <span className="w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0"></span>
-              <span>Browser Print Mode</span>
-            </span>
-          )}
-        </div>
-        {!qzStatus.connected && !qzStatus.checking && (
-          <button
-            type="button"
-            onClick={checkQz}
-            className="text-[10.5px] text-slate-500 hover:text-slate-800 underline flex items-center gap-0.5 cursor-pointer ml-2 shrink-0 font-medium"
-            title="Check if QZ Tray app was started"
-          >
-            <RefreshCw className="h-2.5 w-2.5" /> Recheck QZ
-          </button>
-        )}
-      </div>
 
       {/* Action Buttons Toolbar */}
       <div className="mt-3 flex items-center gap-2 print:hidden">

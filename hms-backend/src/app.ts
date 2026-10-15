@@ -31,6 +31,8 @@ import cashRoutes from '@/modules/cash/cash.routes';
 import reportsRoutes from '@/modules/reports/reports.routes';
 import expensesRoutes from '@/modules/expenses/expenses.routes';
 import notificationsRoutes from '@/modules/notifications/notifications.routes';
+import deviceRoutes from '@/modules/devices/devices.routes';
+import { devicesController } from '@/modules/devices/devices.controller';
 import { setupController } from '@/modules/setup/setup.controller';
 import { asyncHandler } from '@/shared/asyncHandler';
 
@@ -70,6 +72,8 @@ export function createApp() {
   app.use('/api/v1/health', healthRoutes);
   app.use('/api/v1/auth', authRoutes);
   app.get('/api/v1/public/hospital-profile', asyncHandler(setupController.getHospitalPublicProfile));
+  // Biometric terminal cloud-push endpoint (HTTP ADMS / HTTPS Direct Push)
+  app.post('/api/v1/attendance/punch-ingest', asyncHandler(devicesController.ingestPunches));
 
   // Everything from here on requires a valid access token; mutating verbs
   // are captured to `audit_logs` (§7.14).
@@ -83,6 +87,7 @@ export function createApp() {
   app.use('/api/v1/encounters', encountersRouter);
   app.use('/api/v1/invoices', invoicesRouter);
   app.use('/api/v1/attendance', attendanceRoutes);
+  app.use('/api/v1/devices', deviceRoutes);
   app.use('/api/v1/payroll', payrollRoutes);
   app.use('/api/v1/commission', commissionRoutes);
   app.use('/api/v1/admissions', admissionRoutes);

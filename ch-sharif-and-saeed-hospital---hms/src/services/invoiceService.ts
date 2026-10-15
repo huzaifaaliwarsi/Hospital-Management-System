@@ -94,6 +94,8 @@ export interface InvoiceDetail extends InvoiceSummary {
   admissionEstimatedAmount?: number | null;
   wardName?: string;
   bedNumber?: string;
+  patientWeight?: number | string;
+  weightKg?: number | string;
 }
 
 function formatTimestamp(iso?: string | null): string {
@@ -203,6 +205,12 @@ function toInvoiceDetail(raw: Record<string, any>): InvoiceDetail {
     advancePaid: (raw.paymentReceipts || []).filter((r: any) => r.admissionRecordId && !r.admissionPaymentRequestId && !r.isReversed && Number(r.amount) > 0).reduce((sum: number, r: any) => sum + Number(r.amount), 0),
     wardName: raw.admissionRecord?.bed?.room?.ward?.name || undefined,
     bedNumber: raw.admissionRecord?.bed?.bedNumber || undefined,
+    patientWeight: raw.admissionRecord?.weightKg ?? raw.weightKg ?? raw.weight ?? raw.selfPayEncounter?.weightKg ?? (() => {
+      const allNotes = String(raw.notes || raw.admissionRecord?.notes || raw.appointment?.notes || '');
+      const m = allNotes.match(/weight[:\s]+([0-9]+(?:\.[0-9]+)?(?:\s*kg)?)/i);
+      return m ? m[1] : undefined;
+    })(),
+    weightKg: raw.admissionRecord?.weightKg ?? raw.weightKg ?? raw.weight ?? undefined,
     lines: (raw.lines || []).filter((l: any) => raw.sourceType !== 'ADMISSION' || l.serviceRate?.code !== 'ADM-ADVANCE').map((l: any) => ({
       id: l.id,
       serviceName: l.descriptionSnapshot || formatServiceName(l.serviceRate?.name || '') || l.billingSource,
