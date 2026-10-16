@@ -1,0 +1,14 @@
+import { Router } from 'express';
+import { asyncHandler } from '@/shared/asyncHandler';
+import { authorize } from '@/middleware/authorize';
+import { devicesController as c } from './devices.controller';
+const router = Router();
+router.get('/biometric', authorize('attendance', 'view'), asyncHandler(c.getOverview));
+router.put('/biometric', authorize('attendance', 'config'), asyncHandler(c.upsertDevice));
+router.post('/biometric', authorize('attendance', 'config'), asyncHandler(c.upsertDevice));
+router.get('/biometric/mappings', authorize('attendance', 'view'), asyncHandler(c.listMappings));
+router.post('/biometric/mappings', authorize('attendance', 'config'), asyncHandler(c.createMapping));
+router.delete('/biometric/mappings/:id', authorize('attendance', 'config'), asyncHandler(c.deleteMapping));
+router.get('/biometric/unmapped-punches', authorize('attendance', 'view'), asyncHandler(c.getUnmappedPunches));
+router.post('/biometric/reprocess', authorize('attendance', 'config'), asyncHandler(c.reprocess));
+export default router;

@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "buildCommand": "npm run vercel-build",
+  "functions": {
+    "api/index.js": {
+      "includeFiles": "dist/**",
+      "maxDuration": 300
+    }
+  },
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/api/index.js"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/ipd-room-charges",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/biometric-reprocess",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}
