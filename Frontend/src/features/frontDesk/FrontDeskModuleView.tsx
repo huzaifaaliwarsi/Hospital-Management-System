@@ -32,22 +32,7 @@ interface FrontDeskModuleViewProps {
 }
 
 /**
- * Front Desk portal dispatcher — mirrors `SuperAdminModuleView`'s pattern:
- * real, DB-backed pages first, falling back to `ModulePlaceholderView`
- * (100% hardcoded mock data) for modules not yet wired.
- *
- * `payments_receipts` / `discounts` / `refunds` all point at the same
- * `HospitalInvoicesView` + its `InvoiceDetailModal` — a deliberate
- * consolidation (those actions live per-invoice, not as separate global
- * lists) rather than four near-duplicate pages. Each passes its own
- * `recordFilter` so the list itself only shows invoices that actually have
- * a payment / discount / refund on them (server-side, via `GET /invoices?
- * hasPayment|hasDiscount|hasRefund=true` — see `invoices.service.ts`), not
- * every invoice in the ledger. `panel_billing` follows the
- * same idea: Panel Verification, Contract Resolution, Interim Statement and
- * Remittance all live as tabs on one `PanelBillingView`. Every Front Desk
- * nav item is now real — see HMS_V7.2_NEW_REQUIREMENTS.md's progress log
- * for the build history.
+ * Front Desk portal route dispatcher.
  */
 export const FrontDeskModuleView: React.FC<FrontDeskModuleViewProps> = ({ moduleId, moduleName, groupTitle }) => {
   switch (moduleId) {

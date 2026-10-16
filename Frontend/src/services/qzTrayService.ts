@@ -176,16 +176,54 @@ export function buildEscPosReceiptCommands(
   out += padRow('Encounter:', data.encounterType);
   out += LINE_SEPARATOR;
 
-  // Charges
-  out += padRow('Fees', `PKR ${(data.fees || 0).toLocaleString()}`);
-  out += padRow('Others', `PKR ${(data.others || 0).toLocaleString()}`);
+  // Section 3: Services & Charges (Dynamic Encounter Ledger)
+  out += BOLD_ON + 'SERVICES & CHARGES\n' + BOLD_OFF;
+  out += 'SERVICE                       QTY   AMOUNT\n';
   out += LINE_SEPARATOR;
 
-  // Financial summary
+  if (data.lines && data.lines.length > 0) {
+    for (const item of data.lines) {
+      const srvName = item.serviceName.length > 26 ? item.serviceName.slice(0, 24) + '..' : item.serviceName;
+      const qtyStr = String(item.quantity);
+      const amtStr = (item.netAmount || 0).toLocaleString();
+      const leftPart = srvName.padEnd(27, ' ');
+      const qtyPart = qtyStr.padStart(4, ' ');
+      const amtPart = amtStr.padStart(11, ' ');
+      out += leftPart + qtyPart + amtPart + '\n';
+      if (item.quantity > 1) {
+        out += `  (${item.quantity} x @ ${(item.unitRate || 0).toLocaleString()})\n`;
+      }
+      if (item.discountAmount && item.discountAmount > 0) {
+        out += `  (Disc: -${item.discountAmount.toLocaleString()})\n`;
+      }
+    }
+  } else {
+    out += padRow(data.serviceName || 'Consultation / Encounter Fee', (data.total || 0).toLocaleString());
+  }
+  out += LINE_SEPARATOR;
+
+  // Financial summary & Settlement
+  if (data.totalDiscount && data.totalDiscount > 0) {
+    out += padRow('Subtotal:', `PKR ${(data.subtotal || data.total + data.totalDiscount).toLocaleString()}`);
+    out += padRow('Discount:', `-PKR ${data.totalDiscount.toLocaleString()}`);
+  }
   out += BOLD_ON;
-  out += padRow('TOTAL', `PKR ${(data.total || 0).toLocaleString()}`);
-  out += padRow('PAID', `PKR ${(data.paid ?? data.receivedNow ?? 0).toLocaleString()}`);
-  out += padRow('OUTSTANDING', `PKR ${(data.outstanding || 0).toLocaleString()}`);
+  out += padRow('NET TOTAL:', `PKR ${(data.netTotal || data.total || 0).toLocaleString()}`);
+  out += BOLD_OFF;
+  if (data.previouslyPaid && data.previouslyPaid > 0) {
+    out += padRow('Previously Paid:', `PKR ${data.previouslyPaid.toLocaleString()}`);
+  }
+  out += BOLD_ON;
+  out += padRow('RECEIVED NOW:', `PKR ${(data.receivedNow || 0).toLocaleString()}`);
+  out += BOLD_OFF;
+  if (data.paid > data.receivedNow) {
+    out += padRow('Total Paid:', `PKR ${data.paid.toLocaleString()}`);
+  }
+  out += BOLD_ON;
+  out += padRow('OUTSTANDING:', `PKR ${(data.outstanding || 0).toLocaleString()}`);
+  if (data.advanceCredit && data.advanceCredit > 0) {
+    out += padRow('EXCESS / ADVANCE:', `PKR ${data.advanceCredit.toLocaleString()}`);
+  }
   out += BOLD_OFF;
   out += LINE_SEPARATOR;
 

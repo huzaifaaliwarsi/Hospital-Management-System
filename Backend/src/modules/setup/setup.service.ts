@@ -161,15 +161,19 @@ export const setupService = {
         name: 'CH Sharif and Saeed Hospital',
         shortName: 'CSS Hospital',
         logo: null,
+        primaryPhone: '',
+        address: '',
       };
     }
     const extended = (existing.extendedProfile as Record<string, unknown>) ?? {};
+    const address = existing.address || [extended.addressLine1, extended.city, extended.province].filter(Boolean).join(', ') || '';
+    const phone = existing.contactPhone || (extended.primaryPhone as string) || '';
     return {
       name: existing.name || (extended.name as string) || 'CH Sharif and Saeed Hospital',
       shortName: (extended.shortName as string) || 'CSS Hospital',
       logo: existing.logoUrl ?? null,
-      primaryPhone: existing.contactPhone || '',
-      address: existing.address || '',
+      primaryPhone: phone,
+      address: address,
     };
   },
 
@@ -405,7 +409,9 @@ export const setupService = {
 
   async deactivateDepartment(id: string, updatedById: string) {
     const existing = await this.assertExists('department', id);
-    if ((existing as any).isDefaultPharmacy) throw new ValidationError('Default Pharmacy department cannot be deactivated');
+    if ((existing as any).isDefaultPharmacy || (existing as any).departmentType === 'PHARMACY' || (existing as any).code === 'DEP-0004' || (existing as any).name?.toLowerCase() === 'pharmacy') {
+      throw new ValidationError('Default Pharmacy department cannot be deactivated');
+    }
     const updated = await prisma.department.update({
       where: { id },
       data: {
@@ -421,7 +427,9 @@ export const setupService = {
 
   async deleteDepartment(id: string) {
     const dept = (await this.assertExists('department', id)) as any;
-    if (dept.isDefaultPharmacy) throw new ValidationError('Default Pharmacy department cannot be deleted');
+    if (dept.isDefaultPharmacy || dept.departmentType === 'PHARMACY' || dept.code === 'DEP-0004' || dept.name?.toLowerCase() === 'pharmacy') {
+      throw new ValidationError('Default Pharmacy department cannot be deleted');
+    }
 
     const [staffCount, wardCount, apptCount, admCount, rateCount] = await Promise.all([
       prisma.staff.count({ where: { departmentId: id } }),
@@ -814,9 +822,6 @@ export const setupService = {
         id: true,
         bedId: true,
         admittedAt: true,
-        // Self-pay encounters are per-visit and have no permanent MRN by
-        // design (panel.md §4.6/§17) — patientMrNumber stays undefined for
-        // those, which is correct, not a gap.
         panelPatient: { select: { fullName: true, mrNumber: true } },
         selfPayEncounter: { select: { fullName: true } },
         doctor: { select: { fullName: true } },

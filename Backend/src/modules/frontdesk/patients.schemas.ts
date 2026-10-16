@@ -19,10 +19,7 @@ const phoneSchema = z.string().transform((val, ctx) => {
   return normalized;
 });
 
-// panel.md §17 backlog item 3 — the full identity-matching surface a
-// duplicate check must cover (§4.4): MRN, external member ID, CNIC/B-Form,
-// phone, and name + DOB. Every field optional/independent so a caller can
-// probe with whatever the form currently has filled in.
+// Duplicate check query schema
 export const checkDuplicateQuerySchema = z
   .object({
     cnic: z.string().optional(),

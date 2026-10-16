@@ -32,7 +32,7 @@ import { useToast } from '../../context/ToastContext';
 import { formatPKR } from '../../utils/formatters';
 import { Modal } from '../../components/common/Modal';
 import { ConfirmModal } from '../../components/common/ConfirmModal';
-import { TextInput, NumberInput, Select } from '../../components/forms/FormControls';
+import { TextInput, NumberInput, Select, PhoneInput } from '../../components/forms/FormControls';
 import { ImportExcelModal } from '../../components/tables/ImportExcelModal';
 import { ExportMenu } from '../../components/tables/ExportMenu';
 import { SuperAdminHospitalOverview } from './SuperAdminHospitalOverview';
@@ -1948,9 +1948,9 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
               required
             />
             <div className="grid grid-cols-2 gap-3">
-              <TextInput
+              <PhoneInput
                 label="Mobile Phone"
-                placeholder="0300 1234567"
+                placeholder="0300-1234567"
                 value={adminForm.phone}
                 onChange={(e) => setAdminForm({ ...adminForm, phone: e.target.value })}
                 required
@@ -2025,9 +2025,9 @@ export const SuperAdminModuleView: React.FC<SuperAdminModuleViewProps> = ({
                 onChange={(e) => setStaffForm({ ...staffForm, username: e.target.value })}
                 required
               />
-              <TextInput
+              <PhoneInput
                 label="Contact Phone"
-                placeholder="0321 5554433"
+                placeholder="0321-5554433"
                 value={staffForm.phone}
                 onChange={(e) => setStaffForm({ ...staffForm, phone: e.target.value })}
                 required

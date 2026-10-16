@@ -40,7 +40,7 @@ import { Department } from '../../../types/department';
 import { HospitalService } from '../../../types/serviceRates';
 import { Shift } from '../../../types/shift';
 import { StaffUserService, StaffWizardChanges } from '../../../services/staffUserService';
-import { formatCnicInput, formatPKR } from '../../../utils/formatters';
+import { formatCnicInput, formatPhoneInput, formatPKR } from '../../../utils/formatters';
 import { useToast } from '../../../context/ToastContext';
 
 interface StaffUserModalProps {
@@ -503,10 +503,10 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
             <input type="date" lang="en-GB" className={inputCls(errors.dateOfBirth)} value={formData.dateOfBirth} onChange={(e) => set({ dateOfBirth: e.target.value })} />
           </Field>
           <Field label="Mobile Number" required error={errors.phone}>
-            <input className={inputCls(errors.phone)} placeholder="0300-1234567" value={formData.phone} onChange={(e) => set({ phone: e.target.value })} />
+            <input className={inputCls(errors.phone)} maxLength={12} placeholder="0300-1234567" value={formData.phone} onChange={(e) => set({ phone: formatPhoneInput(e.target.value) })} />
           </Field>
           <Field label="Alternate Mobile">
-            <input className={inputCls()} value={formData.alternatePhone} onChange={(e) => set({ alternatePhone: e.target.value })} />
+            <input className={inputCls()} maxLength={12} placeholder="0300-1234567" value={formData.alternatePhone} onChange={(e) => set({ alternatePhone: formatPhoneInput(e.target.value) })} />
           </Field>
           <Field label="Email" error={errors.email} className="lg:col-span-2">
             <input type="email" className={inputCls(errors.email)} value={formData.email} onChange={(e) => set({ email: e.target.value })} />

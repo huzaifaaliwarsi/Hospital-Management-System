@@ -37,18 +37,7 @@ import { generateMrNumber } from '@/shared/idGenerator';
  */
 export const patientsService = {
   /**
-   * Checks both identity tables — a self-pay visitor may already have a
-   * matching CNIC/phone from a prior encounter or an existing panel
-   * record, which front desk staff should be shown before registering a
-   * new one. Server-side and authoritative (panel.md §17 backlog item 3):
-   * the frontend previously ran this scan itself over a client-side
-   * page-200 cache, silently missing anything registered beyond that
-   * window or by another session. Tiered like a credit check, most
-   * certain first — MRN, external member ID and CNIC are hard identity
-   * anchors (STRONG_EXACT); name+DOB is a strong but not certain match
-   * (HIGH_WARNING); a shared phone or bare name alone is a likely-match
-   * signal for a dependent/family member, not necessarily the same person
-   * (WEAK_WARNING, per §4.4) — so it warns rather than blocks.
+   * Checks both identity tables for duplicate CNIC, phone, MRN, or member ID.
    */
   async checkDuplicate(query: CheckDuplicateQuery) {
     const cnic = query.cnic ? normalizeCnic(query.cnic) : undefined;
@@ -210,16 +199,7 @@ export const patientsService = {
       const existing = await tx.panelPatient.findUnique({ where: { id }, include: { corporatePanel: true } });
       if (!existing) throw new NotFoundError('Panel patient not found');
 
-      // Controlled company transfer (panel.md §14 backlog item 1): now safe
-      // because every HospitalInvoice freezes its own corporatePanelId at
-      // posting time — an old receivable stays on the books of the company
-      // that was actually billed, so moving the patient's live membership
-      // forward can no longer misattribute or hide past debt. The new
-      // company must be active and satisfy its own membership requirements;
-      // the transfer itself is recorded as an ordinary membership-history
-      // revision below (the snapshot already carries corporatePanelId), plus
-      // an explicit marker so the audit trail reads as a transfer, not a
-      // same-company edit.
+      // Validate and handle company transfer if panel ID changed
       const isCompanyTransfer = body.corporatePanelId !== undefined && body.corporatePanelId !== existing.corporatePanelId;
       let targetCompany = existing.corporatePanel;
       if (isCompanyTransfer) {

@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { cn, formatCnicInput } from '../../utils/formatters';
-export { formatCnicInput };
-import { Calendar, ChevronDown, Check, UploadCloud, X, Search, FileText, Clock } from 'lucide-react';
+import { cn, formatCnicInput, formatPhoneInput, isValidPhoneInput } from '../../utils/formatters';
+export { formatCnicInput, formatPhoneInput, isValidPhoneInput };
+import { Calendar, ChevronDown, Check, UploadCloud, X, Search, FileText, Clock, Phone } from 'lucide-react';
+import { focusNextField, focusNextFieldOnEnter } from '../../utils/formNavigation';
 
 export interface BaseInputProps {
   label?: string;
@@ -313,33 +314,6 @@ export const CurrencyInput: React.FC<CurrencyInputProps> = ({
   );
 };
 
-// 4. Phone Input (+92 format)
-export interface PhoneInputProps extends React.InputHTMLAttributes<HTMLInputElement>, BaseInputProps {}
-
-export const PhoneInput: React.FC<PhoneInputProps> = ({
-  label,
-  error,
-  hint,
-  required,
-  className,
-  id,
-  ...props
-}) => {
-  return (
-    <TextInput
-      type="tel"
-      label={label}
-      error={error}
-      hint={hint || 'Format: 0300 1234567'}
-      required={required}
-      className={className}
-      id={id}
-      icon={<span className="text-xs font-bold text-slate-500">+92</span>}
-      placeholder="300 1234567"
-      {...props}
-    />
-  );
-};
 
 // 4b. CNIC Input (Auto XXXXX-XXXXXXX-X formatting)
 export interface CNICInputProps extends Omit<TextInputProps, 'onChange'> {
@@ -377,6 +351,48 @@ export const CNICInput: React.FC<CNICInputProps> = ({
       value={value}
       onChange={handleChange}
       maxLength={maxLength}
+      {...props}
+    />
+  );
+};
+
+// 4b. Phone Input (Pakistani 11-digit mobile: 03XX-XXXXXXX with auto-formatting & strict 11-digit max length)
+export interface PhoneInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'onChange'>, BaseInputProps {
+  value?: string;
+  onChange?: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onValueChange?: (value: string) => void;
+}
+
+export const PhoneInput: React.FC<PhoneInputProps> = ({
+  value,
+  onChange,
+  onValueChange,
+  label = 'Phone Number',
+  placeholder = '0300-1234567',
+  hint,
+  maxLength = 12, // 11 digits + 1 dash
+  ...props
+}) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const formatted = formatPhoneInput(e.target.value);
+    e.target.value = formatted;
+    if (onChange) {
+      onChange(e);
+    }
+    if (onValueChange) {
+      onValueChange(formatted);
+    }
+  };
+
+  return (
+    <TextInput
+      label={label}
+      placeholder={placeholder}
+      hint={hint}
+      value={value}
+      onChange={handleChange}
+      maxLength={maxLength}
+      icon={<Phone className="h-4 w-4" />}
       {...props}
     />
   );
@@ -643,10 +659,24 @@ export const Select: React.FC<SelectProps> = ({
   id,
   placeholder = 'Select option...',
   disabled,
+  onKeyDown,
   ...props
 }) => {
   const selectId = id || (label ? label.toLowerCase().replace(/\s+/g, '-') : undefined);
   const hasEmptyOption = options.some((opt) => opt.value === '');
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLSelectElement>) => {
+    if (e.key === 'Escape') {
+      (e.currentTarget as any)._pickerOpen = false;
+    }
+    if (onKeyDown) {
+      onKeyDown(e);
+      return;
+    }
+    const container = e.currentTarget.closest('form') || e.currentTarget.closest('[data-form-container]') || e.currentTarget.closest('.space-y-4');
+    focusNextFieldOnEnter(e, container as HTMLElement);
+  };
+
   return (
     <div className={cn('w-full flex flex-col gap-1', className)}>
       {label && (
@@ -658,6 +688,11 @@ export const Select: React.FC<SelectProps> = ({
         <select
           id={selectId}
           disabled={disabled}
+          onKeyDown={handleKeyDown}
+          onBlur={(e) => {
+            (e.currentTarget as any)._pickerOpen = false;
+            props.onBlur?.(e);
+          }}
           className={cn(
             'w-full appearance-none rounded-lg border bg-white px-3 py-2 pr-8 text-xs text-slate-900 transition-colors',
             'focus:outline-hidden focus:ring-2 focus:ring-[#129b70]/20 focus:border-[#129b70]',

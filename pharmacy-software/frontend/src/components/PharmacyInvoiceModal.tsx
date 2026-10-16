@@ -21,6 +21,12 @@ import { pharmacyApi } from '../services/pharmacyApi';
 import apiClient from '../services/apiClient';
 import { useToast } from '../context/ToastContext';
 
+import {
+  PharmacyThermalReceipt,
+  buildPharmacyThermalReceiptData,
+  printPharmacyThermalReceipt,
+} from './PharmacyThermalReceipt';
+
 interface PharmacyInvoiceModalProps {
   invoice: any;
   onClose: () => void;
@@ -54,20 +60,50 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
   const [returnReason, setReturnReason] = useState('');
   const [returning, setReturning] = useState(false);
   const [hospitalLogo, setHospitalLogo] = useState<string | null>(null);
+  const [hospitalProfile, setHospitalProfile] = useState<any>(null);
+  const [pharmacySettings, setPharmacySettings] = useState<any>(null);
 
   React.useEffect(() => {
     fetch('http://localhost:4000/api/v1/public/hospital-profile')
       .then((r) => r.json())
       .then((data) => {
-        if (data?.data?.logo) {
-          setHospitalLogo(data.data.logo);
+        if (data?.data) {
+          setHospitalProfile(data.data);
+          if (data.data.logo) {
+            setHospitalLogo(data.data.logo);
+          }
         }
       })
       .catch(() => {});
-  }, []);
+
+    pharmacyApi
+      .getPharmacySettings()
+      .then((s) => setPharmacySettings(s))
+      .catch(() => {});
+
+    if (initialInvoice?.id) {
+      pharmacyApi
+        .getInvoiceById(initialInvoice.id)
+        .then((fresh) => {
+          if (fresh) setInvoice(fresh);
+        })
+        .catch(() => {});
+    }
+  }, [initialInvoice?.id]);
+
+  const thermalData = buildPharmacyThermalReceiptData(
+    invoice,
+    pharmacySettings,
+    hospitalProfile,
+    { isReprint: false }
+  );
 
   const handlePrint = () => {
-    window.print();
+    if (viewMode === 'thermal') {
+      printPharmacyThermalReceipt(thermalData);
+    } else {
+      window.print();
+    }
   };
 
   const handleAddPayment = async () => {
@@ -281,192 +317,22 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
 
         {/* Scrollable Modal Content */}
         <div className="flex-1 overflow-y-auto p-5 sm:p-6 bg-slate-100/60 flex justify-center print:p-0 print:bg-white print:overflow-visible">
-          {/* Printable Invoice Container */}
-          <div
-            id="pharmacy-printable-invoice"
-            className={`bg-white shadow-sm border border-slate-200 print:shadow-none print:border-none w-full transition-all ${
-              viewMode === 'thermal'
-                ? 'max-w-[380px] p-5 font-mono text-[12px] text-slate-900 leading-tight'
-                : 'max-w-2xl p-7 text-xs text-slate-800'
-            }`}
-          >
-            {/* ═════════════════════════════════════════════════════════════
-                THERMAL SLIP VIEW (80mm standard receipt)
-                ═════════════════════════════════════════════════════════════ */}
-            {viewMode === 'thermal' ? (
-              <div className="space-y-3">
-                {/* Hospital Header */}
-                <div className="text-center space-y-1">
-                  {hospitalLogo && (
-                    <img
-                      src={hospitalLogo}
-                      alt="Hospital Logo"
-                      className="h-10 w-10 object-contain mx-auto mb-1 rounded"
-                    />
-                  )}
-                  <div className="font-extrabold text-[15px] tracking-wide uppercase text-slate-950">
-                    CH SHARIF &amp; SAEED HOSPITAL
-                  </div>
-                  <div className="font-bold text-[12px] tracking-wider text-emerald-800 uppercase">
-                    CENTRAL PHARMACY &amp; DISPENSARY
-                  </div>
-                  <div className="text-[10px] text-slate-600">
-                    Main Boulevard, Near Jail Road · 24/7 Service
-                  </div>
-                  <div className="text-[10px] text-slate-600">
-                    UAN: +92 42 111-467-748 · DL #: DL-2026-CHSS
-                  </div>
-                </div>
+          {viewMode === 'thermal' && (
+            <PharmacyThermalReceipt
+              receipt={thermalData}
+              onPrint={() => printPharmacyThermalReceipt(thermalData)}
+              onClose={onClose}
+            />
+          )}
 
-                <div className="border-t border-dashed border-slate-400 my-2" />
-
-                {/* Receipt Metadata */}
-                <div className="text-[11px] space-y-0.5">
-                  <div className="flex justify-between">
-                    <span className="text-slate-600">INVOICE #:</span>
-                    <span className="font-bold text-slate-950">{invoice.invoiceNumber}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-600">DATE &amp; TIME:</span>
-                    <span className="font-semibold text-slate-800">{formatDateTime(invoice.createdAt)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-600">CUSTOMER:</span>
-                    <span className="font-semibold text-slate-900">{invoice.customerName || 'Walk-In Customer'}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-600">DISPENSED BY:</span>
-                    <span className="font-semibold text-slate-800">
-                      {invoice.dispensedByUser?.fullName || invoice.dispensedByUser?.username || 'Staff Pharmacist'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-600">CHANNEL:</span>
-                    <span className="font-semibold text-slate-800">
-                      {invoice.channel === 'HMS_LINKED' ? 'HMS Inpatient' : 'Retail POS'}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="border-t border-dashed border-slate-400 my-2" />
-
-                {/* Table Header */}
-                <div className="grid grid-cols-12 text-[10px] font-bold text-slate-700 uppercase pb-1 border-b border-slate-300">
-                  <div className="col-span-6 text-left">ITEM / MEDICINE</div>
-                  <div className="col-span-2 text-center">QTY</div>
-                  <div className="col-span-2 text-right">RATE</div>
-                  <div className="col-span-2 text-right">NET</div>
-                </div>
-
-                {/* Table Lines */}
-                <div className="space-y-1.5 py-1 text-[11px]">
-                  {invoice.lines?.map((line: any, idx: number) => {
-                    const medicineName = line.medicine?.name || 'Medicine Item';
-                    const batchNo = line.batch?.batchNumber;
-                    // medicine-packaging-plan — show what was actually sold (e.g. "2 Strip") when recorded, else the base quantity.
-                    const displayQty = line.saleUnitQuantity != null ? Number(line.saleUnitQuantity) : Number(line.quantity || 0);
-                    const displayUnit = line.saleUnit?.name || '';
-                    const rate = Number(line.rateSnapshot || 0);
-                    const net = Number(line.lineNet || 0);
-
-                    return (
-                      <div key={line.id || idx} className="space-y-0.5">
-                        <div className="grid grid-cols-12 items-baseline">
-                          <div className="col-span-6 font-semibold text-slate-950 truncate pr-1">
-                            {medicineName}
-                          </div>
-                          <div className="col-span-2 text-center tabular-nums">{formatNumber(displayQty)}{displayUnit ? ` ${displayUnit}` : ''}</div>
-                          <div className="col-span-2 text-right tabular-nums text-slate-700">{formatNumber(rate)}</div>
-                          <div className="col-span-2 text-right font-bold tabular-nums text-slate-950">
-                            {formatNumber(net)}
-                          </div>
-                        </div>
-                        {batchNo && (
-                          <div className="text-[9px] text-slate-500 pl-1">
-                            Batch: {batchNo} {line.batch?.expiryDate ? `· Exp: ${new Date(line.batch.expiryDate).toLocaleDateString('en-GB')}` : ''}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div className="border-t border-dashed border-slate-400 my-2" />
-
-                {/* Financial Summary */}
-                <div className="space-y-1 text-[11px]">
-                  <div className="flex justify-between">
-                    <span className="text-slate-600">Subtotal:</span>
-                    <span className="tabular-nums font-semibold">{formatPKR(invoice.subtotal)}</span>
-                  </div>
-                  {Number(invoice.discountTotal) > 0 && (
-                    <div className="flex justify-between text-emerald-800">
-                      <span>Discount:</span>
-                      <span className="tabular-nums font-semibold">- {formatPKR(invoice.discountTotal)}</span>
-                    </div>
-                  )}
-                  {Number(invoice.taxTotal) > 0 && (
-                    <div className="flex justify-between text-slate-600">
-                      <span>Tax / GST:</span>
-                      <span className="tabular-nums font-semibold">+ {formatPKR(invoice.taxTotal)}</span>
-                    </div>
-                  )}
-                  <div className="border-t border-slate-300 pt-1 flex justify-between font-extrabold text-[13px] text-slate-950">
-                    <span>NET PAYABLE:</span>
-                    <span className="tabular-nums">{formatPKR(invoice.total)}</span>
-                  </div>
-                  <div className="flex justify-between font-semibold text-emerald-800">
-                    <span>Amount Paid:</span>
-                    <span className="tabular-nums">{formatPKR(invoice.paidTotal)}</span>
-                  </div>
-                  {Number(invoice.outstanding) > 0 ? (
-                    <div className="flex justify-between font-bold text-rose-700">
-                      <span>BALANCE DUE:</span>
-                      <span className="tabular-nums">{formatPKR(invoice.outstanding)}</span>
-                    </div>
-                  ) : (
-                    <div className="flex justify-between font-bold text-emerald-700">
-                      <span>BALANCE DUE:</span>
-                      <span className="tabular-nums">PKR 0 (CLEARED)</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Payments Section */}
-                {invoice.payments?.length > 0 && (
-                  <div className="border-t border-dashed border-slate-400 pt-1.5 space-y-0.5 text-[10px]">
-                    <div className="font-bold text-slate-700 uppercase">Payment Modes:</div>
-                    {invoice.payments.map((p: any) => (
-                      <div key={p.id} className="flex justify-between text-slate-700">
-                        <span>
-                          {p.method} {p.collectedByUser?.fullName ? `(${p.collectedByUser.fullName})` : ''}
-                        </span>
-                        <span className="tabular-nums font-semibold">{formatPKR(p.amount)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <div className="border-t border-dashed border-slate-400 my-2" />
-
-                {/* Footer & Return Policy */}
-                <div className="text-center space-y-1 text-[10px] text-slate-600">
-                  <div className="font-bold uppercase tracking-wider text-slate-800">
-                    *** THANK YOU FOR VISITING ***
-                  </div>
-                  <p className="leading-snug">
-                    Medicines once sold can only be returned within 3 days with this original receipt.
-                    Fridge &amp; cold-chain items are strictly non-returnable.
-                  </p>
-                  <div className="pt-2 font-mono text-[9px] tracking-widest text-slate-400">
-                    ||||| | ||||| || |||||| | ||||| ||||
-                  </div>
-                </div>
-              </div>
-            ) : (
-              /* ═════════════════════════════════════════════════════════════
+          {viewMode === 'tax_invoice' && (
+            <div
+              id="pharmacy-printable-invoice"
+              className="bg-white shadow-sm border border-slate-200 print:shadow-none print:border-none w-full transition-all max-w-2xl p-7 text-xs text-slate-800"
+            >
+              {/* ═════════════════════════════════════════════════════════════
                  STANDARD TAX INVOICE VIEW (A4 Medical Bill)
-                 ═════════════════════════════════════════════════════════════ */
+                 ═════════════════════════════════════════════════════════════ */}
               <div className="space-y-6">
                 {/* Header Banner */}
                 <div className="flex items-start justify-between pb-4 border-b-2 border-emerald-800">
@@ -484,17 +350,17 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
                         </div>
                       )}
                       <h1 className="text-lg font-black tracking-tight text-slate-900 uppercase">
-                        CH Sharif &amp; Saeed Hospital
+                        {pharmacySettings?.receiptHeaderText || hospitalProfile?.name || 'CH Sharif & Saeed Hospital'}
                       </h1>
                     </div>
                     <p className="text-xs font-semibold text-emerald-800 uppercase tracking-wide">
                       Central Pharmacy &amp; Retail Dispensary
                     </p>
                     <p className="text-[11px] text-slate-500">
-                      Main Boulevard, Near Jail Road · 24/7 Pharmacy Care
+                      {hospitalProfile?.address || 'Main Boulevard, Near Jail Road · 24/7 Pharmacy Care'}
                     </p>
                     <p className="text-[11px] text-slate-500">
-                      UAN: +92 42 111-467-748 · Drug License: DL-2026-CHSS · NTN: 8291048-2
+                      {hospitalProfile?.primaryPhone ? `Phone: ${hospitalProfile.primaryPhone}` : 'UAN: +92 42 111-467-748'}
                     </p>
                   </div>
 
@@ -668,12 +534,17 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
                   </div>
                 </div>
               </div>
-            )}
+            </div>
+          )}
 
-            {/* ═════════════════════════════════════════════════════════════
-               HMS-LINKED INPATIENT DISPENSE DETAILS (§15)
-               ═════════════════════════════════════════════════════════════ */}
-            {viewMode === 'hms_details' && (
+          {/* ═════════════════════════════════════════════════════════════
+             HMS-LINKED INPATIENT DISPENSE DETAILS (§15)
+             ═════════════════════════════════════════════════════════════ */}
+          {viewMode === 'hms_details' && (
+            <div
+              id="pharmacy-printable-invoice"
+              className="bg-white shadow-sm border border-slate-200 print:shadow-none print:border-none w-full transition-all max-w-4xl p-7 text-xs text-slate-800"
+            >
               <div className="space-y-5">
                 {/* Header Information Bar */}
                 <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-emerald-50/60 rounded-xl border border-emerald-200">
@@ -892,8 +763,8 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
                   </div>
                 )}
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
         {/* In-Modal Add Payment Section */}

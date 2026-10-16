@@ -11,6 +11,8 @@ export type GuardianRelation =
   | 'Daughter'
   | 'Relative'
   | 'Guardian'
+  | 'Himself'
+  | 'Herself'
   | 'Other';
 
 export const PATIENT_GENDERS: PatientGender[] = ['Male', 'Female', 'Other / Not Specified'];
@@ -26,6 +28,8 @@ export const GUARDIAN_RELATIONS: GuardianRelation[] = [
   'Daughter',
   'Relative',
   'Guardian',
+  'Himself',
+  'Herself',
   'Other',
 ];
 

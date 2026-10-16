@@ -52,7 +52,7 @@ import { fetchServices } from '../../../services/serviceRatesService';
 import { fetchDepartments, DepartmentService } from '../../../services/departmentService';
 import { Department } from '../../../types/department';
 import { HospitalService } from '../../../types/serviceRates';
-import { TextInput, Select, Textarea, CNICInput, MultiSelect, ServiceChecklist, NumberInput } from '../../../components/forms/FormControls';
+import { TextInput, Select, Textarea, CNICInput, PhoneInput, MultiSelect, ServiceChecklist, NumberInput } from '../../../components/forms/FormControls';
 import { formatPKR } from '../../../utils/formatters';
 import { focusNextField, focusNextFieldOnEnter } from '../../../utils/formNavigation';
 import { useToast } from '../../../context/ToastContext';
@@ -151,7 +151,7 @@ export const WalkInIntakeView: React.FC = () => {
   // Patient Registration Inline Fields (Always New Registration)
   const [fullName, setFullName] = useState('');
   const [fatherGuardianName, setFatherGuardianName] = useState('');
-  const [guardianRelation, setGuardianRelation] = useState<GuardianRelation>('Father');
+  const [guardianRelation, setGuardianRelation] = useState<GuardianRelation | ''>('');
   const [primaryPhone, setPrimaryPhone] = useState('');
   const [age, setAge] = useState('');
   const [gender, setGender] = useState<PatientGender>('Male');
@@ -174,7 +174,7 @@ export const WalkInIntakeView: React.FC = () => {
   const handleUseExistingPatient = (match: PanelPatientSearchResult) => {
     setFullName(match.fullName.toUpperCase());
     setFatherGuardianName((match.guardianName || '').toUpperCase());
-    setGuardianRelation((match.guardianRelation as GuardianRelation) || 'Father');
+    setGuardianRelation((match.guardianRelation as GuardianRelation) || '');
     setPrimaryPhone(match.phone || '');
     if (match.dob) {
       const ageNum = calculateAgeFromDob(match.dob);
@@ -192,7 +192,7 @@ export const WalkInIntakeView: React.FC = () => {
     setSelectedExistingPatient(null);
     setFullName('');
     setFatherGuardianName('');
-    setGuardianRelation('Father');
+    setGuardianRelation('');
     setPrimaryPhone('');
     setAge('');
     setGender('Male');
@@ -281,20 +281,7 @@ export const WalkInIntakeView: React.FC = () => {
   // doctor (native browser behavior once the popup is open) and onChange
   // below advances focus to the next field automatically.
   const handleDoctorSelectKeyDown = (e: React.KeyboardEvent<HTMLSelectElement>) => {
-    if (e.key !== 'Enter') return;
-    if (doctorDropdownOpenRef.current) return;
-    e.preventDefault();
-    doctorDropdownOpenRef.current = true;
-    const el = e.currentTarget as HTMLSelectElement & { showPicker?: () => void };
-    try {
-      if (typeof el.showPicker === 'function') {
-        el.showPicker();
-      } else {
-        el.click();
-      }
-    } catch {
-      el.click();
-    }
+    focusNextFieldOnEnter(e, formContainerRef.current);
   };
 
   const doctorsForEncounterType = useMemo(
@@ -426,7 +413,7 @@ export const WalkInIntakeView: React.FC = () => {
   const handleReset = () => {
     setFullName('');
     setFatherGuardianName('');
-    setGuardianRelation('Father');
+    setGuardianRelation('');
     setPrimaryPhone('');
     setAge('');
     setGender('Male');
@@ -477,7 +464,7 @@ export const WalkInIntakeView: React.FC = () => {
       return;
     }
     if (!isValidPhone(primaryPhone)) {
-      showValidationError('Please enter a valid Pakistani mobile number (at least 10 digits, e.g. 0300-1234567).');
+      showValidationError('Please enter a valid Pakistani mobile number (11 digits, e.g. 0300-1234567).');
       return;
     }
     const ageNum = Number(age);
@@ -1131,7 +1118,7 @@ export const WalkInIntakeView: React.FC = () => {
 
             {/* Contact, CNIC */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <TextInput
+              <PhoneInput
                 label="Contact Phone"
                 required
                 disabled={payerType === 'Corporate / Panel'}
@@ -1177,10 +1164,17 @@ export const WalkInIntakeView: React.FC = () => {
               />
               <Select
                 label="Guardian Relation (optional)"
+                placeholder="Select relation (optional)"
                 disabled={payerType === 'Corporate / Panel' && !!selectedExistingPatient}
                 options={GUARDIAN_RELATIONS.map((r) => ({ label: r, value: r }))}
                 value={guardianRelation}
-                onChange={(e) => setGuardianRelation(e.target.value as GuardianRelation)}
+                onChange={(e) => {
+                  const val = e.target.value as GuardianRelation | '';
+                  setGuardianRelation(val);
+                  if ((val === 'Himself' || val === 'Herself') && !fatherGuardianName.trim() && fullName.trim()) {
+                    setFatherGuardianName(fullName.trim());
+                  }
+                }}
                 onKeyDown={handleEnterNext}
               />
             </div>
@@ -1191,22 +1185,41 @@ export const WalkInIntakeView: React.FC = () => {
                 Gender <span className="text-rose-500">*</span>
               </label>
               <div className="flex gap-2">
-                {(['Male', 'Female', 'Other / Not Specified'] as PatientGender[]).map((g) => (
-                  <button
-                    key={g}
-                    type="button"
-                    disabled={payerType === 'Corporate / Panel'}
-                    onClick={() => setGender(g)}
-                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
-                      payerType === 'Corporate / Panel' ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'
-                    } ${gender === g
-                      ? 'bg-[#08775A] text-white border-[#08775A] shadow-xs'
-                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                      }`}
-                  >
-                    {g === 'Other / Not Specified' ? 'Other' : g}
-                  </button>
-                ))}
+                {(['Male', 'Female', 'Other / Not Specified'] as PatientGender[]).map((g, idx, arr) => {
+                  const isSelected = gender === g;
+                  return (
+                    <button
+                      key={g}
+                      type="button"
+                      tabIndex={isSelected ? 0 : -1}
+                      data-nav-item={isSelected ? 'true' : undefined}
+                      disabled={payerType === 'Corporate / Panel'}
+                      onClick={() => setGender(g)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                          e.preventDefault();
+                          const nextG = arr[(idx + 1) % arr.length];
+                          setGender(nextG);
+                        } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                          e.preventDefault();
+                          const prevG = arr[(idx - 1 + arr.length) % arr.length];
+                          setGender(prevG);
+                        } else if (e.key === 'Enter') {
+                          e.preventDefault();
+                          focusNextField(e.currentTarget, formContainerRef.current);
+                        }
+                      }}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all focus:outline-none focus:ring-2 focus:ring-[#08775A]/40 ${
+                        payerType === 'Corporate / Panel' ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'
+                      } ${isSelected
+                        ? 'bg-[#08775A] text-white border-[#08775A] shadow-xs'
+                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                        }`}
+                    >
+                      {g === 'Other / Not Specified' ? 'Other' : g}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -1305,15 +1318,8 @@ export const WalkInIntakeView: React.FC = () => {
               value={doctorId}
               onChange={(e) => {
                 handleDoctorChange(e.target.value);
-                doctorDropdownOpenRef.current = false;
-                if (e.target.value) {
-                  focusNextField(e.currentTarget, formContainerRef.current);
-                }
               }}
               onKeyDown={handleDoctorSelectKeyDown}
-              onBlur={() => {
-                doctorDropdownOpenRef.current = false;
-              }}
             />
 
 
@@ -1605,8 +1611,15 @@ export const WalkInIntakeView: React.FC = () => {
             <button
               ref={submitButtonRef}
               id="btn-register-encounter"
+              data-submit-btn="true"
               type="button"
               onClick={handleCreateEncounter}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleCreateEncounter();
+                }
+              }}
               disabled={
                 isSaving ||
                 !encounterType ||

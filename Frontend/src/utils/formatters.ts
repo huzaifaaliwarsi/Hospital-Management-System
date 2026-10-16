@@ -67,6 +67,33 @@ export function formatCnicInput(raw?: string | null): string {
 }
 
 /**
+ * Automatically formats a Pakistani mobile phone number:
+ * 03XX-XXXXXXX (11 digits max with dash auto-inserted after 4 digits).
+ * Strictly guarantees that the phone number NEVER exceeds 11 digits.
+ */
+export function formatPhoneInput(raw?: string | null): string {
+  if (!raw) return '';
+  let cleanDigits = raw.replace(/\D/g, '');
+  if (cleanDigits.startsWith('92') && cleanDigits.length >= 12) {
+    cleanDigits = `0${cleanDigits.slice(2)}`;
+  }
+  cleanDigits = cleanDigits.slice(0, 11);
+  if (cleanDigits.length > 4) {
+    return `${cleanDigits.slice(0, 4)}-${cleanDigits.slice(4)}`;
+  }
+  return cleanDigits;
+}
+
+/**
+ * Validates that a mobile number contains exactly 11 digits and starts with 03.
+ */
+export function isValidPhoneInput(raw?: string | null): boolean {
+  if (!raw || !raw.trim()) return false;
+  const digits = raw.replace(/\D/g, '');
+  return digits.length === 11 && digits.startsWith('03');
+}
+
+/**
  * Automatically capitalizes the first letter of text and after sentence endings (. ! ?),
  * while keeping the rest in natural case as the user types (preventing forced ALL CAPS).
  */

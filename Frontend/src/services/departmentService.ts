@@ -44,7 +44,8 @@ export const formatAuditTimestamp = (): string => {
  * not departments. Departments are clinical, surgical, diagnostic, and administrative units.
  */
 export function isProtectedCoreDepartment(_dept?: { code?: string | null; name?: string | null; isDefaultPharmacy?: boolean } | null): boolean {
-  return _dept?.isDefaultPharmacy === true;
+  if (!_dept) return false;
+  return _dept.isDefaultPharmacy === true || _dept.code === 'DEP-0004' || _dept.name?.trim().toLowerCase() === 'pharmacy';
 }
 
 /** Valid department types list */

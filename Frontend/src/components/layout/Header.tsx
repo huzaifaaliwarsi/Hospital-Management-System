@@ -144,11 +144,30 @@ export const Header: React.FC<HeaderProps> = ({
     setShowNotifications(false);
     if (notif.actionUrl) {
       let targetUrl = notif.actionUrl;
+
+      // Normalize legacy and alias notification URLs
       if (targetUrl.startsWith('/admissions')) {
         targetUrl = '/admission/planned_admissions';
+      } else if (targetUrl.startsWith('/billing/inpatient') || targetUrl === '/billing/inpatient') {
+        targetUrl = '/front-desk/admission_patient_records';
+      } else if (targetUrl.includes('billing_pending_discharges')) {
+        targetUrl = '/front-desk/billing_pending_discharges';
+      } else if (targetUrl.includes('payment_requests')) {
+        targetUrl = '/front-desk/admission_payment_requests';
+      } else if (targetUrl === '/billing' || targetUrl === '/billing/invoices') {
+        targetUrl = '/front-desk/hospital_invoices';
       }
-      if (notif.targetPortal && notif.targetPortal !== 'all' && notif.targetPortal !== activePortal) {
-        onChangePortal(notif.targetPortal as PortalKey);
+
+      // Safe portal switching: only switch if targetPortal is allowed for this user
+      if (
+        notif.targetPortal &&
+        notif.targetPortal !== 'all' &&
+        notif.targetPortal !== activePortal
+      ) {
+        const canSwitch = !user.allowedPortals || user.allowedPortals.includes(notif.targetPortal as PortalKey);
+        if (canSwitch) {
+          onChangePortal(notif.targetPortal as PortalKey);
+        }
       }
       navigate(targetUrl);
     }

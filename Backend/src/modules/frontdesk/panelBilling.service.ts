@@ -122,10 +122,7 @@ export const panelBillingService = {
     });
     const activePatientsCount = currentRoster.length;
 
-    // Keyed off the invoice's own frozen corporatePanelId (panel.md §14
-    // backlog item 1), never re-derived from panelPatient's CURRENT
-    // company — a receivable stays on the books of the company it was
-    // actually billed to, even after the patient transfers elsewhere.
+    // Invoices billed to this corporate panel
     const invoiceWhere: Prisma.HospitalInvoiceWhereInput = panelPatientId
       ? { corporatePanelId, panelPatientId, panelReceivable: { gt: 0 }, status: { not: 'VOID' } }
       : { corporatePanelId, panelReceivable: { gt: 0 }, status: { not: 'VOID' } };
@@ -214,10 +211,7 @@ export const panelBillingService = {
       // together over-allocate (over-realize) the receivable.
       await tx.$queryRaw`SELECT id FROM corporate_panels WHERE id = ${corporatePanelId} FOR UPDATE`;
 
-      // Keyed off each invoice's own frozen corporatePanelId (panel.md §14
-      // backlog item 1) so a remittance always allocates against the exact
-      // company it was actually paid by, even for invoices whose patient
-      // has since transferred to a different company.
+      // Invoices with panel receivables for this company
       const invoices = await tx.hospitalInvoice.findMany({
         where: { corporatePanelId, panelReceivable: { gt: 0 }, status: { not: 'VOID' } },
         orderBy: { createdAt: 'asc' },
@@ -332,9 +326,7 @@ export const panelBillingService = {
     const corporatePanel = await prisma.corporatePanel.findUnique({ where: { id: corporatePanelId } });
     if (!corporatePanel) throw new NotFoundError('Corporate panel not found');
 
-    // Both keyed off each invoice's own frozen corporatePanelId (panel.md
-    // §14 backlog item 1) — the company that actually owns this ledger, not
-    // whichever company the patient currently belongs to.
+    // Invoices and remittances for this corporate panel
     const [chargeInvoices, allPatientInvoices, remittances] = await Promise.all([
       prisma.hospitalInvoice.findMany({
         where: { corporatePanelId, panelReceivable: { gt: 0 }, status: { not: 'VOID' } },

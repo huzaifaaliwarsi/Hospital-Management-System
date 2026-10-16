@@ -34,15 +34,11 @@ export const createPlannedAdmissionSchema = z.object({
   outsourcedFulfillmentMode: z.enum(['HOSPITAL_MANAGED', 'SELF']).default('HOSPITAL_MANAGED'),
   medicationMode: z.enum(['SELF', 'HOSPITAL_MANAGED']).default('HOSPITAL_MANAGED'),
   notes: z.string().optional(),
-  // v7.2 §"Admission from Front Desk" step 6 — optional advance collected
-  // at creation time, before any department invoice exists (§2.2). Same
-  // shape as `appointments.schemas.ts`'s `bookAppointmentSchema`.
+  // Optional advance payment collected at creation
   advanceAmount: z.coerce.number().nonnegative().optional(),
   paymentMethod: z.enum(['CASH', 'CARD', 'BANK', 'ONLINE']).optional().default('CASH'),
   paymentReference: z.string().optional(),
-  // Case authorization/guarantee (panel.md §15 backlog item 2) — required
-  // up front when the panel company's authorizationRequired policy is on;
-  // re-checked against every ward/room/procedure charge posted afterward.
+  // Panel case authorization / guarantee
   authorizationNumber: z.string().trim().max(100).optional(),
   authorizationLimit: z.coerce.number().nonnegative().optional(),
   authorizationValidUntil: z.coerce.date().optional(),

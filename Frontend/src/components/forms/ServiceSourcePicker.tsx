@@ -3,6 +3,7 @@ import { fetchServices } from '../../services/serviceRatesService';
 import { selectionFromSource } from '../../utils/serviceSelection';
 import type { Department } from '../../types/department';
 import type { HospitalService } from '../../types/serviceRates';
+import { focusNextField } from '../../utils/formNavigation';
 
 export function ServiceSourcePicker({ value, onChange, departments, onServices }: {
   value: string;
@@ -59,6 +60,12 @@ export function ServiceSourcePicker({ value, onChange, departments, onServices }
           className={selectCls}
           value={selection.providerType}
           onChange={e => onChange(e.target.value + '::')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              focusNextField(e.currentTarget);
+            }
+          }}
         >
           <option value="INTERNAL">Hospital / Internal</option>
           <option value="OUTSOURCED">Outsourced</option>
@@ -79,6 +86,12 @@ export function ServiceSourcePicker({ value, onChange, departments, onServices }
             className={selectCls}
             value={selection.outsourcedProviderId ?? ''}
             onChange={e => onChange('OUTSOURCED::' + e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                focusNextField(e.currentTarget);
+              }
+            }}
           >
             <option value="">Select Provider</option>
             {providers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
@@ -96,6 +109,12 @@ export function ServiceSourcePicker({ value, onChange, departments, onServices }
           onChange={e => onChange(
             selection.providerType + ':' + e.target.value + ':' + (selection.outsourcedProviderId ?? '')
           )}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              focusNextField(e.currentTarget);
+            }
+          }}
         >
           <option value="">Select Department</option>
           {scoped.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}

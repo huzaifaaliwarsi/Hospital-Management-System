@@ -295,6 +295,7 @@ export const SuperAdminServicesRatesView: React.FC = () => {
         onToggleStatus={handleToggleStatus}
         onDelete={handleDeletePrompt}
         onResetFilters={handleResetFilters}
+        onImport={() => setIsImportModalOpen(true)}
         onExportExcel={() => setIsExportModalOpen(true)}
         onExportPDF={handleDirectDownloadPDF}
         onPrint={() => window.print()}
@@ -344,6 +345,7 @@ export const SuperAdminServicesRatesView: React.FC = () => {
           loadData();
         }}
         existingServices={services}
+        departments={departments}
         currentUser={currentUser}
       />
 

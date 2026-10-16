@@ -22,9 +22,11 @@ import { formatDisplayDate } from '../utils/dateConstants';
  */
 
 export const VALID_SERVICE_CATEGORIES: ServiceCategory[] = [
+  'Consultation',
   'Emergency',
   'Observation',
   'Admission',
+  'Room / Bed',
   'Procedure',
   'Surgery',
   'Diagnostic',
@@ -248,9 +250,18 @@ export class ServiceRatesService {
     return { totalServices, activeServices, clinicalServices, diagnosticProcedureServices, panelEligibleServices };
   }
 
-  static validateImportRows(rawRows: any[], existingServices: HospitalService[]): ServiceImportValidationResult {
-    const departments = DepartmentService.getDepartments();
-    const deptCodeMap = new Map(departments.map((d) => [d.code.toUpperCase(), d]));
+  static validateImportRows(
+    rawRows: any[],
+    existingServices: HospitalService[],
+    departmentsList?: { id: string; code: string; name: string; status?: string }[]
+  ): ServiceImportValidationResult {
+    const departments = departmentsList && departmentsList.length > 0 ? departmentsList : DepartmentService.getDepartments();
+    const deptMap = new Map<string, any>();
+    departments.forEach((d) => {
+      if (d.code) deptMap.set(d.code.toUpperCase().trim(), d);
+      if (d.name) deptMap.set(d.name.toUpperCase().trim(), d);
+    });
+
     const existingCodeSet = new Set(existingServices.map((s) => s.code.toUpperCase()));
     const seenFileCodes = new Set<string>();
 
@@ -261,22 +272,33 @@ export class ServiceRatesService {
       const rowNum = idx + 2;
       const errors: string[] = [];
 
-      const rawCode = String(row.service_code || row.code || '').trim().toUpperCase();
-      const rawName = String(row.service_name || row.name || '').trim();
-      const rawDeptCode = String(row.department_code || row.dept_code || '').trim().toUpperCase();
-      const rawCat = String(row.category || '').trim();
-      const rawDesc = String(row.description || '').trim();
-      const rawUnit = String(row.billing_unit || row.unit || '').trim();
-      const rawRate = Number(row.standard_rate ?? row.rate);
-      const rawPanel = String(row.panel_eligible || '').trim().toLowerCase();
-      const rawDiscount = String(row.discount_allowed || '').trim().toLowerCase();
-      const rawOverride = String(row.manual_rate_override_allowed || '').trim().toLowerCase();
-      const rawStatus = String(row.status || 'Active').trim();
+      // Support camelCase, snake_case, and spaced Excel title headers
+      const rawCode = String(row.service_code || row.code || row['Service Code'] || row['Code'] || '').trim().toUpperCase();
+      const rawName = String(row.service_name || row.name || row['Service Name'] || row['Name'] || '').trim();
+      const rawDeptKey = String(row.department_code || row.dept_code || row.department || row['Department Code'] || row['Department'] || row['Dept Code'] || '').trim().toUpperCase();
+      const rawCatInput = String(row.category || row['Category'] || '').trim();
+      const rawDesc = String(row.description || row['Description'] || '').trim();
+      const rawUnitInput = String(row.billing_unit || row.unit || row['Billing Unit'] || row['Unit'] || 'Per Procedure').trim();
+      const rawRate = Number(row.standard_rate ?? row.rate ?? row['Standard Rate'] ?? row['Rate'] ?? row['Price']);
+      const rawPanel = String(row.panel_eligible || row['Panel Eligible'] || '').trim().toLowerCase();
+      const rawDiscount = String(row.discount_allowed || row['Discount Allowed'] || '').trim().toLowerCase();
+      const rawOverride = String(row.manual_rate_override_allowed || row['Manual Rate Override Allowed'] || '').trim().toLowerCase();
+      const rawStatus = String(row.status || row['Status'] || 'Active').trim();
 
-      // Code is optional — left blank, the backend auto-generates a unique one.
+      // Normalize category (case-insensitive lookup against valid categories)
+      const matchedCat = VALID_SERVICE_CATEGORIES.find(
+        (c) => c.toLowerCase() === rawCatInput.toLowerCase()
+      ) || (rawCatInput ? (VALID_SERVICE_CATEGORIES.find((c) => c.toLowerCase().includes(rawCatInput.toLowerCase())) || 'Other') : undefined);
+
+      // Normalize billing unit (case-insensitive lookup against valid units)
+      const matchedUnit = VALID_BILLING_UNITS.find(
+        (u) => u.toLowerCase() === rawUnitInput.toLowerCase()
+      ) || (VALID_BILLING_UNITS.find((u) => u.toLowerCase().includes(rawUnitInput.toLowerCase())) || 'One-Time');
+
+      // Code is optional — left blank, auto-generated
       if (rawCode) {
-        if (!/^[A-Z0-9-]+$/.test(rawCode)) {
-          errors.push('Code must contain uppercase letters, numbers, and hyphens only.');
+        if (!/^[A-Z0-9_-]+$/.test(rawCode)) {
+          errors.push('Code must contain uppercase letters, numbers, hyphens, and underscores only.');
         } else if (existingCodeSet.has(rawCode)) {
           errors.push(`Service code "${rawCode}" already exists in master catalog.`);
         } else if (seenFileCodes.has(rawCode)) {
@@ -288,25 +310,15 @@ export class ServiceRatesService {
 
       if (!rawName) errors.push('Missing service name.');
 
-      const matchedDept = rawDeptCode ? deptCodeMap.get(rawDeptCode) : undefined;
-      if (!rawDeptCode) {
-        errors.push('Missing department code.');
-      } else if (!matchedDept) {
-        errors.push(`Department code "${rawDeptCode}" not recognized in hospital directory.`);
-      } else if (matchedDept.status !== 'Active') {
-        errors.push(`Department "${matchedDept.name}" (${rawDeptCode}) is currently Inactive.`);
+      const matchedDept = rawDeptKey ? deptMap.get(rawDeptKey) : (departments.length > 0 ? departments[0] : undefined);
+      if (!rawDeptKey && departments.length === 0) {
+        errors.push('Missing department code or name.');
+      } else if (rawDeptKey && !matchedDept) {
+        errors.push(`Department "${rawDeptKey}" not recognized in hospital directory.`);
       }
 
-      if (!rawCat) {
-        errors.push('Missing service category.');
-      } else if (!VALID_SERVICE_CATEGORIES.includes(rawCat as ServiceCategory)) {
-        errors.push(`Invalid category "${rawCat}". Valid: ${VALID_SERVICE_CATEGORIES.join(', ')}.`);
-      }
-
-      if (!rawUnit) {
-        errors.push('Missing billing unit.');
-      } else if (!VALID_BILLING_UNITS.includes(rawUnit as BillingUnit)) {
-        errors.push(`Invalid billing unit "${rawUnit}". Valid: ${VALID_BILLING_UNITS.join(', ')}.`);
+      if (!matchedCat) {
+        errors.push(`Missing or invalid category "${rawCatInput}". Valid: ${VALID_SERVICE_CATEGORIES.join(', ')}.`);
       }
 
       if (isNaN(rawRate) || rawRate < 0) errors.push('Standard rate must be a non-negative number.');
@@ -318,12 +330,12 @@ export class ServiceRatesService {
 
       const parsedRow: ServiceImportRow = {
         rowNumber: rowNum,
-        serviceCode: rawCode,
+        serviceCode: rawCode || `SRV-${Date.now().toString(36).toUpperCase()}-${idx + 1}`,
         serviceName: rawName,
-        departmentCode: rawDeptCode,
-        category: rawCat,
+        departmentCode: matchedDept ? matchedDept.code : rawDeptKey,
+        category: (matchedCat || 'Other') as ServiceCategory,
         description: rawDesc,
-        billingUnit: rawUnit,
+        billingUnit: (matchedUnit || 'One-Time') as BillingUnit,
         standardRate: isNaN(rawRate) ? 0 : rawRate,
         panelEligible,
         discountAllowed,
@@ -342,20 +354,25 @@ export class ServiceRatesService {
 
   /**
    * Persists each validated import row against the real backend, one
-   * `POST /setup/services-rates` at a time (so a mid-batch failure never
-   * leaves fabricated rows in the UI). Returns { imported, failures }.
+   * `POST /setup/services-rates` at a time. Returns { imported, failures }.
    */
   static async importServices(
     validRows: ServiceImportRow[],
-    _currentUser?: User | null
+    _currentUser?: User | null,
+    departmentsList?: { id: string; code: string; name: string }[]
   ): Promise<{ imported: number; failures: string[] }> {
-    const departments = DepartmentService.getDepartments();
-    const deptCodeMap = new Map(departments.map((d) => [d.code.toUpperCase(), d]));
+    const departments = departmentsList && departmentsList.length > 0 ? departmentsList : DepartmentService.getDepartments();
+    const deptMap = new Map<string, any>();
+    departments.forEach((d) => {
+      if (d.code) deptMap.set(d.code.toUpperCase().trim(), d);
+      if (d.name) deptMap.set(d.name.toUpperCase().trim(), d);
+    });
+
     const failures: string[] = [];
     let imported = 0;
 
     for (const r of validRows) {
-      const dept = deptCodeMap.get(r.departmentCode.toUpperCase());
+      const dept = deptMap.get(r.departmentCode.toUpperCase().trim()) || (departments.length > 0 ? departments[0] : null);
       if (!dept) {
         failures.push(`${r.serviceCode}: department "${r.departmentCode}" not found`);
         continue;

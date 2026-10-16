@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Building2, Loader2, Plus, X } from 'lucide-react';
 import { pharmacyApi } from '../services/pharmacyApi';
 import { useToast } from '../context/ToastContext';
+import { formatPhoneInput, isValidPhoneInput } from '../utils/format';
 
 const emptyForm = { name: '', contactPerson: '', phone: '', paymentTermsDays: '0' };
 
@@ -58,6 +59,10 @@ export const AddVendorModal: React.FC<Props> = ({ open, onClose, onCreated }) =>
     e.preventDefault();
     if (!form.name.trim()) {
       toast.error('Vendor Name is required.');
+      return;
+    }
+    if (form.phone.trim() && !isValidPhoneInput(form.phone)) {
+      toast.error('Please enter a valid 11-digit mobile phone number (e.g. 0300-1234567).');
       return;
     }
     setSaving(true);
@@ -184,7 +189,8 @@ export const AddVendorModal: React.FC<Props> = ({ open, onClose, onCreated }) =>
               <label className="block font-semibold text-slate-700 mb-1">Phone / Mobile</label>
               <input
                 value={form.phone}
-                onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                maxLength={12}
+                onChange={(e) => setForm({ ...form, phone: formatPhoneInput(e.target.value) })}
                 placeholder="0300-1234567"
                 className="w-full h-9 px-3 bg-white border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-1 focus:ring-[#08775A]"
               />

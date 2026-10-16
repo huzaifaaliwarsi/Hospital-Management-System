@@ -57,9 +57,11 @@ export function normalizePhone(phone: string): string {
 }
 
 export function isValidPhone(phone: string): boolean {
-  if (!phone.trim()) return false;
-  const digits = phone.replace(/\D/g, '');
-  return digits.length >= 10 && digits.length <= 15;
+  if (!phone || !phone.trim()) return false;
+  let digits = phone.replace(/\D/g, '');
+  if (digits.startsWith('92') && digits.length === 12) digits = `0${digits.slice(2)}`;
+  else if (digits.length === 10 && digits.startsWith('3')) digits = `0${digits}`;
+  return digits.length === 11 && digits.startsWith('03');
 }
 
 /** Age as of today — never a fixed/hardcoded reference date. */
@@ -396,7 +398,7 @@ function validateCommonFields(formData: PatientFormData): string | null {
   if (!formData.fullName.trim()) return 'Full Name is required.';
   if (!formData.gender) return 'Gender is required.';
   if (!formData.primaryPhone.trim()) return 'Primary Phone is required.';
-  if (!isValidPhone(formData.primaryPhone)) return 'Please provide a valid phone number (at least 10 digits).';
+  if (!isValidPhone(formData.primaryPhone)) return 'Please provide a valid 11-digit phone number (e.g. 0300-1234567).';
   const normalizedCnic = normalizeCnic(formData.cnic);
   if (normalizedCnic && !isValidCnic(normalizedCnic)) return 'CNIC must follow the Pakistani format: XXXXX-XXXXXXX-X (13 digits).';
   if (!formData.payerType) return 'Payer Type is required.';

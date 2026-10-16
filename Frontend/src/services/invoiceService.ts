@@ -3,13 +3,7 @@ import { formatDisplayDate } from '../utils/dateConstants';
 import { getPatientById } from './patientRegistryService';
 
 /**
- * Live Hospital Invoices / Billing service — backed by `/api/v1/invoices*`
- * and `/api/v1/encounters`. This is the pre-v7.2 single-invoice-per-
- * admission/encounter billing model (still the real, tested, working
- * model) — the v7.2 Department Sub-Invoice Split (HMS_V7.2_NEW_REQUIREMENTS.md
- * §2.2) that would replace it with one invoice per (admission × department)
- * is a distinct, larger, not-yet-started schema change; see that doc's
- * open-questions section before attempting it.
+ * Hospital Invoices / Billing API service.
  */
 
 export type InvoiceStatus = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID' | 'VOID';
@@ -264,6 +258,11 @@ export async function fetchInvoices(params?: {
 export async function fetchInvoiceDetail(id: string): Promise<InvoiceDetail> {
   const res = await apiClient.get<{ data: Record<string, any> }>(`/invoices/${id}`);
   return toInvoiceDetail(res.data.data);
+}
+
+export async function fetchReceipt(invoiceId: string): Promise<Record<string, any>> {
+  const res = await apiClient.get<{ data: Record<string, any> }>(`/invoices/${invoiceId}/receipt`);
+  return res.data.data;
 }
 
 export async function addServiceLine(

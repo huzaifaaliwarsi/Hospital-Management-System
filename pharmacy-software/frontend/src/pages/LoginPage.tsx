@@ -6,6 +6,8 @@ import { useToast } from '../context/ToastContext';
 /** Dev/testing convenience only — real credentials for this environment's seeded accounts (pharmacy.md §13 role hierarchy). */
 const DEMO_ACCOUNTS = [
   { role: 'Super Admin', username: 'superadmin', password: 'SuperAdmin@2026New' },
+  { role: 'Admin (Huzaifa)', username: 'huzaifa', password: '12345678' },
+  { role: 'Sales (Khuzaima)', username: 'khuzaima', password: '12345678' },
   { role: 'Admin', username: 'admin1', password: 'Admin@2026New' },
   { role: 'Sales / Dispensing', username: 'sales1', password: 'Sales@12345' },
 ];

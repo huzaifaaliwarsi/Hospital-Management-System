@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { Zap, AlertCircle, Loader2, User, Phone, Calendar, Weight, ShieldAlert } from 'lucide-react';
 import { Modal } from '../../../components/common/Modal';
-import { TextInput, NumberInput } from '../../../components/forms/FormControls';
+import { TextInput, NumberInput, PhoneInput } from '../../../components/forms/FormControls';
 import { Patient, PatientGender, PatientFormData } from '../../../types/patient';
-import { createPatient } from '../../../services/patientRegistryService';
+import { createPatient, isValidPhone } from '../../../services/patientRegistryService';
 import { useAuth } from '../../../context/AuthContext';
+import { focusNextFieldOnEnter, focusNextField } from '../../../utils/formNavigation';
 
 interface QuickWalkInPatientModalProps {
   isOpen: boolean;
@@ -56,8 +57,8 @@ export const QuickWalkInPatientModal: React.FC<QuickWalkInPatientModalProps> = (
       setFormError('Father / Guardian Name is required.');
       return;
     }
-    if (!trimmedPhone || trimmedPhone.replace(/\D/g, '').length < 10) {
-      setFormError('A valid phone number (at least 10 digits) is required.');
+    if (!trimmedPhone || !isValidPhone(trimmedPhone)) {
+      setFormError('A valid 11-digit mobile phone number (e.g. 0300-1234567) is required.');
       return;
     }
     if (age === '' || Number(age) < 0 || Number(age) > 130) {
@@ -150,6 +151,7 @@ export const QuickWalkInPatientModal: React.FC<QuickWalkInPatientModalProps> = (
             autoFocus
             value={fullName}
             onChange={(e) => setFullName(e.target.value)}
+            onKeyDown={focusNextFieldOnEnter}
           />
           <TextInput
             label="Father / Guardian Name"
@@ -157,17 +159,19 @@ export const QuickWalkInPatientModal: React.FC<QuickWalkInPatientModalProps> = (
             required
             value={fatherGuardianName}
             onChange={(e) => setFatherGuardianName(e.target.value)}
+            onKeyDown={focusNextFieldOnEnter}
           />
         </div>
 
         {/* Contact Phone & Age */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <TextInput
+          <PhoneInput
             label="Contact Phone"
             placeholder="0300-1234567"
             required
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
+            onKeyDown={focusNextFieldOnEnter}
           />
           <NumberInput
             label="Age (in Years)"
@@ -177,6 +181,7 @@ export const QuickWalkInPatientModal: React.FC<QuickWalkInPatientModalProps> = (
             max={130}
             value={age}
             onChange={(e) => setAge(e.target.value === '' ? '' : Number(e.target.value))}
+            onKeyDown={focusNextFieldOnEnter}
           />
         </div>
 
@@ -184,14 +189,30 @@ export const QuickWalkInPatientModal: React.FC<QuickWalkInPatientModalProps> = (
         <div>
           <label className="block text-xs font-semibold text-slate-700 mb-1.5">Gender *</label>
           <div className="grid grid-cols-3 gap-2">
-            {(['Male', 'Female', 'Other / Not Specified'] as PatientGender[]).map((g) => {
+            {(['Male', 'Female', 'Other / Not Specified'] as PatientGender[]).map((g, idx, arr) => {
               const selected = gender === g;
               return (
                 <button
                   type="button"
                   key={g}
+                  tabIndex={selected ? 0 : -1}
+                  data-nav-item={selected ? 'true' : undefined}
                   onClick={() => setGender(g)}
-                  className={`py-2 px-3 text-xs font-semibold rounded-lg border text-center transition-all ${
+                  onKeyDown={(e) => {
+                    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                      e.preventDefault();
+                      const nextG = arr[(idx + 1) % arr.length];
+                      setGender(nextG);
+                    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                      e.preventDefault();
+                      const prevG = arr[(idx - 1 + arr.length) % arr.length];
+                      setGender(prevG);
+                    } else if (e.key === 'Enter') {
+                      e.preventDefault();
+                      focusNextField(e.currentTarget);
+                    }
+                  }}
+                  className={`py-2 px-3 text-xs font-semibold rounded-lg border text-center transition-all focus:outline-none focus:ring-2 focus:ring-[#08775A]/40 ${
                     selected
                       ? 'bg-[#08775A] text-white border-[#08775A] shadow-xs'
                       : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
@@ -214,6 +235,7 @@ export const QuickWalkInPatientModal: React.FC<QuickWalkInPatientModalProps> = (
             step={0.5}
             value={weight}
             onChange={(e) => setWeight(e.target.value === '' ? '' : Number(e.target.value))}
+            onKeyDown={focusNextFieldOnEnter}
           />
           <span className="text-[10px] text-slate-400 mt-1 block">
             Optional vital sign for dosage or clinical reference.

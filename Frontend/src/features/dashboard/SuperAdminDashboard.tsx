@@ -599,7 +599,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             </div>
 
             {/* Recharts Area Chart */}
-            <div className="h-64 w-full pt-3">
+            <div className="h-64 w-full pt-3 outline-none focus:outline-none focus:ring-0 select-none [&_*]:outline-none [&_*]:focus:outline-none">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={revenueTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                   <defs>
@@ -725,7 +725,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             </div>
 
             {/* Recharts Area Chart for Patient Traffic */}
-            <div className="h-64 w-full pt-3">
+            <div className="h-64 w-full pt-3 outline-none focus:outline-none focus:ring-0 select-none [&_*]:outline-none [&_*]:focus:outline-none">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={patientTrafficData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                   <defs>

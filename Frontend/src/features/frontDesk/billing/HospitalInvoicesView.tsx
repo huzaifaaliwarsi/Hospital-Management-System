@@ -34,6 +34,7 @@ import {
   formatDateISO,
   getHospitalCurrentDate,
 } from '../../../utils/dateConstants';
+import { useToast } from '../../../context/ToastContext';
 
 export type CareQueueFilter = 'ALL' | 'OPD' | 'ER' | 'OBS' | 'ADM' | 'CUSTOM';
 export type PayerFilter = 'ALL' | 'SELF_PAY' | 'PANEL';
@@ -96,6 +97,7 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
     return 'ALL';
   }, [initialQueueFilter, encounterTypeFilter]);
 
+  const toast = useToast();
   const [invoices, setInvoices] = useState<InvoiceSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -288,7 +290,10 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
   }, [activeQueue, statusFilter, payerFilter, startDate, endDate, searchTerm]);
 
   const handleExportCsv = () => {
-    if (filteredInvoices.length === 0) return;
+    if (filteredInvoices.length === 0) {
+      toast.warning('No invoices match the selected filters to export.', 'Export');
+      return;
+    }
     const headers = ['#', 'Invoice Number', 'Service ID', 'MR #', 'Patient Name', 'Care Type', 'Payer', 'Gross', 'Discount', 'Net Payable', 'Paid', 'Due', 'Status', 'Date'];
     const rows = filteredInvoices.map((inv, idx) => [
       idx + 1,
@@ -311,12 +316,17 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `hospital_invoices_${new Date().toISOString().slice(0, 10)}.csv`;
+    const filename = `hospital_invoices_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = filename;
     link.click();
+    toast.success(`Exported ${filteredInvoices.length} invoices to ${filename}.`, 'CSV Export Ready');
   };
 
   const handleExportExcel = () => {
-    if (filteredInvoices.length === 0) return;
+    if (filteredInvoices.length === 0) {
+      toast.warning('No invoices match the selected filters to export.', 'Export');
+      return;
+    }
     const headers = ['#', 'Invoice Number', 'Service ID', 'MR #', 'Patient Name', 'Care Type', 'Payer', 'Gross', 'Discount', 'Net Payable', 'Paid', 'Due', 'Status', 'Date'];
     const rowsHtml = filteredInvoices.map((inv, idx) => `
       <tr>
@@ -356,8 +366,10 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `hospital_invoices_${new Date().toISOString().slice(0, 10)}.xls`;
+    const filename = `hospital_invoices_${new Date().toISOString().slice(0, 10)}.xls`;
+    link.download = filename;
     link.click();
+    toast.success(`Exported ${filteredInvoices.length} invoices to ${filename}.`, 'Excel Export Ready');
   };
 
   if (isLoading) {

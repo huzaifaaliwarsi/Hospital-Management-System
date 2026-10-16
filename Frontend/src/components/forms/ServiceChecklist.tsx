@@ -2,6 +2,7 @@ import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { Search, X, CheckSquare, Square, ChevronDown, ChevronUp } from 'lucide-react';
 import { HospitalService } from '../../types/serviceRates';
 import { formatPKR } from '../../utils/formatters';
+import { focusNextField } from '../../utils/formNavigation';
 
 export interface ServiceChecklistProps {
   services: HospitalService[];
@@ -36,6 +37,10 @@ export const ServiceChecklist: React.FC<ServiceChecklistProps> = ({
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        const target = event.target as HTMLElement | null;
+        if (target && target.closest('button[type="submit"]')) {
+          return;
+        }
         setIsOpen(false);
       }
     };
@@ -106,8 +111,18 @@ export const ServiceChecklist: React.FC<ServiceChecklistProps> = ({
 
       {/* Trigger Box (Looks like a clean Select dropdown) */}
       <div
+        tabIndex={disabled ? -1 : 0}
+        data-nav-item="true"
+        role="button"
+        aria-expanded={isOpen}
         onClick={() => !disabled && setIsOpen(!isOpen)}
-        className={`w-full min-h-[38px] rounded-lg border px-3 py-2 text-xs flex items-center justify-between gap-2 cursor-pointer transition-colors ${
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (!disabled) setIsOpen(true);
+          }
+        }}
+        className={`w-full min-h-[38px] rounded-lg border px-3 py-2 text-xs flex items-center justify-between gap-2 cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A] ${
           isOpen
             ? 'border-[#08775A] ring-2 ring-[#08775A]/20 bg-white'
             : 'border-slate-300 bg-white hover:border-slate-400'
@@ -150,9 +165,9 @@ export const ServiceChecklist: React.FC<ServiceChecklistProps> = ({
         </div>
       </div>
 
-      {/* Dropdown Popover Menu */}
+      {/* Dropdown Menu (In-flow so it never clips, floats over submit buttons, or breaks modal scrolling) */}
       {isOpen && (
-        <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-white rounded-xl border border-slate-200 shadow-xl overflow-hidden flex flex-col animate-in fade-in duration-100">
+        <div className="relative mt-2 w-full bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col animate-in fade-in duration-100">
           {/* Top Search & Filter Bar */}
           <div className="p-2.5 border-b border-slate-200 bg-slate-50/70 space-y-2">
             <div className="relative flex items-center">
@@ -163,6 +178,25 @@ export const ServiceChecklist: React.FC<ServiceChecklistProps> = ({
                 onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="Search services by name or code…"
                 autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (filteredServices.length > 0) {
+                      handleToggle(filteredServices[0].id);
+                    } else {
+                      setIsOpen(false);
+                      if (dropdownRef.current) {
+                        focusNextField(dropdownRef.current);
+                      }
+                    }
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setIsOpen(false);
+                    if (dropdownRef.current) {
+                      focusNextField(dropdownRef.current);
+                    }
+                  }
+                }}
                 className="w-full pl-8 pr-8 py-1.5 text-xs rounded-lg border border-slate-300 bg-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A] transition-colors"
               />
               {searchTerm && (
@@ -260,7 +294,12 @@ export const ServiceChecklist: React.FC<ServiceChecklistProps> = ({
             </span>
             <button
               type="button"
-              onClick={() => setIsOpen(false)}
+              onClick={() => {
+                setIsOpen(false);
+                if (dropdownRef.current) {
+                  focusNextField(dropdownRef.current);
+                }
+              }}
               className="px-3 py-1 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg shadow-2xs cursor-pointer transition-colors"
             >
               Done

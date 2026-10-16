@@ -25,6 +25,7 @@ interface ServiceImportModalProps {
   onImportComplete: (count: number) => void;
   existingServices: HospitalService[];
   currentUser: User | null;
+  departments?: { id: string; code: string; name: string }[];
 }
 
 export const ServiceImportModal: React.FC<ServiceImportModalProps> = ({
@@ -33,6 +34,7 @@ export const ServiceImportModal: React.FC<ServiceImportModalProps> = ({
   onImportComplete,
   existingServices,
   currentUser,
+  departments,
 }) => {
   const [file, setFile] = useState<File | null>(null);
   const [validationResult, setValidationResult] =
@@ -56,7 +58,7 @@ export const ServiceImportModal: React.FC<ServiceImportModalProps> = ({
         const worksheet = workbook.Sheets[sheetName];
         const json = XLSX.utils.sheet_to_json(worksheet);
 
-        const result = ServiceRatesService.validateImportRows(json, existingServices);
+        const result = ServiceRatesService.validateImportRows(json, existingServices, departments);
         setValidationResult(result);
       } catch (err) {
         console.error('Failed to parse Excel file:', err);
@@ -81,7 +83,11 @@ export const ServiceImportModal: React.FC<ServiceImportModalProps> = ({
     if (!validationResult || validationResult.validRows.length === 0) return;
     setIsImporting(true);
     try {
-      const { imported, failures } = await ServiceRatesService.importServices(validationResult.validRows, currentUser);
+      const { imported, failures } = await ServiceRatesService.importServices(
+        validationResult.validRows,
+        currentUser,
+        departments
+      );
       if (failures.length > 0) {
         alert(`Imported ${imported} service(s). ${failures.length} row(s) failed:\n${failures.join('\n')}`);
       }

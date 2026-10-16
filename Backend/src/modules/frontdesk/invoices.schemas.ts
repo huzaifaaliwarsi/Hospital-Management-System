@@ -29,9 +29,7 @@ export const createEncounterSchema = z.object({
   doctorStaffId: z.string().uuid().optional(),
   notes: z.string().optional(),
   weightKg: z.coerce.number().positive().max(999).optional(),
-  // Case authorization/guarantee (panel.md §15 backlog item 2) — required
-  // up front when the panel company's authorizationRequired policy is on;
-  // re-checked against every service line added afterward too.
+  // Panel case authorization / guarantee
   authorizationNumber: z.string().trim().max(100).optional(),
   authorizationLimit: z.coerce.number().nonnegative().optional(),
   authorizationValidUntil: z.coerce.date().optional(),
@@ -75,10 +73,7 @@ export const applyDiscountSchema = z.object({
 
 export type ApplyDiscountBody = z.infer<typeof applyDiscountSchema>;
 
-// Case authorization/guarantee (panel.md §15 backlog item 2) — lets Front
-// Desk capture or renew the reference on an already-open panel encounter,
-// e.g. when a service line turns out to need it under its own rule even
-// though the company-wide policy didn't already require one at intake.
+// Panel case authorization / guarantee update
 export const setInvoiceAuthorizationSchema = z.object({
   authorizationNumber: z.string().trim().max(100).optional(),
   authorizationLimit: z.coerce.number().nonnegative().optional(),

@@ -37,6 +37,7 @@ import {
 } from '../../../services/patientRegistryService';
 import { getActiveCorporatePanels, fetchCorporatePanels, type CorporatePanel } from '../../../services/panelService';
 import { useToast } from '../../../context/ToastContext';
+import { formatPhoneInput } from '../../../utils/formatters';
 
 export const PAKISTAN_CITIES = [
   'Lahore',
@@ -419,7 +420,7 @@ export const PatientModal: React.FC<PatientModalProps> = ({
     if (!formData.primaryPhone.trim()) {
       newErrors.primaryPhone = 'Primary phone number is required.';
     } else if (!isValidPhone(formData.primaryPhone)) {
-      newErrors.primaryPhone = 'Please enter a valid phone number (at least 10 digits).';
+      newErrors.primaryPhone = 'Please enter a valid 11-digit phone number (e.g. 0300-1234567).';
     }
 
     if (formData.cnic.trim()) {
@@ -837,7 +838,7 @@ export const PatientModal: React.FC<PatientModalProps> = ({
                     Guardian Relation
                   </label>
                   <select
-                    value={formData.guardianRelation}
+                    value={formData.guardianRelation || ''}
                     onChange={(e) =>
                       setFormData({
                         ...formData,
@@ -846,6 +847,7 @@ export const PatientModal: React.FC<PatientModalProps> = ({
                     }
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-hidden focus:bg-white focus:border-[#08775A]"
                   >
+                    <option value="">Select relation (optional)</option>
                     {GUARDIAN_RELATIONS.map((r) => (
                       <option key={r} value={r}>
                         {r}
@@ -862,7 +864,8 @@ export const PatientModal: React.FC<PatientModalProps> = ({
                   <input
                     type="text"
                     value={formData.primaryPhone}
-                    onChange={(e) => setFormData({ ...formData, primaryPhone: e.target.value })}
+                    onChange={(e) => setFormData({ ...formData, primaryPhone: formatPhoneInput(e.target.value) })}
+                    maxLength={12}
                     placeholder="0300-1234567"
                     className={`w-full px-3 py-2 font-mono bg-slate-50 border rounded-lg text-sm text-slate-800 focus:outline-hidden focus:bg-white ${
                       errors.primaryPhone

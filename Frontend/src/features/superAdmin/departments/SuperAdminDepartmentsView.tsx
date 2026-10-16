@@ -942,17 +942,20 @@ export const SuperAdminDepartmentsView: React.FC = () => {
 
                         {/* Activate / Deactivate Toggle */}
                         <button
-                          disabled={dept.isDefaultPharmacy}
+                          disabled={dept.isDefaultPharmacy || isProtectedCoreDepartment(dept)}
                           type="button"
                           onClick={() => {
+                            if (isProtectedCoreDepartment(dept)) return;
                             setSelectedDeptForDeactivate(dept);
                             setIsDeactivateOpen(true);
                           }}
-                          title={dept.status === 'Active' ? 'Deactivate Department' : 'Activate Department'}
-                          className={`h-7 w-7 rounded-lg inline-flex items-center justify-center transition-colors cursor-pointer ${
-                            dept.status === 'Active'
-                              ? 'text-[#52665e] hover:bg-amber-50 hover:text-amber-700'
-                              : 'text-[#08775A] hover:bg-[#effaf5]'
+                          title={isProtectedCoreDepartment(dept) ? 'Default Pharmacy department cannot be deactivated' : dept.status === 'Active' ? 'Deactivate Department' : 'Activate Department'}
+                          className={`h-7 w-7 rounded-lg inline-flex items-center justify-center transition-colors ${
+                            isProtectedCoreDepartment(dept)
+                              ? 'opacity-30 cursor-not-allowed text-slate-400'
+                              : dept.status === 'Active'
+                              ? 'text-[#52665e] hover:bg-amber-50 hover:text-amber-700 cursor-pointer'
+                              : 'text-[#08775A] hover:bg-[#effaf5] cursor-pointer'
                           }`}
                         >
                           <Power className="h-3.5 w-3.5" />

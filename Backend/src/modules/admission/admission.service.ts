@@ -671,7 +671,7 @@ export const admissionService = {
         type: 'urgent',
         module: 'BILLING',
         targetPortal: 'front-desk',
-        actionUrl: '/billing/inpatient',
+        actionUrl: '/front-desk/admission_payment_requests',
         referenceId: admission.id,
         createdById: actorId,
       });
@@ -1016,7 +1016,7 @@ export const admissionService = {
           type: 'info',
           module: 'BILLING',
           targetPortal: 'front-desk',
-          actionUrl: '/billing/inpatient',
+          actionUrl: '/front-desk/admission_patient_records',
           referenceId: admission.id,
           createdById: actorId,
         });
@@ -1467,11 +1467,7 @@ export const admissionService = {
       return { isDischarged: admission?.status === 'DISCHARGED', isDischargePending: false, admission };
     }
 
-    // 1. Evaluate billing balance across this admission
-    // Only the PATIENT's responsibility gates billing clearance — an open panel
-    // receivable is the company's debt, realized later through remittances,
-    // and never blocks the patient's exit (panel.md §5.3: patient exit is not
-    // company settlement).
+    // 1. Evaluate billing balance across this admission (patient responsibility only)
     const totalCharges = admission.hospitalInvoices.reduce((sum: Decimal, inv: any) => sum.plus(patientResponsibility(inv)), new Decimal(0));
     const invoiceIds = admission.hospitalInvoices.map((inv: any) => inv.id);
     const receipts = await tx.paymentReceipt.aggregate({
@@ -1632,7 +1628,7 @@ export const admissionService = {
         type: 'DISCHARGE_REQUEST',
         module: 'BILLING',
         targetPortal: 'front-desk',
-        actionUrl: `/front-desk?tab=billing_pending_discharges&admissionId=${result.admission.id}`,
+        actionUrl: '/front-desk/billing_pending_discharges',
         referenceId: result.admission.id,
         createdById: actorId,
       });

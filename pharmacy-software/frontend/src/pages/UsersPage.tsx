@@ -4,6 +4,7 @@ import apiClient from '../services/apiClient';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { PharmacyDataTable, Column } from '../components/PharmacyDataTable';
+import { formatPhoneInput, isValidPhoneInput } from '../utils/format';
 
 const emptyForm = { username: '', email: '', fullName: '', phone: '', password: '' };
 
@@ -33,6 +34,10 @@ export const UsersPage: React.FC = () => {
     e.preventDefault();
     if (!form.username.trim() || !form.fullName.trim() || form.password.length < 8) {
       toast.error('Username, Full Name and an 8+ character Password are required.');
+      return;
+    }
+    if (form.phone.trim() && !isValidPhoneInput(form.phone)) {
+      toast.error('Please enter a valid 11-digit mobile phone number (e.g. 0300-1234567).');
       return;
     }
     setSaving(true);
@@ -258,7 +263,7 @@ export const UsersPage: React.FC = () => {
               <Field label="Full Name *"><input value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} className="input" /></Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Username *"><input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} className="input" /></Field>
-                <Field label="Phone"><input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="input" /></Field>
+                <Field label="Phone"><input value={form.phone} maxLength={12} placeholder="0300-1234567" onChange={(e) => setForm({ ...form, phone: formatPhoneInput(e.target.value) })} className="input font-mono" /></Field>
               </div>
               <Field label="Email"><input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="input" /></Field>
               <Field label="Temporary Password * (min 8 chars)"><input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="input" /></Field>

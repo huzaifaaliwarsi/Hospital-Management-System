@@ -286,12 +286,7 @@ export const invoicesService = {
   },
 
   /**
-   * Capture or renew a panel encounter's case authorization/guarantee
-   * reference after it was already opened (panel.md §15 backlog item 2) —
-   * e.g. a service line turns out to match a rule that independently
-   * requires preauthorization even though the company-wide policy didn't
-   * demand one at intake. Never blocked by an already-expired reference:
-   * that is exactly the situation this exists to fix.
+   * Capture or renew a panel encounter's case authorization/guarantee.
    */
   async setAuthorization(invoiceId: string, body: SetInvoiceAuthorizationBody) {
     const invoice = await prisma.hospitalInvoice.findUnique({ where: { id: invoiceId } });
@@ -787,10 +782,39 @@ export const invoicesService = {
       include: {
         panelPatient: { include: { corporatePanel: true } },
         selfPayEncounter: true,
+        department: true,
         appointment: { include: { doctor: true, department: true } },
-        lines: { include: { serviceRate: true, performedBy: true } },
-        paymentReceipts: { include: { collectedBy: { select: { id: true, username: true } } } },
-        createdByUser: { select: { id: true, username: true } },
+        admissionRecord: {
+          include: {
+            doctor: true,
+            department: true,
+            bed: {
+              include: {
+                room: {
+                  include: {
+                    ward: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        lines: {
+          include: {
+            serviceRate: {
+              include: {
+                department: true,
+              },
+            },
+            performedBy: true,
+          },
+          orderBy: { createdAt: 'asc' },
+        },
+        paymentReceipts: {
+          include: { collectedBy: { select: { id: true, username: true } } },
+          orderBy: { collectedAt: 'asc' },
+        },
+        createdByUser: { select: { id: true, username: true, role: true } },
       },
     });
 
@@ -799,8 +823,96 @@ export const invoicesService = {
     const hospitalProfile = await prisma.hospitalProfile.findFirst();
 
     const outstanding = Decimal.max(0, patientResponsibility(invoice).minus(invoice.paidTotal));
+    const advanceCredit = Decimal.max(0, invoice.paidTotal.minus(patientResponsibility(invoice)));
+
+    const latestReceipt = invoice.paymentReceipts.length > 0 ? invoice.paymentReceipts[invoice.paymentReceipts.length - 1] : null;
+    const receivedNow = latestReceipt ? Number(latestReceipt.amount) : Number(invoice.paidTotal);
+    const previouslyPaid = Math.max(0, Number(invoice.paidTotal) - receivedNow);
+
+    const docName =
+      invoice.appointment?.doctor?.fullName ||
+      invoice.admissionRecord?.doctor?.fullName ||
+      invoice.lines[0]?.performedBy?.fullName ||
+      'Consultant';
+
+    const patientName = invoice.panelPatient
+      ? invoice.panelPatient.fullName
+      : invoice.selfPayEncounter?.fullName ?? 'Walk-In Patient';
+
+    const mrNumber = invoice.panelPatient
+      ? invoice.panelPatient.mrNumber
+      : invoice.selfPayEncounter?.mrNumber ?? '';
+
+    const patientAge = invoice.panelPatient?.dob
+      ? Math.max(0, new Date().getFullYear() - new Date(invoice.panelPatient.dob).getFullYear())
+      : invoice.selfPayEncounter?.dob
+      ? Math.max(0, new Date().getFullYear() - new Date(invoice.selfPayEncounter.dob).getFullYear())
+      : null;
+
+    const patientGender = invoice.panelPatient?.gender ?? invoice.selfPayEncounter?.gender ?? null;
+
+    const resolvedWeight =
+      invoice.weightKg != null
+        ? Number(invoice.weightKg)
+        : invoice.admissionRecord?.weightKg != null
+        ? Number(invoice.admissionRecord.weightKg)
+        : (invoice.selfPayEncounter as any)?.weightKg != null
+        ? Number((invoice.selfPayEncounter as any).weightKg)
+        : null;
+
+    const filteredLines = invoice.lines.filter(
+      (l) => invoice.sourceType !== 'ADMISSION' || l.serviceRate?.code !== 'ADM-ADVANCE'
+    );
+
+    const lineItems = filteredLines.map((l) => ({
+      lineId: l.id,
+      serviceId: l.serviceRateId ?? '',
+      serviceCode: l.serviceRate?.code ?? '',
+      serviceName: (l.descriptionSnapshot ?? l.serviceRate?.name ?? l.billingSource),
+      quantity: Number(l.quantity),
+      unitRate: Number(l.rateSnapshot),
+      grossAmount: Number(l.lineGross),
+      discountAmount: Number(l.discountAmount),
+      discountReason: l.discountReason ?? '',
+      taxAmount: 0,
+      netAmount: Number(l.lineNet),
+      sourceType: l.billingSource,
+      performedByName: l.performedBy?.fullName ?? '',
+      billingUnit: (l.serviceRate?.billingUnit ?? 'Items'),
+    }));
 
     return {
+      // Canonical Top-Level Receipt DTO
+      receiptNumber: latestReceipt?.receiptNumber || 'RCP-PENDING',
+      invoiceNumber: invoice.invoiceNumber,
+      encounterType: invoice.encounterType ?? (invoice.sourceType === 'ADMISSION' ? 'ADMISSION' : 'OPD'),
+      encounterRef: invoice.sourceType,
+      tokenNumber: invoice.queueNumber || null,
+      mrNumber,
+      patientName,
+      patientAge,
+      patientGender,
+      patientWeight: resolvedWeight,
+      doctorName: docName,
+      admissionNumber: invoice.admissionRecord?.admissionNumber || null,
+      wardName: invoice.admissionRecord?.bed?.room?.ward?.name || null,
+      bedNumber: invoice.admissionRecord?.bed?.bedNumber || null,
+      dateTime: latestReceipt?.collectedAt || invoice.createdAt,
+      lineItems,
+      subtotal: Number(invoice.subtotal),
+      totalDiscount: Number(invoice.discountTotal),
+      totalTax: 0,
+      netTotal: Number(invoice.total),
+      paidAmount: Number(invoice.paidTotal),
+      receivedNow,
+      previouslyPaid,
+      outstanding: Number(outstanding),
+      advanceCredit: Number(advanceCredit),
+      paymentMethod: latestReceipt?.method ?? 'CASH',
+      collectedBy: latestReceipt?.collectedBy?.username ?? invoice.createdByUser?.username ?? 'Cashier',
+      isReprint: false,
+
+      // Nested structures for full backward compatibility
       hospital: {
         name: hospitalProfile?.name ?? 'CH Sharif & Saeed Hospital',
         address: hospitalProfile?.address ?? '',
@@ -813,6 +925,7 @@ export const invoicesService = {
         invoiceNumber: invoice.invoiceNumber,
         sourceType: invoice.sourceType,
         encounterType: invoice.encounterType,
+        queueNumber: invoice.queueNumber,
         createdAt: invoice.createdAt,
         status: invoice.status === 'VOID' ? 'VOID' : patientPaymentStatus(invoice, invoice.paidTotal),
         subtotal: invoice.subtotal,
@@ -830,6 +943,9 @@ export const invoicesService = {
             mrNumber: invoice.panelPatient.mrNumber,
             phone: invoice.panelPatient.phone,
             corporatePanel: invoice.panelPatient.corporatePanel.organizationName,
+            age: patientAge,
+            gender: patientGender,
+            weightKg: resolvedWeight,
           }
         : {
             type: 'SELF_PAY',
@@ -837,18 +953,21 @@ export const invoicesService = {
             mrNumber: invoice.selfPayEncounter?.mrNumber ?? '',
             phone: invoice.selfPayEncounter?.phone,
             cnic: invoice.selfPayEncounter?.cnicOrPassport,
+            age: patientAge,
+            gender: patientGender,
+            weightKg: resolvedWeight,
           },
-      lines: invoice.lines.filter((l) => invoice.sourceType !== 'ADMISSION' || l.serviceRate?.code !== 'ADM-ADVANCE').map((l) => ({
-        id: l.id,
-        billingSource: l.billingSource,
-        serviceName: (l.descriptionSnapshot ?? l.serviceRate?.name ?? l.billingSource),
-        billingUnit: (l.serviceRate?.billingUnit ?? 'Items'),
-        rate: l.rateSnapshot,
+      lines: lineItems.map((l) => ({
+        id: l.lineId,
+        billingSource: l.sourceType,
+        serviceName: l.serviceName,
+        billingUnit: l.billingUnit,
+        rate: l.unitRate,
         quantity: l.quantity,
-        gross: l.lineGross,
+        gross: l.grossAmount,
         discount: l.discountAmount,
-        net: l.lineNet,
-        performedBy: l.performedBy?.fullName ?? 'Hospital',
+        net: l.netAmount,
+        performedBy: l.performedByName || 'Hospital',
       })),
       payments: invoice.paymentReceipts.map((p) => ({
         receiptNumber: p.receiptNumber,
@@ -894,14 +1013,7 @@ export const invoicesService = {
     if (query.hasRefund === 'true') where.paymentReceipts = { some: { isReversed: true } };
     if (query.hasPayment === 'true') where.paymentReceipts = { some: {} };
     if (query.isPanel === 'true') where.panelPatientId = { not: null };
-    // Keyed off the invoice's own frozen corporatePanelId (panel.md §14
-    // backlog item 1), not the patient's CURRENT company — an invoice
-    // stays listed under the company it was actually billed to even after
-    // the patient later transfers to a different company.
     if (query.corporatePanelId) where.corporatePanelId = query.corporatePanelId;
-    // Outstanding = still owed: UNPAID or PARTIALLY_PAID only (PAID/VOID have
-    // no remaining balance). Only applied when the caller didn't already ask
-    // for a specific status — an explicit `status` filter always wins.
     if (query.hasOutstandingBalance === 'true' && !query.status) {
       where.status = { in: ['UNPAID', 'PARTIALLY_PAID'] };
     }
@@ -918,10 +1030,6 @@ export const invoicesService = {
             corporatePanel: { select: { id: true, code: true, organizationName: true } },
           },
         },
-        // The invoice's own frozen payer (panel.md §14 backlog item 1) —
-        // authoritative for display even if the patient later transfers to
-        // a different company; panelPatient.corporatePanel above stays
-        // useful for the CURRENT membership context only.
         corporatePanel: { select: { id: true, code: true, organizationName: true } },
         selfPayEncounter: { select: { id: true, fullName: true, mrNumber: true } },
         department: { select: { id: true, name: true, code: true } },

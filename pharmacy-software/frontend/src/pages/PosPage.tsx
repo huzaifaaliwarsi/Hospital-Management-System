@@ -20,6 +20,10 @@ import { pharmacyApi, MedicineRow, Unit } from '../services/pharmacyApi';
 import { formatPKR, formatNumber } from '../utils/format';
 import { useToast } from '../context/ToastContext';
 import { PharmacyInvoiceModal } from '../components/PharmacyInvoiceModal';
+import {
+  buildPharmacyThermalReceiptData,
+  printPharmacyThermalReceipt,
+} from '../components/PharmacyThermalReceipt';
 
 interface CartLine {
   medicine: MedicineRow;
@@ -77,6 +81,8 @@ export const PosPage: React.FC = () => {
   const [paymentManuallyEdited, setPaymentManuallyEdited] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [receipt, setReceipt] = useState<any | null>(null);
+  const [pharmacySettings, setPharmacySettings] = useState<any>(null);
+  const [hospitalProfile, setHospitalProfile] = useState<any>(null);
 
   // Quick Add Medicine Modal state
   const [showAddMedicineModal, setShowAddMedicineModal] = useState(false);
@@ -108,6 +114,13 @@ export const PosPage: React.FC = () => {
   useEffect(() => {
     loadMedicines();
     pharmacyApi.listUnits().then(setUnitCatalog).catch(() => {});
+    pharmacyApi.getPharmacySettings().then(setPharmacySettings).catch(() => {});
+    fetch('http://localhost:4000/api/v1/public/hospital-profile')
+      .then((r) => r.json())
+      .then((d) => {
+        if (d?.data) setHospitalProfile(d.data);
+      })
+      .catch(() => {});
   }, []);
 
   // Keyboard shortcut: '/' to focus search, Ctrl+Enter to complete sale
@@ -281,9 +294,20 @@ export const PosPage: React.FC = () => {
         invoiceDiscount: Number(invoiceDiscount) || 0,
         payments: validPayments.map((p) => ({ method: p.method, amount: Number(p.amount) })),
       });
+      // Fetch full invoice with complete batch and relation data
+      const fullInvoice = await pharmacyApi.getInvoiceById(invoice.id).catch(() => invoice);
       toast.success(`Sale completed successfully — Invoice ${invoice.invoiceNumber}`);
       clearCart();
       loadMedicines();
+      setReceipt(fullInvoice);
+
+      // Auto-trigger authentic 80mm thermal receipt printing via isolated iframe
+      try {
+        const receiptData = buildPharmacyThermalReceiptData(fullInvoice, pharmacySettings, hospitalProfile);
+        printPharmacyThermalReceipt(receiptData);
+      } catch (printErr) {
+        console.error('Thermal receipt print error:', printErr);
+      }
     } catch (err: any) {
       toast.error(err?.response?.data?.error?.message || 'Failed to complete sale.');
     } finally {

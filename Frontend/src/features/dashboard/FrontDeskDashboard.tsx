@@ -1236,7 +1236,7 @@ export const FrontDeskDashboard: React.FC = () => {
 
             {/* Live Recharts Day-wise / Hourly Chart */}
             <div className="relative pt-2 pb-2">
-              <div className="h-56 w-full">
+              <div className="h-56 w-full outline-none focus:outline-none focus:ring-0 select-none [&_*]:outline-none [&_*]:focus:outline-none">
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={trendItems} margin={{ top: 12, right: 12, left: -15, bottom: 0 }}>
                     <defs>
@@ -1458,9 +1458,9 @@ export const FrontDeskDashboard: React.FC = () => {
           5. BOTTOM SECTION: MULTI-TAB WORKABLE OPERATIONS & SMART INSIGHTS
              (Fully workable tables with view, pay due, print, and admission actions)
           ═════════════════════════════════════════════════════════════════════ */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
         {/* Left 2 cols: Workable Command Center with Pharmacy Table Theme */}
-        <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-300/80 shadow-[0_1px_4px_rgba(0,0,0,0.04)] overflow-hidden flex flex-col justify-between">
+        <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-300/80 shadow-[0_1px_4px_rgba(0,0,0,0.04)] overflow-hidden flex flex-col">
           <div>
             {/* ── Tab Switcher & Quick Navigation ── */}
             <div className="p-3 bg-slate-50/80 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
@@ -2032,7 +2032,7 @@ export const FrontDeskDashboard: React.FC = () => {
         </div>
 
         {/* Right col: Smart Front Desk Insights (Shadcn Dark Card - Workable) */}
-        <Card className="bg-gradient-to-br from-[#0c5944] via-[#094736] to-[#07382a] text-white p-6 border-emerald-800/60 shadow-lg flex flex-col justify-between">
+        <Card className="bg-gradient-to-br from-[#0c5944] via-[#094736] to-[#07382a] text-white p-6 border-emerald-800/60 shadow-lg flex flex-col gap-4 self-start h-fit lg:sticky lg:top-18">
           <div className="space-y-4">
             <CardHeader className="p-0 pb-3 border-b border-emerald-400/20 flex-row items-center justify-between space-y-0">
               <div className="flex items-center gap-2">

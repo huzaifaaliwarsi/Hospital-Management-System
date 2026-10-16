@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Download, FileText, Printer, FileSpreadsheet, ChevronDown, Check, Eye } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { Modal } from '../common/Modal';
 import { HOSPITAL_INFO, SOFTWARE_PROVIDER } from '../../constants';
 import { useToast } from '../../context/ToastContext';
@@ -12,6 +13,9 @@ export interface ExportMenuProps {
   activeFilters?: string[];
   dateRange?: string;
   currentUserName?: string;
+  data?: Record<string, any>[];
+  columns?: { key: string; header: string }[];
+  onExport?: (format: 'pdf' | 'excel' | 'print') => void;
 }
 
 export const ExportMenu: React.FC<ExportMenuProps> = ({
@@ -21,6 +25,9 @@ export const ExportMenu: React.FC<ExportMenuProps> = ({
   activeFilters = ['All Records', 'Status: Active'],
   dateRange = 'Today (Sep 6, 2026)',
   currentUserName = 'Super Admin',
+  data,
+  columns,
+  onExport,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -31,19 +38,53 @@ export const ExportMenu: React.FC<ExportMenuProps> = ({
     setSelectedFormat(format);
     setIsOpen(false);
 
+    if (onExport) {
+      onExport(format);
+      return;
+    }
+
     if (format === 'print' || format === 'pdf') {
       setPreviewOpen(true);
     } else {
-      toast.success(
-        `Generated Excel spreadsheet for "${reportTitle}" (${dataCount} rows). Download ready.`,
-        'Excel Export Ready'
-      );
+      try {
+        let worksheet: any;
+        if (data && data.length > 0) {
+          const exportRows = data.map((row, idx) => {
+            if (columns && columns.length > 0) {
+              const obj: Record<string, any> = { '#': idx + 1 };
+              columns.forEach((c) => {
+                obj[c.header || c.key] = row[c.key] ?? '—';
+              });
+              return obj;
+            }
+            return { '#': idx + 1, ...row };
+          });
+          worksheet = XLSX.utils.json_to_sheet(exportRows);
+        } else {
+          const table = document.querySelector('table');
+          if (table) {
+            worksheet = XLSX.utils.table_to_sheet(table);
+          } else {
+            toast.warning('No table data found to export.', 'Export Warning');
+            return;
+          }
+        }
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Export_Data');
+        const safeTitle = reportTitle.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const filename = `${safeTitle}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+        XLSX.writeFile(workbook, filename);
+        toast.success(`Exported ${dataCount || 'table'} records to ${filename}.`, 'Excel Download Complete');
+      } catch (err: any) {
+        console.error('Excel export error:', err);
+        toast.error('Failed to export Excel file.', 'Export Error');
+      }
     }
   };
 
   const handleConfirmPrint = () => {
     setPreviewOpen(false);
-    toast.success(`Sent "${reportTitle}" to hospital printer queue.`, 'Print Job Dispatched');
+    window.print();
   };
 
   return (

@@ -7,6 +7,7 @@ import {
   Search,
   User,
   Info,
+  ShieldAlert,
 } from 'lucide-react';
 import {
   Department,
@@ -15,7 +16,7 @@ import {
   DepartmentType,
   HospitalFloor,
 } from '../../../types/department';
-import { VALID_DEPARTMENT_TYPES } from '../../../services/departmentService';
+import { VALID_DEPARTMENT_TYPES, isProtectedCoreDepartment } from '../../../services/departmentService';
 import { getActiveOutsourcedProviders } from '../../../services/outsourcedProviderService';
 import { FloorService } from '../../../services/floorService';
 import { useToast } from '../../../context/ToastContext';
@@ -242,18 +243,32 @@ export const AddEditDepartmentModal: React.FC<AddEditDepartmentModalProps> = ({
           )}
 
           {/* Section 1: Basic Identifiers */}
+          {isProtectedCoreDepartment(departmentToEdit) && (
+            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center gap-2.5 text-xs text-emerald-900">
+              <ShieldAlert className="w-4 h-4 text-[#08775A] shrink-0" />
+              <span>
+                <strong>Default Pharmacy ({departmentToEdit?.code || 'DEP-0004'})</strong> is a permanent system department. Its code, name, and internal classification cannot be modified or deleted.
+              </span>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <div className="flex items-center justify-between mb-1">
                 <label className="block text-xs font-bold text-slate-700">
                   Department Code
                 </label>
-                <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
-                  Auto-generated
+                <span className={`text-[10px] font-medium px-1.5 py-0.2 rounded border ${
+                  isProtectedCoreDepartment(departmentToEdit)
+                    ? 'text-amber-800 bg-amber-50 border-amber-200 font-semibold'
+                    : 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                }`}>
+                  {isProtectedCoreDepartment(departmentToEdit) ? 'Permanent Default' : 'Auto-generated'}
                 </span>
               </div>
               <input
                 type="text"
+                disabled={isProtectedCoreDepartment(departmentToEdit)}
                 value={formData.code}
                 onChange={(e) => {
                   setFormData({ ...formData, code: e.target.value.toUpperCase() });
@@ -261,7 +276,9 @@ export const AddEditDepartmentModal: React.FC<AddEditDepartmentModalProps> = ({
                 }}
                 placeholder="Auto-generated (e.g. DEP-0001)"
                 className={`w-full rounded-lg border px-3 py-2 text-xs font-mono font-bold uppercase transition-colors focus:outline-hidden focus:ring-2 ${
-                  errors.code
+                  isProtectedCoreDepartment(departmentToEdit)
+                    ? 'border-slate-200 bg-slate-100 text-slate-600 cursor-not-allowed'
+                    : errors.code
                     ? 'border-rose-300 bg-rose-50/30 text-rose-900 focus:ring-rose-200'
                     : 'border-slate-300 bg-white text-slate-900 focus:border-[#08775A] focus:ring-[#08775A]/20'
                 }`}
@@ -269,7 +286,9 @@ export const AddEditDepartmentModal: React.FC<AddEditDepartmentModalProps> = ({
               {errors.code ? (
                 <p className="mt-1 text-[11px] font-medium text-rose-600">{errors.code}</p>
               ) : (
-                <p className="mt-1 text-[10px] text-slate-400">Pre-filled automatically — editable if needed</p>
+                <p className="mt-1 text-[10px] text-slate-400">
+                  {isProtectedCoreDepartment(departmentToEdit) ? 'Default Pharmacy code is protected' : 'Pre-filled automatically — editable if needed'}
+                </p>
               )}
             </div>
 
@@ -279,6 +298,7 @@ export const AddEditDepartmentModal: React.FC<AddEditDepartmentModalProps> = ({
               </label>
               <input
                 type="text"
+                disabled={isProtectedCoreDepartment(departmentToEdit)}
                 value={formData.name}
                 onChange={(e) => {
                   setFormData({ ...formData, name: e.target.value });
@@ -286,7 +306,9 @@ export const AddEditDepartmentModal: React.FC<AddEditDepartmentModalProps> = ({
                 }}
                 placeholder="e.g. General Medicine"
                 className={`w-full rounded-lg border px-3 py-2 text-xs transition-colors focus:outline-hidden focus:ring-2 ${
-                  errors.name
+                  isProtectedCoreDepartment(departmentToEdit)
+                    ? 'border-slate-200 bg-slate-100 text-slate-600 cursor-not-allowed'
+                    : errors.name
                     ? 'border-rose-300 bg-rose-50/30 text-rose-900 focus:ring-rose-200'
                     : 'border-slate-300 bg-white text-slate-900 focus:border-[#08775A] focus:ring-[#08775A]/20'
                 }`}

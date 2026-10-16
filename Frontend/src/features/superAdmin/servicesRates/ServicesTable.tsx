@@ -15,6 +15,7 @@ import {
   Printer,
   ChevronLeft,
   ChevronRight,
+  Upload,
 } from 'lucide-react';
 import { HospitalService } from '../../../types/serviceRates';
 import { StatusBadge } from '../../../components/common/StatusBadge';
@@ -26,6 +27,7 @@ interface ServicesTableProps {
   onToggleStatus: (service: HospitalService) => void;
   onDelete: (service: HospitalService) => void;
   onResetFilters: () => void;
+  onImport?: () => void;
   onExportExcel?: () => void;
   onExportPDF?: () => void;
   onPrint?: () => void;
@@ -38,6 +40,7 @@ export const ServicesTable: React.FC<ServicesTableProps> = ({
   onToggleStatus,
   onDelete,
   onResetFilters,
+  onImport,
   onExportExcel,
   onExportPDF,
   onPrint,
@@ -115,6 +118,17 @@ export const ServicesTable: React.FC<ServicesTableProps> = ({
           </span>
         </div>
         <div className="flex items-center gap-2">
+          {onImport && (
+            <button
+              type="button"
+              onClick={onImport}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#08775A] hover:bg-[#065f46] text-white text-[11px] font-semibold shadow-xs transition-colors cursor-pointer"
+              title="Import Services from Excel or CSV"
+            >
+              <Upload className="h-3.5 w-3.5" />
+              <span>Import</span>
+            </button>
+          )}
           {onExportExcel && (
             <button
               type="button"

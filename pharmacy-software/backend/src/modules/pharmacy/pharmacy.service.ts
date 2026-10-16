@@ -519,7 +519,12 @@ export const pharmacyService = {
           lines: { create: linesToCreate },
           payments: body.payments.length ? { create: body.payments.map((p) => ({ amount: new Decimal(p.amount), method: p.method, reference: p.reference, collectedById: actorId })) } : undefined,
         },
-        include: { lines: { include: { medicine: true, batch: true, saleUnit: true } }, payments: true },
+        include: {
+          lines: { include: { medicine: true, batch: true, saleUnit: true } },
+          payments: { include: { collectedByUser: { select: { id: true, fullName: true, username: true } } } },
+          dispensedByUser: { select: { id: true, fullName: true, username: true } },
+          medicineRequests: { include: { lines: true } },
+        },
       });
 
       for (const d of stockDeductions) {
@@ -583,7 +588,12 @@ export const pharmacyService = {
   async listInvoices(query: ListInvoicesQuery) {
     return prisma.pharmacyInvoice.findMany({
       where: { channel: query.channel, status: query.status },
-      include: { lines: { include: { medicine: { select: { name: true, code: true } } } }, payments: true, dispensedByUser: { select: { id: true, fullName: true, username: true } } },
+      include: {
+        lines: { include: { medicine: true, batch: true, saleUnit: true } },
+        payments: { include: { collectedByUser: { select: { id: true, fullName: true, username: true } } } },
+        dispensedByUser: { select: { id: true, fullName: true, username: true } },
+        medicineRequests: { include: { lines: true } },
+      },
       orderBy: { createdAt: 'desc' },
       take: 200,
     });

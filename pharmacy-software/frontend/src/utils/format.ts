@@ -42,3 +42,26 @@ export function formatShortRef(id: string | null | undefined): string {
   if (id.length <= 8) return id.toUpperCase();
   return id.slice(0, 8).toUpperCase();
 }
+
+/**
+ * Pakistani 11-digit mobile phone number: 03XX-XXXXXXX with auto-formatting & strict 11-digit max length.
+ */
+export function formatPhoneInput(raw?: string | null): string {
+  if (!raw) return '';
+  let cleanDigits = raw.replace(/\D/g, '');
+  if (cleanDigits.startsWith('92') && cleanDigits.length >= 11) {
+    cleanDigits = `0${cleanDigits.slice(2)}`;
+  }
+  cleanDigits = cleanDigits.slice(0, 11);
+  if (cleanDigits.length > 4) {
+    return `${cleanDigits.slice(0, 4)}-${cleanDigits.slice(4)}`;
+  }
+  return cleanDigits;
+}
+
+export function isValidPhoneInput(raw?: string | null): boolean {
+  if (!raw || !raw.trim()) return false;
+  const digits = raw.replace(/\D/g, '');
+  return digits.length === 11 && digits.startsWith('03');
+}
+

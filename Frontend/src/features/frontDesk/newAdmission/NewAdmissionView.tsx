@@ -65,7 +65,7 @@ import {
   normalizeSentenceCase,
 } from '../../../utils/formatters';
 import { useAuth } from '../../../context/AuthContext';
-import { Select, Textarea, NumberInput, TextInput, CNICInput } from '../../../components/forms/FormControls';
+import { Select, Textarea, NumberInput, TextInput, CNICInput, PhoneInput } from '../../../components/forms/FormControls';
 import { focusNextField, focusNextFieldOnEnter } from '../../../utils/formNavigation';
 import { useToast } from '../../../context/ToastContext';
 
@@ -99,8 +99,7 @@ const emptyForm = (): CreateAdmissionFormValues => ({
 });
 
 /**
- * v7.2 §2.9 (HMS_V7.2_NEW_REQUIREMENTS.md) — "Admission begins at Front Desk".
- * Landscape 2-column intake layout: Left = Patient Demographics & Payer; Right = Clinical Booking & Bed.
+ * Inpatient Admission form.
  */
 export const NewAdmissionView: React.FC = () => {
   const { currentUser } = useAuth();
@@ -110,22 +109,7 @@ export const NewAdmissionView: React.FC = () => {
   const handleEnterNext = (e: React.KeyboardEvent<HTMLElement>) => focusNextFieldOnEnter(e, formContainerRef.current);
 
   const handleSelectKeyDown = (e: React.KeyboardEvent<HTMLSelectElement>) => {
-    if (e.key !== 'Enter') return;
-    e.preventDefault();
-    const el = e.currentTarget;
-    if (el.value) {
-      focusNextField(el, formContainerRef.current);
-    } else {
-      try {
-        if (typeof (el as any).showPicker === 'function') {
-          (el as any).showPicker();
-        } else {
-          el.click();
-        }
-      } catch {
-        el.click();
-      }
-    }
+    focusNextFieldOnEnter(e, formContainerRef.current);
   };
 
   // New Patient Inline Fields
@@ -398,7 +382,7 @@ export const NewAdmissionView: React.FC = () => {
       return;
     }
     if (!primaryPhone.trim()) { showValidationError('Contact Phone is required.'); return; }
-    if (!isValidPhone(primaryPhone)) { showValidationError('Please enter a valid phone number (at least 10 digits).'); return; }
+    if (!isValidPhone(primaryPhone)) { showValidationError('Please enter a valid 11-digit phone number (e.g. 0300-1234567).'); return; }
     const ageNum = Number(age);
     if (!age.trim() || isNaN(ageNum) || ageNum < 0 || ageNum > 130) { showValidationError('Please enter a valid age in years.'); return; }
     if (payerType === 'Corporate / Panel') {
@@ -1054,7 +1038,7 @@ export const NewAdmissionView: React.FC = () => {
                   }
 
                   const latestReceipt = invToUse?.receipts?.[(invToUse?.receipts?.length || 0) - 1] || createdAdvanceReceipt;
-                  const weightVal = values.weightKg ? Number(values.weightKg) : (invToUse?.patientWeight || (invToUse as any)?.weightKg || (createdAdmission as any)?.weightKg);
+                  const weightVal = invToUse?.patientWeight || (invToUse as any)?.weightKg || (createdAdmission as any)?.weightKg;
 
                   if (invToUse) {
                     const thermal = buildThermalReceiptData(invToUse, latestReceipt as any, {
@@ -1065,17 +1049,19 @@ export const NewAdmissionView: React.FC = () => {
                     setActiveThermalReceipt(thermal);
                     setIsThermalModalOpen(true);
                   } else {
+                    const doctorObj = allStaff.find((d) => d.id === createdAdmission?.doctorId);
+                    const docDisplayName = createdAdmission?.doctorName || doctorObj?.fullName;
                     const mockInv: any = {
                       invoiceNumber: createdAdmission?.admissionNumber ? `INV-${createdAdmission.admissionNumber}` : 'INV-ADM',
                       sourceType: 'ADMISSION',
                       encounterType: 'ADMISSION',
-                      patientName: values.fullName,
-                      patientMr: values.mrNumber,
-                      patientAge: values.age,
-                      patientGender: values.gender,
+                      patientName: fullName || 'Patient',
+                      patientMr: createdAdmission?.admissionNumber || '',
+                      patientAge: age || '',
+                      patientGender: gender || '',
                       patientWeight: weightVal,
-                      patientPhone: values.phone,
-                      doctorName: allDoctors.find((d) => d.id === values.doctorStaffId)?.fullName,
+                      patientPhone: primaryPhone || '',
+                      doctorName: docDisplayName,
                       admissionNumber: createdAdmission?.admissionNumber,
                       admissionRecord: createdAdmission,
                       total: createdAdmission?.estimatedAmount || effectiveAdvance,
@@ -1347,7 +1333,7 @@ export const NewAdmissionView: React.FC = () => {
                 onChange={(e) => setGuardianCnic(e.target.value)}
                 onKeyDown={handleEnterNext}
               />
-              <TextInput
+              <PhoneInput
                 label="Contact Phone"
                 required
                 disabled={payerType === 'Corporate / Panel'}
@@ -1379,23 +1365,42 @@ export const NewAdmissionView: React.FC = () => {
                   Gender <span className="text-rose-500">*</span>
                 </label>
                 <div className="flex gap-1">
-                  {(['Male', 'Female', 'Other / Not Specified'] as PatientGender[]).map((g) => (
-                    <button
-                      key={g}
-                      type="button"
-                      disabled={payerType === 'Corporate / Panel'}
-                      onClick={() => setGender(g)}
-                      className={`flex-1 py-2 text-xs font-semibold rounded-lg border transition-all text-center ${
-                        payerType === 'Corporate / Panel' ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'
-                      } ${
-                        gender === g
-                          ? 'bg-[#08775A] text-white border-[#08775A] shadow-xs'
-                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                      }`}
-                    >
-                      {g === 'Other / Not Specified' ? 'Other' : g}
-                    </button>
-                  ))}
+                  {(['Male', 'Female', 'Other / Not Specified'] as PatientGender[]).map((g, idx, arr) => {
+                    const isSelected = gender === g;
+                    return (
+                      <button
+                        key={g}
+                        type="button"
+                        tabIndex={isSelected ? 0 : -1}
+                        data-nav-item={isSelected ? 'true' : undefined}
+                        disabled={payerType === 'Corporate / Panel'}
+                        onClick={() => setGender(g)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                            e.preventDefault();
+                            const nextG = arr[(idx + 1) % arr.length];
+                            setGender(nextG);
+                          } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                            e.preventDefault();
+                            const prevG = arr[(idx - 1 + arr.length) % arr.length];
+                            setGender(prevG);
+                          } else if (e.key === 'Enter') {
+                            e.preventDefault();
+                            focusNextField(e.currentTarget, formContainerRef.current);
+                          }
+                        }}
+                        className={`flex-1 py-2 text-xs font-semibold rounded-lg border transition-all text-center focus:outline-none focus:ring-2 focus:ring-[#08775A]/40 ${
+                          payerType === 'Corporate / Panel' ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'
+                        } ${
+                          isSelected
+                            ? 'bg-[#08775A] text-white border-[#08775A] shadow-xs'
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        {g === 'Other / Not Specified' ? 'Other' : g}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
               <div className="sm:col-span-4">
@@ -1776,6 +1781,8 @@ export const NewAdmissionView: React.FC = () => {
             <div className="pt-3 border-t border-slate-200 space-y-2">
               <button
                 ref={submitButtonRef}
+                id="btn-save-admission"
+                data-submit-btn="true"
                 type="submit"
                 disabled={isSaving}
                 className="w-full py-3 px-4 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] rounded-xl shadow-xs disabled:opacity-60 transition-colors flex items-center justify-center gap-2 cursor-pointer"

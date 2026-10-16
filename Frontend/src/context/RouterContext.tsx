@@ -81,8 +81,63 @@ export function parsePath(path: string): ParsedRoute {
     }
   }
 
+  // Normalize /billing aliases so /billing and /billing/* map to front-desk
+  if (rawPortal === 'billing') {
+    rawPortal = 'front-desk';
+    if (secondSegment === 'inpatient' || secondSegment === 'admission') {
+      secondSegment = 'admission_patient_records';
+    } else if (secondSegment === 'pending_discharges' || secondSegment === 'billing_pending_discharges') {
+      secondSegment = 'billing_pending_discharges';
+    } else if (secondSegment === 'payment_requests' || secondSegment === 'admission_payment_requests') {
+      secondSegment = 'admission_payment_requests';
+    } else if (secondSegment === 'discharged_patients') {
+      secondSegment = 'discharged_patients';
+    } else if (secondSegment === 'dashboard' || secondSegment === 'invoices') {
+      secondSegment = 'hospital_invoices';
+    }
+  }
+
+  // Front-desk modules accessed without portal prefix
+  const FRONT_DESK_MODULES = [
+    'admission_patient_records',
+    'hospital_invoices',
+    'billing_pending_discharges',
+    'admission_payment_requests',
+    'new_admission',
+    'walk_in_intake',
+    'appointments',
+    'discharged_patients',
+    'payments_receipts',
+    'my_balance_sheet',
+    'my_account_settlement',
+    'front_desk_billing_reports',
+  ];
+  if (FRONT_DESK_MODULES.includes(rawPortal)) {
+    secondSegment = rawPortal;
+    rawPortal = 'front-desk';
+  }
+
+  // Admission modules accessed without portal prefix
+  const ADMISSION_MODULES = [
+    'active_admissions',
+    'planned_admissions',
+    'ward_management',
+    'bed_management',
+  ];
+  if (ADMISSION_MODULES.includes(rawPortal)) {
+    secondSegment = rawPortal;
+    rawPortal = 'admission';
+  }
+
   const isPortalValid = VALID_PORTALS.includes(rawPortal as PortalKey);
-  const portal: PortalKey = isPortalValid ? (rawPortal as PortalKey) : 'super-admin';
+  let portal: PortalKey;
+  if (isPortalValid) {
+    portal = rawPortal as PortalKey;
+  } else {
+    // Check if active user has an authenticated portal stored in localStorage
+    const savedPortal = typeof window !== 'undefined' ? (localStorage.getItem('css_hospital_active_portal') as PortalKey) : null;
+    portal = savedPortal && VALID_PORTALS.includes(savedPortal) ? savedPortal : 'super-admin';
+  }
 
   const isLogin = secondSegment === 'login';
   const module = isLogin ? 'login' : secondSegment;

@@ -224,6 +224,11 @@ export function DataTable<T extends Record<string, any>>({
                 dataCount={filteredData.length}
                 selectedCount={selectedKeys.size}
                 activeFilters={searchTerm ? [`Search: "${searchTerm}"`] : ['All Active Records']}
+                data={filteredData}
+                columns={columns.map((c) => ({
+                  key: String(c.key),
+                  header: typeof c.header === 'string' ? c.header : String(c.key),
+                }))}
               />
             )}
 

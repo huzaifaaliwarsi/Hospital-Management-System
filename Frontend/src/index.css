@@ -335,3 +335,36 @@ table thead th,
 table thead tr {
   white-space: nowrap !important;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Recharts & SVG Focus Outline Reset:
+   Prevents browser default black focus ring when clicking or selecting charts
+   ═══════════════════════════════════════════════════════════════════════ */
+.recharts-wrapper,
+.recharts-wrapper *,
+.recharts-surface,
+svg.recharts-surface,
+.recharts-responsive-container,
+.recharts-responsive-container *,
+svg:focus,
+svg *:focus,
+svg:focus-visible,
+svg *:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  border: none !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -webkit-tap-highlight-color: transparent !important;
+}
+
+.recharts-wrapper:focus,
+.recharts-wrapper:focus-visible,
+.recharts-wrapper:active,
+.recharts-surface:focus,
+.recharts-surface:focus-visible,
+.recharts-surface:active {
+  outline: none !important;
+  box-shadow: none !important;
+  border: none !important;
+}
