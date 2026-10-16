@@ -10,12 +10,12 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(4100),
 
-  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
+  DATABASE_URL: z.string().default('postgresql://postgres:admin123@localhost:5432/pharmacy_db?schema=public'),
   DATABASE_POOL_MAX: z.coerce.number().int().positive().default(10),
 
-  JWT_ACCESS_SECRET: z.string().min(16, 'JWT_ACCESS_SECRET must be at least 16 characters'),
+  JWT_ACCESS_SECRET: z.string().min(16).default('db77ef97d6b6ab1d61fad6d37cd6ef45ad4fb5c23e7c6858aa49d6e4a34d6453'),
   JWT_ACCESS_TTL: z.string().default('15m'),
-  JWT_REFRESH_SECRET: z.string().min(16, 'JWT_REFRESH_SECRET must be at least 16 characters'),
+  JWT_REFRESH_SECRET: z.string().min(16).default('0b8d1cab024914f6db2235e06a2b366c36bafc4e7041af4f2bf3e5651f22ff53'),
   JWT_REFRESH_TTL: z.string().default('30d'),
   COOKIE_DOMAIN: z.string().default('localhost'),
 
