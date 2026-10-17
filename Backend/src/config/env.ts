@@ -47,13 +47,10 @@ const envSchema = z.object({
 function loadEnv() {
   const parsed = envSchema.safeParse(process.env);
   if (!parsed.success) {
+    const issues = parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`);
     // eslint-disable-next-line no-console
-    console.error('❌ Invalid environment configuration:');
-    for (const issue of parsed.error.issues) {
-      // eslint-disable-next-line no-console
-      console.error(`  - ${issue.path.join('.')}: ${issue.message}`);
-    }
-    process.exit(1);
+    console.error('❌ Invalid environment configuration:', issues);
+    throw new Error(`Invalid environment configuration: ${issues.join('; ')}`);
   }
   return parsed.data;
 }
