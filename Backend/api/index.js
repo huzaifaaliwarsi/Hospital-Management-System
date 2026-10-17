@@ -36629,7 +36629,11 @@ var pharmacyService = {
       const remoteMedicines = await pharmacyBridgeClient.getMedicines(search);
       if (Array.isArray(remoteMedicines)) {
         for (const rm of remoteMedicines) {
-          await syncRemoteMedicineToLocal(rm);
+          try {
+            await syncRemoteMedicineToLocal(rm);
+          } catch (syncErr) {
+            console.warn(`[pharmacyService] syncRemoteMedicineToLocal error for ${rm?.id}:`, syncErr.message);
+          }
         }
         return remoteMedicines.map((m) => ({
           id: m.id,
@@ -40634,8 +40638,16 @@ function notFoundHandler(req, res) {
 // src/modules/health/health.routes.ts
 var import_express2 = __toESM(require_express2());
 var router2 = (0, import_express2.Router)();
-router2.get("/", (_req, res) => {
-  res.json({ data: { status: "ok" } });
+router2.get("/", async (_req, res) => {
+  const bridgeMedicines = await pharmacyBridgeClient.getMedicines().catch((err) => ({ error: err.message }));
+  res.json({
+    data: {
+      status: "ok",
+      version: "bridge-v2",
+      bridgeMedicinesCount: Array.isArray(bridgeMedicines) ? bridgeMedicines.length : null,
+      bridgeMedicines
+    }
+  });
 });
 router2.get("/ready", async (_req, res) => {
   const dbOk = await checkDatabaseConnection();

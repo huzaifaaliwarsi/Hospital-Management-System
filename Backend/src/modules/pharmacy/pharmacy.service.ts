@@ -118,7 +118,12 @@ export const pharmacyService = {
       if (Array.isArray(remoteMedicines)) {
         // Sync/cache medicines into hms_db so local foreign keys will not fail
         for (const rm of remoteMedicines) {
-          await syncRemoteMedicineToLocal(rm);
+          try {
+            await syncRemoteMedicineToLocal(rm);
+          } catch (syncErr: any) {
+            // eslint-disable-next-line no-console
+            console.warn(`[pharmacyService] syncRemoteMedicineToLocal error for ${rm?.id}:`, syncErr.message);
+          }
         }
 
         return remoteMedicines.map((m: any) => ({
