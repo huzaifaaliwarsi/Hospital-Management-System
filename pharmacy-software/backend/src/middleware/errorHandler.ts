@@ -2,7 +2,6 @@ import type { NextFunction, Request, Response } from 'express';
 import { ZodError } from 'zod';
 import { AppError } from '@/shared/errors/AppError';
 import { logger } from '@/shared/logger';
-import { env } from '@/config/env';
 
 /** Single error → HTTP response translator. Must be registered LAST, after all routes. */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -37,7 +36,7 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
   res.status(500).json({
     error: {
       code: 'INTERNAL_ERROR',
-      message: env.NODE_ENV === 'production' ? 'Internal server error' : error?.message,
+      message: error?.message || 'Internal server error',
       requestId,
     },
   });

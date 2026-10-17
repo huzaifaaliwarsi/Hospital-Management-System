@@ -34748,7 +34748,7 @@ function errorHandler(err, req, res, _next) {
   res.status(500).json({
     error: {
       code: "INTERNAL_ERROR",
-      message: env.NODE_ENV === "production" ? "Internal server error" : error?.message,
+      message: error?.message || "Internal server error",
       requestId
     }
   });
