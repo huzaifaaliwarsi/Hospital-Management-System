@@ -3,7 +3,8 @@ import { env } from '@/config/env';
 export const pharmacyBridgeClient = {
   async getMedicines(search?: string) {
     try {
-      const url = new URL(`${env.PHARMACY_BACKEND_URL}/pharmacy/medicines`);
+      const baseUrl = env.PHARMACY_BACKEND_URL.replace(/\/+$/, '');
+      const url = new URL(`${baseUrl}/pharmacy/medicines`);
       if (search) url.searchParams.set('search', search);
 
       const res = await fetch(url.toString(), {
@@ -14,10 +15,16 @@ export const pharmacyBridgeClient = {
         },
       });
 
-      if (!res.ok) return null;
+      if (!res.ok) {
+        // eslint-disable-next-line no-console
+        console.warn(`[pharmacyBridgeClient] getMedicines HTTP ${res.status}: ${await res.text().catch(() => '')}`);
+        return null;
+      }
       const data = await res.json();
       return (data as any).data;
-    } catch {
+    } catch (err: any) {
+      // eslint-disable-next-line no-console
+      console.warn(`[pharmacyBridgeClient] getMedicines network error: ${err.message}`);
       return null;
     }
   },
@@ -31,7 +38,8 @@ export const pharmacyBridgeClient = {
     lines: Array<{ medicineId: string; requestedQuantity: number; notes?: string }>;
   }) {
     try {
-      const url = `${env.PHARMACY_BACKEND_URL}/hms-requests`;
+      const baseUrl = env.PHARMACY_BACKEND_URL.replace(/\/+$/, '');
+      const url = `${baseUrl}/hms-requests`;
       const res = await fetch(url, {
         method: 'POST',
         headers: {
@@ -62,7 +70,8 @@ export const pharmacyBridgeClient = {
     collectedAt?: string;
   }) {
     try {
-      const url = `${env.PHARMACY_BACKEND_URL}/hms-requests/callback/patient-collected`;
+      const baseUrl = env.PHARMACY_BACKEND_URL.replace(/\/+$/, '');
+      const url = `${baseUrl}/hms-requests/callback/patient-collected`;
       const res = await fetch(url, {
         method: 'POST',
         headers: {
@@ -96,7 +105,8 @@ export const pharmacyBridgeClient = {
     pharmacyInvoiceNumber: string;
     authoritativeCollectedAmount: number;
   }) {
-    const url = `${env.PHARMACY_BACKEND_URL}/hms-requests/callback/reconcile-collection`;
+    const baseUrl = env.PHARMACY_BACKEND_URL.replace(/\/+$/, '');
+    const url = `${baseUrl}/hms-requests/callback/reconcile-collection`;
     const res = await fetch(url, {
       method: 'POST',
       headers: {
@@ -124,7 +134,8 @@ export const pharmacyBridgeClient = {
     remarks?: string;
   }) {
     try {
-      const url = `${env.PHARMACY_BACKEND_URL}/hms-requests/settlement/release`;
+      const baseUrl = env.PHARMACY_BACKEND_URL.replace(/\/+$/, '');
+      const url = `${baseUrl}/hms-requests/settlement/release`;
       const res = await fetch(url, {
         method: 'POST',
         headers: {

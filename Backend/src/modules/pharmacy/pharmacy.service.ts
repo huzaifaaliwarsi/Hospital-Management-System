@@ -29,6 +29,7 @@ export async function syncRemoteMedicineToLocal(rm: any) {
       await prisma.medicineMaster.update({
         where: { id: rm.id },
         data: {
+          code,
           name,
           saleRate: new Decimal(saleRate),
           unit,
@@ -40,17 +41,28 @@ export async function syncRemoteMedicineToLocal(rm: any) {
 
     const existingByCode = await prisma.medicineMaster.findUnique({ where: { code } });
     if (existingByCode) {
-      // Primary key update cascades to pharmacy_clearance_lines and other relations
-      await prisma.$executeRawUnsafe(
-        `UPDATE medicine_masters SET id = $1, name = $2, sale_rate = $3, unit = $4, is_active = $5 WHERE code = $6`,
-        rm.id,
-        name,
-        saleRate,
-        unit,
-        isActive,
-        code,
-      );
-      return;
+      try {
+        await prisma.$executeRawUnsafe(
+          `UPDATE medicine_masters SET id = $1, name = $2, sale_rate = $3, unit = $4, is_active = $5 WHERE code = $6`,
+          rm.id,
+          name,
+          saleRate,
+          unit,
+          isActive,
+          code,
+        );
+        return;
+      } catch {
+        // If raw primary key update failed due to foreign key referencing existingByCode.id,
+        // free the unique code by appending an -OLD suffix and deactivating it
+        await prisma.medicineMaster.update({
+          where: { id: existingByCode.id },
+          data: {
+            code: `${code}-OLD-${existingByCode.id.slice(0, 6)}`,
+            isActive: false,
+          },
+        });
+      }
     }
 
     await prisma.medicineMaster.create({
@@ -103,7 +115,7 @@ export const pharmacyService = {
   async listMedicines(search?: string) {
     try {
       const remoteMedicines = await pharmacyBridgeClient.getMedicines(search);
-      if (Array.isArray(remoteMedicines) && remoteMedicines.length > 0) {
+      if (Array.isArray(remoteMedicines)) {
         // Sync/cache medicines into hms_db so local foreign keys will not fail
         for (const rm of remoteMedicines) {
           await syncRemoteMedicineToLocal(rm);

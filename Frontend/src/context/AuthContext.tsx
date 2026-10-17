@@ -18,81 +18,7 @@ import { AUTH_TOKEN_REFRESHED_EVENT, AUTH_SESSION_EXPIRED_EVENT } from '../servi
 import { primePatientRegistryCache } from '../services/patientRegistryService';
 import { formatDateTimeDDMMYYYY } from '../utils/formatters';
 
-// Operational staff demo fallback accounts (Admin and Super Admin are authoritatively managed in AdminUserService)
-export const MOCK_STAFF_ACCOUNTS: Record<string, StaffAccount> = {
-  frontdesk: {
-    username: 'frontdesk',
-    password: 'FrontDesk@123',
-    user: {
-      id: 'usr_frontdesk',
-      username: 'frontdesk',
-      name: 'Ahmed Raza',
-      email: 'ahmed.raza@sharif-saeed.hospital',
-      role: 'Billing Officer',
-      department: 'Front Desk Reception & Patient Cashiering',
-      portal: 'front-desk',
-      allowedPortals: ['front-desk'],
-      permissions: ['patient_registration', 'token_generation', 'billing_cashier', 'receipt_issuance'],
-      status: 'active',
-      lastLogin: 'Today, 08:00 AM',
-      isSuperAdminProtected: false,
-    },
-  },
-  admission: {
-    username: 'admission',
-    password: 'Admission@123',
-    user: {
-      id: 'usr_admission',
-      username: 'admission',
-      name: 'Sara Khan',
-      email: 'sara.khan@sharif-saeed.hospital',
-      role: 'Admission Officer',
-      department: 'Inpatient Wards & Bed Coordination Desk',
-      portal: 'admission',
-      allowedPortals: ['admission'],
-      permissions: ['bed_management', 'admission_clearance', 'discharge_management', 'ward_transfers'],
-      status: 'active',
-      lastLogin: 'Today, 07:45 AM',
-      isSuperAdminProtected: false,
-    },
-  },
-  inventory: {
-    username: 'inventory',
-    password: 'Inventory@123',
-    user: {
-      id: 'usr_inventory',
-      username: 'inventory',
-      name: 'Usman Ali',
-      email: 'usman.ali@sharif-saeed.hospital',
-      role: 'Store Manager',
-      department: 'Central Store, Procurement & Goods Receiving (GRN)',
-      portal: 'inventory',
-      allowedPortals: ['inventory'],
-      permissions: ['grn_entry', 'purchase_orders', 'stock_transfer', 'inventory_audit'],
-      status: 'active',
-      lastLogin: 'Today, 08:05 AM',
-      isSuperAdminProtected: false,
-    },
-  },
-  pharmacy: {
-    username: 'pharmacy',
-    password: 'Pharmacy@123',
-    user: {
-      id: 'usr_pharmacy',
-      username: 'pharmacy',
-      name: 'Tariq Mehmood',
-      email: 'tariq.pharmacy@sharif-saeed.hospital',
-      role: 'Pharmacist',
-      department: 'Central Pharmacy & Dispensing Counter',
-      portal: 'inventory',
-      allowedPortals: ['inventory'],
-      permissions: ['medicine_dispense', 'batch_receipt', 'pos_cashiering'],
-      status: 'active',
-      lastLogin: 'Today, 08:15 AM',
-      isSuperAdminProtected: false,
-    },
-  },
-};
+
 
 interface AuthContextType {
   currentUser: User | null;
@@ -184,23 +110,23 @@ function validateAndNormalizeRestoredSession(): {
         return null;
       }
 
-      const activeUserPortal = portal || user.portal || 'super-admin';
+      const activeUserPortal = 'super-admin';
       const normalizedUser: User = {
         ...user,
         role: 'Super Admin',
-        portal: activeUserPortal,
-        allowedPortals: ['super-admin', 'admin', 'front-desk', 'admission', 'inventory'],
+        portal: 'super-admin',
+        allowedPortals: ['super-admin'],
       };
       const normalizedSession: UserSession = {
         ...session,
-        selectedPortal: activeUserPortal,
-        allowedPortals: ['super-admin', 'admin', 'front-desk', 'admission', 'inventory'],
+        selectedPortal: 'super-admin',
+        allowedPortals: ['super-admin'],
       };
 
       return {
         user: normalizedUser,
         session: normalizedSession,
-        portal: activeUserPortal,
+        portal: 'super-admin',
       };
     }
 
@@ -211,23 +137,23 @@ function validateAndNormalizeRestoredSession(): {
         return null;
       }
 
-      const activeUserPortal = portal || user.portal || 'admin';
+      const activeUserPortal = 'admin';
       const normalizedUser: User = {
         ...user,
         role: 'Admin',
-        portal: activeUserPortal,
-        allowedPortals: ['super-admin', 'admin', 'front-desk', 'admission', 'inventory'],
+        portal: 'admin',
+        allowedPortals: ['admin'],
       };
       const normalizedSession: UserSession = {
         ...session,
-        selectedPortal: activeUserPortal,
-        allowedPortals: ['super-admin', 'admin', 'front-desk', 'admission', 'inventory'],
+        selectedPortal: 'admin',
+        allowedPortals: ['admin'],
       };
 
       return {
         user: normalizedUser,
         session: normalizedSession,
-        portal: activeUserPortal,
+        portal: 'admin',
       };
     }
 
@@ -237,33 +163,6 @@ function validateAndNormalizeRestoredSession(): {
     const validStaffPortals: StaffPortalKey[] = ['front-desk', 'admission', 'inventory'];
     if (session.token && validStaffPortals.includes(user.portal as StaffPortalKey)) {
       const assignedPortal = user.portal as StaffPortalKey;
-      const normalizedUser: User = {
-        ...user,
-        portal: assignedPortal,
-        allowedPortals: [assignedPortal],
-      };
-      const normalizedSession: UserSession = {
-        ...session,
-        selectedPortal: assignedPortal,
-        allowedPortals: [assignedPortal],
-      };
-
-      return {
-        user: normalizedUser,
-        session: normalizedSession,
-        portal: assignedPortal,
-      };
-    }
-
-    // Fallback: check operational demo account
-    const mockAccount = MOCK_STAFF_ACCOUNTS[user.username];
-    if (
-      mockAccount &&
-      mockAccount.user.status === 'active' &&
-      mockAccount.user.portal === user.portal &&
-      mockAccount.user.allowedPortals.includes(user.portal)
-    ) {
-      const assignedPortal = mockAccount.user.portal;
       const normalizedUser: User = {
         ...user,
         portal: assignedPortal,
@@ -373,11 +272,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const userRole = mapRoleToUserRole(backendAuth.user.role);
 
-      const isCrossPortalAdmin =
-        backendAuth.user.role === 'SUPER_ADMIN' || backendAuth.user.role === 'ADMIN';
-      const userAllowedPortals: PortalKey[] = isCrossPortalAdmin
-        ? ['super-admin', 'admin', 'front-desk', 'admission', 'inventory']
-        : [targetPortal];
+      const userAllowedPortals: PortalKey[] = [targetPortal];
 
       const authenticatedUser: User = {
         id: backendAuth.user.id,
@@ -416,108 +311,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         portal: targetPortal,
       };
     } catch (apiErr: any) {
-      // If backend returns an explicit 401 invalid credential, return error
-      if (apiErr.response?.status === 401) {
-        return {
-          success: false,
-          error: apiErr.message || 'Invalid username or password.',
-        };
-      }
-      // If backend is unreachable/offline, fall through to local fallback
-      console.warn('Backend login unavailable, evaluating local credentials:', apiErr.message);
-    }
-
-    // 4. Admin/Super Admin accounts have no offline fallback — their real
-    // password only ever lives, hashed, on the backend (`PortalUser`).
-    // If we get here, the backend login attempt above failed to reach the
-    // server at all; a matching username in the Admin Users list is not
-    // sufficient to authenticate without it.
-    const adminUser =
-      AdminUserService.getAdminUserByUsername(cleanUsername) ||
-      AdminUserService.getAdminUsers().find((u) => u.email.toLowerCase() === cleanUsername);
-    if (adminUser) {
+      const msg =
+        apiErr.response?.data?.error?.message ||
+        apiErr.message ||
+        'Authentication failed. Please verify your credentials.';
       return {
         success: false,
-        error: 'Unable to reach the authentication server. Please check your connection and try again.',
+        error: msg,
       };
     }
-
-    // 5. Staff (Front Desk / Admission / Inventory) accounts also have no
-    // offline fallback for the same reason as Admin/Super Admin above —
-    // their real password only ever lives, hashed, on the backend.
-    const staffUser =
-      StaffUserService.getStaffUserByUsername(cleanUsername) ||
-      StaffUserService.getStaffUsers().find((u) => u.email.toLowerCase() === cleanUsername);
-    if (staffUser && staffUser.accessType === 'PORTAL_USER') {
-      return {
-        success: false,
-        error: 'Unable to reach the authentication server. Please check your connection and try again.',
-      };
-    }
-
-    // 6. Fallback to operational staff demo accounts (Front Desk, Admission, Pharmacy, Inventory)
-    const account = MOCK_STAFF_ACCOUNTS[cleanUsername];
-    if (!account) {
-      return {
-        success: false,
-        error: 'Invalid username or password.',
-      };
-    }
-
-    // Verify configured password strictly (no universal bypass)
-    if (password !== account.password) {
-      return {
-        success: false,
-        error: 'Invalid username or password.',
-      };
-    }
-
-    // Verify account status
-    if (account.user.status === 'suspended' || account.user.status === 'inactive') {
-      return {
-        success: false,
-        error: 'Your account is disabled. Please contact the Hospital Administrator.',
-      };
-    }
-
-    // Check portal authorization
-    if (!account.user.allowedPortals.includes(portalKey)) {
-      return {
-        success: false,
-        error: 'Your account does not have access to the selected portal.',
-      };
-    }
-
-    // Establish authenticated session for staff account
-    const now = new Date();
-    const loginTimeStr = formatDateTimeDDMMYYYY(now);
-
-    const userWithLogin: User = {
-      ...account.user,
-      lastLogin: `Today at ${loginTimeStr}`,
-    };
-
-    const newSession: UserSession = {
-      userId: account.user.id,
-      name: account.user.name,
-      username: account.user.username,
-      role: account.user.role,
-      selectedPortal: portalKey,
-      allowedPortals: account.user.allowedPortals,
-      permissions: account.user.permissions || ['standard_access'],
-      status: 'active',
-      loginTime: loginTimeStr,
-      token: `mock_jwt_${account.user.id}_${Date.now()}`,
-    };
-
-    setCurrentUser(userWithLogin);
-    setSession(newSession);
-    setActivePortal(portalKey);
-
-    return {
-      success: true,
-      portal: portalKey,
-    };
   };
 
   const logout = () => {

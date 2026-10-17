@@ -25,7 +25,8 @@ export const hmsBridgeClient = {
     }>;
   }) {
     try {
-      const url = `${env.HMS_BACKEND_URL}/pharmacy-bridge/callback/dispensed`;
+      const baseUrl = env.HMS_BACKEND_URL.replace(/\/+$/, '');
+      const url = `${baseUrl}/pharmacy-bridge/callback/dispensed`;
       const res = await fetch(url, {
         method: 'POST',
         headers: {
@@ -58,7 +59,8 @@ export const hmsBridgeClient = {
     remarks?: string;
   }) {
     try {
-      const url = `${env.HMS_BACKEND_URL}/pharmacy-bridge/settlement/request`;
+      const baseUrl = env.HMS_BACKEND_URL.replace(/\/+$/, '');
+      const url = `${baseUrl}/pharmacy-bridge/settlement/request`;
       const res = await fetch(url, {
         method: 'POST',
         headers: {

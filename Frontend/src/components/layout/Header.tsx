@@ -437,42 +437,7 @@ export const Header: React.FC<HeaderProps> = ({
                     <span>Account Settings</span>
                   </button>
 
-                  {/* Multi-portal users only (Super Admin, Admin) */}
-                  {user.allowedPortals && user.allowedPortals.length > 1 && (
-                    <div className="pt-1.5 pb-1 border-t border-slate-100">
-                      <div className="px-3 py-1 text-[10px] font-bold uppercase text-slate-400">
-                        Authorized Workstations
-                      </div>
-                      <div className="space-y-0.5 mt-1">
-                        {availablePortals.map((p) => {
-                          const isCurrent = p.key === activePortal;
-                          return (
-                            <button
-                              key={p.key}
-                              type="button"
-                              onClick={() => {
-                                setShowUserMenu(false);
-                                onChangePortal(p.key);
-                              }}
-                              className={cn(
-                                'w-full text-left px-3 py-1.5 rounded-lg flex items-center justify-between text-xs transition-colors cursor-pointer',
-                                isCurrent
-                                  ? 'bg-[#e7f6f1] text-[#0e7d5a] font-bold'
-                                  : 'hover:bg-[#f6f8f7] text-[#52665e]'
-                              )}
-                            >
-                              <span>{p.name}</span>
-                              {isCurrent && (
-                                <span className="text-[10px] font-bold text-[#129b70]">Active</span>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
 
-                  <div className="my-1 border-t border-slate-100" />
 
                   {/* Logout Action */}
                   <button

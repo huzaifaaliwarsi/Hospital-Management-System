@@ -22,6 +22,7 @@ import {
   Clock,
   CreditCard,
   Bed,
+  RefreshCw,
 } from 'lucide-react';
 import { Modal } from '../../components/common/Modal';
 import { PanelBadge } from '../../components/common/PanelBadge';
@@ -266,12 +267,27 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
 
   // ── Pharmacy Requests ────────────────────────────────────────────────
   const [medicines, setMedicines] = useState<BackendMedicine[]>([]);
+  const [isLoadingMedicines, setIsLoadingMedicines] = useState(false);
   const [pharmLines, setPharmLines] = useState<{ medicineId: string; requestedQuantity: number }[]>([{ medicineId: '', requestedQuantity: 1 }]);
   const [pharmNotes, setPharmNotes] = useState('');
 
+  const loadMedicines = async (showToast = false) => {
+    setIsLoadingMedicines(true);
+    try {
+      const data = await pharmacyApiService.getMedicines();
+      setMedicines(data);
+      if (showToast) toast.success(`Synced ${data.length} medicines from Pharmacy stock`);
+    } catch {
+      setMedicines([]);
+      if (showToast) toast.error('Failed to sync pharmacy medicines');
+    } finally {
+      setIsLoadingMedicines(false);
+    }
+  };
+
   useEffect(() => {
     if (tab === 'pharmacy') {
-      pharmacyApiService.getMedicines().then(setMedicines).catch(() => setMedicines([]));
+      loadMedicines();
     }
   }, [tab]);
 
@@ -1269,9 +1285,21 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                       <Pill className="h-4 w-4 text-emerald-300" />
                       <h4 className="text-xs font-bold tracking-wide">Inpatient Medicine Requisition</h4>
                     </div>
-                    <span className="px-2.5 py-0.5 text-[10px] font-bold bg-emerald-950/70 text-emerald-200 border border-emerald-700/60 rounded-full">
-                      Live Central Pharmacy Stock
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={isLoadingMedicines}
+                        onClick={() => loadMedicines(true)}
+                        className="px-2.5 py-1 text-[11px] font-medium bg-emerald-900/80 hover:bg-emerald-800 disabled:opacity-50 text-emerald-100 rounded-lg border border-emerald-700/60 flex items-center gap-1.5 transition-colors cursor-pointer"
+                        title="Reload latest medicines and live stock from Pharmacy"
+                      >
+                        <RefreshCw className={`h-3 w-3 ${isLoadingMedicines ? 'animate-spin' : ''}`} />
+                        <span>Sync Stock</span>
+                      </button>
+                      <span className="px-2.5 py-0.5 text-[10px] font-bold bg-emerald-950/70 text-emerald-200 border border-emerald-700/60 rounded-full">
+                        Live Central Pharmacy Stock
+                      </span>
+                    </div>
                   </div>
 
                   <form onSubmit={handleCreatePharmacyRequest} className="p-4 space-y-3.5">
@@ -1285,7 +1313,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                                 label={idx === 0 ? 'Select Medicine from Pharmacy Stock' : undefined}
                                 placeholder="Choose medicine from pharmacy…"
                                 options={medicines.map((m) => ({
-                                  label: m.name,
+                                  label: `${m.name}${m.code ? ` (${m.code})` : ''} — Stock: ${m.currentStock} ${m.unit || ''} (Rs. ${m.saleRate})`,
                                   value: m.id,
                                 }))}
                                 value={line.medicineId}

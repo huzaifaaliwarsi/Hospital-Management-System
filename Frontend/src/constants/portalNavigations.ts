@@ -186,13 +186,6 @@ export const CANONICAL_HOSPITAL_MANAGEMENT_NAV_GROUPS: NavGroup[] = [
       { id: 'sa_inventory_pharmacy', label: 'Inventory / Pharmacy Summary', icon: 'Boxes' },
     ],
   },
-  {
-    id: 'hm_logout_section',
-    title: 'LOGOUT',
-    items: [
-      { id: 'logout', label: 'Logout', icon: 'LogOut' },
-    ],
-  },
 ];
 
 export const SUPER_ADMIN_NAV_GROUPS: NavGroup[] = CANONICAL_HOSPITAL_MANAGEMENT_NAV_GROUPS;
@@ -253,13 +246,6 @@ export const FRONT_DESK_NAV_GROUPS: NavGroup[] = [
       { id: 'fd_discount_report', label: 'Discounts / Refunds / Voids', icon: 'Tag' },
     ],
   },
-  {
-    id: 'fd_logout_section',
-    title: 'LOGOUT',
-    items: [
-      { id: 'logout', label: 'Logout', icon: 'LogOut' },
-    ],
-  },
 ];
 
 // 4. ADMISSION FINAL NAVIGATION (NO cash collection, NO balance sheet, NO account settlement)
@@ -311,13 +297,6 @@ export const ADMISSION_NAV_GROUPS: NavGroup[] = [
       { id: 'adm_outstanding_balance', label: 'Running Hospital Bill / Payment Status', icon: 'Receipt' },
       { id: 'adm_pharmacy_requests', label: 'Pharmacy Request & Fulfillment', icon: 'Pill' },
       { id: 'adm_discharge_clearance_report', label: 'Discharge Clearance Report', icon: 'ShieldCheck' },
-    ],
-  },
-  {
-    id: 'adm_logout_section',
-    title: 'LOGOUT',
-    items: [
-      { id: 'logout', label: 'Logout', icon: 'LogOut' },
     ],
   },
 ];
@@ -377,13 +356,6 @@ export const INVENTORY_NAV_GROUPS: NavGroup[] = [
       { id: 'expense_report', label: 'Expense Report', icon: 'Wallet' },
       { id: 'stock_status_report', label: 'Stock Status', icon: 'Layers' },
       { id: 'cash_settlement_report', label: 'Cash & Settlement', icon: 'Coins' },
-    ],
-  },
-  {
-    id: 'inv_logout_section',
-    title: 'LOGOUT',
-    items: [
-      { id: 'logout', label: 'Logout', icon: 'LogOut' },
     ],
   },
 ];

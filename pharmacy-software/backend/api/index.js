@@ -36088,7 +36088,8 @@ var import_library2 = require("@prisma/client/runtime/library");
 var hmsBridgeClient = {
   async notifyDispensed(payload) {
     try {
-      const url = `${env.HMS_BACKEND_URL}/pharmacy-bridge/callback/dispensed`;
+      const baseUrl = env.HMS_BACKEND_URL.replace(/\/+$/, "");
+      const url = `${baseUrl}/pharmacy-bridge/callback/dispensed`;
       const res = await fetch(url, {
         method: "POST",
         headers: {
@@ -36110,7 +36111,8 @@ var hmsBridgeClient = {
   },
   async requestSettlement(payload) {
     try {
-      const url = `${env.HMS_BACKEND_URL}/pharmacy-bridge/settlement/request`;
+      const baseUrl = env.HMS_BACKEND_URL.replace(/\/+$/, "");
+      const url = `${baseUrl}/pharmacy-bridge/settlement/request`;
       const res = await fetch(url, {
         method: "POST",
         headers: {
