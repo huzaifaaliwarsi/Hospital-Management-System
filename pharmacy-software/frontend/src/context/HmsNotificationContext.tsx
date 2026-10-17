@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { toast } from 'react-toastify';
-import { getAccessToken } from '../services/apiClient';
+import { getAccessToken, BASE_URL } from '../services/apiClient';
 
 export interface HmsNotification {
   id: string;
@@ -115,7 +115,7 @@ export const HmsNotificationProvider: React.FC<{ children: React.ReactNode }> = 
         return;
       }
 
-      const streamUrl = `http://localhost:4100/api/v1/hms-requests/stream/events?token=${encodeURIComponent(token)}`;
+      const streamUrl = `${BASE_URL}/hms-requests/stream/events?token=${encodeURIComponent(token)}`;
       eventSource = new EventSource(streamUrl);
 
       eventSource.onmessage = (event) => {

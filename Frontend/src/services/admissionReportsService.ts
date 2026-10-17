@@ -359,8 +359,11 @@ export interface PharmacyRequestFulfillmentRow {
   admissionNumber: string;
   patient: string;
   medicine: string;
+  unit?: string;
   requestedQty: number;
   dispensedQty: number;
+  unitPrice: number;
+  totalAmount: number;
   requestStatus: string;
   notes: string | null;
   pharmacyInvoice: string | null;
@@ -373,7 +376,14 @@ export async function fetchPharmacyRequestFulfillment(range: RangeParams, filter
   const d = await get<any>('/reports/admission/pharmacy-request-fulfillment', params(range, filters));
   return {
     periodLabel: d.period.label,
-    rows: d.rows.map((r: any) => ({ ...r, requestedAt: formatDateTimeDDMMYYYY(r.requestedAt), requestedQty: Number(r.requestedQty), dispensedQty: Number(r.dispensedQty) })),
+    rows: d.rows.map((r: any) => ({
+      ...r,
+      requestedAt: formatDateTimeDDMMYYYY(r.requestedAt),
+      requestedQty: Number(r.requestedQty || 0),
+      dispensedQty: Number(r.dispensedQty || 0),
+      unitPrice: Number(r.unitPrice || 0),
+      totalAmount: Number(r.totalAmount || 0),
+    })),
   };
 }
 

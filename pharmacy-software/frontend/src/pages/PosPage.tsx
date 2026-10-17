@@ -17,6 +17,7 @@ import {
   Package,
 } from 'lucide-react';
 import { pharmacyApi, MedicineRow, Unit } from '../services/pharmacyApi';
+import { HMS_BASE_URL } from '../services/apiClient';
 import { formatPKR, formatNumber } from '../utils/format';
 import { useToast } from '../context/ToastContext';
 import { PharmacyInvoiceModal } from '../components/PharmacyInvoiceModal';
@@ -115,7 +116,7 @@ export const PosPage: React.FC = () => {
     loadMedicines();
     pharmacyApi.listUnits().then(setUnitCatalog).catch(() => {});
     pharmacyApi.getPharmacySettings().then(setPharmacySettings).catch(() => {});
-    fetch('http://localhost:4000/api/v1/public/hospital-profile')
+    fetch(`${HMS_BASE_URL}/public/hospital-profile`)
       .then((r) => r.json())
       .then((d) => {
         if (d?.data) setHospitalProfile(d.data);

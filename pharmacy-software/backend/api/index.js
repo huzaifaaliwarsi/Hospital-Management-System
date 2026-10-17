@@ -36085,51 +36085,75 @@ setInterval(() => {
 var import_library2 = require("@prisma/client/runtime/library");
 
 // src/shared/hmsBridgeClient.ts
+function getHmsBaseUrls() {
+  const url = (env.HMS_BACKEND_URL || "").trim().replace(/\/+$/, "");
+  const urls = [];
+  if (url) urls.push(url);
+  if (process.env.VERCEL || process.env.NODE_ENV === "production") {
+    if (!urls.includes("https://hms-project-backend.vercel.app/api/v1")) {
+      urls.unshift("https://hms-project-backend.vercel.app/api/v1");
+    }
+  } else {
+    if (!urls.includes("http://localhost:4000/api/v1")) {
+      urls.push("http://localhost:4000/api/v1");
+    }
+    if (!urls.includes("https://hms-project-backend.vercel.app/api/v1")) {
+      urls.push("https://hms-project-backend.vercel.app/api/v1");
+    }
+  }
+  return urls;
+}
 var hmsBridgeClient = {
   async notifyDispensed(payload) {
-    try {
-      const baseUrl = env.HMS_BACKEND_URL.replace(/\/+$/, "");
-      const url = `${baseUrl}/pharmacy-bridge/callback/dispensed`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-bridge-token": env.INTERNAL_BRIDGE_SECRET
-        },
-        body: JSON.stringify(payload)
-      });
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        console.error("[hmsBridgeClient] notifyDispensed non-200 response:", errJson);
-        return null;
+    const urlsToTry = getHmsBaseUrls();
+    for (const baseUrl of urlsToTry) {
+      try {
+        const url = `${baseUrl}/pharmacy-bridge/callback/dispensed`;
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-bridge-token": env.INTERNAL_BRIDGE_SECRET
+          },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+          const errJson = await res.json().catch(() => ({}));
+          console.warn(`[hmsBridgeClient] notifyDispensed on ${baseUrl} returned non-200:`, errJson);
+          continue;
+        }
+        return await res.json();
+      } catch (err) {
+        console.warn(`[hmsBridgeClient] notifyDispensed failed on ${baseUrl}: ${err.message}`);
       }
-      return await res.json();
-    } catch (err) {
-      console.error("[hmsBridgeClient] notifyDispensed failed:", err.message);
-      return null;
     }
+    return null;
   },
   async requestSettlement(payload) {
-    try {
-      const baseUrl = env.HMS_BACKEND_URL.replace(/\/+$/, "");
-      const url = `${baseUrl}/pharmacy-bridge/settlement/request`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-bridge-token": env.INTERNAL_BRIDGE_SECRET
-        },
-        body: JSON.stringify(payload)
-      });
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson?.error?.message || `HMS returned HTTP ${res.status}`);
+    const urlsToTry = getHmsBaseUrls();
+    let lastError = null;
+    for (const baseUrl of urlsToTry) {
+      try {
+        const url = `${baseUrl}/pharmacy-bridge/settlement/request`;
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-bridge-token": env.INTERNAL_BRIDGE_SECRET
+          },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+          const errJson = await res.json().catch(() => ({}));
+          throw new Error(errJson?.error?.message || `HMS returned HTTP ${res.status}`);
+        }
+        return await res.json();
+      } catch (err) {
+        lastError = err;
+        console.warn(`[hmsBridgeClient] requestSettlement failed on ${baseUrl}: ${err.message}`);
       }
-      return await res.json();
-    } catch (err) {
-      console.error("[hmsBridgeClient] requestSettlement failed:", err.message);
-      throw err;
     }
+    throw lastError;
   }
 };
 

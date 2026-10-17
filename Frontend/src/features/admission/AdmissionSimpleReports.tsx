@@ -273,6 +273,7 @@ export const PharmacyRequestFulfillmentView: React.FC = () => {
           <FilterSelect label="Approval Status" options={opts(['NOT_REQUIRED', 'Not Required'], ['PENDING', 'Pending'], ['AUTHORIZED', 'Approved'], ['REJECTED', 'Rejected'])} {...bind('approvalStatus')} />
         </>
       }
+      noTotalColumns={['Unit Price (PKR)']}
       rowKey={(r, i) => `${r.requestRef}-${r.medicine}-${i}`}
       columns={[
         { header: 'Request #', cell: (r) => r.requestRef },
@@ -282,6 +283,8 @@ export const PharmacyRequestFulfillmentView: React.FC = () => {
         { header: 'Medicine', cell: (r) => r.medicine },
         { header: 'Requested Qty', align: 'right', cell: (r) => String(r.requestedQty), excelValue: (r) => r.requestedQty },
         { header: 'Dispensed Qty', align: 'right', cell: (r) => String(r.dispensedQty), excelValue: (r) => r.dispensedQty },
+        { header: 'Unit Price (PKR)', align: 'right', cell: (r) => formatAmount(r.unitPrice), excelValue: (r) => r.unitPrice },
+        { header: 'Total Amount (PKR)', align: 'right', cell: (r) => formatAmount(r.totalAmount), excelValue: (r) => r.totalAmount },
         { header: 'Request Status', cell: (r) => r.requestStatus },
         { header: 'Notes / Urgency', cell: (r) => r.notes || '—' },
         { header: 'Pharmacy Invoice', cell: (r) => r.pharmacyInvoice || '—' },

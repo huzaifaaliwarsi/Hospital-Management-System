@@ -183,6 +183,7 @@ export const CANONICAL_HOSPITAL_MANAGEMENT_NAV_GROUPS: NavGroup[] = [
       { id: 'sa_expense', label: 'Expense Report', icon: 'TrendingDown' },
       { id: 'sa_balance_settlements', label: 'Balance Sheet & Settlements', icon: 'FileSpreadsheet' },
       { id: 'sa_staff_payroll_commission', label: 'Staff / Payroll / Commission', icon: 'Users' },
+      { id: 'sa_pharmacy_medicines', label: 'Pharmacy Inpatient Medicines', icon: 'Pill' },
       { id: 'sa_inventory_pharmacy', label: 'Inventory / Pharmacy Summary', icon: 'Boxes' },
     ],
   },

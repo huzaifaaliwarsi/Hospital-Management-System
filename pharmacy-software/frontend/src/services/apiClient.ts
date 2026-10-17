@@ -8,7 +8,13 @@ const DEFAULT_API_URL = isLocalhost
   ? 'http://localhost:4100/api/v1'
   : 'https://pharmacy-software-backend.vercel.app/api/v1';
 
-const BASE_URL = ((import.meta as any).env && (import.meta as any).env.VITE_API_BASE_URL) || DEFAULT_API_URL;
+export const BASE_URL = ((import.meta as any).env && (import.meta as any).env.VITE_API_BASE_URL) || DEFAULT_API_URL;
+
+export const HMS_BASE_URL =
+  ((import.meta as any).env && (import.meta as any).env.VITE_HMS_BASE_URL) ||
+  (isLocalhost
+    ? 'http://localhost:4000/api/v1'
+    : 'https://hms-project-backend.vercel.app/api/v1');
 
 export const apiClient: AxiosInstance = axios.create({
   baseURL: BASE_URL,

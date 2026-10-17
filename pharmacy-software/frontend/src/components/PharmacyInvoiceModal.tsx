@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { formatPKR, formatNumber, formatDateTime } from '../utils/format';
 import { pharmacyApi } from '../services/pharmacyApi';
-import apiClient from '../services/apiClient';
+import apiClient, { HMS_BASE_URL } from '../services/apiClient';
 import { useToast } from '../context/ToastContext';
 
 import {
@@ -64,7 +64,7 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
   const [pharmacySettings, setPharmacySettings] = useState<any>(null);
 
   React.useEffect(() => {
-    fetch('http://localhost:4000/api/v1/public/hospital-profile')
+    fetch(`${HMS_BASE_URL}/public/hospital-profile`)
       .then((r) => r.json())
       .then((data) => {
         if (data?.data) {

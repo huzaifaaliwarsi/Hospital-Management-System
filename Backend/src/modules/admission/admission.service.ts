@@ -1238,7 +1238,10 @@ export const admissionService = {
     }, { maxWait: 15000, timeout: 30000 });
 
     if (result.status === 'REQUESTED') {
-      this.dispatchToPharmacyBridge(result.id).catch(() => null);
+      await this.dispatchToPharmacyBridge(result.id).catch((err: any) => {
+        // eslint-disable-next-line no-console
+        console.error('[createPharmacyRequest] Bridge dispatch error:', err?.message || err);
+      });
     }
 
     return result;

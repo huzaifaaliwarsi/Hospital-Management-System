@@ -36412,13 +36412,20 @@ function resolvePharmacyBaseUrl() {
   }
   return (url || "http://localhost:4100/api/v1").replace(/\/+$/, "");
 }
+function getPharmacyBaseUrls() {
+  const primary = resolvePharmacyBaseUrl();
+  const urls = [primary];
+  if (!urls.includes("http://localhost:4100/api/v1")) {
+    urls.push("http://localhost:4100/api/v1");
+  }
+  if (!urls.includes("https://pharmacy-software-backend.vercel.app/api/v1")) {
+    urls.push("https://pharmacy-software-backend.vercel.app/api/v1");
+  }
+  return urls;
+}
 var pharmacyBridgeClient = {
   async getMedicines(search) {
-    const firstUrl = resolvePharmacyBaseUrl();
-    const urlsToTry = [firstUrl];
-    if (!firstUrl.includes("pharmacy-software-backend.vercel.app")) {
-      urlsToTry.push("https://pharmacy-software-backend.vercel.app/api/v1");
-    }
+    const urlsToTry = getPharmacyBaseUrls();
     for (const baseUrl of urlsToTry) {
       try {
         const url = new URL(`${baseUrl}/pharmacy/medicines`);
@@ -36442,96 +36449,112 @@ var pharmacyBridgeClient = {
     return null;
   },
   async dispatchMedicineRequest(payload) {
-    try {
-      const baseUrl = env.PHARMACY_BACKEND_URL.replace(/\/+$/, "");
-      const url = `${baseUrl}/hms-requests`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-bridge-token": env.INTERNAL_BRIDGE_SECRET
-        },
-        body: JSON.stringify(payload)
-      });
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson?.error?.message || `Pharmacy returned HTTP ${res.status}`);
+    const urlsToTry = getPharmacyBaseUrls();
+    let lastError = null;
+    for (const baseUrl of urlsToTry) {
+      try {
+        const url = `${baseUrl}/hms-requests`;
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-bridge-token": env.INTERNAL_BRIDGE_SECRET
+          },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+          const errJson = await res.json().catch(() => ({}));
+          throw new Error(errJson?.error?.message || `Pharmacy returned HTTP ${res.status}`);
+        }
+        const json = await res.json();
+        return json.data;
+      } catch (err) {
+        lastError = err;
+        console.warn(`[pharmacyBridgeClient] dispatchMedicineRequest failed on ${baseUrl}: ${err.message}`);
       }
-      const json = await res.json();
-      return json.data;
-    } catch (err) {
-      console.error("[pharmacyBridgeClient] dispatchMedicineRequest failed:", err.message);
-      throw err;
     }
+    console.error("[pharmacyBridgeClient] dispatchMedicineRequest failed on all candidates:", lastError?.message);
+    throw lastError;
   },
   async notifyPatientCollected(payload) {
-    try {
-      const baseUrl = env.PHARMACY_BACKEND_URL.replace(/\/+$/, "");
-      const url = `${baseUrl}/hms-requests/callback/patient-collected`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-bridge-token": env.INTERNAL_BRIDGE_SECRET
-        },
-        body: JSON.stringify(payload)
-      });
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        console.warn("[pharmacyBridgeClient] notifyPatientCollected warning:", errJson);
+    const urlsToTry = getPharmacyBaseUrls();
+    for (const baseUrl of urlsToTry) {
+      try {
+        const url = `${baseUrl}/hms-requests/callback/patient-collected`;
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-bridge-token": env.INTERNAL_BRIDGE_SECRET
+          },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+          const errJson = await res.json().catch(() => ({}));
+          console.warn(`[pharmacyBridgeClient] notifyPatientCollected on ${baseUrl} returned non-200:`, errJson);
+          continue;
+        }
+        return await res.json().catch(() => ({}));
+      } catch (err) {
+        console.warn(`[pharmacyBridgeClient] notifyPatientCollected failed on ${baseUrl}: ${err.message}`);
       }
-      return await res.json().catch(() => ({}));
-    } catch (err) {
-      console.error("[pharmacyBridgeClient] notifyPatientCollected failed:", err.message);
-      return null;
     }
+    return null;
   },
   /**
-   * Manual resync for when `notifyPatientCollected` silently failed (network
-   * blip, Pharmacy backend unreachable at that moment — that call swallows
-   * errors so the Front Desk cashier's payment flow never breaks on it).
-   * Unlike `notifyPatientCollected`, this THROWS on failure — it's invoked
-   * from an explicit "Resync to Pharmacy" action, so the admin needs to see
-   * if it didn't work, not have it silently swallowed again.
+   * Manual resync for when `notifyPatientCollected` failed.
    */
   async reconcileCollection(payload) {
-    const baseUrl = env.PHARMACY_BACKEND_URL.replace(/\/+$/, "");
-    const url = `${baseUrl}/hms-requests/callback/reconcile-collection`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-bridge-token": env.INTERNAL_BRIDGE_SECRET
-      },
-      body: JSON.stringify(payload)
-    });
-    if (!res.ok) {
-      const errJson = await res.json().catch(() => ({}));
-      throw new Error(errJson?.error?.message || `Pharmacy returned HTTP ${res.status}`);
+    const urlsToTry = getPharmacyBaseUrls();
+    let lastError = null;
+    for (const baseUrl of urlsToTry) {
+      try {
+        const url = `${baseUrl}/hms-requests/callback/reconcile-collection`;
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-bridge-token": env.INTERNAL_BRIDGE_SECRET
+          },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+          const errJson = await res.json().catch(() => ({}));
+          throw new Error(errJson?.error?.message || `Pharmacy returned HTTP ${res.status}`);
+        }
+        return await res.json();
+      } catch (err) {
+        lastError = err;
+        console.warn(`[pharmacyBridgeClient] reconcileCollection failed on ${baseUrl}: ${err.message}`);
+      }
     }
-    return await res.json();
+    throw lastError;
   },
   async releaseSettlement(payload) {
-    try {
-      const baseUrl = env.PHARMACY_BACKEND_URL.replace(/\/+$/, "");
-      const url = `${baseUrl}/hms-requests/settlement/release`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-bridge-token": env.INTERNAL_BRIDGE_SECRET
-        },
-        body: JSON.stringify(payload)
-      });
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson?.error?.message || `Pharmacy returned HTTP ${res.status}`);
+    const urlsToTry = getPharmacyBaseUrls();
+    let lastError = null;
+    for (const baseUrl of urlsToTry) {
+      try {
+        const url = `${baseUrl}/hms-requests/settlement/release`;
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-bridge-token": env.INTERNAL_BRIDGE_SECRET
+          },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+          const errJson = await res.json().catch(() => ({}));
+          throw new Error(errJson?.error?.message || `Pharmacy returned HTTP ${res.status}`);
+        }
+        return await res.json();
+      } catch (err) {
+        lastError = err;
+        console.warn(`[pharmacyBridgeClient] releaseSettlement failed on ${baseUrl}: ${err.message}`);
       }
-      return await res.json();
-    } catch (err) {
-      console.error("[pharmacyBridgeClient] releaseSettlement failed:", err.message);
-      throw err;
     }
+    throw lastError;
   }
 };
 
@@ -38097,7 +38120,9 @@ var admissionService = {
       return { ...clearance, highCostAuthorization };
     }, { maxWait: 15e3, timeout: 3e4 });
     if (result.status === "REQUESTED") {
-      this.dispatchToPharmacyBridge(result.id).catch(() => null);
+      await this.dispatchToPharmacyBridge(result.id).catch((err) => {
+        console.error("[createPharmacyRequest] Bridge dispatch error:", err?.message || err);
+      });
     }
     return result;
   },
@@ -54905,7 +54930,7 @@ var admissionSimpleReportsService = {
         ...query.medicine ? { medicine: { name: { contains: query.medicine, mode: "insensitive" } } } : {}
       },
       include: {
-        medicine: { select: { name: true } },
+        medicine: { select: { name: true, saleRate: true, unit: true } },
         pharmacyClearance: {
           select: {
             medicineRequestNumber: true,
@@ -54914,7 +54939,15 @@ var admissionSimpleReportsService = {
             notes: true,
             admissionRecord: { select: { admissionNumber: true, ...patientNameSelect3 } },
             highCostAuthorization: { select: { status: true } },
-            pharmacyDispenses: { select: { invoiceNumber: true, status: true }, orderBy: { createdAt: "desc" }, take: 1 }
+            pharmacyDispenses: {
+              select: {
+                invoiceNumber: true,
+                status: true,
+                lines: { select: { medicineId: true, rateSnapshot: true, lineNet: true } }
+              },
+              orderBy: { createdAt: "desc" },
+              take: 1
+            }
           }
         }
       },
@@ -54927,14 +54960,23 @@ var admissionSimpleReportsService = {
       rows: lines.map((l) => {
         const c = l.pharmacyClearance;
         const dispense = c.pharmacyDispenses[0];
+        const matchLine = dispense?.lines?.find((dl) => dl.medicineId === l.medicineId);
+        const unitPrice = matchLine?.rateSnapshot != null ? Number(matchLine.rateSnapshot) : Number(l.medicine.saleRate || 0);
+        const reqQty = Number(l.requestedQuantity || 0);
+        const dispQty = Number(l.dispensedQuantity || 0);
+        const qty = dispQty > 0 ? dispQty : reqQty;
+        const totalAmount = matchLine?.lineNet != null ? Number(matchLine.lineNet) : Math.round(qty * unitPrice * 100) / 100;
         return {
           requestRef: c.medicineRequestNumber,
           requestedAt: c.requestedAt,
           admissionNumber: c.admissionRecord.admissionNumber,
           patient: patientDisplayName3(c.admissionRecord),
           medicine: l.medicine.name,
-          requestedQty: l.requestedQuantity,
-          dispensedQty: l.dispensedQuantity,
+          unit: l.medicine.unit,
+          requestedQty: reqQty,
+          dispensedQty: dispQty,
+          unitPrice,
+          totalAmount,
           requestStatus: c.status,
           notes: l.notes || c.notes || null,
           pharmacyInvoice: dispense?.invoiceNumber ?? null,

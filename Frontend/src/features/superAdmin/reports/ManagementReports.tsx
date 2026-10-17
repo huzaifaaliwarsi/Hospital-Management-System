@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { BarChart2, Receipt, AlertCircle, TrendingDown, FileSpreadsheet, Users, Boxes, Eye } from 'lucide-react';
+import { BarChart2, Receipt, AlertCircle, TrendingDown, FileSpreadsheet, Users, Boxes, Eye, Pill } from 'lucide-react';
 import { GenericReportView } from '../../../components/reports/GenericReportView';
 import { TextInput } from '../../../components/forms/FormControls';
 import { useReportFilters, useFilterOptions, FilterSelect, opts } from '../../../components/reports/reportFilters';
 import { InvoiceDetailModal } from '../../frontDesk/billing/InvoiceDetailModal';
 import { AdmissionSummaryView } from '../../admission/AdmissionSimpleReports';
 import { StaffFinancialSources } from './StaffFinancialSources';
+import { fetchPharmacyRequestFulfillment, PharmacyRequestFulfillmentRow } from '../../../services/admissionReportsService';
 import {
   fetchExpenses,
   EXPENSE_CATEGORY_LABEL,
@@ -415,6 +416,161 @@ export const InventoryPharmacyReport: React.FC = () => {
   );
 };
 
+// ── #9 Pharmacy Inpatient Medicines Report ─────────────────────────────────
+
+const PHARMACY_REQUEST_STATUS_OPTS = opts(
+  ['REQUESTED', 'Requested'],
+  ['ACCEPTED', 'Accepted'],
+  ['PARTIALLY_FULFILLED', 'Partially Fulfilled'],
+  ['DISPENSING', 'Dispensing'],
+  ['DISPENSED', 'Dispensed'],
+  ['INVOICED', 'Invoiced'],
+  ['CLEARANCE_SENT', 'Clearance Sent'],
+  ['REJECTED', 'Rejected'],
+  ['AUTHORIZATION_REQUIRED', 'Authorization Required'],
+  ['INTEGRATION_ERROR', 'Integration Error'],
+);
+
+const STATUS_BADGE_STYLE: Record<string, string> = {
+  REQUESTED: 'bg-amber-50 text-amber-800 border-amber-200',
+  ACCEPTED: 'bg-blue-50 text-blue-800 border-blue-200',
+  PARTIALLY_FULFILLED: 'bg-indigo-50 text-indigo-800 border-indigo-200',
+  DISPENSING: 'bg-cyan-50 text-cyan-800 border-cyan-200',
+  DISPENSED: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  INVOICED: 'bg-emerald-100 text-emerald-900 border-emerald-300 font-semibold',
+  CLEARANCE_SENT: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  REJECTED: 'bg-rose-50 text-rose-800 border-rose-200',
+  AUTHORIZATION_REQUIRED: 'bg-purple-50 text-purple-800 border-purple-200',
+  INTEGRATION_ERROR: 'bg-red-50 text-red-800 border-red-200',
+};
+
+export const PharmacyMedicinesReport: React.FC = () => {
+  const { filters, bind, reset } = useReportFilters({
+    admissionNumber: '',
+    medicine: '',
+    status: '',
+    approvalStatus: '',
+  });
+
+  return (
+    <GenericReportView<PharmacyRequestFulfillmentRow>
+      title="Pharmacy Inpatient Medicines"
+      subtitle="Comprehensive audit of all medicines ordered from Central Pharmacy for admitted patients: quantities requested vs dispensed, fulfillment status, and clearance invoices."
+      icon={Pill}
+      filenamePrefix="Pharmacy_Inpatient_Medicines"
+      compact
+      noTotalColumns={['Unit Price (PKR)']}
+      fetchReport={(range) => fetchPharmacyRequestFulfillment(range, filters)}
+      onResetExtraFilters={reset}
+      extraFilters={
+        <>
+          <div className="w-36">
+            <TextInput label="Admission #" placeholder="e.g. ADM-26-0001" {...bind('admissionNumber')} />
+          </div>
+          <div className="w-48">
+            <TextInput label="Medicine" placeholder="Search medicine name…" {...bind('medicine')} />
+          </div>
+          <FilterSelect label="Request Status" options={PHARMACY_REQUEST_STATUS_OPTS} {...bind('status')} />
+          <FilterSelect
+            label="Approval / Clearance"
+            options={opts(
+              ['NOT_REQUIRED', 'Not Required'],
+              ['PENDING', 'Pending'],
+              ['AUTHORIZED', 'Approved'],
+              ['REJECTED', 'Rejected'],
+            )}
+            {...bind('approvalStatus')}
+          />
+        </>
+      }
+      rowKey={(r, i) => `${r.requestRef}-${r.medicine}-${i}`}
+      emptyMessage="No medicine requisitions found for the selected period and filters."
+      columns={[
+        {
+          header: 'Request #',
+          cell: (r) => <span className="font-mono font-medium text-slate-900">{r.requestRef}</span>,
+        },
+        { header: 'Requested At', cell: (r) => r.requestedAt },
+        {
+          header: 'Admission #',
+          cell: (r) => <span className="font-semibold text-slate-800">{r.admissionNumber}</span>,
+        },
+        { header: 'Patient', cell: (r) => r.patient },
+        {
+          header: 'Medicine',
+          cell: (r) => (
+            <span className="font-bold text-slate-900 flex items-center gap-1.5">
+              <Pill className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+              <span>{r.medicine}</span>
+            </span>
+          ),
+        },
+        {
+          header: 'Req Qty',
+          align: 'right',
+          cell: (r) => <span className="font-mono font-semibold">{r.requestedQty}</span>,
+          excelValue: (r) => r.requestedQty,
+        },
+        {
+          header: 'Disp Qty',
+          align: 'right',
+          cell: (r) => (
+            <span
+              className={`font-mono font-semibold ${
+                r.dispensedQty > 0 ? 'text-emerald-700' : 'text-slate-400'
+              }`}
+            >
+              {r.dispensedQty}
+            </span>
+          ),
+          excelValue: (r) => r.dispensedQty,
+        },
+        money('Unit Price', (r) => r.unitPrice),
+        money('Total Amount', (r) => r.totalAmount),
+        {
+          header: 'Status',
+          cell: (r) => {
+            const style = STATUS_BADGE_STYLE[r.requestStatus] || 'bg-slate-100 text-slate-700 border-slate-200';
+            return (
+              <span className={`inline-block px-2 py-0.5 text-[11px] font-semibold border rounded-md capitalize ${style}`}>
+                {r.requestStatus.replace(/_/g, ' ').toLowerCase()}
+              </span>
+            );
+          },
+        },
+        {
+          header: 'Pharmacy Invoice',
+          cell: (r) => (r.pharmacyInvoice ? <span className="font-mono text-slate-700">{r.pharmacyInvoice}</span> : '—'),
+        },
+        {
+          header: 'Clearance',
+          cell: (r) => (
+            <span
+              className={`inline-block px-2 py-0.5 text-[10.5px] font-bold rounded ${
+                r.pharmacyClearance === 'CLEARED'
+                  ? 'bg-emerald-50 text-emerald-700'
+                  : r.pharmacyClearance === 'OUTSTANDING'
+                    ? 'bg-rose-50 text-rose-700'
+                    : 'bg-amber-50 text-amber-700'
+              }`}
+            >
+              {r.pharmacyClearance}
+            </span>
+          ),
+        },
+        {
+          header: 'Instructions / Notes',
+          cell: (r) => (
+            <span className="text-slate-500 max-w-xs truncate block" title={r.notes || ''}>
+              {r.notes || '—'}
+            </span>
+          ),
+        },
+      ]}
+    />
+  );
+};
+
 /** Menu id → screen. Keys must match the `hm_reports` nav group in `constants/portalNavigations.ts`. */
 export const MANAGEMENT_REPORT_VIEWS: Record<string, React.FC> = {
   sa_management_summary: ManagementSummaryReport,
@@ -424,5 +580,6 @@ export const MANAGEMENT_REPORT_VIEWS: Record<string, React.FC> = {
   sa_expense: ExpenseReport,
   sa_balance_settlements: BalanceSettlementsReport,
   sa_staff_payroll_commission: StaffPayrollCommissionReport,
+  sa_pharmacy_medicines: PharmacyMedicinesReport,
   sa_inventory_pharmacy: InventoryPharmacyReport,
 };

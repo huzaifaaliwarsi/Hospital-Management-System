@@ -393,7 +393,7 @@ export const admissionSimpleReportsService = {
         ...(query.medicine ? { medicine: { name: { contains: query.medicine, mode: 'insensitive' as const } } } : {}),
       },
       include: {
-        medicine: { select: { name: true } },
+        medicine: { select: { name: true, saleRate: true, unit: true } },
         pharmacyClearance: {
           select: {
             medicineRequestNumber: true,
@@ -402,7 +402,15 @@ export const admissionSimpleReportsService = {
             notes: true,
             admissionRecord: { select: { admissionNumber: true, ...patientNameSelect } },
             highCostAuthorization: { select: { status: true } },
-            pharmacyDispenses: { select: { invoiceNumber: true, status: true }, orderBy: { createdAt: 'desc' }, take: 1 },
+            pharmacyDispenses: {
+              select: {
+                invoiceNumber: true,
+                status: true,
+                lines: { select: { medicineId: true, rateSnapshot: true, lineNet: true } },
+              },
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+            },
           },
         },
       },
@@ -417,14 +425,24 @@ export const admissionSimpleReportsService = {
       rows: lines.map((l) => {
         const c = l.pharmacyClearance;
         const dispense = c.pharmacyDispenses[0];
+        const matchLine = dispense?.lines?.find((dl) => dl.medicineId === l.medicineId);
+        const unitPrice = matchLine?.rateSnapshot != null ? Number(matchLine.rateSnapshot) : Number(l.medicine.saleRate || 0);
+        const reqQty = Number(l.requestedQuantity || 0);
+        const dispQty = Number(l.dispensedQuantity || 0);
+        const qty = dispQty > 0 ? dispQty : reqQty;
+        const totalAmount = matchLine?.lineNet != null ? Number(matchLine.lineNet) : Math.round(qty * unitPrice * 100) / 100;
+
         return {
           requestRef: c.medicineRequestNumber,
           requestedAt: c.requestedAt,
           admissionNumber: c.admissionRecord.admissionNumber,
           patient: patientDisplayName(c.admissionRecord),
           medicine: l.medicine.name,
-          requestedQty: l.requestedQuantity,
-          dispensedQty: l.dispensedQuantity,
+          unit: l.medicine.unit,
+          requestedQty: reqQty,
+          dispensedQty: dispQty,
+          unitPrice,
+          totalAmount,
           requestStatus: c.status,
           notes: l.notes || c.notes || null,
           pharmacyInvoice: dispense?.invoiceNumber ?? null,
