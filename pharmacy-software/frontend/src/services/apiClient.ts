@@ -4,7 +4,9 @@ const isLocalhost =
   typeof window !== 'undefined' &&
   (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
-const DEFAULT_API_URL = isLocalhost ? 'http://localhost:4100/api/v1' : '';
+const DEFAULT_API_URL = isLocalhost
+  ? 'http://localhost:4100/api/v1'
+  : 'https://pharmacy-software-backend.vercel.app/api/v1';
 
 const BASE_URL = ((import.meta as any).env && (import.meta as any).env.VITE_API_BASE_URL) || DEFAULT_API_URL;
 
