@@ -12,15 +12,5 @@
       "src": "/(.*)",
       "dest": "/api/index.js"
     }
-  ],
-  "crons": [
-    {
-      "path": "/api/cron/ipd-room-charges",
-      "schedule": "* * * * *"
-    },
-    {
-      "path": "/api/cron/biometric-reprocess",
-      "schedule": "*/5 * * * *"
-    }
   ]
 }
