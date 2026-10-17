@@ -36403,29 +36403,43 @@ function assertCaseAuthorization(companyRequiresAuthorization, ruleRequiresAutho
 }
 
 // src/shared/pharmacyBridgeClient.ts
+function resolvePharmacyBaseUrl() {
+  let url = (env.PHARMACY_BACKEND_URL || "").trim();
+  if (process.env.VERCEL || process.env.NODE_ENV === "production") {
+    if (!url || url.includes("localhost") || url.includes("127.0.0.1")) {
+      url = "https://pharmacy-software-backend.vercel.app/api/v1";
+    }
+  }
+  return (url || "http://localhost:4100/api/v1").replace(/\/+$/, "");
+}
 var pharmacyBridgeClient = {
   async getMedicines(search) {
-    try {
-      const baseUrl = env.PHARMACY_BACKEND_URL.replace(/\/+$/, "");
-      const url = new URL(`${baseUrl}/pharmacy/medicines`);
-      if (search) url.searchParams.set("search", search);
-      const res = await fetch(url.toString(), {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "x-bridge-token": env.INTERNAL_BRIDGE_SECRET
-        }
-      });
-      if (!res.ok) {
-        console.warn(`[pharmacyBridgeClient] getMedicines HTTP ${res.status}: ${await res.text().catch(() => "")}`);
-        return null;
-      }
-      const data = await res.json();
-      return data.data;
-    } catch (err) {
-      console.warn(`[pharmacyBridgeClient] getMedicines network error: ${err.message}`);
-      return null;
+    const firstUrl = resolvePharmacyBaseUrl();
+    const urlsToTry = [firstUrl];
+    if (!firstUrl.includes("pharmacy-software-backend.vercel.app")) {
+      urlsToTry.push("https://pharmacy-software-backend.vercel.app/api/v1");
     }
+    for (const baseUrl of urlsToTry) {
+      try {
+        const url = new URL(`${baseUrl}/pharmacy/medicines`);
+        if (search) url.searchParams.set("search", search);
+        const res = await fetch(url.toString(), {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            "x-bridge-token": env.INTERNAL_BRIDGE_SECRET
+          }
+        });
+        if (!res.ok) continue;
+        const data = await res.json();
+        if (data && data.data) {
+          return data.data;
+        }
+      } catch (err) {
+        console.warn(`[pharmacyBridgeClient] getMedicines failed on ${baseUrl}: ${err.message}`);
+      }
+    }
+    return null;
   },
   async dispatchMedicineRequest(payload) {
     try {
