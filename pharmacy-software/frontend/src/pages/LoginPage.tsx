@@ -1,16 +1,7 @@
 import React, { useState } from 'react';
-import { Building2, Lock, User as UserIcon, Eye, EyeOff, ArrowRight, AlertCircle, Check, Sparkles } from 'lucide-react';
+import { Building2, Lock, User as UserIcon, Eye, EyeOff, ArrowRight, AlertCircle, Check } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
-
-/** Dev/testing convenience only — real credentials for this environment's seeded accounts (pharmacy.md §13 role hierarchy). */
-const DEMO_ACCOUNTS = [
-  { role: 'Super Admin', username: 'superadmin', password: 'SuperAdmin@2026New' },
-  { role: 'Admin (Huzaifa)', username: 'huzaifa', password: '12345678' },
-  { role: 'Sales (Khuzaima)', username: 'khuzaima', password: '12345678' },
-  { role: 'Admin', username: 'admin1', password: 'Admin@2026New' },
-  { role: 'Sales / Dispensing', username: 'sales1', password: 'Sales@12345' },
-];
 
 export const LoginPage: React.FC = () => {
   const [identifier, setIdentifier] = useState('');
@@ -18,16 +9,9 @@ export const LoginPage: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [showDemoAccounts, setShowDemoAccounts] = useState(false);
 
   const { login } = useAuth();
   const toast = useToast();
-
-  const handleAutofill = (username: string, pwd: string) => {
-    setIdentifier(username);
-    setPassword(pwd);
-    setErrorMessage(null);
-  };
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -167,40 +151,6 @@ export const LoginPage: React.FC = () => {
               {isLoading ? 'Signing in…' : 'Login to Portal'} {!isLoading && <ArrowRight className="h-4 w-4" />}
             </button>
           </form>
-
-          {/* Dev/testing quick-fill — remove before real deployment */}
-          <div className="mt-6 pt-5 border-t border-[#e2eae5]">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[11px] font-semibold text-[#52665e] uppercase tracking-wider">Demo Accounts</span>
-              <button
-                type="button"
-                onClick={() => setShowDemoAccounts((v) => !v)}
-                className="text-[11px] font-semibold text-[#129b70] hover:text-[#0e7d5a] flex items-center gap-1 cursor-pointer"
-              >
-                <Sparkles className="h-3 w-3" />
-                <span>{showDemoAccounts ? 'Hide Quick Fill' : '1-Click Autofill'}</span>
-              </button>
-            </div>
-
-            {showDemoAccounts && (
-              <div className="p-3 bg-[#f6f8f7] rounded-lg border border-[#e2eae5] space-y-1.5 text-xs">
-                <p className="text-[11px] text-[#52665e] mb-1.5">Select a role to test — fills the form, you still press Login:</p>
-                {DEMO_ACCOUNTS.map((acc) => (
-                  <button
-                    key={acc.username}
-                    type="button"
-                    onClick={() => handleAutofill(acc.username, acc.password)}
-                    className="w-full p-1.5 text-left rounded-md bg-white hover:bg-[#e7f6f1] border border-[#e2eae5] hover:border-[#c2e7db] transition-colors cursor-pointer flex items-center justify-between"
-                  >
-                    <span>
-                      <span className="font-semibold text-[#111827] text-xs">{acc.role}</span>
-                      <span className="block text-[10px] text-[#8b9e95]">User: {acc.username}</span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
         </div>
 
         <p className="text-[10.5px] text-[#94a3b8] mt-8 text-center">

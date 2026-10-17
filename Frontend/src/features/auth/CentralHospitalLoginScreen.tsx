@@ -11,12 +11,11 @@ import {
   AlertCircle,
   ChevronDown,
   Info,
-  Sparkles,
 } from 'lucide-react';
 import { HOSPITAL_INFO, SOFTWARE_PROVIDER } from '../../constants';
 import { PORTAL_CONFIGS } from '../../constants/portalNavigations';
 import { PortalKey } from '../../types';
-import { useAuth, MOCK_STAFF_ACCOUNTS } from '../../context/AuthContext';
+import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { useRouter } from '../../context/RouterContext';
 import { Modal } from '../../components/common/Modal';
@@ -56,7 +55,6 @@ export const CentralHospitalLoginScreen: React.FC<CentralHospitalLoginScreenProp
 
   // Modals & testing helpers
   const [showForgotPassword, setShowForgotPassword] = useState(false);
-  const [showDemoAccounts, setShowDemoAccounts] = useState(false);
 
   const { login } = useAuth();
   const { navigate } = useRouter();
@@ -133,65 +131,6 @@ export const CentralHospitalLoginScreen: React.FC<CentralHospitalLoginScreenProp
       const msg = err.message || 'Authentication failed. Please verify credentials.';
       setErrorMessage(msg);
       toast.error(msg, 'Access Denied');
-    }
-  };
-
-  const handleAutofill = (accountKey: string, portalKey: PortalKey) => {
-    if (accountKey === 'superadmin') {
-      setSelectedPortal('super-admin');
-      setUsername('superadmin');
-      setPassword('SuperAdmin@123');
-      setErrorMessage(null);
-      toast.info('Selected Super Administrator Workstation (superadmin)');
-      return;
-    }
-    if (accountKey === 'admin') {
-      setSelectedPortal('admin');
-      setUsername('admin');
-      setPassword('Admin@123');
-      setErrorMessage(null);
-      toast.info('Selected Hospital Administrator Workstation (admin)');
-      return;
-    }
-    if (accountKey === 'frontdesk') {
-      setSelectedPortal('front-desk');
-      setUsername('frontdesk');
-      setPassword('FrontDesk@123');
-      setErrorMessage(null);
-      toast.info('Selected Front Desk & Cashiering Workstation (frontdesk)');
-      return;
-    }
-    if (accountKey === 'admission') {
-      setSelectedPortal('admission');
-      setUsername('admission');
-      setPassword('Admission@123');
-      setErrorMessage(null);
-      toast.info('Selected Inpatient Admission Workstation (admission)');
-      return;
-    }
-    if (accountKey === 'inventory') {
-      setSelectedPortal('inventory');
-      setUsername('inventory');
-      setPassword('Inventory@123');
-      setErrorMessage(null);
-      toast.info('Selected Inventory & Procurement Workstation (inventory)');
-      return;
-    }
-    if (accountKey === 'pharmacy') {
-      setSelectedPortal('inventory');
-      setUsername('pharmacy');
-      setPassword('Pharmacy@123');
-      setErrorMessage(null);
-      toast.info('Selected Pharmacy Sales Workstation (pharmacy)');
-      return;
-    }
-    const acc = MOCK_STAFF_ACCOUNTS[accountKey];
-    if (acc) {
-      setSelectedPortal(portalKey);
-      setUsername(acc.username);
-      setPassword(acc.password);
-      setErrorMessage(null);
-      toast.info(`Selected ${acc.user.name} (${acc.user.role})`);
     }
   };
 
@@ -476,86 +415,6 @@ export const CentralHospitalLoginScreen: React.FC<CentralHospitalLoginScreenProp
               )}
             </button>
           </form>
-
-          {/* Quick Demo Helper Drawer for Testing */}
-          <div className="mt-6 pt-5 border-t border-[#e2eae5]">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[11px] font-semibold text-[#52665e] uppercase tracking-wider">
-                Demo Accounts
-              </span>
-              <button
-                type="button"
-                onClick={() => setShowDemoAccounts(!showDemoAccounts)}
-                className="text-[11px] font-semibold text-[#129b70] hover:text-[#0e7d5a] flex items-center gap-1 cursor-pointer"
-              >
-                <Sparkles className="h-3 w-3" />
-                <span>{showDemoAccounts ? 'Hide Quick Fill' : '1-Click Autofill'}</span>
-              </button>
-            </div>
-
-            {showDemoAccounts && (
-              <div className="p-3 bg-[#f6f8f7] rounded-lg border border-[#e2eae5] space-y-2 text-xs">
-                <p className="text-[11px] text-[#52665e]">
-                  Select an authorized staff workstation role to test:
-                </p>
-                <div className="grid grid-cols-2 gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => handleAutofill('superadmin', 'super-admin')}
-                    className="p-1.5 text-left rounded-md bg-white hover:bg-[#e7f6f1] border border-[#e2eae5] hover:border-[#c2e7db] transition-colors cursor-pointer"
-                  >
-                    <div className="font-semibold text-[#111827] text-xs">Super Admin</div>
-                    <div className="text-[10px] text-[#8b9e95]">User: superadmin</div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleAutofill('admin', 'admin')}
-                    className="p-1.5 text-left rounded-md bg-white hover:bg-[#e7f6f1] border border-[#e2eae5] hover:border-[#c2e7db] transition-colors cursor-pointer"
-                  >
-                    <div className="font-semibold text-[#111827] text-xs">Admin</div>
-                    <div className="text-[10px] text-[#8b9e95]">User: admin</div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleAutofill('frontdesk', 'front-desk')}
-                    className="p-1.5 text-left rounded-md bg-white hover:bg-[#e7f6f1] border border-[#e2eae5] hover:border-[#c2e7db] transition-colors cursor-pointer"
-                  >
-                    <div className="font-semibold text-[#111827] text-xs">Front Desk</div>
-                    <div className="text-[10px] text-[#8b9e95]">User: frontdesk</div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleAutofill('admission', 'admission')}
-                    className="p-1.5 text-left rounded-md bg-white hover:bg-[#e7f6f1] border border-[#e2eae5] hover:border-[#c2e7db] transition-colors cursor-pointer"
-                  >
-                    <div className="font-semibold text-[#111827] text-xs">Admission</div>
-                    <div className="text-[10px] text-[#8b9e95]">User: admission</div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleAutofill('inventory', 'inventory')}
-                    className="p-1.5 text-left rounded-md bg-white hover:bg-[#e7f6f1] border border-[#e2eae5] hover:border-[#c2e7db] transition-colors cursor-pointer"
-                  >
-                    <div className="font-semibold text-[#111827] text-xs">Inventory</div>
-                    <div className="text-[10px] text-[#8b9e95]">User: inventory</div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleAutofill('pharmacy', 'inventory')}
-                    className="p-1.5 text-left rounded-md bg-white hover:bg-[#e7f6f1] border border-[#e2eae5] hover:border-[#c2e7db] transition-colors cursor-pointer"
-                  >
-                    <div className="font-semibold text-[#111827] text-xs">Pharmacy</div>
-                    <div className="text-[10px] text-[#8b9e95]">User: pharmacy</div>
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
         </div>
 
         {/* Right Footer */}

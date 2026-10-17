@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, Bell, MessageSquare, Moon, Sun, ChevronDown, PanelLeftOpen, Check, Trash2, Pill, ExternalLink } from 'lucide-react';
+import { Search, Bell, ChevronDown, PanelLeftOpen, Check, Trash2, Pill, ExternalLink } from 'lucide-react';
 import type { CurrentUser } from '../types';
 import { useHmsNotifications } from '../context/HmsNotificationContext';
 
@@ -27,7 +27,6 @@ export const TopBar: React.FC<TopBarProps> = ({
   onNavigate,
 }) => {
   const [searchVal, setSearchVal] = useState('');
-  const [darkMode, setDarkMode] = useState(false);
   const [showNotifMenu, setShowNotifMenu] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
 
@@ -206,26 +205,6 @@ export const TopBar: React.FC<TopBarProps> = ({
               </div>
             )}
           </div>
-
-          {/* Messages */}
-          <button
-            type="button"
-            className="relative p-2 rounded-xl text-slate-500 hover:text-slate-700 hover:bg-slate-100/70 transition-colors cursor-pointer"
-            title="Messages & Requests"
-          >
-            <MessageSquare className="h-4.5 w-4.5" />
-            <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-blue-500 ring-2 ring-white" />
-          </button>
-
-          {/* Dark / Light Toggle */}
-          <button
-            type="button"
-            onClick={() => setDarkMode(!darkMode)}
-            className="p-2 rounded-xl text-slate-500 hover:text-slate-700 hover:bg-slate-100/70 transition-colors cursor-pointer"
-            title="Toggle theme"
-          >
-            {darkMode ? <Sun className="h-4.5 w-4.5 text-amber-500" /> : <Moon className="h-4.5 w-4.5" />}
-          </button>
         </div>
 
         {/* User Profile matching Reference */}
