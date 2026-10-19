@@ -107,7 +107,7 @@ export const CANONICAL_HOSPITAL_MANAGEMENT_NAV_GROUPS: NavGroup[] = [
       { id: 'departments', label: 'Departments', icon: 'Building' },
       { id: 'services_rates', label: 'Services & Rates', icon: 'Stethoscope' },
       { id: 'wards_rooms_beds', label: 'Wards / Rooms / Beds', icon: 'Bed' },
-      { id: 'outsourced_providers', label: 'Outsourced Providers', icon: 'Truck' },
+      { id: 'outsourced_providers', label: 'Outsourced Departments', icon: 'ExternalLink' },
       { id: 'high_cost_medicine_policy', label: 'High-Cost Medicine Policy', icon: 'ShieldAlert' },
     ],
   },

@@ -398,9 +398,10 @@ export const dashboardService = {
 
     for (const rec of receipts) {
       const amt = Number(rec.amount || 0);
-      if (rec.isReversed) {
-        refundsAmount += amt;
-      } else {
+      if (amt < 0) refundsAmount += Math.abs(amt);
+      // A negative reversed receipt is a refund; a positive reversed receipt
+      // is voided and must not contribute to collections.
+      if (!rec.isReversed || amt < 0) {
         if (rec.method === 'CASH') cashAmount += amt;
         else if (rec.method === 'CARD') cardAmount += amt;
         else if (rec.method === 'BANK') bankAmount += amt;
@@ -862,8 +863,8 @@ export const dashboardService = {
       {
         id: 'kpi_today_collections',
         title: `${periodLabel}'s Collections`,
-        value: `PKR ${paidAmount.toLocaleString()}`,
-        numericValue: paidAmount,
+        value: `PKR ${totalReceiptsAmount.toLocaleString()}`,
+        numericValue: totalReceiptsAmount,
         iconName: 'CreditCard',
         contextText: `PKR ${outstandingAmount.toLocaleString()} outstanding`,
         colorClass: 'text-emerald-700',
@@ -956,7 +957,7 @@ export const dashboardService = {
         grossBilling,
         discounts,
         netBilling,
-        paidAmount,
+        paidAmount: totalReceiptsAmount,
         partiallyPaidAmount,
         partiallyPaidInvoicesCount,
         outstandingAmount,

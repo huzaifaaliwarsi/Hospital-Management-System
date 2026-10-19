@@ -12,6 +12,7 @@ export type DatePreset = 'today' | 'yesterday' | 'this_week' | 'this_month' | 'c
 export interface FrontDeskBillingReport {
   period: { label: string; start: string; end: string };
   collections: {
+    /** Net receipts after refunds, both overall and per payment method. */
     total: number;
     byMethod: Record<'CASH' | 'CARD' | 'BANK' | 'ONLINE', number>;
   };

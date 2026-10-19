@@ -1,6 +1,7 @@
 import { Decimal } from '@prisma/client/runtime/library';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
-import { NotFoundError, ValidationError, AuthorizationError } from '@/shared/errors/AppError';
+import { NotFoundError, ValidationError } from '@/shared/errors/AppError';
 import type { CollectAdmissionPaymentBody, ApplyAdmissionDiscountBody } from './admissionBilling.schemas';
 import { admissionService } from '@/modules/admission/admission.service';
 import { commissionService } from '@/modules/commission/commission.service';
@@ -773,18 +774,32 @@ export const admissionBillingService = {
    * posted" case.
    */
   async collectPayment(admissionId: string, body: CollectAdmissionPaymentBody, actorId: string) {
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction((tx) =>
+      this.collectPaymentInTransaction(tx, admissionId, body, actorId));
+    this.notifyPharmacyCollections(result.pharmacyNotifications);
+    return { receipts: result.receipts, allocations: result.allocations, isDischarged: result.isDischarged };
+  },
+
+  async collectPaymentInTransaction(tx: Prisma.TransactionClient, admissionId: string, body: CollectAdmissionPaymentBody, actorId: string, paymentRequestId?: string) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${admissionId}))`;
       const admission = await tx.admissionRecord.findUnique({ where: { id: admissionId } });
       if (!admission) throw new NotFoundError('Admission record not found');
+      if (admission.status === 'CANCELLED' || admission.status === 'DISCHARGED') {
+        throw new ValidationError('Cannot collect admission payments after discharge or cancellation');
+      }
 
       const invoices = await tx.hospitalInvoice.findMany({
-        where: { admissionRecordId: admissionId, sourceType: 'ADMISSION' },
+        where: { admissionRecordId: admissionId, sourceType: 'ADMISSION', status: { not: 'VOID' } },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       });
 
       const amountDecimal = new Decimal(body.amount);
       let allocations: { invoiceId: string | null; amount: Decimal }[];
 
       if (body.allocations && body.allocations.length > 0) {
+        if (new Set(body.allocations.map(a => a.invoiceId)).size !== body.allocations.length) {
+          throw new ValidationError('Duplicate invoice allocations are not allowed');
+        }
         const byId = new Map(invoices.map((inv) => [inv.id, inv]));
         let sum = new Decimal(0);
         const explicit = body.allocations.map((a) => {
@@ -855,21 +870,22 @@ export const admissionBillingService = {
         }
       }
 
-      // 1 single customer receipt for the payment transaction (one payment = one receipt record)
-      const primaryInvoice = allocations.find((a) => a.invoiceId)?.invoiceId
-        ? invoices.find((i) => i.id === allocations.find((a) => a.invoiceId)!.invoiceId)
-        : null;
-
+      // Each receipt records exactly its allocation. Only the true advance
+      // remains unlinked, so later dispensing cannot credit allocated cash twice.
+      const receipts = [];
+      for (const allocation of allocations) {
+      if (allocation.amount.lessThanOrEqualTo(0)) continue;
       const receipt = await tx.paymentReceipt.create({
         data: {
           receiptNumber: await generateReceiptNumber(tx),
-          amount: amountDecimal,
+          amount: allocation.amount,
           method: body.paymentMethod,
           reference:
             body.reference ??
             `Payment for admission ${admission.admissionNumber}`,
-          hospitalInvoiceId: allocations.length === 1 ? primaryInvoice?.id : null,
+          hospitalInvoiceId: allocation.invoiceId,
           admissionRecordId: admissionId,
+          admissionPaymentRequestId: paymentRequestId,
           collectedById: actorId,
         },
       });
@@ -880,12 +896,14 @@ export const admissionBillingService = {
           portalUserId: actorId,
           moduleScope: 'BILLING',
           direction: 'IN',
-          amount: amountDecimal,
+          amount: allocation.amount,
           category: 'COLLECTION',
           isPhysicalCash: body.paymentMethod === 'CASH',
           paymentReceiptId: receipt.id,
         },
       });
+      receipts.push(receipt);
+      }
 
       // Update paidTotal & status for each allocated invoice
       const pharmacyNotifications: Array<{ pharmacyInvoiceNumber: string; amount: number; receiptNumber: string }> = [];
@@ -904,6 +922,7 @@ export const admissionBillingService = {
         if (alloc.amount.lessThanOrEqualTo(0) || !alloc.invoiceId) continue;
         const invoice = invoices.find((i) => i.id === alloc.invoiceId);
         if (invoice) {
+          const receipt = receipts.find(r => r.hospitalInvoiceId === alloc.invoiceId)!;
           const previousPaidTotal = invoice.paidTotal;
           const newPaidTotal = invoice.paidTotal.plus(alloc.amount);
           const newStatus = patientPaymentStatus(invoice, newPaidTotal);
@@ -1002,15 +1021,15 @@ export const admissionBillingService = {
       const reconcile = await admissionService.reconcileAdmissionDischarge(tx, admissionId, actorId);
 
       return {
-        receipts: [receipt],
+        receipts,
         allocations: allocations.map((a) => ({ invoiceId: a.invoiceId, amount: a.amount })),
         isDischarged: reconcile.isDischarged,
         pharmacyNotifications,
       };
-    });
+  },
 
-    // Notify Pharmacy Software via Bridge asynchronously outside the DB transaction
-    for (const notif of result.pharmacyNotifications) {
+  notifyPharmacyCollections(notifications: Array<{ pharmacyInvoiceNumber: string; amount: number; receiptNumber: string }>) {
+    for (const notif of notifications) {
       pharmacyBridgeClient.notifyPatientCollected({
         pharmacyInvoiceNumber: notif.pharmacyInvoiceNumber,
         collectedAmount: notif.amount,
@@ -1022,11 +1041,6 @@ export const admissionBillingService = {
       });
     }
 
-    return {
-      receipts: result.receipts,
-      allocations: result.allocations,
-      isDischarged: result.isDischarged,
-    };
   },
 
   /**

@@ -232,58 +232,15 @@ export const inventoryService = {
     const supplier = await prisma.supplier.findUnique({ where: { id: supplierId } });
     if (!supplier) throw new NotFoundError('Supplier not found');
 
-    return prisma.$transaction(async (tx) => {
-      // Find any purchase orders belonging to this supplier
-      const pos = await tx.purchaseOrder.findMany({
-        where: { supplierId },
-        select: { id: true },
-      });
-      const poIds = pos.map((p) => p.id);
-
-      if (poIds.length > 0) {
-        // Delete associated stock ledger movements for these purchase orders
-        await tx.stockLedger.deleteMany({
-          where: { referenceTable: 'purchase_orders', referenceId: { in: poIds } },
-        });
-        // Delete purchase order lines
-        await tx.purchaseOrderLine.deleteMany({
-          where: { purchaseOrderId: { in: poIds } },
-        });
-        // Delete purchase orders
-        await tx.purchaseOrder.deleteMany({
-          where: { id: { in: poIds } },
-        });
-      }
-
-      // Delete supplier ledger entries
-      await tx.supplierLedger.deleteMany({ where: { supplierId } });
-
-      // Delete the supplier
-      await tx.supplier.delete({ where: { id: supplierId } });
-
-      return { success: true, message: `Supplier "${supplier.name}" deleted successfully` };
-    });
+    await prisma.supplier.update({ where: { id: supplierId }, data: { isActive: false } });
+    return { success: true, message: 'Supplier deactivated; history retained' };
   },
 
-  /** Delete Stock Item and clean up related stock records safely */
   async deleteStockItem(stockItemId: string) {
     const item = await prisma.stockItem.findUnique({ where: { id: stockItemId } });
     if (!item) throw new NotFoundError('Stock item not found');
-
-    return prisma.$transaction(async (tx) => {
-      // Delete associated stock ledger entries
-      await tx.stockLedger.deleteMany({ where: { stockItemId } });
-      // Delete purchase order lines
-      await tx.purchaseOrderLine.deleteMany({ where: { stockItemId } });
-      // Delete department requisition lines
-      await tx.departmentRequisitionLine.deleteMany({ where: { stockItemId } });
-      // Delete stock adjustments
-      await tx.stockAdjustment.deleteMany({ where: { stockItemId } });
-      // Delete stock item
-      await tx.stockItem.delete({ where: { id: stockItemId } });
-
-      return { success: true, message: `Stock item "${item.name}" deleted successfully` };
-    });
+    await prisma.stockItem.update({ where: { id: stockItemId }, data: { isActive: false } });
+    return { success: true, message: 'Stock item deactivated; history retained' };
   },
 
   // ── Stock Items & Running Balance ──────────────────────────────────────

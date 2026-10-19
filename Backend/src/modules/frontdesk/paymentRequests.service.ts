@@ -3,7 +3,7 @@ import { prisma } from '@/db/client';
 import { NotFoundError, ValidationError } from '@/shared/errors/AppError';
 import type { ListPaymentRequestsQuery, CollectPaymentRequestBody } from './paymentRequests.schemas';
 
-import { generateReceiptNumber } from '@/shared/idGenerator';
+import { admissionBillingService } from './admissionBilling.service';
 
 const requestInclude = {
   admissionRecord: {
@@ -37,7 +37,8 @@ export const paymentRequestsService = {
   },
 
   async collectPaymentRequest(id: string, body: CollectPaymentRequestBody, actorId: string) {
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${id}))`;
       const request = await tx.admissionPaymentRequest.findUnique({
         where: { id },
         include: { paymentReceipts: { where: { isReversed: false } } },
@@ -56,30 +57,11 @@ export const paymentRequestsService = {
         );
       }
 
-      const receipt = await tx.paymentReceipt.create({
-        data: {
-          receiptNumber: await generateReceiptNumber(tx),
-          amount: amountDecimal,
-          method: body.paymentMethod,
-          reference: body.reference ?? `Payment request ${request.id}`,
-          admissionPaymentRequestId: request.id,
-          collectedById: actorId,
-        },
-      });
-
-      // Universal Cashier balance ledger update (§4.9, §8.12) — same pattern
-      // as appointments/invoices collection.
-      await tx.userCashBalance.create({
-        data: {
-          portalUserId: actorId,
-          moduleScope: 'BILLING',
-          direction: 'IN',
-          amount: amountDecimal,
-          category: 'COLLECTION',
-          isPhysicalCash: body.paymentMethod === 'CASH',
-          paymentReceiptId: receipt.id,
-        },
-      });
+      const collection = await admissionBillingService.collectPaymentInTransaction(
+        tx, request.admissionRecordId,
+        { ...body, reference: body.reference ?? `Payment request ${request.id}` },
+        actorId, request.id,
+      );
 
       const newCollected = alreadyCollected.plus(amountDecimal);
       const newStatus = newCollected.greaterThanOrEqualTo(request.requestedAmount) ? 'FULFILLED' : 'PARTIALLY_FULFILLED';
@@ -90,7 +72,9 @@ export const paymentRequestsService = {
         include: requestInclude,
       });
 
-      return { request: updated, receipt };
+      return { request: updated, ...collection };
     });
+    admissionBillingService.notifyPharmacyCollections(result.pharmacyNotifications);
+    return { request: result.request, receipt: result.receipts[0], receipts: result.receipts };
   },
 };

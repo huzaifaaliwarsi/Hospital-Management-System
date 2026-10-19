@@ -241,18 +241,18 @@ export const SuperAdminOutsourcedProvidersView: React.FC = () => {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="h-11 w-11 rounded-xl bg-[#effaf5] text-[#08775A] border border-[#c2e7db] flex items-center justify-center shadow-2xs">
-              <Truck className="h-5 w-5" />
+              <Building2 className="h-5 w-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-xl font-bold text-[#123e2b] tracking-tight">Outsourced Providers</h1>
+                <h1 className="text-xl font-bold text-[#123e2b] tracking-tight">Outsourced Departments</h1>
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#effaf5] text-[#08775A] border border-[#c2e7db]">
                   <span className="w-1.5 h-1.5 rounded-full bg-[#08775A] animate-pulse" />
-                  External Diagnostics
+                  External Facilities &amp; Labs
                 </span>
               </div>
               <p className="text-xs text-[#52665e] mt-0.5">
-                External Lab, Radiology, and Neurology partners linked to outsourced clinical departments
+                Outsourced diagnostic labs, imaging centers, and specialized external departments linked to hospital billing
               </p>
             </div>
           </div>
@@ -262,7 +262,7 @@ export const SuperAdminOutsourcedProvidersView: React.FC = () => {
             className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#08775A] hover:bg-[#065f46] text-white rounded-lg text-xs font-semibold shadow-2xs transition-colors cursor-pointer shrink-0"
           >
             <Plus className="h-4 w-4" />
-            <span>Add Provider</span>
+            <span>Add Outsourced Department</span>
           </button>
         </div>
       </div>
@@ -301,10 +301,10 @@ export const SuperAdminOutsourcedProvidersView: React.FC = () => {
         {/* Dark Emerald Header Strip */}
         <div className="bg-[#0e5944] text-white px-4 py-2.5 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            <Truck className="h-4 w-4 text-[#c2e7db]" />
-            <span className="font-semibold text-xs tracking-wide">Outsourced Diagnostic Partners</span>
+            <Building2 className="h-4 w-4 text-[#c2e7db]" />
+            <span className="font-semibold text-xs tracking-wide">Outsourced Departments Registry</span>
             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#effaf5] text-[#08775A] border border-[#c2e7db]">
-              {filteredProviders.length} Providers
+              {filteredProviders.length} Departments
             </span>
           </div>
         </div>
@@ -315,7 +315,7 @@ export const SuperAdminOutsourcedProvidersView: React.FC = () => {
               <tr className="bg-[#effaf5] border-b border-[#c2e7db] text-[11px] font-bold text-[#08775A] select-none sticky top-0 z-10">
                 <th className="py-2.5 px-3 text-center border-r border-[#c2e7db]/60 w-12">#</th>
                 <th className="py-2.5 px-4 border-r border-[#c2e7db]/60">Code</th>
-                <th className="py-2.5 px-4 border-r border-[#c2e7db]/60">Provider Name</th>
+                <th className="py-2.5 px-4 border-r border-[#c2e7db]/60">Department Name</th>
                 <th className="py-2.5 px-4 border-r border-[#c2e7db]/60">Representative</th>
                 <th className="py-2.5 px-4 border-r border-[#c2e7db]/60">Settlement Cycle</th>
                 <th className="py-2.5 px-4 text-center border-r border-[#c2e7db]/60">Linked Depts</th>
@@ -397,7 +397,7 @@ export const SuperAdminOutsourcedProvidersView: React.FC = () => {
       <Modal
         isOpen={isFormOpen}
         onClose={() => setIsFormOpen(false)}
-        title={editingProvider ? 'Edit Outsourced Provider' : 'Register Outsourced Provider'}
+        title={editingProvider ? 'Edit Outsourced Department' : 'Register Outsourced Department'}
         maxWidth="2xl"
       >
         <form onSubmit={handleSave} className="space-y-4">
@@ -406,14 +406,15 @@ export const SuperAdminOutsourcedProvidersView: React.FC = () => {
           )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <TextInput
-              label="Provider Code"
+              label="Department / Partner Code"
               placeholder="Auto-generated (e.g. PRV-0001)"
               value={formValues.code}
               onChange={(e) => setFormValues({ ...formValues, code: e.target.value })}
-              hint="Auto-generated sequential code — editable if needed"
+              hint="Auto-generated code — automatically creates &amp; links an Outsourced Department"
             />
             <TextInput
-              label="Provider Name"
+              label="Outsourced Department Name"
+              placeholder="e.g. Chughtai Lab, Islamabad Diagnostic"
               value={formValues.name}
               onChange={(e) => setFormValues({ ...formValues, name: e.target.value })}
               required

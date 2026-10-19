@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dashboardService } from '../src/modules/reports/dashboard.service';
+import { prisma } from '@/db/client';
 
 vi.mock('@/db/client', () => {
   return {
@@ -112,6 +113,20 @@ vi.mock('@/db/client', () => {
 });
 
 describe('Super Admin Dashboard Service', () => {
+  it('subtracts refunds from dashboard cash, payment methods and collections', async () => {
+    vi.mocked(prisma.paymentReceipt.findMany).mockResolvedValueOnce([
+      { method: 'CASH', amount: 2200, isReversed: false },
+      { method: 'CASH', amount: 1000, isReversed: false },
+      { method: 'CASH', amount: -1000, isReversed: true },
+      { method: 'CASH', amount: 1000, isReversed: false },
+      { method: 'CASH', amount: 500, isReversed: true },
+    ] as any);
+    const data = await dashboardService.getSuperAdminDashboard({ preset: 'today' });
+    expect(data.revenueChannels.cash).toBe(3200);
+    expect(data.paymentMethods.find(p => p.method === 'Cash Payment')?.amount).toBe(3200);
+    expect(data.billingSummary.paidAmount).toBe(3200);
+    expect(data.billingSummary.refundsAmount).toBe(1000);
+  });
   it('aggregates master infrastructure, beds, billing and alerts accurately', async () => {
     const data = await dashboardService.getSuperAdminDashboard({ preset: 'today' });
 

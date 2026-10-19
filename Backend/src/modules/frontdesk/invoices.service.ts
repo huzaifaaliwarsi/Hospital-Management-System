@@ -9,6 +9,7 @@ import { prisma } from '@/db/client';
 import { NotFoundError, ValidationError, AuthorizationError } from '@/shared/errors/AppError';
 import { commissionService } from '@/modules/commission/commission.service';
 import { pharmacyBridgeClient } from '@/shared/pharmacyBridgeClient';
+import { computePharmacyPortion } from '@/shared/pharmacyFifoCredit';
 import type {
   CreateEncounterBody,
   AddServiceLineBody,
@@ -482,6 +483,8 @@ export const invoicesService = {
    */
   async collectPayment(invoiceId: string, body: CollectPaymentBody, actorId: string) {
     const result = await prisma.$transaction(async (tx) => {
+      const identity = await tx.hospitalInvoice.findUnique({ where: { id: invoiceId }, select: { admissionRecordId: true } });
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${identity?.admissionRecordId ?? invoiceId}))`;
       const invoice = await tx.hospitalInvoice.findUnique({
         where: { id: invoiceId },
         include: { paymentReceipts: true, lines: true },
@@ -507,6 +510,7 @@ export const invoicesService = {
           receiptNumber,
           hospitalInvoiceId: invoice.id,
           amount: amountDecimal,
+          admissionRecordId: invoice.admissionRecordId,
           method: body.paymentMethod,
           reference: body.reference ?? `Payment for Invoice ${invoice.invoiceNumber}`,
           collectedById: actorId,
@@ -567,11 +571,9 @@ export const invoicesService = {
           }
         }
 
-        if (pharmacyPortion.greaterThan(0)) {
+        if (pharmacyPortion.greaterThan(0) && invoice.admissionRecordId) {
           const charges = await tx.hmsPharmacyCharge.findMany({
-            where: invoice.admissionRecordId
-              ? { admissionRecordId: invoice.admissionRecordId }
-              : undefined,
+            where: { admissionRecordId: invoice.admissionRecordId },
             orderBy: { createdAt: 'asc' },
           });
 
@@ -671,7 +673,9 @@ export const invoicesService = {
    * and creates linked Doctor Commission reversal if commission was accrued.
    */
   async refundPayment(invoiceId: string, body: RefundPaymentBody, actorId: string) {
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
+      const identity = await tx.hospitalInvoice.findUnique({ where: { id: invoiceId }, select: { admissionRecordId: true } });
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${identity?.admissionRecordId ?? invoiceId}))`;
       const invoice = await tx.hospitalInvoice.findUnique({
         where: { id: invoiceId },
         include: {
@@ -682,7 +686,26 @@ export const invoicesService = {
 
       if (!invoice) throw new NotFoundError('Invoice not found');
 
+      if (body.requestKey) {
+        const previous = await tx.paymentReceipt.findUnique({ where: { refundRequestKey: body.requestKey } });
+        if (previous) {
+          if (previous.hospitalInvoiceId !== invoiceId || !previous.amount.equals(new Decimal(body.amount).negated()) || previous.method !== body.refundMethod || previous.originalReceiptId !== (body.paymentReceiptId ?? null)) {
+            throw new ValidationError('Refund request key was already used for a different refund');
+          }
+          return { refundReceipt: previous, invoice, pharmacyNotifications: [] };
+        }
+      }
+      if (invoice.status === 'VOID') throw new ValidationError('Cannot refund a void invoice');
+
       const refundAmount = new Decimal(body.amount);
+      if (!refundAmount.gt(0)) throw new ValidationError('Refund amount must be positive');
+      if (body.paymentReceiptId) {
+        const original = invoice.paymentReceipts.find(r => r.id === body.paymentReceiptId && r.amount.gt(0) && !r.isReversed);
+        if (!original) throw new ValidationError('Original receipt does not belong to this invoice or is not refundable');
+        const refunded = await tx.paymentReceipt.aggregate({ where: { originalReceiptId: original.id }, _sum: { amount: true } });
+        const available = original.amount.plus(refunded._sum.amount ?? 0);
+        if (refundAmount.gt(available)) throw new ValidationError('Refund exceeds the remaining amount on the original receipt');
+      }
       if (refundAmount.greaterThan(invoice.paidTotal)) {
         throw new ValidationError(
           `Refund amount PKR ${refundAmount.toFixed(2)} cannot exceed total paid PKR ${invoice.paidTotal.toFixed(2)}`,
@@ -697,6 +720,9 @@ export const invoicesService = {
           receiptNumber,
           hospitalInvoiceId: invoice.id,
           amount: refundAmount.negated(),
+          admissionRecordId: invoice.admissionRecordId,
+          originalReceiptId: body.paymentReceiptId,
+          refundRequestKey: body.requestKey,
           method: body.refundMethod,
           reference: `Refund for ${invoice.invoiceNumber}: ${body.reason}`,
           collectedById: actorId,
@@ -729,6 +755,7 @@ export const invoicesService = {
       });
 
       // Reverse doctor commission accruals for lines where commission was accrued
+      const chargePaymentReversed = Decimal.max(0, Decimal.min(invoice.paidTotal, patientResponsibility(invoice)).minus(Decimal.min(newPaidTotal, patientResponsibility(invoice))));
       for (const line of invoice.lines) {
         if (line.commissionAccrual) {
           await commissionService.reverseCommissionAccrual(
@@ -736,16 +763,40 @@ export const invoicesService = {
             line.id,
             `Refund: ${body.reason}`,
             actorId,
-            invoice.total.gt(0) ? refundAmount.div(invoice.total) : new Decimal(0),
+            invoice.total.gt(0) ? chargePaymentReversed.div(invoice.total) : new Decimal(0),
           );
         }
       }
 
+      const pharmacyNotifications: Array<{ pharmacyInvoiceNumber: string; authoritativeCollectedAmount: number }> = [];
+      if (invoice.admissionRecordId) {
+        const lines = await tx.invoiceLineItem.findMany({ where: { hospitalInvoiceId: invoice.id }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], select: { billingSource: true, patientShare: true } });
+        let remaining = computePharmacyPortion(lines, new Decimal(0), newPaidTotal);
+        const charges = await tx.hmsPharmacyCharge.findMany({ where: { admissionRecordId: invoice.admissionRecordId }, orderBy: { createdAt: 'asc' } });
+        for (const charge of charges) {
+          const paid = Decimal.min(charge.patientPaid, remaining);
+          remaining = Decimal.max(0, remaining.minus(paid));
+          const outstanding = charge.patientOutstanding.plus(charge.patientPaid.minus(paid));
+          await tx.hmsPharmacyCharge.update({ where: { id: charge.id }, data: {
+            patientPaid: paid, patientOutstanding: outstanding,
+            patientPaymentStatus: outstanding.isZero() ? 'CLEARED' : paid.gt(0) ? 'PARTIALLY_COLLECTED' : 'PENDING',
+          } });
+          pharmacyNotifications.push({ pharmacyInvoiceNumber: charge.pharmacyInvoiceNumber, authoritativeCollectedAmount: Number(paid) });
+        }
+        await tx.dualDischargeClearance.updateMany({ where: { admissionRecordId: invoice.admissionRecordId, clearanceType: { in: ['HOSPITAL_BILLING', ...(charges.some(c => c.patientPaid.gt(0)) ? ['PHARMACY' as const] : [])] } }, data: { status: 'PENDING', clearedAt: null, clearedById: null } });
+      }
       return {
         refundReceipt: reversalReceipt,
         invoice: updatedInvoice,
+        pharmacyNotifications,
       };
     });
+    for (const notification of result.pharmacyNotifications) {
+      await pharmacyBridgeClient.reconcileCollection(notification).catch(err => {
+        console.error('[refundPayment] Pharmacy reconciliation failed:', err);
+      });
+    }
+    return { refundReceipt: result.refundReceipt, invoice: result.invoice };
   },
 
   /**

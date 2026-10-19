@@ -51,7 +51,7 @@ export const WEEK_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'
 
 const timeOfDay = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Time must be HH:mm (24h)');
 
-export const DEDUCTION_MODES = ['NONE', 'PER_MINUTE', 'FIXED_PER_OCCURRENCE'] as const;
+export const DEDUCTION_MODES = ['NONE', 'PER_MINUTE', 'FIXED_PER_OCCURRENCE', 'PERCENTAGE_DAILY'] as const;
 
 /** One cutting/payment rule for a lateness or early-departure policy. */
 const deductionRuleSchema = z.object({

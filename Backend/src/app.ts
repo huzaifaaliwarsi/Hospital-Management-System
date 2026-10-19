@@ -8,7 +8,7 @@ import cookieParser from 'cookie-parser';
 import '@/config/env';
 import { requestContext } from '@/middleware/requestId';
 import { globalRateLimiter } from '@/middleware/rateLimiter';
-import { authenticate } from '@/middleware/authenticate';
+import { authenticate, blockIfMustResetPassword } from '@/middleware/authenticate';
 import { auditLog } from '@/middleware/auditLog';
 import { errorHandler, notFoundHandler } from '@/middleware/errorHandler';
 
@@ -99,7 +99,7 @@ export function createApp() {
 
   // Everything from here on requires a valid access token; mutating verbs
   // are captured to `audit_logs` (§7.14).
-  app.use('/api/v1', authenticate, auditLog);
+  app.use('/api/v1', authenticate, blockIfMustResetPassword, auditLog);
 
   app.use('/api/v1/staff', identityRoutes);
   app.use('/api/v1/portal-users', portalUserRoutes);

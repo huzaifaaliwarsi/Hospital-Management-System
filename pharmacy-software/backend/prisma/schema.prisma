@@ -622,6 +622,7 @@ model MedicineRequestLine {
 }
 
 model PharmacyInvoice {
+  processedCollectionReceipts String[] @default([]) @map("processed_collection_receipts")
   id                String           @id @default(uuid())
   /// System-generated — never manually typed, see DocumentSequence. INV-0001… for channel=RETAIL (POS Sale Invoice), PHI-0001… for channel=HMS_LINKED (Pharmacy Invoice) — two counters sharing this one column/table.
   invoiceNumber     String           @unique @map("invoice_number")
@@ -660,6 +661,8 @@ model PharmacyInvoice {
 }
 
 model PharmacyInvoiceLine {
+  returnedQuantity Decimal @default(0) @map("returned_quantity") @db.Decimal(14, 3)
+  returnedValue Decimal @default(0) @map("returned_value") @db.Decimal(14, 2)
   id             String          @id @default(uuid())
   invoiceId      String          @map("invoice_id")
   invoice        PharmacyInvoice @relation(fields: [invoiceId], references: [id])

@@ -52,7 +52,7 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({ isOpen, onClose, onS
         ...(services || []).map((s) => s.code),
       ])
     );
-    const fallbackCode = generateNextCode(allKnown, 'SRV');
+    const fallbackCode = generateNextCode(allKnown, 'SRV', 3);
 
     setFormValues({
       code: service?.code ?? fallbackCode, name: service?.name ?? '',
@@ -401,7 +401,11 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({ isOpen, onClose, onS
                     <p className="text-[11px] text-rose-600 mt-1">{departmentError || errors.departmentId}</p>
                   )}
                   {!departmentsLoading && !departmentError && availableDepartments.length === 0 && (
-                    <p className="text-[11px] text-slate-500 mt-1">No active departments available for this classification.</p>
+                    <p className="text-[11px] text-amber-600 mt-1">
+                      {selectedStream === 'OUTSOURCED'
+                        ? 'No active outsourced departments found — add one under Outsourced Departments first.'
+                        : 'No active hospital departments available.'}
+                    </p>
                   )}
                 </div>}
                 {isCore && <p className="text-xs text-slate-500">Default encounter service — no department.</p>}

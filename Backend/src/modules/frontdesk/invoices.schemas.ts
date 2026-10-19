@@ -99,6 +99,7 @@ export const collectPaymentSchema = z.object({
 export type CollectPaymentBody = z.infer<typeof collectPaymentSchema>;
 
 export const refundPaymentSchema = z.object({
+  requestKey: z.string().uuid().optional(),
   paymentReceiptId: z.string().uuid().optional(),
   amount: z.coerce.number().positive('Refund amount must be greater than zero'),
   refundMethod: z.enum(['CASH', 'CARD', 'BANK', 'ONLINE']).default('CASH'),

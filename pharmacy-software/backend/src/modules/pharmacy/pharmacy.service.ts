@@ -94,7 +94,9 @@ async function allocateFefoBatches(
   medicineId: string,
   requestedQuantity: Decimal,
   tx: Prisma.TransactionClient,
+  reserved: { medicineId: string; batchId: string | null; quantity: Decimal }[] = [],
 ): Promise<BatchAllocation[]> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('pharmacy-stock'))`;
   const medicine = await tx.medicineMaster.findUnique({
     where: { id: medicineId },
     include: { batches: { orderBy: { expiryDate: 'asc' }, include: { stockEntries: { select: { quantityDelta: true } } } } },
@@ -103,7 +105,8 @@ async function allocateFefoBatches(
 
   if (!medicine.batchManaged) {
     const entries = await tx.stockLedgerEntry.findMany({ where: { medicineId }, select: { quantityDelta: true } });
-    const total = entries.reduce((sum, e) => sum.plus(e.quantityDelta), new Decimal(0));
+    const total = entries.reduce((sum, e) => sum.plus(e.quantityDelta), new Decimal(0))
+      .minus(reserved.filter(r => r.medicineId === medicineId).reduce((sum, r) => sum.plus(r.quantity), new Decimal(0)));
     if (total.lessThan(requestedQuantity)) {
       throw new ValidationError(`Insufficient stock for "${medicine.name}". Available: ${total}, Requested: ${requestedQuantity}`);
     }
@@ -113,7 +116,8 @@ async function allocateFefoBatches(
   const now = new Date();
   const withStock = medicine.batches
     .filter((b) => b.expiryDate > now)
-    .map((b) => ({ id: b.id, available: b.stockEntries.reduce((s, e) => s.plus(e.quantityDelta), new Decimal(0)) }))
+    .map((b) => ({ id: b.id, available: b.stockEntries.reduce((s, e) => s.plus(e.quantityDelta), new Decimal(0))
+      .minus(reserved.filter(r => r.medicineId === medicineId && r.batchId === b.id).reduce((sum, r) => sum.plus(r.quantity), new Decimal(0))) }))
     .filter((b) => b.available.greaterThan(0));
 
   let remaining = requestedQuantity;
@@ -409,6 +413,13 @@ export const pharmacyService = {
     const delta = isNegative ? new Decimal(body.quantity).negated() : new Decimal(body.quantity);
 
     return prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('pharmacy-stock'))`;
+      if (medicine.batchManaged && !body.batchId) throw new ValidationError('Select a batch for this stock adjustment');
+      if (body.batchId && !await tx.medicineBatch.findFirst({ where: { id: body.batchId, medicineId: body.medicineId } })) {
+        throw new ValidationError('Batch does not belong to this medicine');
+      }
+      const balance = await tx.stockLedgerEntry.aggregate({ where: { medicineId: body.medicineId, batchId: body.batchId ?? null }, _sum: { quantityDelta: true } });
+      if (new Decimal(balance._sum.quantityDelta ?? 0).plus(delta).lessThan(0)) throw new ValidationError('Adjustment would create negative stock');
       const adjustmentNumber = await nextCode(tx, SEQUENCE.STOCK_ADJUSTMENT);
       const adjustment = await tx.stockAdjustment.create({
         data: { adjustmentNumber, medicineId: body.medicineId, batchId: body.batchId, type: body.type, quantity: new Decimal(body.quantity), reason: body.reason, createdById: actorId },
@@ -453,12 +464,13 @@ export const pharmacyService = {
         const reqQty = new Decimal(reqLine.saleUnitQuantity).mul(conversionToBase);
         const saleRate = packagingLevel.overrideSaleRate ? packagingLevel.overrideSaleRate.div(conversionToBase) : medicine.saleRate;
         const lineDiscount = new Decimal(reqLine.discountAmount || 0);
-        const allocations = await allocateFefoBatches(medicine.id, reqQty, tx);
+        const allocations = await allocateFefoBatches(medicine.id, reqQty, tx, stockDeductions);
+        if (lineDiscount.greaterThan(reqQty.mul(saleRate))) throw new ValidationError('Line discount exceeds medicine value');
 
         for (let i = 0; i < allocations.length; i++) {
           const alloc = allocations[i]!;
           const allocGross = alloc.quantity.mul(saleRate);
-          const allocDiscount = i === 0 ? lineDiscount : new Decimal(0);
+          const allocDiscount = lineDiscount.mul(alloc.quantity).div(reqQty);
           const taxable = allocGross.minus(allocDiscount);
           const allocTax = taxable.mul(medicine.taxPercent).div(100);
           const allocNet = taxable.plus(allocTax);
@@ -549,6 +561,7 @@ export const pharmacyService = {
 
   async addPayment(invoiceId: string, body: AddPaymentBody, actorId: string) {
     return prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${invoiceId}))`;
       const invoice = await tx.pharmacyInvoice.findUnique({ where: { id: invoiceId } });
       if (!invoice) throw new NotFoundError('Invoice not found');
       if (invoice.status === 'PAID') throw new ConflictError('Invoice is already fully paid');

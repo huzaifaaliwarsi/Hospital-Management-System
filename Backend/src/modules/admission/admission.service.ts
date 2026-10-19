@@ -1418,6 +1418,10 @@ export const admissionService = {
         }
       }
 
+      if (body.clearanceType === 'PHARMACY' && await pharmacyDischargeBlocked(tx, admissionId)) {
+        throw new ValidationError('Cannot grant Pharmacy clearance: unpaid or pending medicines remain');
+      }
+
       // Upsert clearance status to CLEARED
       const existing = admission.dischargeClearances.find(
         (c) => c.clearanceType === body.clearanceType,
@@ -1462,7 +1466,7 @@ export const admissionService = {
     const admission = await tx.admissionRecord.findUnique({
       where: { id: admissionId },
       include: {
-        hospitalInvoices: { where: { sourceType: 'ADMISSION' } },
+        hospitalInvoices: { where: { sourceType: 'ADMISSION', status: { not: 'VOID' } } },
         dischargeClearances: true,
       },
     });
@@ -1475,7 +1479,6 @@ export const admissionService = {
     const invoiceIds = admission.hospitalInvoices.map((inv: any) => inv.id);
     const receipts = await tx.paymentReceipt.aggregate({
       where: {
-        isReversed: false,
         OR: [
           { admissionRecordId: admission.id },
           ...(invoiceIds.length > 0 ? [{ hospitalInvoiceId: { in: invoiceIds } }] : []),
@@ -1516,15 +1519,15 @@ export const admissionService = {
     });
 
     const clinicalGate = allClearances.find((c: any) => c.clearanceType === 'CLINICAL');
-    const billingGate = allClearances.find((c: any) => c.clearanceType === 'HOSPITAL_BILLING');
     const pharmacyGate = allClearances.find((c: any) => c.clearanceType === 'PHARMACY');
 
     const clinicalOk = clinicalGate?.status === 'CLEARED';
-    const billingOk = billingGate?.status === 'CLEARED' || isBillingSettled;
-    const pharmacyOk = !pharmacyGate || pharmacyGate.status === 'CLEARED' || pharmacyGate.status === 'NOT_APPLICABLE';
+    const billingOk = isBillingSettled;
+    const pharmacyOk = !(await pharmacyDischargeBlocked(tx, admission.id)) &&
+      (pharmacyGate?.status === 'CLEARED' || (admission.medicationMode === 'SELF' && pharmacyGate?.status === 'NOT_APPLICABLE'));
 
     // If clinical is cleared but billing is not settled, ensure status is DISCHARGE_PENDING
-    if (clinicalOk && !billingOk && admission.status === 'ACTIVE') {
+    if (clinicalOk && (!billingOk || !pharmacyOk) && admission.status === 'ACTIVE') {
       const updated = await tx.admissionRecord.update({
         where: { id: admission.id },
         data: { status: 'DISCHARGE_PENDING' },
@@ -1713,47 +1716,8 @@ export const admissionService = {
         };
       }
 
-      const admission = await tx.admissionRecord.findUnique({
-        where: { id: admissionId },
-        include: { dischargeClearances: true, panelPatient: true, selfPayEncounter: true },
-      });
-
-      if (!admission) throw new NotFoundError('Admission record not found');
-      if (admission.status === 'DISCHARGED') {
-        throw new ValidationError('Patient is already discharged');
-      }
-
-      const clearances = admission.dischargeClearances;
-      const pendingClearances = clearances.filter((c) => c.status === 'PENDING').map((c) => c.clearanceType);
-
-      if (pendingClearances.length > 0) {
-        throw new ValidationError(
-          `Final discharge blocked: The following clearances are still pending: [${pendingClearances.join(', ')}]. All 3 clearance gates must be approved before discharge.`,
-        );
-      }
-
-      // Set AdmissionRecord to DISCHARGED
-      const discharged = await tx.admissionRecord.update({
-        where: { id: admission.id },
-        data: {
-          status: 'DISCHARGED',
-          dischargedAt: new Date(),
-        },
-        include: { panelPatient: true, selfPayEncounter: true },
-      });
-
-      // Automatically free assigned Bed to AVAILABLE
-      if (admission.bedId) {
-        await tx.bed.update({
-          where: { id: admission.bedId },
-          data: { status: 'AVAILABLE' },
-        });
-      }
-
-      return {
-        admission: discharged,
-        message: 'Patient discharged successfully. Bed freed to AVAILABLE.',
-      };
+      if (!reconcile.admission) throw new NotFoundError('Admission record not found');
+      throw new ValidationError('Final discharge blocked: clinical, billing and pharmacy clearance are required; unpaid or pending medicines must be resolved.');
     }, { maxWait: 15000, timeout: 30000 });
 
     try {
@@ -1918,3 +1882,4 @@ export const admissionService = {
     });
   },
 };
+import { pharmacyDischargeBlocked } from '@/shared/pharmacyDischargeGate';

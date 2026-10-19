@@ -101,7 +101,7 @@ export const managementReportsService = {
       prisma.paymentReceipt.findMany({
         where: {
           collectedAt: { gte: start, lte: end },
-          isReversed: false,
+          AND: [{ OR: [{ isReversed: false }, { amount: { lt: 0 } }] }],
           ...(user ? { collectedById: user } : {}),
           ...(dept
             ? {
@@ -432,7 +432,7 @@ export const managementReportsService = {
     for (const e of ledger) {
       const r = rowFor(e.portalUserId, e.moduleScope, e.portalUser);
       if (!e.isPhysicalCash) {
-        if (e.direction === 'IN') r.nonCash = r.nonCash.plus(e.amount);
+        r.nonCash = r.nonCash.plus(e.direction === 'IN' ? e.amount : e.amount.negated());
         continue;
       }
       if (e.direction === 'IN') {
@@ -459,7 +459,7 @@ export const managementReportsService = {
       .filter((r) => !query.settlementStatus || r.settlementStatus === query.settlementStatus)
       .map(({ physicalOut, ...r }) => {
         const expectedCash = r.opening.plus(r.pettyCash).plus(r.cashCollections).minus(physicalOut);
-        return { ...r, expectedCash, remaining: expectedCash.minus(r.accepted) };
+        return { ...r, cashCollections: r.cashCollections.minus(r.refunds), expectedCash, remaining: expectedCash.minus(r.accepted) };
       })
       .sort((a, b) => a.user.localeCompare(b.user) || a.portal.localeCompare(b.portal));
 

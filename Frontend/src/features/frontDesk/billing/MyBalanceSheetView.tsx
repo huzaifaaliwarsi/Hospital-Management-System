@@ -201,6 +201,7 @@ export const MyBalanceSheetView: React.FC<MyBalanceSheetViewProps> = ({ userId, 
   }
 
   const { summary, transactions } = data;
+  const netCollections = summary.totalCollections - summary.totalRefunds;
   const hasUnsettled = summary.unsettledCount > 0;
   const isShift = data.period.mode === 'shift';
 
@@ -217,7 +218,7 @@ export const MyBalanceSheetView: React.FC<MyBalanceSheetViewProps> = ({ userId, 
     periodLabel: data.period.label,
     filters: [
       `Expected Physical Cash: ${formatPKR(summary.expectedPhysicalCash)}`,
-      `Total Collections: ${formatPKR(summary.totalCollections)}`,
+      `Net Collections (after refunds): ${formatPKR(netCollections)}`,
       `Total Refunds: ${formatPKR(summary.totalRefunds)}`,
     ],
   };
@@ -311,6 +312,11 @@ export const MyBalanceSheetView: React.FC<MyBalanceSheetViewProps> = ({ userId, 
         {filterExtra && <div className="ml-auto">{filterExtra}</div>}
       </div>
 
+      <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 flex items-center justify-between">
+        <span className="font-bold text-emerald-900">{isShift ? 'Live Cash (after refunds & expenses)' : 'Expected Cash (after refunds & expenses)'}</span>
+        <span className="font-mono text-xl font-bold text-emerald-950">{formatPKR(summary.expectedPhysicalCash)}</span>
+      </div>
+
       {/* Dual Side-by-Side Tables (Payments vs Expenses / Refunds) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Left Table: Payments / Collections */}
@@ -372,9 +378,9 @@ export const MyBalanceSheetView: React.FC<MyBalanceSheetViewProps> = ({ userId, 
           </div>
           {/* Footer Total */}
           <div className="border-t border-slate-300 flex items-center justify-between bg-slate-50 text-xs font-bold">
-            <span className="py-2.5 px-3.5 text-slate-700 uppercase tracking-wide">Total</span>
+            <span className="py-2.5 px-3.5 text-slate-700 uppercase tracking-wide">Net Collections (after refunds)</span>
             <span className="py-2.5 px-4 bg-[#dcfce7] text-emerald-900 font-mono text-sm border-l border-slate-300">
-              {formatPKR(summary.totalCollections)}
+              {formatPKR(netCollections)}
             </span>
           </div>
         </div>

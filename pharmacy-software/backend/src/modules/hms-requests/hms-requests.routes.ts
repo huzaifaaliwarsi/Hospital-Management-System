@@ -11,7 +11,7 @@ const view = authorize('pharmacy', 'view');
 const create = authorize('pharmacy', 'create');
 const edit = authorize('pharmacy', 'edit');
 
-router.get('/stream/events', c.streamEvents);
+router.get('/stream/events', view, c.streamEvents);
 router.get('/settings', view, asyncHandler(c.getSettings));
 router.put('/settings', edit, validate({ body: s.updateSettingsBodySchema }), asyncHandler(c.updateSettings));
 

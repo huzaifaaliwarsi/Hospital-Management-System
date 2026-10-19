@@ -248,8 +248,8 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
 
           const rules = (salary.deductionRules ?? {}) as { late?: { mode?: string; amount?: number }; early_exit?: { mode?: string; amount?: number } };
           const readRule = (r?: { mode?: string; amount?: number }): DeductionRuleForm =>
-            r && (r.mode === 'PER_MINUTE' || r.mode === 'FIXED_PER_OCCURRENCE')
-              ? { mode: r.mode, amount: r.amount != null ? Number(r.amount) : '' }
+            r && (r.mode === 'PER_MINUTE' || r.mode === 'FIXED_PER_OCCURRENCE' || r.mode === 'PERCENTAGE_DAILY')
+              ? { mode: r.mode as DeductionMode, amount: r.amount != null ? Number(r.amount) : '' }
               : emptyDeductionRule();
           next.lateInDeduction = readRule(rules.late);
           next.earlyOutDeduction = readRule(rules.early_exit);
@@ -815,8 +815,23 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
                       ))}
                     </select>
                   </Field>
-                  <Field label={rule.mode === 'FIXED_PER_OCCURRENCE' ? 'Amount (PKR / day)' : 'Amount (PKR / min)'}>
-                    <NumberInput value={rule.amount} disabled={rule.mode === 'NONE'} placeholder="0" onChange={(v) => setRule({ amount: v })} />
+                  <Field
+                    label={
+                      rule.mode === 'FIXED_PER_OCCURRENCE'
+                        ? 'Amount (PKR / day)'
+                        : rule.mode === 'PERCENTAGE_DAILY'
+                        ? 'Percentage (% of daily wage)'
+                        : rule.mode === 'PER_MINUTE'
+                        ? 'Amount (PKR / min)'
+                        : 'Amount'
+                    }
+                  >
+                    <NumberInput
+                      value={rule.amount}
+                      disabled={rule.mode === 'NONE'}
+                      placeholder={rule.mode === 'PERCENTAGE_DAILY' ? 'e.g. 50' : '0'}
+                      onChange={(v) => setRule({ amount: v })}
+                    />
                   </Field>
                 </div>
               </div>
@@ -1104,8 +1119,12 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
     </div>
   );
 
-  const deductionLabel = (r: DeductionRuleForm) =>
-    r.mode === 'NONE' || r.amount === '' ? 'No cutting' : `${formatPKR(Number(r.amount))} ${r.mode === 'PER_MINUTE' ? 'per late/early minute' : 'per day'}`;
+  const deductionLabel = (r: DeductionRuleForm) => {
+    if (r.mode === 'NONE' || r.amount === '') return 'No cutting';
+    if (r.mode === 'PERCENTAGE_DAILY') return `${r.amount}% of daily wage per day`;
+    if (r.mode === 'PER_MINUTE') return `${formatPKR(Number(r.amount))} per late/early minute`;
+    return `${formatPKR(Number(r.amount))} per day`;
+  };
 
   const renderReview = () => {
     const working = formData.weeklySchedule.filter((d) => d.isWorking);

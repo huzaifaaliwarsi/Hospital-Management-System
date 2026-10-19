@@ -30,7 +30,7 @@ export const frontdeskBillingReportService = {
       }),
       prisma.userCashBalance.findMany({
         where: { moduleScope: 'BILLING', category: 'REFUND', direction: 'OUT', occurredAt: dateFilter, ...ledgerFilter },
-        select: { amount: true },
+        select: { amount: true, paymentReceipt: { select: { method: true } } },
       }),
       prisma.hospitalInvoice.findMany({
         where: {
@@ -51,6 +51,10 @@ export const frontdeskBillingReportService = {
     }
 
     const totalRefunds = refunds.reduce((sum, r) => sum.plus(r.amount), new Decimal(0));
+    for (const refund of refunds) {
+      const method = refund.paymentReceipt?.method ?? 'CASH';
+      byMethod[method] = (byMethod[method] ?? new Decimal(0)).minus(refund.amount);
+    }
 
     const totalDiscounts = invoices.reduce((sum, inv) => sum.plus(inv.discountTotal), new Decimal(0));
     const totalGross = invoices.reduce((sum, inv) => sum.plus(inv.subtotal), new Decimal(0));
@@ -68,7 +72,7 @@ export const frontdeskBillingReportService = {
     return {
       period: { label, start: start.toISOString(), end: end.toISOString() },
       collections: {
-        total: totalCollections,
+        total: totalCollections.minus(totalRefunds),
         byMethod,
       },
       refunds: { total: totalRefunds },

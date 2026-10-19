@@ -12,3 +12,7 @@ coverage/
 *.log
 .DS_Store
 Thumbs.db
+.workspaces/
+*.tsbuildinfo
+*-test-results.json
+test-results-current.json

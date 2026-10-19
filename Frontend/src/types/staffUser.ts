@@ -239,11 +239,12 @@ export interface CommissionRuleForm {
   basis: 'NET' | 'GROSS';
 }
 
-export type DeductionMode = 'NONE' | 'PER_MINUTE' | 'FIXED_PER_OCCURRENCE';
+export type DeductionMode = 'NONE' | 'PER_MINUTE' | 'FIXED_PER_OCCURRENCE' | 'PERCENTAGE_DAILY';
 export const DEDUCTION_MODE_OPTIONS: { value: DeductionMode; label: string }[] = [
   { value: 'NONE', label: 'No cutting' },
   { value: 'PER_MINUTE', label: 'PKR per minute' },
   { value: 'FIXED_PER_OCCURRENCE', label: 'Fixed PKR per day' },
+  { value: 'PERCENTAGE_DAILY', label: 'Percentage of Daily Wage (% / day)' },
 ];
 
 /** Late-In / Early-Out cutting rule — amount is PKR per minute or a flat PKR per late/early day, beyond the shift's own grace/tolerance. */

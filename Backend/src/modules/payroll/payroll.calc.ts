@@ -63,7 +63,7 @@ export interface SalaryAmounts {
 }
 
 interface DeductionRule {
-  mode: 'NONE' | 'PER_MINUTE' | 'FIXED_PER_OCCURRENCE';
+  mode: 'NONE' | 'PER_MINUTE' | 'FIXED_PER_OCCURRENCE' | 'PERCENTAGE_DAILY';
   amount: Decimal;
 }
 
@@ -75,14 +75,17 @@ function readDeductionRule(rules: unknown, key: 'late' | 'early_exit'): Deductio
   if (!rule || typeof rule !== 'object') return NO_DEDUCTION;
   const mode = (rule as Record<string, unknown>).mode;
   const amount = (rule as Record<string, unknown>).amount;
-  if (mode !== 'PER_MINUTE' && mode !== 'FIXED_PER_OCCURRENCE') return NO_DEDUCTION;
+  if (mode !== 'PER_MINUTE' && mode !== 'FIXED_PER_OCCURRENCE' && mode !== 'PERCENTAGE_DAILY') return NO_DEDUCTION;
   return { mode, amount: new Decimal((amount as number | string | undefined) ?? 0) };
 }
 
-/** Late-In / Early-Out cut for the period — minutes-based or a flat amount per late/early day, as the staff member's own profile configures (never a fixed hardcoded rate). */
-function computeTimingDeduction(rule: DeductionRule, totalMinutes: number, occurrences: number): Decimal {
+/** Late-In / Early-Out cut for the period — minutes-based, fixed amount, or percentage of daily wage per occurrence. */
+function computeTimingDeduction(rule: DeductionRule, totalMinutes: number, occurrences: number, dailyRate: Decimal): Decimal {
   if (rule.mode === 'PER_MINUTE') return rule.amount.mul(totalMinutes);
   if (rule.mode === 'FIXED_PER_OCCURRENCE') return rule.amount.mul(occurrences);
+  if (rule.mode === 'PERCENTAGE_DAILY') {
+    return dailyRate.mul(rule.amount).div(100).mul(occurrences);
+  }
   return new Decimal(0);
 }
 
@@ -214,8 +217,8 @@ export function computeSalaryAmounts(
 
   // Late-In / Early-Out cutting — dynamically read from this staff member's
   // own Salary Profile (`deductionRules`), never a hardcoded platform rate.
-  const lateDeduction = computeTimingDeduction(readDeductionRule(profile.deductionRules, 'late'), lateMinutes, lateOccurrences);
-  const earlyExitDeduction = computeTimingDeduction(readDeductionRule(profile.deductionRules, 'early_exit'), earlyExitMinutes, earlyExitOccurrences);
+  const lateDeduction = computeTimingDeduction(readDeductionRule(profile.deductionRules, 'late'), lateMinutes, lateOccurrences, dailyRate);
+  const earlyExitDeduction = computeTimingDeduction(readDeductionRule(profile.deductionRules, 'early_exit'), earlyExitMinutes, earlyExitOccurrences, dailyRate);
 
   const netAmount = Decimal.max(grossAmount.minus(tax).minus(otherDeductions).minus(lateDeduction).minus(earlyExitDeduction), zero);
 

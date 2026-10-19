@@ -19,7 +19,7 @@ vi.mock('@/modules/notifications/notifications.service', () => ({ notificationsS
  * some unrelated future payment happens to trigger `collectPayment`.
  */
 describe.skipIf(process.env.RUN_SERVICE_DB_TESTS !== '1')('pharmacy advance credit — folded into a later dispense (rolled back)', () => {
-  it('a 1000 advance given before dispense fully covers a 524 pharmacy+ward charge and clears the pharmacy charge', async () => {
+  it.each([false, true])('a 1000 advance covers a later 524 pharmacy+ward charge (already linked: %s)', async (alreadyLinked) => {
     const rollback = new Error('ROLLBACK_ACCEPTANCE_FIXTURES');
     const originalTransaction = prisma.$transaction.bind(prisma);
     const reconcileSpy = vi.spyOn(pharmacyBridgeClient, 'reconcileCollection').mockResolvedValue({} as any);
@@ -39,7 +39,7 @@ describe.skipIf(process.env.RUN_SERVICE_DB_TESTS !== '1')('pharmacy advance cred
         const invoice = await tx.hospitalInvoice.create({
           data: {
             invoiceNumber: key, sourceType: 'ADMISSION', admissionRecordId: admission.id, departmentId: dept.id,
-            subtotal: 224, discountTotal: 0, total: 224, paidTotal: 0, patientShare: 224, panelReceivable: 0, status: 'UNPAID',
+            subtotal: 224, discountTotal: 0, total: 224, paidTotal: alreadyLinked ? 1000 : 0, patientShare: 224, panelReceivable: 0, status: alreadyLinked ? 'PAID' : 'UNPAID',
           },
         });
         await tx.invoiceLineItem.create({
@@ -55,6 +55,7 @@ describe.skipIf(process.env.RUN_SERVICE_DB_TESTS !== '1')('pharmacy advance cred
           data: {
             receiptNumber: `RCT-${key}`, amount: 1000, method: 'CASH',
             admissionRecordId: admission.id, collectedById: actor.id,
+            hospitalInvoiceId: alreadyLinked ? invoice.id : null,
           },
         });
 

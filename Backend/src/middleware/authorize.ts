@@ -123,6 +123,9 @@ const policy: Policy = {
  */
 export function authorize(module: ModuleKey, action: Action) {
   return (req: Request, _res: Response, next: NextFunction) => {
+    if ((req as any).isInternalBridge) {
+      throw new AuthorizationError('Bridge credentials are restricted to integration endpoints');
+    }
     if (!req.user) {
       throw new AuthenticationError();
     }

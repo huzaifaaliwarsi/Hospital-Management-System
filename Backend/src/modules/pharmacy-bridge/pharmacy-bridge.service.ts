@@ -306,7 +306,10 @@ export const pharmacyBridgeService = {
       // onto `HmsPharmacyCharge.patientPaid` right after it's created/
       // updated below (step 11), so Front Desk and the Pharmacy bridge both
       // see it immediately instead of only on the next fresh payment.
-      const pharmacyPortionFromAdvance = computePharmacyPortion(allLines, previousPaidTotal, paidTotal);
+      // Previously linked overpayments also cover newly posted medicines.
+      // Recompute total coverage instead of adding only newly linked deposits.
+      const pharmacyCovered = computePharmacyPortion(allLines, new Decimal(0), paidTotal);
+      const pharmacyPortionFromAdvance = Decimal.max(0, pharmacyCovered.minus(existingCharge?.patientPaid ?? 0));
 
       // 10. Update Pharmacy Clearance status to DISPENSED
       const allRequestRefs = new Set<string>();

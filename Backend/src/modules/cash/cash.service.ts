@@ -99,7 +99,7 @@ export const cashService = {
         }
       } else {
         // Digital (Card/Bank/Online): tracked separately without inflating physical cash
-        nonPhysicalTotal = nonPhysicalTotal.plus(tx.amount);
+        nonPhysicalTotal = nonPhysicalTotal.plus(tx.direction === 'IN' ? tx.amount : tx.amount.negated());
         if (tx.category === 'COLLECTION') totalCollections = totalCollections.plus(tx.amount);
         else if (tx.category === 'REFUND') totalRefunds = totalRefunds.plus(tx.amount);
       }

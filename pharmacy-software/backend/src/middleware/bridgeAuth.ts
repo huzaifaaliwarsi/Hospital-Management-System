@@ -9,9 +9,5 @@ export function bridgeAuth(req: Request, _res: Response, next: NextFunction) {
     return next();
   }
 
-  if ((req as any).user) {
-    return next();
-  }
-
   throw new AuthenticationError('Unauthorized bridge request: invalid or missing internal bridge token');
 }

@@ -67,7 +67,7 @@ async function generateUniqueCode(model: CodeModel, prefix: string): Promise<str
   for (const row of existingRows) {
     if (!row.code) continue;
     const match = row.code.match(regex);
-    if (match) {
+    if (match?.[1]) {
       const num = parseInt(match[1], 10);
       if (!isNaN(num) && num > maxNum) {
         maxNum = num;
@@ -75,9 +75,10 @@ async function generateUniqueCode(model: CodeModel, prefix: string): Promise<str
     }
   }
 
+  const padLength = model === 'serviceRate' ? 3 : 4;
   let seq = maxNum + 1;
   for (let attempt = 0; attempt < 50; attempt++) {
-    const candidate = `${prefixUpper}-${String(seq).padStart(4, '0')}`;
+    const candidate = `${prefixUpper}-${String(seq).padStart(padLength, '0')}`;
     const taken = existingRows.some((r) => r.code?.toUpperCase() === candidate);
     if (!taken) {
       const dbMatch = await table.findFirst({ where: { code: candidate } });
@@ -1468,6 +1469,24 @@ export const setupService = {
         data: { ...body, code, createdById },
         include: this.outsourcedProviderInclude,
       });
+
+      // Automatically create a corresponding Department with fulfillmentOwnership = 'OUTSOURCED'
+      const deptCode = await generateUniqueCode('department', 'DEP');
+      await prisma.department.create({
+        data: {
+          code: deptCode,
+          name: body.name,
+          description: body.paymentTermsNotes || `Outsourced department: ${body.name}`,
+          departmentType: 'DIAGNOSTIC',
+          fulfillmentOwnership: 'OUTSOURCED',
+          outsourcedProviderId: created.id,
+          isActive: body.isActive ?? true,
+          createdById,
+        },
+      }).catch((e) => {
+        console.error('Failed to auto-create department for outsourced provider:', e);
+      });
+
       return this.decorateOutsourcedProviders([created as any])[0];
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
@@ -1482,6 +1501,18 @@ export const setupService = {
     const data: Prisma.OutsourcedProviderUncheckedUpdateInput = { ...body, code: normalizeCode(body.code), updatedById };
     try {
       const updated = await prisma.outsourcedProvider.update({ where: { id }, data, include: this.outsourcedProviderInclude });
+
+      if (body.name || body.isActive !== undefined) {
+        await prisma.department.updateMany({
+          where: { outsourcedProviderId: id },
+          data: {
+            ...(body.name ? { name: body.name } : {}),
+            ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
+            updatedById,
+          },
+        }).catch(() => {});
+      }
+
       return this.decorateOutsourcedProviders([updated as any])[0];
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {

@@ -277,7 +277,7 @@ export const CollectionReportViewPage: React.FC = () => {
   return (
     <GenericReportView<CollectionRow>
       title="Collection & Receipt Report"
-      subtitle="Every payment receipt, including Admission partial payments. Card/Online show here but are never counted as physical cash."
+      subtitle="Payments and negative refund receipts, including Admission partial payments. The total is net of refunds; status filters show only the selected receipts."
       icon={Wallet}
       filenamePrefix="Collection_Report"
       fetchReport={(range) => fetchCollectionReport(range, filters)}
@@ -298,7 +298,7 @@ export const CollectionReportViewPage: React.FC = () => {
         { header: 'Method', cell: (r) => r.method },
         { header: 'Date/Time', cell: (r) => r.occurredAt },
         { header: 'Collected By', cell: (r) => r.collectedBy },
-        { header: 'Status', cell: (r) => (r.status === 'REVERSED' ? 'Reversed' : 'Active') },
+        { header: 'Status', cell: (r) => (r.amount < 0 ? 'Refund' : r.status === 'REVERSED' ? 'Reversed' : 'Active') },
       ]}
     />
   );

@@ -144,7 +144,7 @@ export const financeControlService = {
           else if (row.category === 'EXPENSE') bucket.cashExpenses = bucket.cashExpenses.plus(row.amount);
         }
       } else {
-        bucket.nonPhysicalTotal = bucket.nonPhysicalTotal.plus(row.amount);
+        bucket.nonPhysicalTotal = bucket.nonPhysicalTotal.plus(row.direction === 'IN' ? row.amount : row.amount.negated());
         if (row.category === 'COLLECTION') bucket.totalCollections = bucket.totalCollections.plus(row.amount);
         else if (row.category === 'REFUND') bucket.totalRefunds = bucket.totalRefunds.plus(row.amount);
       }
@@ -181,7 +181,7 @@ export const financeControlService = {
           carriedForwardAmount,
           expectedPhysicalCash: b.physicalCashIn.minus(b.physicalCashOut).plus(carriedForwardAmount),
           nonPhysicalTotal: b.nonPhysicalTotal,
-          totalCollections: b.totalCollections,
+          totalCollections: b.totalCollections.minus(b.totalRefunds),
           totalRefunds: b.totalRefunds,
           pettyCashIssued: b.pettyCashIssued,
           cashExpenses: b.cashExpenses,
@@ -348,7 +348,7 @@ export const financeControlService = {
       }),
       prisma.userCashBalance.findMany({
         where: { moduleScope: { in: HMS_OVERSIGHT_SCOPES }, category: 'REFUND', direction: 'OUT', occurredAt: dateFilter },
-        select: { amount: true },
+        select: { amount: true, isPhysicalCash: true, paymentReceipt: { select: { method: true } } },
       }),
       prisma.userCashBalance.findMany({
         where: { moduleScope: { in: HMS_OVERSIGHT_SCOPES }, isSettled: false },
@@ -370,6 +370,14 @@ export const financeControlService = {
         const method = c.paymentReceipt?.method ?? 'CARD';
         if (!byMethod[method]) byMethod[method] = new Decimal(0);
         byMethod[method] = byMethod[method].plus(c.amount);
+      }
+    }
+    for (const refund of refundRows) {
+      if (refund.isPhysicalCash) {
+        totalCashCollectedToday = totalCashCollectedToday.minus(refund.amount);
+      } else {
+        const method = refund.paymentReceipt?.method ?? 'CARD';
+        byMethod[method] = (byMethod[method] ?? new Decimal(0)).minus(refund.amount);
       }
     }
     const totalNonCashCollectedToday = Object.values(byMethod).reduce((s, v) => s.plus(v), new Decimal(0));

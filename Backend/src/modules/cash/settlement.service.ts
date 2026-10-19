@@ -33,6 +33,7 @@ import { resolveCashModuleScope } from './moduleScope.util';
 export const settlementService = {
   async submitSettlement(portalUserId: string, body: SubmitSettlementBody) {
     return prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`settlement:${portalUserId}`}))`;
       const targetUser = await tx.portalUser.findUniqueOrThrow({
         where: { id: portalUserId },
         select: { role: true },

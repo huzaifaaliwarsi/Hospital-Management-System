@@ -54,6 +54,9 @@ const POLICY: Record<PortalRole, Partial<Record<ModuleKey, Set<Action>>>> = {
 /** Per-route authorization middleware. Must run after `authenticate`. */
 export function authorize(module: ModuleKey, action: Action) {
   return (req: Request, _res: Response, next: NextFunction) => {
+    if ((req as any).isInternalBridge) {
+      throw new AuthorizationError('Bridge credentials are restricted to integration endpoints');
+    }
     const role = req.user?.role;
     if (!role || !POLICY[role]?.[module]?.has(action)) {
       throw new AuthorizationError(`Role ${role ?? 'UNKNOWN'} cannot ${action} ${module}`);

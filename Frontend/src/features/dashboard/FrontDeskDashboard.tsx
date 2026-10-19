@@ -78,6 +78,7 @@ interface DashboardState {
   todayInvoicesCount: number;
   outstandingBalance: number;
   cashCollected: number;
+  drawerCash: number;
   onlineCollected: number;
   unsettledCount: number;
   recentPatients: Array<{ id: string; name: string; mrn: string; payerType: string; registeredAt: string }>;
@@ -96,6 +97,7 @@ const EMPTY_STATE: DashboardState = {
   todayInvoicesCount: 0,
   outstandingBalance: 0,
   cashCollected: 0,
+  drawerCash: 0,
   onlineCollected: 0,
   unsettledCount: 0,
   recentPatients: [],
@@ -249,7 +251,7 @@ export const FrontDeskDashboard: React.FC = () => {
         id: t.id,
         receiptNumber: t.receiptNumber,
         invoiceNumber: t.invoiceNumber,
-        amount: Number(t.amount ?? 0),
+        amount: (t.direction === 'OUT' ? -1 : 1) * Number(t.amount ?? 0),
         method: t.paymentMethod,
         occurredAt: t.occurredAt,
       }));
@@ -263,7 +265,8 @@ export const FrontDeskDashboard: React.FC = () => {
         customBillingCount,
         todayInvoicesCount: todayInvoices.length,
         outstandingBalance,
-        cashCollected: cashRes ? Number(cashRes.summary?.physicalCashIn ?? 0) : 0,
+        cashCollected: cashRes ? Number(cashRes.summary?.cashCollections ?? 0) - Number(cashRes.summary?.cashRefunds ?? 0) : 0,
+        drawerCash: Number(cashRes?.summary?.expectedPhysicalCash ?? 0),
         onlineCollected: cashRes ? Number(cashRes.summary?.nonPhysicalTotal ?? 0) : 0,
         unsettledCount: cashRes ? Number(cashRes.summary?.unsettledCount ?? 0) : 0,
         recentPatients,
@@ -1062,10 +1065,10 @@ export const FrontDeskDashboard: React.FC = () => {
                 </span>
               </div>
               <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider truncate">
-                Cash Collected
+                Live Cash
               </div>
               <div className="text-xl sm:text-2xl font-extrabold text-slate-900 truncate tabular-nums mt-0.5">
-                {formatPKR(data.cashCollected)}
+                {formatPKR(data.drawerCash)}
               </div>
               <div className="text-[10px] text-slate-400 truncate mt-0.5">
                 {data.unsettledCount} pending shift receipts
@@ -2140,11 +2143,11 @@ export const FrontDeskDashboard: React.FC = () => {
                   </button>
                 </div>
                 <div className="text-xl font-extrabold text-white font-mono">
-                  {formatPKR(data.cashCollected)}
+                  {formatPKR(data.drawerCash)}
                 </div>
                 <div className="text-[11px] text-emerald-300/80 flex items-center justify-between">
                   <span>{data.unsettledCount} receipts pending settlement</span>
-                  <span className="text-emerald-400 font-semibold">Physical Inflow</span>
+                  <span className="text-emerald-400 font-semibold">Live Cash</span>
                 </div>
               </div>
 

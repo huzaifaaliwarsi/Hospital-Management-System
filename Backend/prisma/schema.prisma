@@ -1553,6 +1553,10 @@ model InvoiceLineItem {
 /// Merges §6.8's `payments` + `receipts` (1:1 in the source schema) into
 /// one model for this phase.
 model PaymentReceipt {
+  refundRequestKey String? @unique @map("refund_request_key")
+  originalReceiptId String? @map("original_receipt_id")
+  originalReceipt PaymentReceipt? @relation("ReceiptRefunds", fields: [originalReceiptId], references: [id], onDelete: Restrict)
+  refunds PaymentReceipt[] @relation("ReceiptRefunds")
   id                        String                   @id @default(uuid())
   receiptNumber             String                   @unique @map("receipt_number")
   hospitalInvoiceId         String?                  @map("hospital_invoice_id")

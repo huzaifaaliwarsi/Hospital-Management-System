@@ -177,7 +177,8 @@ export const FrontDeskBillingReportsView: React.FC = () => {
   const totalOutstanding = Math.max(0, report?.billing.totalOutstanding ?? 0);
   const totalRefunds = report?.refunds.total ?? 0;
   const totalInvoices = report?.billing.invoiceCount ?? 0;
-  const netIntake = totalCollections - totalRefunds;
+  // The report API returns collections net of refunds, including each payment method.
+  const netIntake = totalCollections;
 
   const discountRate = totalGross > 0 ? ((totalDiscounts / totalGross) * 100).toFixed(1) : '0.0';
   const collectionRate = totalNet > 0 ? Math.min(100, Math.round((totalCollections / totalNet) * 100)) : 0;
@@ -189,9 +190,9 @@ export const FrontDeskBillingReportsView: React.FC = () => {
       { category: 'Financial Summary', metric: 'Gross Billed', detail: 'Gross charges before discount', amountOrCount: formatPKR(totalGross) },
       { category: 'Financial Summary', metric: 'Total Discounts', detail: `${discountRate}% concession rate`, amountOrCount: formatPKR(totalDiscounts) },
       { category: 'Financial Summary', metric: 'Net Billed', detail: 'Gross billed minus discounts', amountOrCount: formatPKR(totalNet) },
-      { category: 'Financial Summary', metric: 'Realized Collections', detail: 'Total payments collected', amountOrCount: formatPKR(totalCollections) },
+      { category: 'Financial Summary', metric: 'Realized Collections', detail: 'Payments collected minus refunds', amountOrCount: formatPKR(totalCollections) },
       { category: 'Financial Summary', metric: 'Total Refunds', detail: 'Refunds and reversals', amountOrCount: formatPKR(totalRefunds) },
-      { category: 'Financial Summary', metric: 'Net Hospital Intake', detail: 'Collections minus refunds', amountOrCount: formatPKR(netIntake) },
+      { category: 'Financial Summary', metric: 'Net Hospital Intake', detail: 'Net collections after refunds', amountOrCount: formatPKR(netIntake) },
       { category: 'Financial Summary', metric: 'Outstanding Receivables', detail: 'Unpaid / partially paid balances', amountOrCount: formatPKR(totalOutstanding) },
       { category: 'Payment Methods', metric: 'Cash Collections', detail: 'Physical counter cash', amountOrCount: formatPKR(report.collections.byMethod.CASH) },
       { category: 'Payment Methods', metric: 'Debit / Credit Card', detail: 'POS machine receipts', amountOrCount: formatPKR(report.collections.byMethod.CARD) },
@@ -223,7 +224,7 @@ export const FrontDeskBillingReportsView: React.FC = () => {
       `Period: ${report?.period.label || preset}`,
       `Cashier: ${cashierOptions.find((o) => o.value === cashierId)?.label || 'All'}`,
       `Department: ${departmentOptions.find((o) => o.value === departmentId)?.label || 'All'}`,
-      `Total Collections: ${formatPKR(totalCollections)}`,
+      `Net Collections (after refunds): ${formatPKR(totalCollections)}`,
       `Net Billed: ${formatPKR(totalNet)}`,
       `Outstanding: ${formatPKR(totalOutstanding)}`,
     ],
@@ -235,7 +236,7 @@ export const FrontDeskBillingReportsView: React.FC = () => {
     { label: 'Net Billed', detail: 'Gross billed minus discounts', amount: totalNet, strong: true },
     { label: 'Collections', detail: `${collectionRate}% of net billed collected`, amount: totalCollections, tone: 'text-emerald-700' },
     { label: 'Refunds', detail: 'Refunds and reversals', amount: -totalRefunds, tone: 'text-rose-700' },
-    { label: 'Net Intake', detail: 'Collections minus refunds', amount: netIntake, strong: true },
+    { label: 'Net Intake', detail: 'Net collections after refunds', amount: netIntake, strong: true },
     { label: 'Outstanding', detail: 'Unpaid and partially paid balances', amount: totalOutstanding, tone: 'text-rose-700' },
   ];
 

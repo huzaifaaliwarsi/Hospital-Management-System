@@ -373,7 +373,7 @@ export const AddEditDepartmentModal: React.FC<AddEditDepartmentModalProps> = ({
               {formData.fulfillmentOwnership === 'Outsourced' && (
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Outsourced Provider <span className="text-rose-600">*</span>
+                    Outsourced Department / Partner <span className="text-rose-600">*</span>
                   </label>
                   <select
                     value={formData.outsourcedProviderId}
@@ -387,7 +387,7 @@ export const AddEditDepartmentModal: React.FC<AddEditDepartmentModalProps> = ({
                         : 'border-slate-300 bg-white text-slate-900 focus:border-[#08775A] focus:ring-[#08775A]/20'
                     }`}
                   >
-                    <option value="">— Select Provider —</option>
+                    <option value="">— Select Outsourced Department —</option>
                     {outsourcedProviders.map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.name} ({p.code})
@@ -397,7 +397,7 @@ export const AddEditDepartmentModal: React.FC<AddEditDepartmentModalProps> = ({
                   {errors.outsourcedProviderId ? (
                     <p className="mt-1 text-[11px] font-medium text-rose-600">{errors.outsourcedProviderId}</p>
                   ) : outsourcedProviders.length === 0 ? (
-                    <p className="mt-1 text-[10px] text-amber-600">No active providers yet — add one under Outsourced Providers first.</p>
+                    <p className="mt-1 text-[10px] text-amber-600">No active outsourced departments yet — add one under Outsourced Departments first.</p>
                   ) : null}
                 </div>
               )}

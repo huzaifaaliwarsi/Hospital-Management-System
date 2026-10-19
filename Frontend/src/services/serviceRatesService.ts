@@ -165,7 +165,7 @@ export class ServiceRatesService {
       ...cachedServices,
       ...(existingServices || []),
     ];
-    return generateNextCode(allKnown.map((s) => s.code), 'SRV');
+    return generateNextCode(allKnown.map((s) => s.code), 'SRV', 3);
   }
 
   /** No-op kept for interface stability: persistence now happens per-mutation against the real backend. */

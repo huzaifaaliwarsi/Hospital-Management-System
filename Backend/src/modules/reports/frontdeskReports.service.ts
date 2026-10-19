@@ -139,7 +139,11 @@ export const frontdeskReportsService = {
     const { start, end, label } = resolveDateRange(query);
     const where: Prisma.PaymentReceiptWhereInput = {
       collectedAt: { gte: start, lte: end },
-      isReversed: query.receiptStatus === 'REVERSED',
+      // Refunds are negative receipts marked reversed. Include them in the
+      // default net report, while excluding voided positive receipts.
+      ...(query.receiptStatus
+        ? { isReversed: query.receiptStatus === 'REVERSED' }
+        : { OR: [{ isReversed: false }, { amount: { lt: 0 } }] }),
       ...(query.collectedById ? { collectedById: query.collectedById } : {}),
       ...(query.method ? { method: query.method } : {}),
       ...(query.source === 'ADMISSION' ? { admissionRecordId: { not: null } } : {}),
@@ -558,7 +562,7 @@ export const frontdeskReportsService = {
   async getCashierPerformanceReport(query: CashierPerformanceQuery) {
     const { start, end, label } = resolveDateRange(query);
     const rows = await prisma.paymentReceipt.findMany({
-      where: { collectedAt: { gte: start, lte: end }, isReversed: false },
+      where: { collectedAt: { gte: start, lte: end }, OR: [{ isReversed: false }, { amount: { lt: 0 } }] },
       include: { collectedBy: { select: userSummarySelect } },
       take: 5000,
     });
@@ -637,18 +641,58 @@ export const frontdeskReportsService = {
       occurredAt: Date;
     };
 
+    const discountMap = new Map<string, {
+      services: string[];
+      invoiceNumber: string;
+      invoiceId: string;
+      patient: string;
+      amount: Decimal;
+      reasons: Set<string>;
+      performedBy: string;
+      occurredAt: Date;
+    }>();
+
+    for (const l of discountLines) {
+      const invId = l.hospitalInvoice.id;
+      const serviceName = l.descriptionSnapshot ?? l.serviceRate?.name ?? l.billingSource;
+      const existing = discountMap.get(invId);
+      if (!existing) {
+        discountMap.set(invId, {
+          services: serviceName ? [serviceName] : [],
+          invoiceNumber: l.hospitalInvoice.invoiceNumber,
+          invoiceId: invId,
+          patient: l.hospitalInvoice.corporatePanel?.organizationName || patientDisplayName(l.hospitalInvoice),
+          amount: new Decimal(l.discountAmount),
+          reasons: new Set(l.discountReason ? [l.discountReason] : []),
+          performedBy: l.hospitalInvoice.createdByUser?.displayName || l.hospitalInvoice.createdByUser?.username || '—',
+          occurredAt: l.createdAt,
+        });
+      } else {
+        if (serviceName && !existing.services.includes(serviceName)) {
+          existing.services.push(serviceName);
+        }
+        existing.amount = existing.amount.plus(l.discountAmount);
+        if (l.discountReason) existing.reasons.add(l.discountReason);
+        if (l.createdAt > existing.occurredAt) {
+          existing.occurredAt = l.createdAt;
+        }
+      }
+    }
+
+    const discountRows: ExceptionRow[] = Array.from(discountMap.values()).map((entry) => ({
+      type: 'DISCOUNT' as const,
+      reference: entry.services.join(', ') || 'Invoice Discount',
+      invoiceNumber: entry.invoiceNumber,
+      invoiceId: entry.invoiceId,
+      patient: entry.patient,
+      amount: entry.amount,
+      reason: Array.from(entry.reasons).join('; ') || null,
+      performedBy: entry.performedBy,
+      occurredAt: entry.occurredAt,
+    }));
+
     const rows: ExceptionRow[] = [
-      ...discountLines.map((l) => ({
-        type: 'DISCOUNT' as const,
-        reference: (l.descriptionSnapshot ?? l.serviceRate?.name ?? l.billingSource),
-        invoiceNumber: l.hospitalInvoice.invoiceNumber,
-        invoiceId: l.hospitalInvoice.id,
-        patient: l.hospitalInvoice.corporatePanel?.organizationName || patientDisplayName(l.hospitalInvoice),
-        amount: l.discountAmount,
-        reason: l.discountReason,
-        performedBy: l.hospitalInvoice.createdByUser?.displayName || l.hospitalInvoice.createdByUser?.username || '—',
-        occurredAt: l.createdAt,
-      })),
+      ...discountRows,
       ...(refundVoid?.rows ?? []).map((r) => ({
         type: r.type,
         reference: r.reference,

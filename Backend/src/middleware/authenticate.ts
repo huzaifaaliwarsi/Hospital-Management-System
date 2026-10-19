@@ -50,14 +50,26 @@ export function authenticate(req: Request, _res: Response, next: NextFunction) {
   }
 }
 
+import { prisma } from '@/db/client';
+
 /**
  * Blocks all non-auth routes until the user completes a forced password
  * reset (§7.8) — used for the bootstrap Super Admin and any Admin-issued
  * Reset Password action. Mount after `authenticate` on protected routers,
  * excluding the auth router itself.
  */
-export function blockIfMustResetPassword(req: Request, _res: Response, next: NextFunction) {
+export async function blockIfMustResetPassword(req: Request, _res: Response, next: NextFunction) {
   if (req.user?.mustResetPassword) {
+    if (req.user.sub) {
+      const dbUser = await prisma.portalUser.findUnique({
+        where: { id: req.user.sub },
+        select: { mustResetPassword: true },
+      }).catch(() => null);
+      if (dbUser && !dbUser.mustResetPassword) {
+        req.user.mustResetPassword = false;
+        return next();
+      }
+    }
     throw new AuthenticationError('Password reset required before continuing');
   }
   next();
