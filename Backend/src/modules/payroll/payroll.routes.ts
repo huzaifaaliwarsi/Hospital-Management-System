@@ -6,6 +6,8 @@ import { payrollController as c } from './payroll.controller';
 import * as s from './payroll.schemas';
 import { financialAdjustmentSchema } from '../commission/commission.schemas';
 import { payrollService } from './payroll.service';
+import { reverseStaffPayment } from '@/modules/cash/staffPaymentReversal';
+import { paymentReversalSchema } from '../commission/commission.schemas';
 
 /**
  * Payroll Run — Daily/Monthly/Custom, attendance-driven (staff.md §19).
@@ -25,6 +27,9 @@ router.get('/runs/:id', view, validate({ params: s.payrollRunIdParamsSchema }), 
 router.post('/runs/:id/approve', approve, validate({ params: s.payrollRunIdParamsSchema }), asyncHandler(c.approve));
 
 router.get('/slips', view, validate({ query: s.listSalarySlipsQuerySchema }), asyncHandler(c.listSlips));
+router.post('/payments/:id/reverse', approve, validate({ params: s.salarySlipIdParamsSchema, body: paymentReversalSchema }), asyncHandler(async (req, res) => {
+  res.json({ data: await reverseStaffPayment('SALARY', req.params.id as string, req.body.reason, req.user!.sub) });
+}));
 router.post('/slips/:id/pay', create, validate({ params: s.salarySlipIdParamsSchema, body: s.paySalarySlipBodySchema }), asyncHandler(c.paySlip));
 router.post('/slips/:id/adjustments', approve, validate({ params: s.salarySlipIdParamsSchema, body: financialAdjustmentSchema }), asyncHandler(async (req, res) => {
   res.status(201).json({ data: await payrollService.adjustSlip(req.params.id as string, req.body, req.user!.sub) });

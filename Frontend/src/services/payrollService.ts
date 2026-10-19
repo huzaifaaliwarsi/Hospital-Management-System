@@ -31,7 +31,7 @@ export async function approvePayrollRun(id: string): Promise<PayrollRun> {
   return res.data.data;
 }
 
-export async function paySalarySlip(id: string, body: { amount: number; method: string; reference?: string }): Promise<SalarySlip> {
+export async function paySalarySlip(id: string, body: { amount: number; method: string; reference?: string; requestKey: string }): Promise<SalarySlip> {
   const res = await apiClient.post<{ data: SalarySlip }>(`/payroll/slips/${id}/pay`, body);
   return res.data.data;
 }

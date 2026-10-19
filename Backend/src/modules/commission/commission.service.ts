@@ -10,6 +10,7 @@ import type {
 } from './commission.schemas';
 import { isCommissionBasis } from '@/modules/identity/staff.schemas';
 import { commissionBalance } from './commission.calc';
+import { postStaffPaymentCash } from '@/modules/cash/staffPaymentCash';
 
 export const commissionInclude = {
   doctor: { select: { id: true, fullName: true, employeeId: true } },
@@ -291,15 +292,33 @@ export const commissionService = {
     return commissionStatement(await prisma.doctorCommissionAccrual.findUniqueOrThrow({ where: { id }, include: commissionInclude }));
   },
 
+  async approveAllAccruals(actorId: string, staffId?: string) {
+    const where: any = { status: 'ACCRUED', commissionRunId: null };
+    if (staffId) {
+      where.staffId = staffId;
+    }
+    const updated = await prisma.doctorCommissionAccrual.updateMany({
+      where,
+      data: { status: 'APPROVED', approvedById: actorId, approvedAt: new Date() },
+    });
+    return { count: updated.count };
+  },
+
   async payAccrual(id: string, body: PayAccrualBody, actorId: string) {
     return prisma.$transaction(async tx => {
       await tx.$queryRaw`SELECT id FROM doctor_commission_accruals WHERE id = ${id} FOR UPDATE`;
       const accrual = await tx.doctorCommissionAccrual.findUnique({ where: { id }, include: commissionInclude });
       if (!accrual) throw new NotFoundError('Commission accrual not found');
+      const previous = await tx.commissionPayout.findUnique({ where: { requestKey: body.requestKey } });
+      if (previous) {
+        if (previous.doctorCommissionAccrualId !== id || previous.paidById !== actorId || !previous.amount.equals(body.amount) || previous.method !== body.method || (previous.reference ?? '') !== (body.reference ?? '')) throw new ConflictError('Payment request key was already used for different payment details.');
+        return commissionStatement(accrual);
+      }
       if (!['APPROVED', 'PARTIALLY_PAID'].includes(accrual.status)) throw new ConflictError('Only approved commission can be paid.');
       const balance = commissionBalance(accrual);
       if (balance.remaining.lte(0) || new Decimal(body.amount).gt(balance.remaining)) throw new ValidationError(`Payment exceeds remaining commission ${balance.remaining.toFixed(2)}.`);
-      await tx.commissionPayout.create({ data: { doctorCommissionAccrualId: id, amount: body.amount, method: body.method, reference: body.reference, paidById: actorId } });
+      const cashEntryId = await postStaffPaymentCash(tx, actorId, new Decimal(body.amount), body.method, 'COMMISSION_PAYMENT', `Commission payment for accrual ${id}`);
+      await tx.commissionPayout.create({ data: { doctorCommissionAccrualId: id, ...body, paidById: actorId, cashEntryId } });
       return commissionStatement(await tx.doctorCommissionAccrual.update({
         where: { id }, data: { status: balance.paid.plus(body.amount).gte(balance.payable) ? 'PAID' : 'PARTIALLY_PAID' }, include: commissionInclude,
       }));

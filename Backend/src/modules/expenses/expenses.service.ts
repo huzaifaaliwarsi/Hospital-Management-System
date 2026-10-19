@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, PaymentMethod } from '@prisma/client';
 import { prisma } from '@/db/client';
 import { NotFoundError, BusinessRuleError } from '@/shared/errors/AppError';
 import { generateExpenseNumber } from '@/shared/idGenerator';
@@ -127,7 +127,7 @@ export const expensesService = {
   },
 
   /** Total of ACTIVE expenses dated within [start, end] — used by the Management Summary. */
-  async totalBetween(start: Date, end: Date, departmentId?: string) {
+  async totalBetween(start: Date, end: Date, departmentId?: string, paymentMethod?: PaymentMethod) {
     const agg = await prisma.expense.aggregate({
       where: {
         status: 'ACTIVE',
@@ -136,9 +136,10 @@ export const expensesService = {
           lte: toDateOnly(end.toLocaleDateString('en-CA')),
         },
         ...(departmentId ? { departmentId } : {}),
+        ...(paymentMethod ? { paymentMethod } : {}),
       },
       _sum: { amount: true },
     });
-    return agg._sum.amount ?? new Prisma.Decimal(0);
+    return agg?._sum?.amount ?? new Prisma.Decimal(0);
   },
 };

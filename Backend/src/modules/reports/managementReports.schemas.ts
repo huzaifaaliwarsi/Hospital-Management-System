@@ -14,10 +14,11 @@ const uuid = z.string().uuid().optional();
 const payerType = z.enum(['PANEL', 'SELF_PAY']).optional();
 export const cashPortalEnum = z.enum(['BILLING', 'INVENTORY', 'PHARMACY']);
 
-/** #1 Management Summary — From/To, Department, Portal/User. */
+/** #1 Management Summary — From/To, Department, Portal/User, Payment Method. */
 export const managementSummaryQuerySchema = dateRangeSchema.extend({
   departmentId: uuid,
   portalUserId: uuid,
+  method: z.enum(['CASH', 'CARD', 'BANK', 'ONLINE']).optional(),
 });
 export type ManagementSummaryQuery = z.infer<typeof managementSummaryQuerySchema>;
 

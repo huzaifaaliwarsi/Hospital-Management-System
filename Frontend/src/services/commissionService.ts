@@ -1,4 +1,5 @@
 import apiClient from './apiClient';
+import type { StaffPaymentRecord } from '../features/superAdmin/payroll/StaffPaymentHistory';
 import { formatDisplayDate } from '../utils/dateConstants';
 
 /**
@@ -93,6 +94,7 @@ export async function createCommissionRule(values: CommissionRuleFormValues): Pr
 export type AccrualStatus = 'ACCRUED' | 'GENERATED' | 'APPROVED' | 'PARTIALLY_PAID' | 'PAID';
 
 export interface CommissionAccrual {
+  payouts: StaffPaymentRecord[];
   id: string;
   staffId: string;
   doctorName: string;
@@ -114,6 +116,7 @@ export interface CommissionAccrual {
   eligibleNet: number;
   ruleLabel: string;
   corrections: { amount: string; reason: string; createdAt: string; createdById: string }[];
+  reversals: { id: string; reversalAmount: number; reason: string; source: string; reversedAt: string }[];
   periodStart: string;
   createdAt: string;
 }
@@ -123,6 +126,7 @@ function toAccrual(raw: Record<string, any>): CommissionAccrual {
   const reversedTotal = (raw.reversals || []).reduce((sum: number, r: any) => sum + Number(r.reversalAmount), 0);
   const commissionAmount = Number(raw.commissionAmount ?? 0);
   return {
+    payouts: raw.payouts ?? [],
     id: raw.id,
     staffId: raw.staffId,
     doctorName: raw.doctor?.fullName || '',
@@ -144,6 +148,7 @@ function toAccrual(raw: Record<string, any>): CommissionAccrual {
     eligibleNet: Number(raw.ruleSnapshot?.lineNet ?? 0),
     ruleLabel: raw.ruleSnapshot?.ruleType === 'PERCENTAGE' ? `${raw.ruleSnapshot.rate}%` : `PKR ${raw.ruleSnapshot?.rate ?? 0}/service`,
     corrections: raw.adjustments ?? [],
+    reversals: raw.reversals ?? [],
     periodStart: formatDate(raw.periodStart),
     createdAt: formatDate(raw.createdAt),
   };
@@ -190,7 +195,14 @@ export async function approveCommissionAccrual(id: string): Promise<CommissionAc
   return toAccrual(res.data.data);
 }
 
-export async function payCommissionAccrual(id: string, body: { amount: number; method: string; reference?: string }): Promise<CommissionAccrual> {
+export async function approveAllCommissionAccruals(staffId?: string): Promise<{ count: number }> {
+  const res = await apiClient.post<{ data: { count: number } }>('/commission/accruals/approve-all', {
+    staffId: staffId && staffId !== 'All' ? staffId : undefined,
+  });
+  return res.data.data;
+}
+
+export async function payCommissionAccrual(id: string, body: { amount: number; method: string; reference?: string; requestKey: string }): Promise<CommissionAccrual> {
   const res = await apiClient.post<{ data: Record<string, any> }>(`/commission/accruals/${id}/pay`, body);
   return toAccrual(res.data.data);
 }

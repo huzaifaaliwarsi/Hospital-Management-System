@@ -5,6 +5,7 @@ import { NotFoundError, ConflictError, ValidationError } from '@/shared/errors/A
 import { buildPaginationMeta, paginationSkipTake } from '@/shared/pagination';
 import { computeSalaryAmounts, workingDaySet } from './payroll.calc';
 import { salaryBalance } from './payroll.balance';
+import { postStaffPaymentCash } from '@/modules/cash/staffPaymentCash';
 import type { PayrollRunFilters, ListPayrollRunsQuery, PaySalarySlipBody, ListSalarySlipsQuery } from './payroll.schemas';
 
 interface EligibleRow {
@@ -310,10 +311,16 @@ export const payrollService = {
       await tx.$queryRaw`SELECT id FROM salary_slips WHERE id = ${id} FOR UPDATE`;
       const slip = await tx.salarySlip.findUnique({ where: { id }, include: { payments: true, correctionEntries: true } });
       if (!slip) throw new NotFoundError('Salary slip not found');
+      const previous = await tx.salaryPayment.findUnique({ where: { requestKey: body.requestKey } });
+      if (previous) {
+        if (previous.salarySlipId !== id || previous.paidById !== actorId || !previous.amount.equals(body.amount) || previous.method !== body.method || (previous.reference ?? '') !== (body.reference ?? '')) throw new ConflictError('Payment request key was already used for different payment details.');
+        return { ...slip, balance: salaryBalance(slip) };
+      }
       if (!['APPROVED', 'PARTIALLY_PAID'].includes(slip.status)) throw new ConflictError('Only an approved salary slip can be paid.');
       const balance = salaryBalance(slip);
       if (balance.remaining.lte(0) || new Decimal(body.amount).gt(balance.remaining)) throw new ValidationError(`Payment exceeds remaining salary ${balance.remaining.toFixed(2)}.`);
-      await tx.salaryPayment.create({ data: { salarySlipId: id, ...body, paidById: actorId } });
+      const cashEntryId = await postStaffPaymentCash(tx, actorId, new Decimal(body.amount), body.method, 'SALARY_PAYMENT', `Salary payment for slip ${id}`);
+      await tx.salaryPayment.create({ data: { salarySlipId: id, ...body, paidById: actorId, cashEntryId } });
       const updated = await tx.salarySlip.update({ where: { id }, data: {
         status: balance.paid.plus(body.amount).gte(balance.payable) ? 'PAID' : 'PARTIALLY_PAID',
       }, include: { payments: true, correctionEntries: true, staff: { select: { id: true, fullName: true, employeeId: true } } } });

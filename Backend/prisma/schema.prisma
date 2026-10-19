@@ -288,6 +288,8 @@ enum CashDirection {
 }
 
 enum CashCategory {
+  SALARY_PAYMENT
+  COMMISSION_PAYMENT
   COLLECTION
   PURCHASE
   REFUND
@@ -1594,6 +1596,8 @@ model PaymentReceipt {
 /// balance for a user/period is computed by summing rows at query time,
 /// never stored as a mutable total (avoids write-time race conditions).
 model UserCashBalance {
+  salaryPayment SalaryPayment?
+  commissionPayout CommissionPayout?
   id               String          @id @default(uuid())
   portalUserId     String          @map("portal_user_id")
   portalUser       PortalUser      @relation("UserCashBalanceOwner", fields: [portalUserId], references: [id])
@@ -2589,6 +2593,13 @@ model SalarySlip {
 }
 
 model SalaryPayment {
+  requestKey String? @unique @map("request_key")
+  reversalOfId String? @unique @map("reversal_of_id")
+  reversalOf SalaryPayment? @relation("SalaryPaymentReversal", fields: [reversalOfId], references: [id])
+  reversal SalaryPayment? @relation("SalaryPaymentReversal")
+  reversalReason String? @map("reversal_reason")
+  cashEntryId String? @unique @map("cash_entry_id")
+  cashEntry UserCashBalance? @relation(fields: [cashEntryId], references: [id])
   id           String        @id @default(uuid())
   salarySlipId String        @map("salary_slip_id")
   salarySlip   SalarySlip    @relation(fields: [salarySlipId], references: [id])
@@ -2697,6 +2708,13 @@ model DoctorCommissionAccrual {
 
 /// = §6.7 `commission_payments`, renamed `CommissionPayout`.
 model CommissionPayout {
+  requestKey String? @unique @map("request_key")
+  reversalOfId String? @unique @map("reversal_of_id")
+  reversalOf CommissionPayout? @relation("CommissionPayoutReversal", fields: [reversalOfId], references: [id])
+  reversal CommissionPayout? @relation("CommissionPayoutReversal")
+  reversalReason String? @map("reversal_reason")
+  cashEntryId String? @unique @map("cash_entry_id")
+  cashEntry UserCashBalance? @relation(fields: [cashEntryId], references: [id])
   id                        String                  @id @default(uuid())
   doctorCommissionAccrualId String                  @map("doctor_commission_accrual_id")
   doctorCommissionAccrual   DoctorCommissionAccrual @relation(fields: [doctorCommissionAccrualId], references: [id])

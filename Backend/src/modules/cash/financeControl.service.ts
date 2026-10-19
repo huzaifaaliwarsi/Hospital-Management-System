@@ -134,6 +134,7 @@ export const financeControlService = {
       }
 
       if (row.isPhysicalCash) {
+        if (row.category === 'SALARY_PAYMENT' || row.category === 'COMMISSION_PAYMENT') bucket.cashExpenses = bucket.cashExpenses.plus(row.direction === 'OUT' ? row.amount : row.amount.negated());
         if (row.direction === 'IN') {
           bucket.physicalCashIn = bucket.physicalCashIn.plus(row.amount);
           if (row.category === 'COLLECTION') bucket.totalCollections = bucket.totalCollections.plus(row.amount);

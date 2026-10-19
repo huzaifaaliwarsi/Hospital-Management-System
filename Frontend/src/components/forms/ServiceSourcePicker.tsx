@@ -5,11 +5,12 @@ import type { Department } from '../../types/department';
 import type { HospitalService } from '../../types/serviceRates';
 import { focusNextField } from '../../utils/formNavigation';
 
-export function ServiceSourcePicker({ value, onChange, departments, onServices }: {
+export function ServiceSourcePicker({ value, onChange, departments, onServices, hideProvider }: {
   value: string;
   onChange: (value: string) => void;
   departments: Department[];
   onServices: (services: HospitalService[]) => void;
+  hideProvider?: boolean;
 }) {
   const selection = selectionFromSource(value);
   const [error, setError] = useState('');
@@ -23,14 +24,16 @@ export function ServiceSourcePicker({ value, onChange, departments, onServices }
   const providers = [...new Map(
     available.filter(d => d.outsourcedProviderId).map(d => [d.outsourcedProviderId!, d.outsourcedProviderName || d.name])
   ).entries()];
-  const scoped = available.filter(d =>
-    selection.providerType === 'INTERNAL' || d.outsourcedProviderId === selection.outsourcedProviderId
-  );
+  const scoped = hideProvider
+    ? available
+    : available.filter(d =>
+        selection.providerType === 'INTERNAL' || d.outsourcedProviderId === selection.outsourcedProviderId
+      );
 
   useEffect(() => {
     let current = true;
     onServices([]); setError('');
-    if (!selection.departmentId || (selection.providerType === 'OUTSOURCED' && !selection.outsourcedProviderId)) {
+    if (!selection.departmentId || (!hideProvider && selection.providerType === 'OUTSOURCED' && !selection.outsourcedProviderId)) {
       setLoading(false); return;
     }
     setLoading(true);
@@ -39,7 +42,7 @@ export function ServiceSourcePicker({ value, onChange, departments, onServices }
       .catch(() => { if (current) setError('Unable to load services. Please select the department again.'); })
       .finally(() => { if (current) setLoading(false); });
     return () => { current = false; };
-  }, [value, onServices]);
+  }, [value, onServices, hideProvider]);
 
   // HMS design-system select style — matches all other HMS dropdowns exactly
   const selectCls =
@@ -77,8 +80,8 @@ export function ServiceSourcePicker({ value, onChange, departments, onServices }
         </p>
       </div>
 
-      {/* Outsourced Provider (only when OUTSOURCED selected) */}
-      {selection.providerType === 'OUTSOURCED' && (
+      {/* Outsourced Provider (only when OUTSOURCED selected and hideProvider is not enabled) */}
+      {!hideProvider && selection.providerType === 'OUTSOURCED' && (
         <div>
           <label className={labelCls}>Provider</label>
           <select
@@ -106,9 +109,13 @@ export function ServiceSourcePicker({ value, onChange, departments, onServices }
           aria-label="Service Department"
           className={selectCls}
           value={selection.departmentId ?? ''}
-          onChange={e => onChange(
-            selection.providerType + ':' + e.target.value + ':' + (selection.outsourcedProviderId ?? '')
-          )}
+          onChange={e => {
+            const chosen = available.find(d => d.id === e.target.value);
+            const providerId = (hideProvider ? chosen?.outsourcedProviderId : selection.outsourcedProviderId) || chosen?.outsourcedProviderId || '';
+            onChange(
+              selection.providerType + ':' + e.target.value + ':' + providerId
+            );
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault();

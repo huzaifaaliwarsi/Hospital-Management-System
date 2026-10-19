@@ -74,6 +74,8 @@ const PERIOD_OPTIONS: { value: SheetPeriod; label: string }[] = [
 ];
 
 const CATEGORY_LABEL: Record<string, string> = {
+  SALARY_PAYMENT: 'Salary payment / reversal',
+  COMMISSION_PAYMENT: 'Commission payment / reversal',
   COLLECTION: 'Collection',
   REFUND: 'Refund',
   EXPENSE: 'Expense',

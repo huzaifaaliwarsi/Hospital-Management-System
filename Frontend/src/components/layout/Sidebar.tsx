@@ -75,6 +75,8 @@ import {
   Calendar,
   SlidersHorizontal,
   Lock,
+  HeartPulse,
+  CircleDollarSign,
 } from 'lucide-react';
 import { HOSPITAL_INFO, SOFTWARE_PROVIDER } from '../../constants';
 import { PORTAL_CONFIGS, PORTAL_NAVIGATION_MAP } from '../../constants/portalNavigations';
@@ -161,6 +163,76 @@ const iconMap: Record<string, React.FC<{ className?: string }>> = {
   Calendar,
   SlidersHorizontal,
   Lock,
+  HeartPulse,
+  CircleDollarSign,
+};
+
+const groupIconMap: Record<string, React.FC<{ className?: string }>> = {
+  // Canonical / Super Admin / Admin
+  hm_overview: Sparkles,
+  hm_patient_management: Users,
+  hm_hospital_management: Building2,
+  hm_users_workforce: UserCog,
+  hm_payroll: Wallet,
+  hm_panel_management: Briefcase,
+  hm_financial_control: CircleDollarSign,
+  hm_operations_overview: HeartPulse,
+  hm_reports: TrendingUp,
+
+  // Front Desk
+  fd_main: Sparkles,
+  fd_patient_flow: ArrowLeftRight,
+  fd_billing: Receipt,
+  fd_cash_control: Coins,
+  fd_reports: TrendingUp,
+
+  // Admission
+  adm_ipd_main: Sparkles,
+  adm_admissions: BedDouble,
+  adm_patient_stay: Stethoscope,
+  adm_discharge: CheckSquare,
+  adm_reports: TrendingUp,
+
+  // Inventory
+  inv_main: Sparkles,
+  inv_inventory: Boxes,
+  inv_suppliers: Truck,
+  inv_cash_expenses: Wallet,
+  inv_reports: TrendingUp,
+
+  // Pharmacy
+  ph_main: Sparkles,
+  ph_sales: ShoppingCart,
+  ph_patient_medicines: Pill,
+  ph_reports: TrendingUp,
+};
+
+const getGroupIcon = (group: NavGroup): React.FC<{ className?: string }> => {
+  if (group.icon && iconMap[group.icon]) {
+    return iconMap[group.icon];
+  }
+  if (groupIconMap[group.id]) {
+    return groupIconMap[group.id];
+  }
+  const title = (group.title || '').toUpperCase();
+  if (title.includes('REPORT')) return TrendingUp;
+  if (title.includes('OVERVIEW') || title.includes('DASHBOARD')) return Sparkles;
+  if (title.includes('PATIENT FLOW')) return ArrowLeftRight;
+  if (title.includes('PATIENT MEDICINE') || title.includes('PHARMACY')) return Pill;
+  if (title.includes('PATIENT')) return Users;
+  if (title.includes('BILLING') || title.includes('FINANCE')) return CircleDollarSign;
+  if (title.includes('PAYROLL') || title.includes('CASH') || title.includes('EXPENSE')) return Wallet;
+  if (title.includes('HOSPITAL')) return Building2;
+  if (title.includes('WORKFORCE') || title.includes('USER')) return UserCog;
+  if (title.includes('PANEL')) return Briefcase;
+  if (title.includes('OPERATION')) return HeartPulse;
+  if (title.includes('ADMISSION') || title.includes('BED')) return BedDouble;
+  if (title.includes('DISCHARGE')) return CheckSquare;
+  if (title.includes('STAY')) return Stethoscope;
+  if (title.includes('INVENTORY') || title.includes('STOCK')) return Boxes;
+  if (title.includes('SUPPLIER')) return Truck;
+  if (title.includes('SALE')) return ShoppingCart;
+  return LayoutGrid;
 };
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -291,29 +363,38 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* Navigation Groups List */}
         <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-4 scrollbar-thin scrollbar-thumb-[#e2eae5] scrollbar-track-transparent">
-          {filteredGroups.map((group) => {
+          {filteredGroups.map((group, index) => {
             const isGroupCollapsed = collapsedGroups[group.id];
+            const GroupIcon = getGroupIcon(group);
 
             return (
               <div key={group.id} className="space-y-1">
+                {/* Divider for collapsed view between groups */}
+                {isCollapsed && !isMobileOpen && index > 0 && (
+                  <div className="my-2 border-t border-[#e2eae5] mx-2" />
+                )}
+
                 {/* Group Title Header */}
                 {(!isCollapsed || isMobileOpen) && group.id !== 'main' ? (
                   <button
                     type="button"
                     onClick={() => toggleGroup(group.id)}
-                    className="w-full flex items-center justify-between px-3 py-1 text-[10px] font-bold text-[#8b9e95] uppercase tracking-widest hover:text-[#52665e] transition-colors cursor-pointer"
+                    className="group/grp w-full flex items-center justify-between px-3 py-1.5 rounded-md text-[10px] font-bold text-[#64748b] uppercase tracking-wider hover:text-[#0e7d5a] hover:bg-[#f0faf6] transition-colors cursor-pointer"
                   >
-                    <span>{group.title}</span>
-                    {isGroupCollapsed ? (
-                      <ChevronRight className="h-3 w-3" />
-                    ) : (
-                      <ChevronDown className="h-3 w-3" />
-                    )}
+                    <div className="flex items-center gap-2 min-w-0">
+                      <GroupIcon className="h-3.5 w-3.5 text-[#64748b] group-hover/grp:text-[#0e7d5a] shrink-0 transition-colors" />
+                      <span className="truncate">{group.title}</span>
+                    </div>
+                    <ChevronDown className={cn(
+                      "h-3 w-3 text-[#8b9e95] group-hover/grp:text-[#0e7d5a] transition-transform duration-200 shrink-0",
+                      isGroupCollapsed ? "-rotate-90" : "rotate-0"
+                    )} />
                   </button>
                 ) : (
                   (!isCollapsed || isMobileOpen) && (
-                    <div className="px-3 text-[10px] font-bold text-[#8b9e95] uppercase tracking-widest mb-1">
-                      {group.title}
+                    <div className="flex items-center gap-2 px-3 py-1 text-[10px] font-bold text-[#64748b] uppercase tracking-wider mb-1">
+                      <GroupIcon className="h-3.5 w-3.5 text-[#64748b] shrink-0" />
+                      <span className="truncate">{group.title}</span>
                     </div>
                   )
                 )}

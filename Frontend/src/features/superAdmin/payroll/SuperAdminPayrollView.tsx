@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { StaffPaymentHistory } from './StaffPaymentHistory';
 import {
   Wallet,
   Loader2,
@@ -594,6 +595,7 @@ const RunsTab: React.FC<{
   const [payAmount, setPayAmount] = useState<number | ''>('');
   const [payMethod, setPayMethod] = useState('BANK');
   const [payReference, setPayReference] = useState('');
+  const [payRequestKey, setPayRequestKey] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const loadRuns = async () => {
@@ -636,6 +638,7 @@ const RunsTab: React.FC<{
   const paidOf = (slip: SalarySlip) => slip.payments.reduce((sum, p) => sum + Number(p.amount), 0);
 
   const openPay = (slip: SalarySlip) => {
+    setPayRequestKey(crypto.randomUUID());
     setPayingSlip(slip);
     setPayAmount(payableOf(slip) - paidOf(slip));
     setPayMethod('BANK');
@@ -647,6 +650,7 @@ const RunsTab: React.FC<{
     setIsSubmitting(true);
     try {
       await paySalarySlip(payingSlip.id, {
+        requestKey: payRequestKey,
         amount: Number(payAmount),
         method: payMethod,
         reference: payReference || undefined,
@@ -908,6 +912,7 @@ const RunsTab: React.FC<{
                       <StatusBadge status={slip.status} />
                     </td>
                     <td className={`${TD} text-center`}>
+                      <StaffPaymentHistory kind="salary" payments={slip.payments} onChanged={async () => { if (detail) setDetail(await getPayrollRun(detail.id)); await loadRuns(); }} />
                       {['APPROVED', 'PARTIALLY_PAID', 'PAID'].includes(slip.status) && (
                         <button
                           onClick={() => setAdjustingSlip(slip)}
@@ -981,7 +986,8 @@ const RunsTab: React.FC<{
                 </tr>
               </tbody>
             </table>
-            <div className="p-5 space-y-3.5">
+              <div className="p-5 space-y-3.5">
+                <p className="text-xs text-slate-600">Cash payments deduct from your cash balance sheet. Bank/Card/Online records the payout; no hospital bank account balance is maintained here.</p>
               <PreferredPaymentAccount staffId={payingSlip.staffId} purpose="Salary" onMethod={setPayMethod} />
               <TextInput
                 label="Amount (PKR)"

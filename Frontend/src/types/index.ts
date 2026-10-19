@@ -136,6 +136,7 @@ export interface NavItem {
 export interface NavGroup {
   id: string;
   title: string;
+  icon?: string;
   items: NavItem[];
 }
 

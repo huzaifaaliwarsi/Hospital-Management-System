@@ -111,13 +111,14 @@ const InvoiceLink: React.FC<{ number: string; onClick: () => void }> = ({ number
 
 export const ManagementSummaryReport: React.FC = () => {
   const options = useOptions();
-  const { filters, bind, reset } = useReportFilters({ departmentId: '', portalUserId: '' });
+  const { filters, bind, reset } = useReportFilters({ departmentId: '', portalUserId: '', method: '' });
   return (
     <GenericReportView<SummaryRecord>
       title="Management Summary"
-      subtitle="Hospital overview — billing, collections, outstanding, expenses, admissions, beds and pending settlements."
+      subtitle="Salary and commission generated use approval dates plus posted adjustments; paid uses payment dates; outstanding includes prior balances as of period end. User filters approvals by approver and payments by payer. Operating result uses net billing less expenses and approved staff costs."
       icon={BarChart2}
       filenamePrefix="Management_Summary"
+      tableZoom={1.2}
       compact
       fetchReport={(range) => fetchManagementSummary(range, filters)}
       onResetExtraFilters={reset}
@@ -125,6 +126,7 @@ export const ManagementSummaryReport: React.FC = () => {
         <>
           <FilterSelect label="Department" options={options.departments} {...bind('departmentId')} />
           <FilterSelect label="Portal / User" options={options.users} {...bind('portalUserId')} />
+          <FilterSelect label="Payment Method" options={PAYMENT_METHOD} {...bind('method')} />
         </>
       }
       rowKey={(r) => r.key}
@@ -485,87 +487,27 @@ export const PharmacyMedicinesReport: React.FC = () => {
       }
       rowKey={(r, i) => `${r.requestRef}-${r.medicine}-${i}`}
       emptyMessage="No medicine requisitions found for the selected period and filters."
+      renderCell={(col, row) => {
+        const value = col.cell(row);
+        if (col.header === 'Medicine') return <span className="font-bold flex items-center gap-1.5"><Pill className="h-3.5 w-3.5 text-emerald-600" />{value}</span>;
+        if (col.header === 'Status') return <span className={`inline-block px-2 py-0.5 text-[11px] font-semibold border rounded-md capitalize ${STATUS_BADGE_STYLE[row.requestStatus] || 'bg-slate-100 text-slate-700 border-slate-200'}`}>{value}</span>;
+        if (col.header === 'Clearance') return <span className={`inline-block px-2 py-0.5 text-[10.5px] font-bold rounded ${row.pharmacyClearance === 'CLEARED' ? 'bg-emerald-50 text-emerald-700' : row.pharmacyClearance === 'OUTSTANDING' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'}`}>{value}</span>;
+        return value;
+      }}
       columns={[
-        {
-          header: 'Request #',
-          cell: (r) => <span className="font-mono font-medium text-slate-900">{r.requestRef}</span>,
-        },
+        { header: 'Request #', cell: (r) => r.requestRef },
         { header: 'Requested At', cell: (r) => r.requestedAt },
-        {
-          header: 'Admission #',
-          cell: (r) => <span className="font-semibold text-slate-800">{r.admissionNumber}</span>,
-        },
+        { header: 'Admission #', cell: (r) => r.admissionNumber },
         { header: 'Patient', cell: (r) => r.patient },
-        {
-          header: 'Medicine',
-          cell: (r) => (
-            <span className="font-bold text-slate-900 flex items-center gap-1.5">
-              <Pill className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
-              <span>{r.medicine}</span>
-            </span>
-          ),
-        },
-        {
-          header: 'Req Qty',
-          align: 'right',
-          cell: (r) => <span className="font-mono font-semibold">{r.requestedQty}</span>,
-          excelValue: (r) => r.requestedQty,
-        },
-        {
-          header: 'Disp Qty',
-          align: 'right',
-          cell: (r) => (
-            <span
-              className={`font-mono font-semibold ${
-                r.dispensedQty > 0 ? 'text-emerald-700' : 'text-slate-400'
-              }`}
-            >
-              {r.dispensedQty}
-            </span>
-          ),
-          excelValue: (r) => r.dispensedQty,
-        },
+        { header: 'Medicine', cell: (r) => r.medicine },
+        count('Req Qty', (r) => r.requestedQty),
+        count('Disp Qty', (r) => r.dispensedQty),
         money('Unit Price', (r) => r.unitPrice),
         money('Total Amount', (r) => r.totalAmount),
-        {
-          header: 'Status',
-          cell: (r) => {
-            const style = STATUS_BADGE_STYLE[r.requestStatus] || 'bg-slate-100 text-slate-700 border-slate-200';
-            return (
-              <span className={`inline-block px-2 py-0.5 text-[11px] font-semibold border rounded-md capitalize ${style}`}>
-                {r.requestStatus.replace(/_/g, ' ').toLowerCase()}
-              </span>
-            );
-          },
-        },
-        {
-          header: 'Pharmacy Invoice',
-          cell: (r) => (r.pharmacyInvoice ? <span className="font-mono text-slate-700">{r.pharmacyInvoice}</span> : '—'),
-        },
-        {
-          header: 'Clearance',
-          cell: (r) => (
-            <span
-              className={`inline-block px-2 py-0.5 text-[10.5px] font-bold rounded ${
-                r.pharmacyClearance === 'CLEARED'
-                  ? 'bg-emerald-50 text-emerald-700'
-                  : r.pharmacyClearance === 'OUTSTANDING'
-                    ? 'bg-rose-50 text-rose-700'
-                    : 'bg-amber-50 text-amber-700'
-              }`}
-            >
-              {r.pharmacyClearance}
-            </span>
-          ),
-        },
-        {
-          header: 'Instructions / Notes',
-          cell: (r) => (
-            <span className="text-slate-500 max-w-xs truncate block" title={r.notes || ''}>
-              {r.notes || '—'}
-            </span>
-          ),
-        },
+        { header: 'Status', cell: (r) => r.requestStatus.replace(/_/g, ' ').toLowerCase() },
+        { header: 'Pharmacy Invoice', cell: (r) => r.pharmacyInvoice || '—' },
+        { header: 'Clearance', cell: (r) => r.pharmacyClearance },
+        { header: 'Instructions / Notes', cell: (r) => r.notes || '—' },
       ]}
     />
   );

@@ -104,15 +104,15 @@ describe('blueprint salary examples keep service commission separate', () => {
     const r = computeSalaryAmounts({ ...baseProfile, salaryBasis, baseAmount: d(3000), fixedAllowance: d(0), fixedDeduction: d(300), salaryTaxMethod: 'FIXED', salaryTaxValue: d(500) }, workingDaySet([], []), new Date('2026-09-01'), new Date('2026-09-10'), records)!;
     expect(r.netAmount.toNumber()).toBe(24700);
   });
-  it('monthly + commission always uses the fixed 30-day basis, never the custom period’s scheduled day count (§11)', () => {
+  it('monthly + commission prorates a partial period using the fixed 30-day daily rate', () => {
     // 10-day custom period, 1 present of 10 scheduled. Daily rate stays Base/30 =
-    // 2,000; deduction = 9 unpaid scheduled days × 2,000 = 18,000; earned = 42,000
+    // 2,000; period base = 20,000; nine absent days deduct 18,000; earned = 2,000.
     // — same divisor plain MONTHLY uses, whatever the selected period's length.
     const records = [{ status: 'PRESENT', attendanceDate: new Date('2026-09-01') }];
     const r = computeSalaryAmounts({ ...baseProfile, fixedAllowance: d(0), fixedDeduction: d(0), salaryTaxMethod: null, salaryTaxValue: null }, workingDaySet([], []), new Date('2026-09-01'), new Date('2026-09-10'), records)!;
-    expect(r.periodBaseAmount.toNumber()).toBe(60000);
+    expect(r.periodBaseAmount.toNumber()).toBe(20000);
     expect(r.attendanceDeductions.toNumber()).toBe(18000);
-    expect(r.earnedBase.toNumber()).toBe(42000);
+    expect(r.earnedBase.toNumber()).toBe(2000);
   });
 });
 

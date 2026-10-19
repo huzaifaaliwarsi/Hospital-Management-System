@@ -521,7 +521,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 
             <div className="flex items-center gap-2 text-emerald-200">
               <Bed className="h-4 w-4 text-emerald-300" />
-              <span>Beds: {bedMetrics.occupiedBeds}/{bedMetrics.totalBeds} ({bedMetrics.occupancyRate}%)</span>
+              <span>Beds: {bedMetrics.occupiedBeds}/{bedMetrics.totalBeds} ({bedMetrics.occupancyPercent}%)</span>
             </div>
 
             <div className="flex items-center gap-2 text-emerald-200">

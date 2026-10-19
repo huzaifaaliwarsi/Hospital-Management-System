@@ -2,6 +2,10 @@ import { expect, it, vi } from 'vitest';
 import { Decimal } from '@prisma/client/runtime/library';
 
 const db = vi.hoisted(() => ({
+  salarySlip: { findMany: vi.fn().mockResolvedValue([]) },
+  salaryPayment: { findMany: vi.fn().mockResolvedValue([]) },
+  doctorCommissionAccrual: { findMany: vi.fn().mockResolvedValue([]) },
+  commissionPayout: { findMany: vi.fn().mockResolvedValue([]) },
   paymentReceipt: { findMany: vi.fn() },
   userCashBalance: { findMany: vi.fn(), aggregate: vi.fn() },
   hospitalInvoice: { findMany: vi.fn() },

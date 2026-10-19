@@ -42,8 +42,14 @@ export const listAccrualsQuerySchema = z.object({
 export type ListAccrualsQuery = z.infer<typeof listAccrualsQuerySchema>;
 
 export const accrualIdParamsSchema = z.object({ id: z.string().uuid() });
+export const approveAllAccrualsBodySchema = z.object({
+  staffId: z.string().uuid().optional(),
+});
+export type ApproveAllAccrualsBody = z.infer<typeof approveAllAccrualsBodySchema>;
+export const paymentReversalSchema = z.object({ reason: z.string().trim().min(3).max(1000) });
 
 export const payAccrualBodySchema = z.object({
+  requestKey: z.string().uuid(),
   amount: z.coerce.number().positive().multipleOf(0.01),
   method: z.enum(['CASH', 'CARD', 'BANK', 'ONLINE']),
   reference: z.string().max(200).optional(),

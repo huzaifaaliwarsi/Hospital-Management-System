@@ -52,6 +52,7 @@ describe.runIf(process.env.HMS_PAYROLL_DB_TEST === '1')('real database + HTTP pa
         await new Promise<void>(resolve => server.once('listening', resolve));
         const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1`;
         const request = async (path: string, body?: unknown, status = 200) => {
+          if (path.endsWith('/pay') && body) body = { ...(body as Record<string, unknown>), requestKey: randomUUID() };
           const r = await fetch(`${url}${path}`, { method: body === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
           const result = await r.json() as any;
           expect(r.status, JSON.stringify(result)).toBe(status); return result.data;

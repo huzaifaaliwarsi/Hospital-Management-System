@@ -44,6 +44,14 @@ export const commissionController = {
     res.json({ data: accrual });
   },
 
+  approveAllAccruals: async (req: Request, res: Response) => {
+    const result = await commissionService.approveAllAccruals(
+      actorId(req),
+      req.body?.staffId || (req.query?.staffId as string | undefined),
+    );
+    res.json({ data: result });
+  },
+
   payAccrual: async (req: Request, res: Response) => {
     const accrual = await commissionService.payAccrual(req.params.id as string, req.body as PayAccrualBody, actorId(req));
     res.status(201).json({ data: accrual });

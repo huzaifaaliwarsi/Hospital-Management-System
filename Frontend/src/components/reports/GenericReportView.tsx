@@ -54,6 +54,8 @@ export interface GenericReportViewProps<T> {
   allTimeOption?: boolean;
   /** Wide tables (management reports): tighter padding, headers and text columns wrap so every money column stays on screen. Money columns never wrap. */
   compact?: boolean;
+  /** Screen-only table magnification; exports retain their own layout. */
+  tableZoom?: number;
   /** Buttons shown on the right of the title bar (e.g. "Add Expense"). */
   headerActions?: React.ReactNode;
 }
@@ -111,6 +113,7 @@ export function GenericReportView<T>({
   noTotalColumns,
   allTimeOption,
   compact,
+  tableZoom = 1,
   headerActions,
 }: GenericReportViewProps<T>) {
   const { currentUser } = useAuth();
@@ -328,7 +331,7 @@ export function GenericReportView<T>({
           {/* Table with proper bordered grid lines */}
           <div className="bg-white rounded-lg border border-slate-300 shadow-xs overflow-hidden">
             <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)]">
-              <table className={`w-full text-left border-collapse ${compact ? 'text-[11.5px]' : 'text-xs'}`}>
+              <table style={{ zoom: tableZoom }} className={`w-full text-left border-collapse ${compact ? 'text-[11.5px]' : 'text-xs'}`}>
                 <thead>
                   <tr
                     className={`bg-[#f1f5f9] border-b border-slate-300 sticky top-0 z-10 text-slate-800 font-bold uppercase ${

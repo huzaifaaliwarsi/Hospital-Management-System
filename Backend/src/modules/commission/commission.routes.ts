@@ -5,11 +5,15 @@ import { asyncHandler } from '@/shared/asyncHandler';
 import { commissionController as c } from './commission.controller';
 import * as s from './commission.schemas';
 import { commissionRunService } from './commissionRun.service';
+import { reverseStaffPayment } from '@/modules/cash/staffPaymentReversal';
 
 const router = Router();
 const view = authorize('commission', 'view');
 const create = authorize('commission', 'create');
 const approve = authorize('commission', 'approve');
+router.post('/payouts/:id/reverse', approve, validate({ params: s.accrualIdParamsSchema, body: s.paymentReversalSchema }), asyncHandler(async (req, res) => {
+  res.json({ data: await reverseStaffPayment('COMMISSION', req.params.id as string, req.body.reason, req.user!.sub) });
+}));
 
 router.post('/preview', view, validate({ body: s.commissionRunFiltersSchema }), asyncHandler(async (req, res) => {
   res.json({ data: await commissionRunService.preview(req.body) });
@@ -45,6 +49,13 @@ router.get(
   view,
   validate({ query: s.listAccrualsQuerySchema }),
   asyncHandler(c.listAccruals),
+);
+
+router.post(
+  '/accruals/approve-all',
+  approve,
+  validate({ body: s.approveAllAccrualsBodySchema.optional() }),
+  asyncHandler(c.approveAllAccruals),
 );
 
 router.post(

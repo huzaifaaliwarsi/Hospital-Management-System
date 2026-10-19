@@ -83,6 +83,7 @@ export const cashService = {
         const signed = tx.direction === 'IN' ? tx.amount : tx.amount.negated();
         if (tx.isSettled) settledNet = settledNet.plus(signed);
         else remainingNet = remainingNet.plus(signed);
+        if (tx.category === 'SALARY_PAYMENT' || tx.category === 'COMMISSION_PAYMENT') cashExpenses = cashExpenses.minus(signed);
 
         if (tx.direction === 'IN') {
           physicalCashIn = physicalCashIn.plus(tx.amount);

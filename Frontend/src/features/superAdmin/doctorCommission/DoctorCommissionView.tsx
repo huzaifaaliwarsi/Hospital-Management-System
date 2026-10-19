@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { StaffPaymentHistory } from '../payroll/StaffPaymentHistory';
 import { Coins, Plus, Loader2, AlertTriangle, CheckCircle2, AlertCircle, Percent, Banknote, ShieldCheck } from 'lucide-react';
 import { formatPKR } from '../../../utils/formatters';
 import {
@@ -12,6 +13,7 @@ import {
   createCommissionRule,
   fetchCommissionAccruals,
   approveCommissionAccrual,
+  approveAllCommissionAccruals,
   payCommissionAccrual,
   adjustCommission,
 } from '../../../services/commissionService';
@@ -22,6 +24,7 @@ import { FinancialAdjustmentModal } from '../payroll/FinancialAdjustmentModal';
 import { PreferredPaymentAccount } from '../payroll/PreferredPaymentAccount';
 import { getHospitalCurrentDate, formatDateISO } from '../../../utils/dateConstants';
 import { Modal } from '../../../components/common/Modal';
+import { ConfirmModal } from '../../../components/common/ConfirmModal';
 import { TextInput, NumberInput, Select } from '../../../components/forms/FormControls';
 import { useToast } from '../../../context/ToastContext';
 import { HospitalKpiHeader, KpiItem } from '../../../components/common/HospitalKpiHeader';
@@ -67,7 +70,10 @@ export const DoctorCommissionView: React.FC = () => {
   const [payAmount, setPayAmount] = useState<number | ''>('');
   const [payMethod, setPayMethod] = useState('BANK');
   const [payReference, setPayReference] = useState('');
+  const [payRequestKey, setPayRequestKey] = useState('');
   const [isSubmittingPay, setIsSubmittingPay] = useState(false);
+  const [isApproveAllOpen, setIsApproveAllOpen] = useState(false);
+  const [isApprovingAll, setIsApprovingAll] = useState(false);
 
   const loadAccruals = async () => {
     setIsLoadingAccruals(true);
@@ -100,7 +106,22 @@ export const DoctorCommissionView: React.FC = () => {
     }
   };
 
+  const handleApproveAll = async () => {
+    setIsApprovingAll(true);
+    try {
+      const res = await approveAllCommissionAccruals(doctorFilter !== 'All' ? doctorFilter : undefined);
+      toast.success(`Successfully approved ${res.count} commission accrual${res.count === 1 ? '' : 's'}.`);
+      setIsApproveAllOpen(false);
+      await loadAccruals();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error?.message || err?.message || 'Failed to approve all accruals.', 'Approve All Error');
+    } finally {
+      setIsApprovingAll(false);
+    }
+  };
+
   const openPay = (accrual: CommissionAccrual) => {
+    setPayRequestKey(crypto.randomUUID());
     setPayingAccrual(accrual);
     setPayAmount(accrual.remaining);
     setPayMethod('BANK');
@@ -111,7 +132,7 @@ export const DoctorCommissionView: React.FC = () => {
     if (!payingAccrual || payAmount === '' || Number(payAmount) <= 0) return;
     setIsSubmittingPay(true);
     try {
-      await payCommissionAccrual(payingAccrual.id, { amount: Number(payAmount), method: payMethod, reference: payReference || undefined });
+      await payCommissionAccrual(payingAccrual.id, { requestKey: payRequestKey, amount: Number(payAmount), method: payMethod, reference: payReference || undefined });
       toast.success(`Commission payment recorded for ${payingAccrual.doctorName}.`);
       setPayingAccrual(null);
       await loadAccruals();
@@ -154,6 +175,18 @@ export const DoctorCommissionView: React.FC = () => {
     if (doctorFilter === 'All') return rules;
     return rules.filter((r) => r.staffId === doctorFilter);
   }, [rules, doctorFilter]);
+
+  const filteredAccruals = useMemo(() => {
+    return accruals.filter((a) => doctorFilter === 'All' || a.staffId === doctorFilter);
+  }, [accruals, doctorFilter]);
+
+  const pendingAccruals = useMemo(() => {
+    return filteredAccruals.filter((a) => a.status === 'ACCRUED');
+  }, [filteredAccruals]);
+
+  const pendingTotalAmount = useMemo(() => {
+    return pendingAccruals.reduce((sum, a) => sum + a.commissionAmount, 0);
+  }, [pendingAccruals]);
 
   const handleOpenAdd = () => {
     setFormValues(emptyForm());
@@ -394,14 +427,29 @@ export const DoctorCommissionView: React.FC = () => {
       {/* Section 4.5 Data Table (Commission Accruals & Payouts) */}
       <div className="bg-white rounded-xl border border-[#e2eae5] shadow-2xs overflow-hidden flex flex-col">
         {/* Dark Emerald Header Strip */}
-        <div className="bg-[#0e5944] text-white px-4 py-2.5 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
+        <div className="bg-[#0e5944] text-white px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
             <Banknote className="h-4 w-4 text-[#c2e7db]" />
             <span className="font-semibold text-xs tracking-wide">Commission Accruals &amp; Disbursements Ledger</span>
             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#effaf5] text-[#08775A] border border-[#c2e7db]">
-              {accruals.filter((a) => doctorFilter === 'All' || a.staffId === doctorFilter).length} Accruals
+              {filteredAccruals.length} Accruals
             </span>
+            {pendingAccruals.length > 0 && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                {pendingAccruals.length} Pending Approval
+              </span>
+            )}
           </div>
+          {pendingAccruals.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setIsApproveAllOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold text-[#0e5944] bg-[#effaf5] hover:bg-white border border-[#c2e7db] rounded-lg cursor-pointer transition-all shadow-xs"
+            >
+              <ShieldCheck className="h-3.5 w-3.5 text-[#08775A]" />
+              Approve All ({pendingAccruals.length})
+            </button>
+          )}
         </div>
 
         {accrualError && (
@@ -414,7 +462,7 @@ export const DoctorCommissionView: React.FC = () => {
           <div className="flex items-center justify-center py-10 text-[#52665e] gap-2 text-sm">
             <Loader2 className="h-4 w-4 animate-spin text-[#08775A]" /> Loading accruals…
           </div>
-        ) : accruals.length === 0 ? (
+        ) : filteredAccruals.length === 0 ? (
           <div className="py-10 text-center text-[#52665e] text-xs">
             No commission has accrued yet — accruals are generated automatically when a billed invoice matches configured rules.
           </div>
@@ -428,12 +476,24 @@ export const DoctorCommissionView: React.FC = () => {
                   <th className="py-2.5 px-4 border-r border-[#c2e7db]/60">Service</th>
                   <th className="py-2.5 px-4 border-r border-[#c2e7db]/60">Accrual Breakdown</th>
                   <th className="py-2.5 px-4 border-r border-[#c2e7db]/60">Status</th>
-                  <th className="py-2.5 px-4 text-right">Actions</th>
+                  <th className="py-2.5 px-4 text-right">
+                    {pendingAccruals.length > 1 ? (
+                      <button
+                        type="button"
+                        onClick={() => setIsApproveAllOpen(true)}
+                        className="inline-flex items-center gap-1 text-[11px] font-bold text-[#08775A] hover:text-[#065f46] hover:underline cursor-pointer"
+                        title="Approve all accrued entries"
+                      >
+                        <ShieldCheck className="h-3.5 w-3.5" /> Approve All ({pendingAccruals.length})
+                      </button>
+                    ) : (
+                      'Actions'
+                    )}
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#e2eae5] text-slate-700">
-                {accruals
-                  .filter((a) => doctorFilter === 'All' || a.staffId === doctorFilter)
+                {filteredAccruals
                   .map((a, idx) => {
                     const isEven = idx % 2 === 0;
                     return (
@@ -449,12 +509,32 @@ export const DoctorCommissionView: React.FC = () => {
                         <td className="py-2.5 px-4 font-bold text-[#123e2b] border-r border-[#e2eae5]">{a.doctorName}</td>
                         <td className="py-2.5 px-4 border-r border-[#e2eae5]">{a.serviceName || '—'}</td>
                         <td className="py-2.5 px-4 font-mono border-r border-[#e2eae5]">
-                          <div className="font-bold text-[#123e2b]">{formatPKR(a.commissionAmount)}</div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-bold text-[#123e2b]">{formatPKR(a.commissionAmount)}</span>
+                            {a.reversedTotal > 0 && (
+                              <span className="text-[10px] text-slate-500 font-normal">
+                                (Gross)
+                              </span>
+                            )}
+                          </div>
                           <div className="text-[10px] text-[#52665e] font-normal mt-0.5">
                             Tax: {formatPKR(a.tax)} · Payable: <strong className="text-[#08775A]">{formatPKR(a.payable)}</strong> · Remaining: <strong className="text-rose-700">{formatPKR(a.remaining)}</strong>
                           </div>
                           {a.paidTotal > 0 && <div className="text-[10px] text-[#08775A]">Disbursed: {formatPKR(a.paidTotal)}</div>}
-                          {a.reversedTotal > 0 && <div className="text-[10px] text-rose-600">Reversed: {formatPKR(a.reversedTotal)}</div>}
+                          {a.reversedTotal > 0 && (
+                            <details className="text-[10px] text-rose-600 mt-0.5">
+                              <summary className="cursor-pointer font-semibold hover:underline">
+                                Reversed: -{formatPKR(a.reversedTotal)} ({a.reversals?.length || 1} deduction{(a.reversals?.length || 1) > 1 ? 's' : ''})
+                              </summary>
+                              <div className="mt-1 pl-2 border-l border-rose-200 space-y-0.5 text-slate-600">
+                                {(a.reversals || []).map((r, ri) => (
+                                  <div key={ri} className="text-[10px]">
+                                    -{formatPKR(Number(r.reversalAmount))} · <span className="font-medium text-slate-700">{r.reason}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </details>
+                          )}
                           {a.overpaid > 0 && <div className="text-[10px] text-rose-700 font-bold">Overpaid: {formatPKR(a.overpaid)}</div>}
                           {!!a.corrections.length && (
                             <details className="text-[10px] text-[#52665e] mt-0.5">
@@ -483,6 +563,7 @@ export const DoctorCommissionView: React.FC = () => {
                           </span>
                         </td>
                         <td className="py-2.5 px-4 text-right whitespace-nowrap">
+                          <StaffPaymentHistory kind="commission" payments={a.payouts} onChanged={loadAccruals} />
                           {a.status === 'ACCRUED' && (
                             <button
                               type="button"
@@ -529,6 +610,7 @@ export const DoctorCommissionView: React.FC = () => {
               <p className="text-[11px] text-slate-500">{payingAccrual.doctorName} · {payingAccrual.serviceName || '—'}</p>
             </div>
             <div className="p-5 space-y-3.5">
+              <p className="text-xs text-slate-600">Cash payments deduct from your cash balance sheet. Bank/Card/Online records the payout; no hospital bank account balance is maintained here.</p>
               <PreferredPaymentAccount staffId={payingAccrual.staffId} purpose="Commission" onMethod={setPayMethod} />
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Amount (PKR) — remaining {formatPKR(payingAccrual.remaining)}</label>
@@ -557,6 +639,17 @@ export const DoctorCommissionView: React.FC = () => {
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={isApproveAllOpen}
+        onClose={() => setIsApproveAllOpen(false)}
+        onConfirm={handleApproveAll}
+        title="Approve All Commission Accruals"
+        message={`Are you sure you want to approve all ${pendingAccruals.length} pending commission accrual${pendingAccruals.length === 1 ? '' : 's'}${doctorFilter !== 'All' ? ' for the selected doctor' : ''} totaling ${formatPKR(pendingTotalAmount)}? Once approved, these accruals will be marked as Approved and ready for payout.`}
+        confirmLabel={isApprovingAll ? 'Approving…' : `Approve ${pendingAccruals.length} Accrual${pendingAccruals.length === 1 ? '' : 's'}`}
+        variant="success"
+        isLoading={isApprovingAll}
+      />
 
       <Modal isOpen={isFormOpen} onClose={() => setIsFormOpen(false)} title="Add Doctor Commission Rule" maxWidth="lg">
         <form onSubmit={handleSave} className="space-y-4">

@@ -88,6 +88,7 @@ export const CANONICAL_HOSPITAL_MANAGEMENT_NAV_GROUPS: NavGroup[] = [
   {
     id: 'hm_overview',
     title: 'OVERVIEW',
+    icon: 'LayoutDashboard',
     items: [
       { id: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard' },
     ],
@@ -95,6 +96,7 @@ export const CANONICAL_HOSPITAL_MANAGEMENT_NAV_GROUPS: NavGroup[] = [
   {
     id: 'hm_patient_management',
     title: 'PATIENT MANAGEMENT',
+    icon: 'Users',
     items: [
       { id: 'patient_registry', label: 'Patient Registry', icon: 'UserCheck' },
     ],
@@ -102,6 +104,7 @@ export const CANONICAL_HOSPITAL_MANAGEMENT_NAV_GROUPS: NavGroup[] = [
   {
     id: 'hm_hospital_management',
     title: 'HOSPITAL MANAGEMENT',
+    icon: 'Building2',
     items: [
       { id: 'hospital_overview', label: 'Hospital Overview', icon: 'Building2' },
       { id: 'departments', label: 'Departments', icon: 'Building' },
@@ -114,6 +117,7 @@ export const CANONICAL_HOSPITAL_MANAGEMENT_NAV_GROUPS: NavGroup[] = [
   {
     id: 'hm_users_workforce',
     title: 'USERS & WORKFORCE',
+    icon: 'UserCog',
     items: [
       { id: 'admin_users', label: 'Admin Users', icon: 'ShieldCheck' },
       { id: 'staff_users', label: 'Staff Users', icon: 'Users' },
@@ -124,6 +128,7 @@ export const CANONICAL_HOSPITAL_MANAGEMENT_NAV_GROUPS: NavGroup[] = [
   {
     id: 'hm_payroll',
     title: 'PAYROLL',
+    icon: 'Wallet',
     items: [
       { id: 'salary_payroll', label: 'Salary Payroll', icon: 'Wallet' },
       { id: 'doctor_commission', label: 'Doctor Commission', icon: 'Coins' },
@@ -132,6 +137,7 @@ export const CANONICAL_HOSPITAL_MANAGEMENT_NAV_GROUPS: NavGroup[] = [
   {
     id: 'hm_panel_management',
     title: 'PANEL MANAGEMENT',
+    icon: 'Briefcase',
     items: [
       { id: 'corporate_panels', label: 'Corporate Panels', icon: 'Briefcase' },
       { id: 'panel_discounts', label: 'Panel Discounts', icon: 'Tag' },
@@ -141,6 +147,7 @@ export const CANONICAL_HOSPITAL_MANAGEMENT_NAV_GROUPS: NavGroup[] = [
   {
     id: 'hm_financial_control',
     title: 'FINANCIAL CONTROL',
+    icon: 'CircleDollarSign',
     items: [
       { id: 'billing_overview', label: 'Billing Overview', icon: 'Receipt' },
       { id: 'collections', label: 'Collections', icon: 'CreditCard' },
@@ -158,6 +165,7 @@ export const CANONICAL_HOSPITAL_MANAGEMENT_NAV_GROUPS: NavGroup[] = [
   {
     id: 'hm_operations_overview',
     title: 'OPERATIONS OVERVIEW',
+    icon: 'HeartPulse',
     items: [
       { id: 'appointments_operations_overview', label: 'Appointments / Operations Overview', icon: 'Activity' },
       { id: 'opd_overview', label: 'OPD Overview', icon: 'Stethoscope' },
@@ -175,6 +183,7 @@ export const CANONICAL_HOSPITAL_MANAGEMENT_NAV_GROUPS: NavGroup[] = [
     // filters and row drill-down (reporting.md §8.3).
     id: 'hm_reports',
     title: 'REPORTS',
+    icon: 'TrendingUp',
     items: [
       { id: 'sa_management_summary', label: 'Management Summary', icon: 'BarChart2' },
       { id: 'sa_billing_collection', label: 'Billing & Collection', icon: 'Receipt' },
@@ -197,6 +206,7 @@ export const FRONT_DESK_NAV_GROUPS: NavGroup[] = [
   {
     id: 'fd_main',
     title: 'OVERVIEW',
+    icon: 'LayoutDashboard',
     items: [
       { id: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard' },
     ],
@@ -204,6 +214,7 @@ export const FRONT_DESK_NAV_GROUPS: NavGroup[] = [
   {
     id: 'fd_patient_flow',
     title: 'PATIENT FLOW',
+    icon: 'ArrowLeftRight',
     items: [
       { id: 'new_admission', label: 'New Admission', icon: 'BedDouble' },
       { id: 'appointments', label: 'Appointments', icon: 'Clock' },
@@ -213,6 +224,7 @@ export const FRONT_DESK_NAV_GROUPS: NavGroup[] = [
   {
     id: 'fd_billing',
     title: 'BILLING',
+    icon: 'Receipt',
     items: [
       { id: 'admission_patient_records', label: 'Admission Patient Records', icon: 'ClipboardList' },
       { id: 'discharged_patients', label: 'Discharged Patients', icon: 'UserCheck' },
@@ -229,6 +241,7 @@ export const FRONT_DESK_NAV_GROUPS: NavGroup[] = [
   {
     id: 'fd_cash_control',
     title: 'CASH CONTROL',
+    icon: 'Coins',
     items: [
       { id: 'my_balance_sheet', label: 'My Balance Sheet', icon: 'Coins' },
       { id: 'my_account_settlement', label: 'My Account Settlement', icon: 'UserCheck' },
@@ -237,6 +250,7 @@ export const FRONT_DESK_NAV_GROUPS: NavGroup[] = [
   {
     id: 'fd_reports',
     title: 'REPORTS',
+    icon: 'BarChart3',
     items: [
       { id: 'front_desk_billing_reports', label: 'Daily Billing Summary', icon: 'BarChart2' },
       { id: 'fd_encounter_register', label: 'Encounter Register', icon: 'ClipboardList' },
@@ -254,6 +268,7 @@ export const ADMISSION_NAV_GROUPS: NavGroup[] = [
   {
     id: 'adm_ipd_main',
     title: 'OVERVIEW',
+    icon: 'LayoutDashboard',
     items: [
       { id: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard' },
     ],
@@ -261,6 +276,7 @@ export const ADMISSION_NAV_GROUPS: NavGroup[] = [
   {
     id: 'adm_admissions',
     title: 'ADMISSION',
+    icon: 'BedDouble',
     items: [
       { id: 'planned_admissions', label: 'Planned Admissions', icon: 'Clock' },
       { id: 'admission_check_in', label: 'Admission Check-In', icon: 'Bed' },
@@ -271,6 +287,7 @@ export const ADMISSION_NAV_GROUPS: NavGroup[] = [
   {
     id: 'adm_patient_stay',
     title: 'PATIENT STAY',
+    icon: 'ClipboardList',
     items: [
       { id: 'hospital_services_procedures', label: 'Hospital Services / Procedures', icon: 'FileText' },
       { id: 'medication_fulfillment_mode', label: 'Medication Fulfillment Mode', icon: 'Layers' },
@@ -281,6 +298,7 @@ export const ADMISSION_NAV_GROUPS: NavGroup[] = [
   {
     id: 'adm_discharge',
     title: 'DISCHARGE',
+    icon: 'CheckSquare',
     items: [
       { id: 'discharge_clearances', label: 'Clearances', icon: 'ShieldCheck' },
       { id: 'final_discharge', label: 'Final Discharge', icon: 'CheckCircle2' },
@@ -290,6 +308,7 @@ export const ADMISSION_NAV_GROUPS: NavGroup[] = [
   {
     id: 'adm_reports',
     title: 'REPORTS',
+    icon: 'BarChart3',
     items: [
       { id: 'admission_reports', label: 'Admission Summary', icon: 'LineChart' },
       { id: 'adm_register_report', label: 'Admission Register', icon: 'ClipboardList' },
@@ -312,6 +331,7 @@ export const INVENTORY_NAV_GROUPS: NavGroup[] = [
   {
     id: 'inv_main',
     title: 'OVERVIEW',
+    icon: 'LayoutDashboard',
     items: [
       { id: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard' },
     ],
@@ -319,6 +339,7 @@ export const INVENTORY_NAV_GROUPS: NavGroup[] = [
   {
     id: 'inv_inventory',
     title: 'INVENTORY',
+    icon: 'Boxes',
     items: [
       { id: 'stock_overview', label: 'Stock Overview', icon: 'Package' },
       { id: 'stock_in', label: 'Stock In / Purchase', icon: 'Truck' },
@@ -331,6 +352,7 @@ export const INVENTORY_NAV_GROUPS: NavGroup[] = [
   {
     id: 'inv_suppliers',
     title: 'SUPPLIERS',
+    icon: 'Truck',
     items: [
       { id: 'supplier_directory', label: 'Supplier Directory', icon: 'Building' },
       { id: 'supplier_ledger', label: 'Supplier Ledger', icon: 'Building2' },
@@ -339,6 +361,7 @@ export const INVENTORY_NAV_GROUPS: NavGroup[] = [
   {
     id: 'inv_cash_expenses',
     title: 'CASH & EXPENSES',
+    icon: 'Wallet',
     items: [
       { id: 'petty_cash_expenses', label: 'Petty Cash & Expenses', icon: 'DollarSign' },
       { id: 'my_balance_sheet', label: 'My Balance Sheet', icon: 'Coins' },
@@ -348,6 +371,7 @@ export const INVENTORY_NAV_GROUPS: NavGroup[] = [
   {
     id: 'inv_reports',
     title: 'REPORTS',
+    icon: 'BarChart3',
     items: [
       { id: 'inventory_summary', label: 'Inventory Summary', icon: 'FileBarChart' },
       { id: 'stock_movement_report', label: 'Stock Movement', icon: 'ArrowLeftRight' },
@@ -366,6 +390,7 @@ export const PHARMACY_NAV_GROUPS: NavGroup[] = [
   {
     id: 'ph_main',
     title: 'OVERVIEW',
+    icon: 'LayoutDashboard',
     items: [
       { id: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard' },
     ],
@@ -373,6 +398,7 @@ export const PHARMACY_NAV_GROUPS: NavGroup[] = [
   {
     id: 'ph_sales',
     title: 'SALES',
+    icon: 'ShoppingCart',
     items: [
       { id: 'new_pharmacy_sale', label: 'New Pharmacy Sale', icon: 'ShoppingCart' },
       { id: 'sales_history', label: 'Sales History', icon: 'Clock' },
@@ -383,6 +409,7 @@ export const PHARMACY_NAV_GROUPS: NavGroup[] = [
   {
     id: 'ph_patient_medicines',
     title: 'PATIENT MEDICINES',
+    icon: 'Pill',
     items: [
       { id: 'prescription_requests', label: 'Prescription Requests', icon: 'Pill' },
       { id: 'inpatient_medicine_requests', label: 'Inpatient Medicine Requests', icon: 'Bed' },
@@ -394,6 +421,7 @@ export const PHARMACY_NAV_GROUPS: NavGroup[] = [
   {
     id: 'ph_reports',
     title: 'REPORTS',
+    icon: 'BarChart3',
     items: [
       { id: 'daily_sales', label: 'Daily Sales', icon: 'Coins' },
       { id: 'user_wise_sales', label: 'User-wise Sales', icon: 'Users' },

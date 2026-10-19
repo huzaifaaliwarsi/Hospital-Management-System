@@ -22,6 +22,7 @@ export const payrollRunIdParamsSchema = z.object({ id: z.string().uuid() });
 export const salarySlipIdParamsSchema = z.object({ id: z.string().uuid() });
 
 export const paySalarySlipBodySchema = z.object({
+  requestKey: z.string().uuid(),
   amount: z.coerce.number().positive().multipleOf(0.01),
   method: z.enum(['CASH', 'CARD', 'BANK', 'ONLINE']),
   reference: z.string().max(200).optional(),

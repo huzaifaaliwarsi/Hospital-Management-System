@@ -1344,7 +1344,13 @@ export const WalkInIntakeView: React.FC = () => {
               <div className="space-y-3 pt-1">
                 {/* 1. Category / Source Selection */}
                 <div>
-                  <ServiceSourcePicker value={selectedServiceStream} onChange={value => { setSelectedServiceStream(value); setSelectedServiceIds([]); }} departments={departments} onServices={setAdditionalCatalog} />
+                  <ServiceSourcePicker
+                    value={selectedServiceStream}
+                    onChange={value => { setSelectedServiceStream(value); setSelectedServiceIds([]); }}
+                    departments={departments}
+                    onServices={setAdditionalCatalog}
+                    hideProvider={true}
+                  />
                   <p className="text-[11px] text-slate-500 mt-1 pl-0.5">
                     {selectedServiceStream === 'HOSPITAL_SERVICES'
                       ? 'Internal hospital procedures, clinical care & nursing'

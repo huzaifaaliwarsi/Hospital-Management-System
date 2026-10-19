@@ -6,6 +6,7 @@ import { PAYABLE_EQUIVALENT } from '@/modules/attendance/attendance.service';
 import { expensesService } from '@/modules/expenses/expenses.service';
 import { commissionBalance } from '@/modules/commission/commission.calc';
 import { salaryBalance } from '@/modules/payroll/payroll.balance';
+import { staffFinanceSummary } from './staffFinanceSummary';
 import { getPositiveBatchBalances } from '@/shared/inventoryBatchBalances';
 import type {
   ManagementSummaryQuery,
@@ -69,6 +70,12 @@ export const managementReportsService = {
     const { start, end, label } = resolveDateRange(query);
     const dept = query.departmentId;
     const user = query.portalUserId;
+    const method = query.method;
+
+    const receiptFilter: Prisma.PaymentReceiptWhereInput = {
+      isReversed: false,
+      ...(method ? { method } : {}),
+    };
 
     const bedDept = dept
       ? { OR: [{ ward: { departmentId: dept } }, { room: { ward: { departmentId: dept } } }] }
@@ -82,6 +89,7 @@ export const managementReportsService = {
       availableBeds,
       pendingSettlements,
       hospitalExpenses,
+      staffFinance,
     ] = await Promise.all([
       prisma.hospitalInvoice.findMany({
         where: {
@@ -89,6 +97,7 @@ export const managementReportsService = {
           status: { not: 'VOID' },
           ...(dept ? { departmentId: dept } : {}),
           ...(user ? { createdById: user } : {}),
+          ...(method ? { paymentReceipts: { some: receiptFilter } } : {}),
         },
         select: {
           subtotal: true,
@@ -102,6 +111,7 @@ export const managementReportsService = {
         where: {
           collectedAt: { gte: start, lte: end },
           AND: [{ OR: [{ isReversed: false }, { amount: { lt: 0 } }] }],
+          ...(method ? { method } : {}),
           ...(user ? { collectedById: user } : {}),
           ...(dept
             ? {
@@ -124,6 +134,7 @@ export const managementReportsService = {
           direction: 'OUT',
           category: { in: ['EXPENSE', 'PURCHASE'] },
           ...(user ? { portalUserId: user } : {}),
+          ...(method === 'CASH' ? { isPhysicalCash: true } : method ? { isPhysicalCash: false } : {}),
         },
         _sum: { amount: true },
       }),
@@ -137,7 +148,8 @@ export const managementReportsService = {
       prisma.accountSettlement.count({
         where: { status: 'SUBMITTED', ...(user ? { portalUserId: user } : {}) },
       }),
-      expensesService.totalBetween(start, end, dept),
+      expensesService.totalBetween(start, end, dept, method),
+      staffFinanceSummary(start, end, dept, user, method),
     ]);
 
     type Row = {
@@ -195,9 +207,14 @@ export const managementReportsService = {
     const table = Array.from(rows.values()).sort((a, b) =>
       a.department.localeCompare(b.department),
     );
+    const operatingCosts = hospitalExpenses.plus(expenses._sum.amount ?? ZERO())
+      .plus(staffFinance.salaryGenerated).plus(staffFinance.commissionGenerated);
     return {
       period: periodOf(start, end, label),
       summary: {
+        ...staffFinance,
+        totalOperatingCosts: operatingCosts,
+        operatingResult: sumOf(table, (r) => r.net).minus(operatingCosts),
         grossBilling: sumOf(table, (r) => r.gross),
         discounts: sumOf(table, (r) => r.discount),
         totalBilling: sumOf(table, (r) => r.net),
@@ -436,6 +453,11 @@ export const managementReportsService = {
         continue;
       }
       if (e.direction === 'IN') {
+        if (e.category === 'SALARY_PAYMENT' || e.category === 'COMMISSION_PAYMENT') {
+          r.physicalOut = r.physicalOut.minus(e.amount);
+          r.expenses = r.expenses.minus(e.amount);
+          continue;
+        }
         if (e.category === 'PETTY_CASH_ISSUE') r.pettyCash = r.pettyCash.plus(e.amount);
         else r.cashCollections = r.cashCollections.plus(e.amount);
       } else {
