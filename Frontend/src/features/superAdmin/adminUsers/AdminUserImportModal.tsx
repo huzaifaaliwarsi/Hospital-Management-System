@@ -343,12 +343,14 @@ export const AdminUserImportModal: React.FC<AdminUserImportModalProps> = ({
                       Staged Records Preview ({stagedRows.length} Rows)
                     </span>
                     <div className="flex items-center gap-2 text-[11px]">
-                      <span className="text-emerald-700 font-semibold">
-                        ✓ {validCount} Valid
+                      <span className="text-emerald-700 font-semibold inline-flex items-center gap-1">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        <span>{validCount} Valid</span>
                       </span>
                       {invalidCount > 0 && (
-                        <span className="text-rose-600 font-semibold">
-                          ✕ {invalidCount} Errors
+                        <span className="text-rose-600 font-semibold inline-flex items-center gap-1">
+                          <AlertTriangle className="h-3.5 w-3.5" />
+                          <span>{invalidCount} Errors</span>
                         </span>
                       )}
                     </div>

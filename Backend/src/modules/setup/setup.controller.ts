@@ -58,6 +58,9 @@ export const setupController = {
   },
 
   // Service Rates
+  getNextServiceCode: async (_req: Request, res: Response) => {
+    res.json({ data: { nextCode: await setupService.getNextServiceCode() } });
+  },
   listServiceRates: async (req: Request, res: Response) => {
     res.json({ data: await setupService.listServiceRates(listServiceRatesSchema.parse(req.query)) });
   },
@@ -73,6 +76,9 @@ export const setupController = {
   deleteServiceRate: async (req: Request, res: Response) => {
     await setupService.deleteServiceRate(req.params.id as string);
     res.status(204).send();
+  },
+  updateBulkDiscount: async (req: Request, res: Response) => {
+    res.json({ data: await setupService.updateBulkDiscount(req.body, actorId(req)) });
   },
 
   // Wards / Rooms / Beds

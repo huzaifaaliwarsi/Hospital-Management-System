@@ -190,7 +190,11 @@ export const FrontDeskDashboard: React.FC = () => {
         return sum + (Number.isFinite(due) ? due : 0);
       }, 0);
 
-      const recentInvoices = allInvoices.slice(0, 15).map((inv) => {
+      const sortedInvoices = [...allInvoices].sort((a, b) =>
+        new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+      );
+
+      const recentInvoices = sortedInvoices.map((inv) => {
         const net = Number(inv.total ?? 0);
         const paid = Number(inv.paidTotal ?? 0);
         const patientShare = inv.panelPatientId ? Number(inv.patientShare ?? 0) : net;
@@ -219,7 +223,11 @@ export const FrontDeskDashboard: React.FC = () => {
       const allAdmissions = admissionsRes as any[];
       const todayAdmissionsCount = allAdmissions.filter((a) => (a.createdAtIso || a.createdAt || '').slice(0, 10) === today).length;
 
-      const recentAdmissions = allAdmissions.slice(0, 12).map((a: any) => ({
+      const sortedAdmissions = [...allAdmissions].sort((a, b) =>
+        new Date(b.admittedAt || b.createdAt || 0).getTime() - new Date(a.admittedAt || a.createdAt || 0).getTime()
+      );
+
+      const recentAdmissions = sortedAdmissions.map((a: any) => ({
         id: a.id,
         admissionNumber: a.admissionNumber || 'ADM',
         patient: a.patientName || 'Inpatient',
@@ -231,16 +239,20 @@ export const FrontDeskDashboard: React.FC = () => {
         admittedAt: a.admittedAt || a.createdAt || '',
       }));
 
-      const recentTransactions = cashRes?.transactions
-        ? cashRes.transactions.slice(0, 12).map((t: any) => ({
-            id: t.id,
-            receiptNumber: t.receiptNumber,
-            invoiceNumber: t.invoiceNumber,
-            amount: Number(t.amount ?? 0),
-            method: t.paymentMethod,
-            occurredAt: t.occurredAt,
-          }))
+      const sortedTransactions = cashRes?.transactions
+        ? [...cashRes.transactions].sort((a, b) =>
+            new Date(b.occurredAt || 0).getTime() - new Date(a.occurredAt || 0).getTime()
+          )
         : [];
+
+      const recentTransactions = sortedTransactions.map((t: any) => ({
+        id: t.id,
+        receiptNumber: t.receiptNumber,
+        invoiceNumber: t.invoiceNumber,
+        amount: Number(t.amount ?? 0),
+        method: t.paymentMethod,
+        occurredAt: t.occurredAt,
+      }));
 
       setData({
         todayAppointmentsCount: (appointmentsRes as any[]).length,
@@ -524,6 +536,22 @@ export const FrontDeskDashboard: React.FC = () => {
   // Pharmacy-style pagination & export states
   const [pageSize, setPageSize] = useState(15);
   const [currentPage, setCurrentPage] = useState(1);
+
+  const activeList = useMemo(() => {
+    if (activeTab === 'invoices') return filteredInvoices;
+    if (activeTab === 'admissions') return filteredAdmissions;
+    return filteredTransactions;
+  }, [activeTab, filteredInvoices, filteredAdmissions, filteredTransactions]);
+
+  const activeTotalCount = activeList.length;
+  const totalPages = Math.max(1, Math.ceil(activeTotalCount / pageSize));
+
+  // Auto-adjust page if filters reduce total pages below current page
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   const paginatedInvoices = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
@@ -1985,48 +2013,86 @@ export const FrontDeskDashboard: React.FC = () => {
 
           {/* ── Table Pagination Bar (Matching Pharmacy) ── */}
           <div className="px-4 py-3 bg-slate-50/80 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600">
-            <div>
-              Page <strong className="text-slate-800">{currentPage}</strong> of{' '}
-              <strong className="text-slate-800">
-                {Math.max(
-                  1,
-                  Math.ceil(
-                    (activeTab === 'invoices'
-                      ? filteredInvoices.length
-                      : activeTab === 'admissions'
-                      ? filteredAdmissions.length
-                      : filteredTransactions.length) / pageSize
-                  )
-                )}
-              </strong>
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <span>
+                Showing <strong className="text-slate-800">{activeTotalCount === 0 ? 0 : (currentPage - 1) * pageSize + 1}</strong> to{' '}
+                <strong className="text-slate-800">{Math.min(currentPage * pageSize, activeTotalCount)}</strong> of{' '}
+                <strong className="text-slate-800">{activeTotalCount}</strong> records
+              </span>
+              <span className="text-slate-300 hidden sm:inline">•</span>
+              <span>
+                Page <strong className="text-slate-800">{currentPage}</strong> of <strong className="text-slate-800">{totalPages}</strong>
+              </span>
             </div>
 
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                disabled={currentPage <= 1}
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:pointer-events-none font-semibold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
-              >
-                <ChevronLeft className="h-3.5 w-3.5" /> Previous
-              </button>
-              <button
-                type="button"
-                disabled={
-                  currentPage >=
-                  Math.ceil(
-                    (activeTab === 'invoices'
-                      ? filteredInvoices.length
-                      : activeTab === 'admissions'
-                      ? filteredAdmissions.length
-                      : filteredTransactions.length) / pageSize
-                  )
-                }
-                onClick={() => setCurrentPage((p) => p + 1)}
-                className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:pointer-events-none font-semibold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
-              >
-                Next <ChevronRight className="h-3.5 w-3.5" />
-              </button>
+            <div className="flex items-center gap-3 flex-wrap">
+              {/* Rows per page selector */}
+              <div className="flex items-center gap-1.5 whitespace-nowrap">
+                <span className="text-slate-500 text-xs">Rows:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setCurrentPage(1);
+                  }}
+                  className="bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a] cursor-pointer"
+                >
+                  <option value={10}>10</option>
+                  <option value={15}>15 (Default)</option>
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </div>
+
+              {/* Page navigation buttons */}
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:pointer-events-none font-semibold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" /> Previous
+                </button>
+
+                {/* Page number buttons */}
+                {Array.from({ length: totalPages }, (_, i) => i + 1)
+                  .filter((p) => {
+                    if (totalPages <= 7) return true;
+                    if (p === 1 || p === totalPages) return true;
+                    return Math.abs(p - currentPage) <= 1;
+                  })
+                  .map((p, idx, arr) => {
+                    const prev = arr[idx - 1];
+                    const showEllipsis = prev && p - prev > 1;
+                    return (
+                      <React.Fragment key={p}>
+                        {showEllipsis && <span className="px-1 text-slate-400">…</span>}
+                        <button
+                          type="button"
+                          onClick={() => setCurrentPage(p)}
+                          className={`h-7 min-w-[28px] px-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            currentPage === p
+                              ? 'bg-[#0e7d5a] text-white shadow-2xs'
+                              : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                          }`}
+                        >
+                          {p}
+                        </button>
+                      </React.Fragment>
+                    );
+                  })}
+
+                <button
+                  type="button"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:pointer-events-none font-semibold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+                >
+                  Next <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
           </div>
         </div>

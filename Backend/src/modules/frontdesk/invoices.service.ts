@@ -22,8 +22,7 @@ import type {
 import { generateInvoiceNumber, generateReceiptNumber, generateMrNumber, generateQueueToken } from '@/shared/idGenerator';
 import {
   isEligibleHospitalService,
-  DISCOUNT_APPROVAL_PERCENT_THRESHOLD,
-  DISCOUNT_APPROVAL_AMOUNT_THRESHOLD,
+  validateDiscountAuthorization,
 } from '@/shared/discountEligibility';
 
 export const invoicesService = {
@@ -209,15 +208,7 @@ export const invoicesService = {
           ? discountAmount.mul(100).div(lineGross).toNumber()
           : 0;
 
-        if (
-          (discountPct > DISCOUNT_APPROVAL_PERCENT_THRESHOLD ||
-            discountAmount.toNumber() > DISCOUNT_APPROVAL_AMOUNT_THRESHOLD) &&
-          !['SUPER_ADMIN', 'ADMIN'].includes(actorRole)
-        ) {
-          throw new AuthorizationError(
-            `Discount of PKR ${discountAmount.toFixed(2)} (${discountPct.toFixed(1)}%) exceeds the front desk threshold (Max ${DISCOUNT_APPROVAL_PERCENT_THRESHOLD}% or PKR ${DISCOUNT_APPROVAL_AMOUNT_THRESHOLD}). Please request Admin approval.`,
-          );
-        }
+        await validateDiscountAuthorization(actorRole, discountAmount, discountPct, 'Discount');
       }
 
       const lineNet = lineGross.minus(discountAmount);
@@ -360,15 +351,7 @@ export const invoicesService = {
           ? discAmt.mul(100).div(line.lineGross).toNumber()
           : 0;
 
-        if (
-          (discPct > DISCOUNT_APPROVAL_PERCENT_THRESHOLD ||
-            discAmt.toNumber() > DISCOUNT_APPROVAL_AMOUNT_THRESHOLD) &&
-          !['SUPER_ADMIN', 'ADMIN'].includes(actorRole)
-        ) {
-          throw new AuthorizationError(
-            `Discount of PKR ${discAmt.toFixed(2)} (${discPct.toFixed(1)}%) requires Admin approval.`
-          );
-        }
+        await validateDiscountAuthorization(actorRole, discAmt, discPct, 'Discount');
 
         const newLineNet = line.lineGross.minus(discAmt);
 
@@ -409,15 +392,7 @@ export const invoicesService = {
           ? totalDiscAmt.mul(100).div(eligibleGross).toNumber()
           : 0;
 
-        if (
-          (discPct > DISCOUNT_APPROVAL_PERCENT_THRESHOLD ||
-            totalDiscAmt.toNumber() > DISCOUNT_APPROVAL_AMOUNT_THRESHOLD) &&
-          !['SUPER_ADMIN', 'ADMIN'].includes(actorRole)
-        ) {
-          throw new AuthorizationError(
-            `Total discount of PKR ${totalDiscAmt.toFixed(2)} requires Admin approval.`
-          );
-        }
+        await validateDiscountAuthorization(actorRole, totalDiscAmt, discPct, 'Total discount');
 
         // Distribute discount proportionally across ELIGIBLE Hospital Services lines only!
         // Round to whole rupees so line amounts stay clean integer PKR (no fractional paisas).

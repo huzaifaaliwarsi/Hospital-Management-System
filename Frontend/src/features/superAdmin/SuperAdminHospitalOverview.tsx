@@ -7,18 +7,18 @@ import {
   FileCheck2,
   Loader2,
   AlertTriangle,
+  Percent,
 } from 'lucide-react';
 import { HospitalProfile, DEFAULT_HOSPITAL_PROFILE, HospitalSystemAggregateCounts } from '../../types/hospital';
 import { fetchHospitalProfile, saveHospitalProfile } from '../../services/hospitalProfileService';
 import { getHospitalSystemSummaryAggregates } from '../../mocks/hospitalSummaryMock';
 import { useToast } from '../../context/ToastContext';
 import { HospitalProfileSummaryCard } from './hospitalOverview/HospitalProfileSummaryCard';
-import { HospitalIdentitySection } from './hospitalOverview/HospitalIdentitySection';
-import { HospitalContactSection } from './hospitalOverview/HospitalContactSection';
-import { HospitalAddressSection } from './hospitalOverview/HospitalAddressSection';
+import { HospitalEssentialDetailsCard } from './hospitalOverview/HospitalEssentialDetailsCard';
 import { HospitalOperationsSection } from './hospitalOverview/HospitalOperationsSection';
 import { BiometricDeviceSection } from './hospitalOverview/BiometricDeviceSection';
 import { HospitalBillingSection } from './hospitalOverview/HospitalBillingSection';
+import { HospitalDiscountPolicySection } from './hospitalOverview/HospitalDiscountPolicySection';
 import { HospitalSystemSummarySection } from './hospitalOverview/HospitalSystemSummarySection';
 import { ProfileAuditSection } from './hospitalOverview/ProfileAuditSection';
 import { DangerZoneSection } from './hospitalOverview/DangerZoneSection';
@@ -41,7 +41,7 @@ export const SuperAdminHospitalOverview: React.FC = () => {
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
   const [floors, setFloors] = useState<HospitalFloor[]>([]);
   const [isManageFloorsOpen, setIsManageFloorsOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'identity' | 'operations' | 'biometric' | 'floors' | 'system'>('identity');
+  const [activeTab, setActiveTab] = useState<'identity' | 'operations' | 'biometric' | 'floors' | 'discounts' | 'system'>('identity');
 
   const loadProfile = React.useCallback(async () => {
     setIsLoading(true);
@@ -206,6 +206,19 @@ export const SuperAdminHospitalOverview: React.FC = () => {
 
         <button
           type="button"
+          onClick={() => setActiveTab('discounts')}
+          className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all shrink-0 cursor-pointer ${
+            activeTab === 'discounts'
+              ? 'bg-white text-[#08775A] shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+          }`}
+        >
+          <Percent className="w-4 h-4 text-[#149e75]" />
+          <span>Discount & Rates Policy</span>
+        </button>
+
+        <button
+          type="button"
           onClick={() => setActiveTab('system')}
           className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all shrink-0 cursor-pointer ${
             activeTab === 'system'
@@ -221,19 +234,21 @@ export const SuperAdminHospitalOverview: React.FC = () => {
       {/* Tab 1: Identity & Location */}
       {activeTab === 'identity' && (
         <div className="space-y-6 animate-in fade-in duration-200">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-            <HospitalIdentitySection profile={profile} />
-            <HospitalContactSection profile={profile} />
-          </div>
-          <HospitalAddressSection profile={profile} />
-          <HospitalBillingSection profile={profile} />
+          <HospitalEssentialDetailsCard
+            profile={profile}
+            onNavigateToDiscounts={() => setActiveTab('discounts')}
+            onEditProfile={() => setIsEditModalOpen(true)}
+          />
         </div>
       )}
 
       {/* Tab 2: Operations & Schedules */}
       {activeTab === 'operations' && (
         <div className="space-y-6 animate-in fade-in duration-200">
-          <HospitalOperationsSection profile={profile} />
+          <HospitalOperationsSection
+            profile={profile}
+            onEditProfile={() => setIsEditModalOpen(true)}
+          />
         </div>
       )}
 
@@ -301,7 +316,17 @@ export const SuperAdminHospitalOverview: React.FC = () => {
         </div>
       )}
 
-      {/* Tab 5: System & Maintenance */}
+      {/* Tab 5: Discount & Rates Governance */}
+      {activeTab === 'discounts' && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          <HospitalDiscountPolicySection
+            profile={profile}
+            onSaveProfile={handleSaveProfile}
+          />
+        </div>
+      )}
+
+      {/* Tab 6: System & Maintenance */}
       {activeTab === 'system' && (
         <div className="space-y-6 animate-in fade-in duration-200">
           <HospitalSystemSummarySection aggregates={aggregates} />

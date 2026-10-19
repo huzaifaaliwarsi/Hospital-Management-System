@@ -61,6 +61,12 @@ export interface HospitalProfile {
   invoicePrefix: string;
   receiptPrefix: string;
 
+  // Discount Governance & Policy
+  discountApprovalRequired?: boolean;
+  discountMaxPercentThreshold?: number;
+  discountMaxAmountThreshold?: number;
+  discountOverallAllowed?: boolean;
+
   // Audit
   createdAt: string;
   createdBy: string;
@@ -137,6 +143,11 @@ export const DEFAULT_HOSPITAL_PROFILE: HospitalProfile = {
   invoiceEmail: '',
   invoicePrefix: 'INV',
   receiptPrefix: 'REC',
+
+  discountApprovalRequired: true,
+  discountMaxPercentThreshold: 15,
+  discountMaxAmountThreshold: 1500,
+  discountOverallAllowed: true,
 
   createdAt: '01 Jan 2026, 09:00 AM',
   createdBy: 'System Setup',

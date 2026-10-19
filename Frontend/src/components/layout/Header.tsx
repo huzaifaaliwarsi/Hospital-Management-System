@@ -15,6 +15,7 @@ import {
   Clock,
   Sparkles,
   ExternalLink,
+  X,
 } from 'lucide-react';
 import { User, PortalType } from '../../types';
 import { HOSPITAL_INFO, SOFTWARE_PROVIDER } from '../../constants';
@@ -475,9 +476,9 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 type="button"
                 onClick={() => setShowProfileModal(false)}
-                className="text-slate-400 hover:text-slate-600 text-sm font-bold"
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
               >
-                ✕
+                <X className="h-4 w-4" />
               </button>
             </div>
             <div className="mt-4 space-y-3 text-xs">
@@ -524,9 +525,9 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 type="button"
                 onClick={() => setShowSettingsModal(false)}
-                className="text-slate-400 hover:text-slate-600 text-sm font-bold"
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
               >
-                ✕
+                <X className="h-4 w-4" />
               </button>
             </div>
             <div className="mt-4 space-y-4 text-xs">

@@ -23,6 +23,8 @@ import {
   FlaskConical,
   Calendar,
   Check,
+  Zap,
+  ArrowRight,
 } from 'lucide-react';
 import { formatDisplayDate } from '../../../utils/dateConstants';
 import { PatientGender, PayerType, GuardianRelation, GUARDIAN_RELATIONS } from '../../../types/patient';
@@ -1057,41 +1059,28 @@ export const WalkInIntakeView: React.FC = () => {
               <span className="text-xs font-bold text-slate-800 uppercase tracking-wide flex items-center gap-1.5">
                 <User className="h-3.5 w-3.5 text-[#08775A]" /> 2. Patient Information
               </span>
-              <span className={`text-[10.5px] font-medium px-2 py-0.5 rounded ${
+              <span className={`text-[11px] font-medium px-2 py-0.5 rounded ${
                 selectedExistingPatient
                   ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
                   : payerType === 'Corporate / Panel'
-                  ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                  ? 'bg-slate-100 text-slate-600 border border-slate-200'
                   : 'bg-slate-100 text-slate-500'
               }`}>
                 {selectedExistingPatient
                   ? `From Panel Registry (${selectedExistingPatient.mrNumber})`
                   : payerType === 'Corporate / Panel'
-                  ? 'Search Required (Panel)'
+                  ? 'Panel Search Required'
                   : 'Instant Walk-In Entry'}
               </span>
             </div>
 
             {/* Corporate / Panel Search Section (When Panel is active) */}
             {payerType === 'Corporate / Panel' && (
-              <>
-                <PanelPatientSearchSection
-                  selectedPatient={selectedExistingPatient}
-                  onSelectPatient={handleUseExistingPatient}
-                  onClearPatient={handleClearExistingPatient}
-                />
-                {!selectedExistingPatient && (
-                  <div className="p-3 bg-amber-50/90 border border-amber-200 rounded-lg text-xs text-amber-950 flex items-start gap-2.5 animate-in fade-in">
-                    <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-                    <div>
-                      <p className="font-semibold text-amber-950">Panel Patient Search Required</p>
-                      <p className="text-amber-800 text-[11px] mt-0.5">
-                        Front Desk can only search and select pre-registered panel patients. New panel patient registration is restricted to <strong>Super Admin</strong> and <strong>Admin</strong>.
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </>
+              <PanelPatientSearchSection
+                selectedPatient={selectedExistingPatient}
+                onSelectPatient={handleUseExistingPatient}
+                onClearPatient={handleClearExistingPatient}
+              />
             )}
 
             {/* Full Name & Father / Guardian */}
@@ -1225,9 +1214,9 @@ export const WalkInIntakeView: React.FC = () => {
 
             {/* Corporate / Panel Specific Fields (Only if Panel selected) */}
             {payerType === 'Corporate / Panel' && (
-              <div className="pt-3 border-t border-amber-200 space-y-3 bg-amber-50/40 p-3 rounded-lg animate-in fade-in">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-amber-900">
-                  <Building2 className="h-3.5 w-3.5 text-amber-600" />
+              <div className="pt-3 border-t border-slate-200 space-y-3 animate-in fade-in">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
+                  <Building2 className="h-3.5 w-3.5 text-[#08775A]" />
                   <span>Panel Contract &amp; Card Information</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1582,7 +1571,10 @@ export const WalkInIntakeView: React.FC = () => {
                 className="inline-flex items-center gap-1 text-[11px] font-bold text-[#08775A] hover:text-[#065f46] hover:underline cursor-pointer"
                 title="Click or press Enter in notes to jump straight to Register button"
               >
-                <span>Jump to Register Button ➔</span>
+                <span className="inline-flex items-center gap-1">
+                  <span>Jump to Register Button</span>
+                  <ArrowRight className="h-3 w-3" />
+                </span>
               </button>
             </div>
             <textarea
@@ -1645,7 +1637,10 @@ export const WalkInIntakeView: React.FC = () => {
                           : `Register Panel & Create ${getEncounterLabel(encounterType)} Invoice`}
             </button>
             <div className="flex items-center justify-between text-[11px] text-slate-400 px-1">
-              <span>⚡ Fast-billing front desk</span>
+              <span className="inline-flex items-center gap-1.5 font-medium text-slate-600">
+                <Zap className="h-3.5 w-3.5 text-[#08775A]" />
+                <span>Fast-billing front desk</span>
+              </span>
               <span>Press Enter to register</span>
             </div>
           </div>

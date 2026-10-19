@@ -75,31 +75,48 @@ export const HospitalKpiHeader: React.FC<HospitalKpiHeaderProps> = ({
           iconClass = 'bg-indigo-50 text-indigo-700 border-indigo-200';
         }
 
+        const valStr = String(item.value);
+        const isLongVal = valStr.length > 9;
+
         return (
           <div
             key={idx}
-            className={`bg-white rounded-2xl border border-slate-200/80 border-t-[3.5px] ${borderTopClass} shadow-[0_2px_8px_rgba(0,0,0,0.03)] p-4 sm:p-5 flex items-center gap-3.5 hover:shadow-md transition-all`}
+            className={`bg-white rounded-2xl border border-slate-200/80 border-t-[3.5px] ${borderTopClass} shadow-[0_2px_8px_rgba(0,0,0,0.03)] p-3.5 sm:p-4 flex items-center gap-3 hover:shadow-md transition-all`}
           >
-            <div className={`h-11 w-11 rounded-xl flex items-center justify-center border shrink-0 ${iconClass}`}>
+            <div className={`h-10 w-10 sm:h-11 sm:w-11 rounded-xl flex items-center justify-center border shrink-0 ${iconClass}`}>
               <Icon className="h-5 w-5" />
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between gap-1">
-                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider truncate">
+                <div
+                  className="text-[10px] sm:text-[11px] font-bold text-slate-500 uppercase tracking-wider truncate"
+                  title={item.category || heading}
+                >
                   {item.category || heading}
                 </div>
                 {item.badge}
               </div>
-              <div className="text-lg sm:text-xl font-extrabold text-slate-900 truncate tabular-nums mt-0.5">
+              <div
+                className={`${
+                  isLongVal ? 'text-base sm:text-lg' : 'text-lg sm:text-xl'
+                } font-extrabold text-slate-900 tabular-nums mt-0.5 whitespace-nowrap overflow-hidden text-ellipsis`}
+                title={valStr}
+              >
                 {item.value}
               </div>
               {item.subtitle ? (
-                <div className="text-[10px] text-slate-400 truncate mt-0.5">
+                <div
+                  className="text-[10px] text-slate-400 truncate mt-0.5"
+                  title={item.subtitle}
+                >
                   {item.subtitle}
                 </div>
               ) : (
                 item.category && (
-                  <div className="text-[10px] text-slate-400 truncate mt-0.5">
+                  <div
+                    className="text-[10px] text-slate-400 truncate mt-0.5"
+                    title={heading}
+                  >
                     {heading}
                   </div>
                 )

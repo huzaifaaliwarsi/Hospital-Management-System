@@ -1,5 +1,5 @@
 import React from 'react';
-import { Search, RotateCcw, Filter, Users } from 'lucide-react';
+import { Search, RotateCcw, Filter, Users, X } from 'lucide-react';
 import {
   PatientFilterState,
   PATIENT_GENDERS,
@@ -48,10 +48,10 @@ export const PatientFilterBar: React.FC<PatientFilterBarProps> = ({
           {filters.searchTerm && (
             <button
               onClick={() => onFilterChange('searchTerm', '')}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 px-1.5 py-0.5 rounded-sm cursor-pointer"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 rounded-sm cursor-pointer"
               title="Clear search"
             >
-              ✕
+              <X className="h-3 w-3" />
             </button>
           )}
         </div>

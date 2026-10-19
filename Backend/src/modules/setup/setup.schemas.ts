@@ -70,6 +70,11 @@ export const updateHospitalProfileSchema = z.object({
 
   printHeaderConfig: z.record(z.string(), z.unknown()).optional(),
   printFooterConfig: z.record(z.string(), z.unknown()).optional(),
+
+  discountApprovalRequired: z.boolean().optional(),
+  discountMaxPercentThreshold: z.number().min(0).max(100).optional(),
+  discountMaxAmountThreshold: z.number().min(0).optional(),
+  discountOverallAllowed: z.boolean().optional(),
 });
 export type UpdateHospitalProfileBody = z.infer<typeof updateHospitalProfileSchema>;
 
@@ -155,6 +160,14 @@ export const createServiceRateSchema = z.object({
 export type CreateServiceRateBody = z.infer<typeof createServiceRateSchema>;
 export const updateServiceRateSchema = createServiceRateSchema.partial();
 export type UpdateServiceRateBody = z.infer<typeof updateServiceRateSchema>;
+
+export const bulkServiceDiscountSchema = z.object({
+  scope: z.enum(['ALL', 'DEPARTMENT', 'SERVICE']),
+  departmentId: z.string().uuid().optional(),
+  serviceRateIds: z.array(z.string().uuid()).optional(),
+  discountAllowed: z.boolean(),
+});
+export type BulkServiceDiscountBody = z.infer<typeof bulkServiceDiscountSchema>;
 
 // ── Wards / Rooms / Beds ─────────────────────────────────────────────
 export const createWardSchema = z.object({

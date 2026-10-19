@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, AlertCircle, Stethoscope, ExternalLink } from 'lucide-react';
+import { X, AlertCircle, Stethoscope, ExternalLink, RefreshCw } from 'lucide-react';
 import { HospitalService, ServiceFormValues } from '../../../types/serviceRates';
 import { Department } from '../../../types/department';
 import { ServiceRatesService, VALID_BILLING_UNITS } from '../../../services/serviceRatesService';
@@ -45,13 +45,17 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({ isOpen, onClose, onS
     setCodeError(null);
     setSelectedStream(service?.providerType === 'OUTSOURCED' ? 'OUTSOURCED' : 'HOSPITAL');
 
-    const autoCode = generateNextCode(
-      (services || ServiceRatesService.getServices()).map((s) => s.code),
-      'SRV'
+    // Combine all known services across cache and props to prevent duplicate codes
+    const allKnown = Array.from(
+      new Set([
+        ...ServiceRatesService.getServices().map((s) => s.code),
+        ...(services || []).map((s) => s.code),
+      ])
     );
+    const fallbackCode = generateNextCode(allKnown, 'SRV');
 
     setFormValues({
-      code: service?.code ?? autoCode, name: service?.name ?? '',
+      code: service?.code ?? fallbackCode, name: service?.name ?? '',
       description: service?.description ?? '', departmentId: service?.departmentId ?? '',
       standardRate: service?.standardRate ?? 0,
       billingUnit: service?.billingUnit ?? 'Per Consultation',
@@ -61,6 +65,17 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({ isOpen, onClose, onS
       encounterType: service?.encounterType ?? 'NONE',
       isDefaultEncounterService: service?.isDefaultEncounterService ?? false,
     });
+
+    // If adding a new service, fetch guaranteed sequential code from server
+    if (!service) {
+      ServiceRatesService.getNextCode(services).then((serverCode) => {
+        if (!cancelled && serverCode) {
+          setFormValues((prev) => ({ ...prev, code: serverCode }));
+          setCodeError(null);
+        }
+      });
+    }
+
     fetchDepartments().then((list) => {
       if (cancelled) return;
       setAllDepartments(list);
@@ -102,10 +117,18 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({ isOpen, onClose, onS
       return;
     }
 
-    const check = ServiceRatesService.validateServiceCode(upper, service?.id);
+    const check = ServiceRatesService.validateServiceCode(upper, service?.id, services);
     if (!check.isValid) {
       setCodeError(check.message || 'Invalid code.');
     } else {
+      setCodeError(null);
+    }
+  };
+
+  const handleRegenerateCode = async () => {
+    const nextCode = await ServiceRatesService.getNextCode(services);
+    if (nextCode) {
+      setFormValues((prev) => ({ ...prev, code: nextCode }));
       setCodeError(null);
     }
   };
@@ -116,7 +139,7 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({ isOpen, onClose, onS
     const newErrors: Record<string, string> = {};
 
     if (formValues.code.trim()) {
-      const check = ServiceRatesService.validateServiceCode(formValues.code, service?.id);
+      const check = ServiceRatesService.validateServiceCode(formValues.code, service?.id, services);
       if (!check.isValid) {
         newErrors.code = check.message || 'Duplicate or invalid code.';
       }
@@ -288,9 +311,21 @@ export const ServiceModal: React.FC<ServiceModalProps> = ({ isOpen, onClose, onS
                     <label className="block text-xs font-semibold text-slate-700">
                       Service Code
                     </label>
-                    <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
-                      Auto-generated
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
+                        Auto-generated
+                      </span>
+                      {!isEditing && (
+                        <button
+                          type="button"
+                          onClick={handleRegenerateCode}
+                          title="Generate new sequential code"
+                          className="text-slate-400 hover:text-emerald-700 p-0.5 rounded transition-colors cursor-pointer"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <input
                     id="service-form-code" disabled={isCore}

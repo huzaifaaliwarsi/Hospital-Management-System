@@ -537,9 +537,10 @@ export const PatientModal: React.FC<PatientModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setQuickSearchTerm('')}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600"
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 rounded cursor-pointer"
+                    title="Clear search"
                   >
-                    ✕
+                    <X className="h-3 w-3" />
                   </button>
                 )}
               </div>

@@ -254,8 +254,9 @@ export const PanelVerificationPanel: React.FC<PanelVerificationPanelProps> = ({ 
                 <span className="font-semibold text-slate-700 text-[11px]">{SOURCE_LABEL[contract.source]}</span>
               </div>
               {contract.preauthorizationRequired && (
-                <div className="col-span-2 sm:col-span-4 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800 font-medium">
-                  ⚠ Preauthorization required by this panel's contract before service is rendered.
+                <div className="col-span-2 sm:col-span-4 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800 font-medium flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
+                  <span>Preauthorization required by this panel's contract before service is rendered.</span>
                 </div>
               )}
               {contract.capAmount != null && (

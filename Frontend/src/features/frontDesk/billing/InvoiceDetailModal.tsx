@@ -2,7 +2,7 @@ import { ServiceSourcePicker } from '../../../components/forms/ServiceSourcePick
 import { selectionFromSource } from '../../../utils/serviceSelection';
 import { HOSPITAL_SERVICE_SOURCE, NO_ACTIVE_DEPARTMENT_SERVICES, serviceSourceOptions, servicesForSource } from '../../../utils/serviceSelection';
 import React, { useState, useEffect, useMemo } from 'react';
-import { Plus, Tag, CreditCard, RotateCcw, Loader2, AlertCircle, CheckCircle2, Printer, Receipt } from 'lucide-react';
+import { Plus, Tag, CreditCard, RotateCcw, Loader2, AlertCircle, CheckCircle2, Printer, Receipt, X } from 'lucide-react';
 import { formatPKR } from '../../../utils/formatters';
 import { useToast } from '../../../context/ToastContext';
 import {
@@ -718,9 +718,10 @@ ${invoice?.sourceType === 'ADMISSION' ? `<div class="meta-row"><span class="meta
                       type="button"
                       disabled={isSavingWeight}
                       onClick={() => setIsEditingWeight(false)}
-                      className="px-1.5 py-0.5 text-[10.5px] font-medium text-slate-500 hover:text-slate-700 cursor-pointer"
+                      className="p-1 text-slate-400 hover:text-slate-600 rounded cursor-pointer transition-colors"
+                      title="Cancel"
                     >
-                      ✕
+                      <X className="h-3 w-3" />
                     </button>
                   </div>
                 ) : (

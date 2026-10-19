@@ -4,9 +4,13 @@ import { HospitalProfile } from '../../../types/hospital';
 
 interface HospitalBillingSectionProps {
   profile: HospitalProfile;
+  onNavigateToDiscounts?: () => void;
 }
 
-export const HospitalBillingSection: React.FC<HospitalBillingSectionProps> = ({ profile }) => {
+export const HospitalBillingSection: React.FC<HospitalBillingSectionProps> = ({
+  profile,
+  onNavigateToDiscounts,
+}) => {
   const isConfigured = (val?: string | null) => Boolean(val && val.trim().length > 0);
 
   return (
@@ -141,8 +145,63 @@ export const HospitalBillingSection: React.FC<HospitalBillingSectionProps> = ({ 
               <span className="text-[11px] text-[#52665e]">(e.g. {profile.receiptPrefix || 'REC'}-2026-0001)</span>
             </div>
           </div>
+
+          {/* Front Desk Discount Governance */}
+          <div className="p-3.5 rounded-lg bg-[#effaf5] border border-[#c2e7db] sm:col-span-2 lg:col-span-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <span className="block text-[10px] uppercase font-bold text-[#08775A]">
+                Front Desk Discount Governance
+              </span>
+              <div className="flex items-center gap-2 mt-1 text-xs text-[#111827] flex-wrap">
+                <span>
+                  Max Threshold:{' '}
+                  <strong>
+                    {profile.discountMaxPercentThreshold !== undefined
+                      ? `${profile.discountMaxPercentThreshold}%`
+                      : '15%'}
+                  </strong>{' '}
+                  or{' '}
+                  <strong>
+                    Rs.{' '}
+                    {(profile.discountMaxAmountThreshold ?? 1500).toLocaleString()}
+                  </strong>
+                </span>
+                <span className="text-[#c2e7db]">•</span>
+                <span className="inline-flex items-center gap-1 font-semibold">
+                  Admin Approval:{' '}
+                  {profile.discountApprovalRequired !== false ? (
+                    <span className="text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 text-[10px]">
+                      Required above threshold
+                    </span>
+                  ) : (
+                    <span className="text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 text-[10px]">
+                      Not Required (Direct discounts allowed)
+                    </span>
+                  )}
+                </span>
+                <span className="text-[#c2e7db]">•</span>
+                <span>
+                  Hospital Discounts:{' '}
+                  <strong>
+                    {profile.discountOverallAllowed !== false ? 'Enabled' : 'Disabled'}
+                  </strong>
+                </span>
+              </div>
+            </div>
+
+            {onNavigateToDiscounts && (
+              <button
+                type="button"
+                onClick={onNavigateToDiscounts}
+                className="px-3 py-1.5 rounded-lg bg-[#08775A] hover:bg-[#065b44] text-white text-xs font-semibold cursor-pointer shrink-0 transition-colors"
+              >
+                Manage Discounts & Rates →
+              </button>
+            )}
+          </div>
         </div>
       </div>
   );
 };
+
 

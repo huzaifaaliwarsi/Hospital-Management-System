@@ -153,6 +153,12 @@ export function buildEscPosReceiptCommands(
   out += BOLD_ON + 'PATIENT INFORMATION\n' + BOLD_OFF;
   out += padRow('Patient:', data.patientName);
   out += padRow('MR No:', data.mrNumber || '—');
+  if (data.panelName) {
+    out += padRow('Panel:', data.panelName);
+  }
+  if (data.panelMemberId) {
+    out += padRow('Member ID:', data.panelMemberId);
+  }
   if (data.patientAge || data.patientGender) {
     const ageSex = [data.patientAge ? `${data.patientAge} Y` : '', data.patientGender].filter(Boolean).join(' / ');
     out += padRow('Age / Sex:', ageSex);

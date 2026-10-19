@@ -25,6 +25,8 @@ import {
   TrendingUp,
   SlidersHorizontal,
 } from 'lucide-react';
+import { useRouter } from '../../context/RouterContext';
+import { useAuth } from '../../context/AuthContext';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -44,6 +46,16 @@ import {
 } from '../../utils/dateConstants';
 import { HospitalKpiHeader, KpiItem } from '../../components/common/HospitalKpiHeader';
 import { StatusBadge } from '../../components/common/StatusBadge';
+
+// Dynamic greeting matching FrontDesk and Admin standard
+function getGreeting(name: string): string {
+  const hour = new Date().getHours();
+  let timeStr = 'Morning';
+  if (hour >= 12 && hour < 17) timeStr = 'Afternoon';
+  else if (hour >= 17) timeStr = 'Evening';
+  const firstName = name.split(' ')[0] || 'Super Admin';
+  return `Good ${timeStr}, ${firstName}`;
+}
 
 const EMPTY_DASHBOARD: ResolvedDashboardState = {
   periodLabel: 'Today',
@@ -120,6 +132,17 @@ interface SuperAdminDashboardProps {
 export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   onNavigateToModule,
 }) => {
+  const { navigate } = useRouter();
+  const { currentUser } = useAuth();
+
+  const handleNav = (mod: string) => {
+    if (onNavigateToModule) {
+      onNavigateToModule(mod);
+    } else {
+      navigate(`/super-admin/${mod}`);
+    }
+  };
+
   // Date range filter state
   const [selectedPreset, setSelectedPreset] = useState<DateFilterPreset>('today');
   const [fromDate, setFromDate] = useState<string>(() => formatDateISO(getStartOfMonth()));
@@ -417,35 +440,95 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   return (
     <div className="space-y-4 pb-8 text-slate-800">
       {/* =========================================================================
-          1. CARD PAGE HEADER BLOCK (design.md §4.1)
+          1. HERO / GREETING BANNER (Matches FrontDesk & Admin Design)
       ========================================================================= */}
-      <div className="bg-white rounded-xl border border-[#e2eae5] p-4 sm:p-5 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 sm:h-11 sm:w-11 rounded-xl bg-[#e7f6f1] text-[#08775A] border border-[#c2e7db] flex items-center justify-center shadow-2xs shrink-0">
-            <Activity className="h-5 w-5" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-bold text-[#111827]">Hospital Executive Dashboard</h1>
-              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#effaf5] text-[#08775A] border border-[#c2e7db] inline-flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-[#129b70] animate-pulse" />
-                Super Admin
-              </span>
-            </div>
-          </div>
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#0c5944] via-[#0e7d5a] to-[#0a664c] text-white p-6 sm:p-8 shadow-lg shadow-emerald-950/10">
+        {/* Large watermark hospital cross & pulse emblem */}
+        <div className="absolute -right-4 sm:right-2 lg:right-6 top-1/2 -translate-y-1/2 w-64 h-64 sm:w-80 sm:h-80 lg:w-96 lg:h-96 opacity-20 sm:opacity-25 pointer-events-none select-none flex items-center justify-center">
+          <svg viewBox="0 0 240 240" fill="none" stroke="currentColor" className="w-full h-full">
+            <circle cx="120" cy="120" r="110" strokeWidth="1.5" strokeDasharray="6 6" opacity="0.35" />
+            <circle cx="120" cy="120" r="90" strokeWidth="1" strokeDasharray="3 3" opacity="0.2" />
+            <path
+              d="M100 65 H140 V100 H175 V140 H140 V175 H100 V140 H65 V100 H100 Z"
+              strokeWidth="3"
+              strokeLinejoin="round"
+              opacity="0.8"
+            />
+            <path
+              d="M50 120 H90 L102 98 L114 142 L126 108 L138 132 L148 120 H190"
+              strokeWidth="3.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </div>
 
-        <div className="flex items-center gap-2 self-start sm:self-auto">
-          <button
-            type="button"
-            onClick={() => loadDashboardData(selectedPreset, fromDate, toDate)}
-            disabled={isLoading}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-[#f6faf8] text-[#52665e] hover:text-[#111827] border border-[#e2eae5] text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer disabled:opacity-50"
-            title="Refresh live dashboard metrics"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 text-[#08775A] ${isLoading ? 'animate-spin' : ''}`} />
-            <span>{isLoading ? 'Syncing...' : 'Refresh'}</span>
-          </button>
+        <div className="relative z-10 max-w-4xl space-y-3.5">
+          {/* Status pill badge & Sync/Refresh */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-900/40 border border-emerald-400/25 text-emerald-200 text-xs font-medium backdrop-blur-xs">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-300 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
+              </span>
+              <span>All systems operational • Super Admin Executive Command</span>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => loadDashboardData(selectedPreset, fromDate, toDate)}
+              disabled={isLoading}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-900/50 hover:bg-emerald-900/70 border border-emerald-400/30 text-emerald-100 text-xs font-semibold backdrop-blur-xs transition-colors cursor-pointer disabled:opacity-50"
+              title="Refresh live dashboard metrics"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 text-emerald-300 ${isLoading ? 'animate-spin' : ''}`} />
+              <span>{isLoading ? 'Syncing...' : 'Refresh Telemetry'}</span>
+            </button>
+          </div>
+
+          {/* Dynamic Greeting */}
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white">
+            {getGreeting(currentUser?.name || currentUser?.username || 'Super Admin')}
+          </h1>
+
+          {/* Subtitle */}
+          <p className="text-xs sm:text-sm text-emerald-100/90 leading-relaxed font-normal max-w-3xl">
+            Hospital executive command center. Monitor real-time cross-department revenues, clinical duty rosters, bed occupancy, inventory alerts, and governance analytics.
+          </p>
+
+          {/* Action Row & Live Telemetry Badges */}
+          <div className="pt-2 flex flex-wrap items-center gap-3 sm:gap-5 text-xs font-medium text-emerald-100">
+            <button
+              type="button"
+              onClick={() => handleNav('staff_users')}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white text-[#0e7d5a] font-semibold hover:bg-emerald-50 transition-all shadow-sm cursor-pointer"
+            >
+              <Stethoscope className="h-4 w-4" /> Staff &amp; Doctors
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleNav('services_rates')}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-800/60 hover:bg-emerald-800/80 border border-emerald-400/30 text-white font-semibold transition-all backdrop-blur-xs cursor-pointer"
+            >
+              <FileText className="h-4 w-4" /> Tariffs &amp; Charges
+            </button>
+
+            <div className="flex items-center gap-2 border-l border-emerald-400/25 pl-3 sm:pl-5 text-emerald-200">
+              <Stethoscope className="h-4 w-4 text-emerald-300" />
+              <span>{currentDataset.infrastructure.doctorsCount || 0} Clinicians</span>
+            </div>
+
+            <div className="flex items-center gap-2 text-emerald-200">
+              <Bed className="h-4 w-4 text-emerald-300" />
+              <span>Beds: {bedMetrics.occupiedBeds}/{bedMetrics.totalBeds} ({bedMetrics.occupancyRate}%)</span>
+            </div>
+
+            <div className="flex items-center gap-2 text-emerald-200">
+              <Shield className="h-4 w-4 text-emerald-300" />
+              <span>Active Window: {displayPeriodLabel}</span>
+            </div>
+          </div>
         </div>
       </div>
 

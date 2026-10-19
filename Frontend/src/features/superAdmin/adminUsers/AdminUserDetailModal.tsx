@@ -58,9 +58,9 @@ export const AdminUserDetailModal: React.FC<AdminUserDetailModalProps> = ({
         className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl border border-slate-200 overflow-hidden my-6 transition-all"
       >
         {/* Header Band */}
-        <div className="bg-gradient-to-r from-slate-900 to-slate-800 text-white p-5 flex items-start justify-between">
+        <div className="bg-gradient-to-r from-[#0a4636] to-[#08775A] text-white p-5 flex items-start justify-between">
           <div className="flex items-center gap-3.5">
-            <div className="w-13 h-13 rounded-2xl bg-gradient-to-br from-[#08775A] to-[#0f766e] flex items-center justify-center text-white font-bold text-lg shadow-md border border-white/20">
+            <div className="w-13 h-13 rounded-2xl bg-white/15 flex items-center justify-center text-white font-bold text-lg shadow-md border border-white/20">
               {initials}
             </div>
             <div>
@@ -75,7 +75,7 @@ export const AdminUserDetailModal: React.FC<AdminUserDetailModalProps> = ({
                   </span>
                 )}
               </div>
-              <div className="text-xs text-slate-300 font-mono mt-0.5">
+              <div className="text-xs text-emerald-100/90 font-mono mt-0.5">
                 @{user.username} • {user.employeeCode || user.id}
               </div>
             </div>
@@ -83,7 +83,7 @@ export const AdminUserDetailModal: React.FC<AdminUserDetailModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-700 transition-colors"
+            className="text-emerald-100/80 hover:text-white p-1.5 rounded-lg hover:bg-white/15 transition-colors cursor-pointer"
           >
             <X className="h-5 w-5" />
           </button>

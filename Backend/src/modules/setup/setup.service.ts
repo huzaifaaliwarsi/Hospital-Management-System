@@ -27,6 +27,7 @@ import type {
   ListProviderSettlementsQuery,
   CreateFloorBody,
   UpdateFloorBody,
+  BulkServiceDiscountBody,
 } from './setup.schemas';
 
 /**
@@ -55,17 +56,36 @@ function normalizeCode(raw?: string): string | undefined {
  */
 async function generateUniqueCode(model: CodeModel, prefix: string): Promise<string> {
   const table = prisma[model] as unknown as {
-    count: () => Promise<number>;
+    findMany: (args?: { select?: { code: boolean } }) => Promise<Array<{ code: string }>>;
     findFirst: (args: { where: { code: string } }) => Promise<unknown>;
   };
-  let seq = (await table.count()) + 1;
-  for (let attempt = 0; attempt < 30; attempt++) {
-    const candidate = `${prefix}-${String(seq).padStart(4, '0')}`;
-    if (!(await table.findFirst({ where: { code: candidate } }))) return candidate;
+  const existingRows = await table.findMany({ select: { code: true } }).catch(() => []);
+  const prefixUpper = prefix.trim().toUpperCase();
+  const regex = new RegExp(`^${prefixUpper}[-_]?(\\d+)$`, 'i');
+
+  let maxNum = 0;
+  for (const row of existingRows) {
+    if (!row.code) continue;
+    const match = row.code.match(regex);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      if (!isNaN(num) && num > maxNum) {
+        maxNum = num;
+      }
+    }
+  }
+
+  let seq = maxNum + 1;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const candidate = `${prefixUpper}-${String(seq).padStart(4, '0')}`;
+    const taken = existingRows.some((r) => r.code?.toUpperCase() === candidate);
+    if (!taken) {
+      const dbMatch = await table.findFirst({ where: { code: candidate } });
+      if (!dbMatch) return candidate;
+    }
     seq += 1;
   }
-  // Practically unreachable — guarantees termination if the sequential range is somehow exhausted.
-  return `${prefix}-${Date.now().toString(36).toUpperCase()}`;
+  return `${prefixUpper}-${Date.now().toString(36).toUpperCase()}`;
 }
 // Fields that live in the `billingLegalMetadata` JSON blob (tax/legal/invoice identity).
 const BILLING_LEGAL_KEYS = [
@@ -111,6 +131,10 @@ const EXTENDED_PROFILE_KEYS = [
   'dateFormat',
   'timeFormat',
   'workingHours',
+  'discountApprovalRequired',
+  'discountMaxPercentThreshold',
+  'discountMaxAmountThreshold',
+  'discountOverallAllowed',
 ] as const;
 
 function pickKeys<T extends Record<string, unknown>>(source: T, keys: readonly string[]): Record<string, unknown> {
@@ -140,6 +164,10 @@ function toClientProfile(row: Awaited<ReturnType<typeof prisma.hospitalProfile.f
     updatedBy: row.updatedBy ?? '',
     ...billing,
     ...extended,
+    discountApprovalRequired: extended.discountApprovalRequired !== false,
+    discountMaxPercentThreshold: typeof extended.discountMaxPercentThreshold === 'number' ? extended.discountMaxPercentThreshold : 15,
+    discountMaxAmountThreshold: typeof extended.discountMaxAmountThreshold === 'number' ? extended.discountMaxAmountThreshold : 1500,
+    discountOverallAllowed: extended.discountOverallAllowed !== false,
     ipdDailyRoomBedPostingTime: extended.ipdDailyRoomBedPostingTime ?? '11:00 AM',
   };
 }
@@ -670,6 +698,10 @@ export const setupService = {
     });
   },
 
+  async getNextServiceCode(): Promise<string> {
+    return generateUniqueCode('serviceRate', 'SRV');
+  },
+
   async listServiceRates(filters: ServiceFilters | { activeOnly?: string; providerType?: 'INTERNAL' | 'OUTSOURCED'; departmentId?: string; outsourcedProviderId?: string; status?: 'ACTIVE' | 'INACTIVE' } = {}) {
     const rows = await prisma.serviceRate.findMany({ where: serviceSelectionWhere({ ...filters, activeOnly: filters.activeOnly === true || filters.activeOnly === 'true' }), include: this.serviceRateInclude, orderBy: { name: 'asc' } });
     return this.decorateServiceRates(rows as any);
@@ -775,6 +807,29 @@ export const setupService = {
 
     // Archive only: retain all invoice, appointment, panel and commission dependencies.
     await prisma.serviceRate.update({ where: { id }, data: { isActive: false, isDeleted: true, selectable: false, deletedAt: new Date() } });
+  },
+
+  async updateBulkDiscount(body: BulkServiceDiscountBody, updatedById: string) {
+    const where: Prisma.ServiceRateWhereInput = { isDeleted: false };
+    if (body.scope === 'DEPARTMENT') {
+      if (!body.departmentId) throw new ValidationError('Department is required for DEPARTMENT scope');
+      where.departmentId = body.departmentId;
+    } else if (body.scope === 'SERVICE') {
+      if (!body.serviceRateIds || !body.serviceRateIds.length) {
+        throw new ValidationError('At least one service is required for SERVICE scope');
+      }
+      where.id = { in: body.serviceRateIds };
+    }
+
+    const result = await prisma.serviceRate.updateMany({
+      where,
+      data: {
+        discountAllowed: body.discountAllowed,
+        updatedById,
+      },
+    });
+
+    return { count: result.count, discountAllowed: body.discountAllowed };
   },
 
   // ── Wards / Rooms / Beds — flexible hierarchy, §4.2 ──────────────────

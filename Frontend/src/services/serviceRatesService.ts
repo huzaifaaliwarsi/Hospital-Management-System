@@ -12,6 +12,7 @@ import { User } from '../types';
 import { DepartmentService } from './departmentService';
 import { getHospitalProfile } from './hospitalProfileService';
 import { formatDisplayDate } from '../utils/dateConstants';
+import { generateNextCode } from '../utils/codeGenerator';
 
 /**
  * Live Services & Rates service — every read/write round-trips through
@@ -123,11 +124,22 @@ function toBackendPayload(values: ServiceFormValues): Record<string, unknown> {
 
 let cachedServices: HospitalService[] = [];
 
+export async function fetchNextServiceCode(): Promise<string> {
+  try {
+    const res = await apiClient.get<{ data: { nextCode: string } }>('/setup/services-rates/next-code');
+    return res.data?.data?.nextCode || '';
+  } catch {
+    return '';
+  }
+}
+
 export interface ServiceQuery { providerType?: 'INTERNAL' | 'OUTSOURCED'; departmentId?: string; outsourcedProviderId?: string; status?: 'ACTIVE' | 'INACTIVE' }
 export async function fetchServices(filters: ServiceQuery = {}): Promise<HospitalService[]> {
   const res = await apiClient.get<{ data: Record<string, any>[] }>('/setup/services-rates', { params: { providerType: 'INTERNAL', status: 'ACTIVE', ...filters, selectable: true } });
   const rows = res.data.data.map(toHospitalService);
-  if (!Object.keys(filters).length) cachedServices = rows;
+  const existingMap = new Map(cachedServices.map((s) => [s.id, s]));
+  rows.forEach((r) => existingMap.set(r.id, r));
+  cachedServices = Array.from(existingMap.values());
   return rows;
 }
 
@@ -146,6 +158,16 @@ export class ServiceRatesService {
     return cachedServices;
   }
 
+  static async getNextCode(existingServices?: HospitalService[]): Promise<string> {
+    const serverCode = await fetchNextServiceCode();
+    if (serverCode) return serverCode;
+    const allKnown = [
+      ...cachedServices,
+      ...(existingServices || []),
+    ];
+    return generateNextCode(allKnown.map((s) => s.code), 'SRV');
+  }
+
   /** No-op kept for interface stability: persistence now happens per-mutation against the real backend. */
   static saveServices(_services: HospitalService[]): void {
     // Intentionally empty.
@@ -155,7 +177,7 @@ export class ServiceRatesService {
     return cachedServices.find((s) => s.id === id);
   }
 
-  static validateServiceCode(code: string, currentId?: string): { isValid: boolean; message?: string } {
+  static validateServiceCode(code: string, currentId?: string, additionalServices?: HospitalService[]): { isValid: boolean; message?: string } {
     const trimmed = code.trim().toUpperCase();
     // Optional — left blank, the backend auto-generates a unique code.
     if (!trimmed) return { isValid: true };
@@ -163,7 +185,8 @@ export class ServiceRatesService {
     if (!validPattern.test(trimmed)) {
       return { isValid: false, message: 'Code must contain uppercase letters, numbers, and hyphens only.' };
     }
-    const isDuplicate = cachedServices.some((s) => s.code.toUpperCase() === trimmed && s.id !== currentId);
+    const all = [...cachedServices, ...(additionalServices || [])];
+    const isDuplicate = all.some((s) => s.code.toUpperCase() === trimmed && s.id !== currentId);
     if (isDuplicate) {
       return { isValid: false, message: `Service code "${trimmed}" already exists in master catalog.` };
     }
@@ -213,6 +236,32 @@ export class ServiceRatesService {
       const msg = err?.response?.data?.error?.message || err?.message || 'Failed to delete service.';
       return { success: false, message: msg };
     }
+  }
+
+  static async updateBulkDiscount(payload: {
+    scope: 'ALL' | 'DEPARTMENT' | 'SERVICE';
+    departmentId?: string;
+    serviceRateIds?: string[];
+    discountAllowed: boolean;
+  }): Promise<{ count: number; discountAllowed: boolean }> {
+    const res = await apiClient.post<{ data: { count: number; discountAllowed: boolean } }>(
+      '/setup/services-rates/bulk-discount',
+      payload
+    );
+    // Invalidate local cachedServices so next fetch gets latest
+    cachedServices = cachedServices.map((s) => {
+      if (payload.scope === 'ALL') {
+        return { ...s, discountAllowed: payload.discountAllowed };
+      }
+      if (payload.scope === 'DEPARTMENT' && s.departmentId === payload.departmentId) {
+        return { ...s, discountAllowed: payload.discountAllowed };
+      }
+      if (payload.scope === 'SERVICE' && payload.serviceRateIds?.includes(s.id)) {
+        return { ...s, discountAllowed: payload.discountAllowed };
+      }
+      return s;
+    });
+    return res.data.data;
   }
 
   static filterServices(services: HospitalService[], filters: ServiceFilterState): HospitalService[] {

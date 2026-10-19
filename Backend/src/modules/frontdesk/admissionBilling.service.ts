@@ -11,8 +11,7 @@ import { pharmacyBridgeClient } from '@/shared/pharmacyBridgeClient';
 import { computePharmacyPortion } from '@/shared/pharmacyFifoCredit';
 import {
   isEligibleHospitalService,
-  DISCOUNT_APPROVAL_PERCENT_THRESHOLD,
-  DISCOUNT_APPROVAL_AMOUNT_THRESHOLD,
+  validateDiscountAuthorization,
 } from '@/shared/discountEligibility';
 
 const invoiceInclude = {
@@ -637,12 +636,7 @@ export const admissionBillingService = {
 
         const discPct = line.lineGross.greaterThan(0) ? discAmt.mul(100).div(line.lineGross).toNumber() : 0;
 
-        if (
-          (discPct > DISCOUNT_APPROVAL_PERCENT_THRESHOLD || discAmt.toNumber() > DISCOUNT_APPROVAL_AMOUNT_THRESHOLD) &&
-          !['SUPER_ADMIN', 'ADMIN'].includes(actorRole)
-        ) {
-          throw new AuthorizationError(`Discount of PKR ${discAmt.toFixed(2)} (${discPct.toFixed(1)}%) requires Admin approval.`);
-        }
+        await validateDiscountAuthorization(actorRole, discAmt, discPct, 'Discount');
 
         const newLineNet = line.lineGross.minus(discAmt);
 
@@ -685,12 +679,7 @@ export const admissionBillingService = {
 
         const discPct = eligibleGross.greaterThan(0) ? totalDiscAmt.mul(100).div(eligibleGross).toNumber() : 0;
 
-        if (
-          (discPct > DISCOUNT_APPROVAL_PERCENT_THRESHOLD || totalDiscAmt.toNumber() > DISCOUNT_APPROVAL_AMOUNT_THRESHOLD) &&
-          !['SUPER_ADMIN', 'ADMIN'].includes(actorRole)
-        ) {
-          throw new AuthorizationError(`Total discount of PKR ${totalDiscAmt.toFixed(2)} requires Admin approval.`);
-        }
+        await validateDiscountAuthorization(actorRole, totalDiscAmt, discPct, 'Total discount');
 
         // Distribute proportionally across eligible lines, largest-remainder on the last line
         let remainingDiscAmt = totalDiscAmt;

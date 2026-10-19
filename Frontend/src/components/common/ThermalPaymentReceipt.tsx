@@ -55,6 +55,11 @@ export interface ThermalReceiptData {
   isReprint?: boolean;
   fees: number;
   others: number;
+  payerType?: 'Corporate / Panel' | 'Self Pay' | string;
+  panelName?: string | null;
+  panelMemberId?: string | null;
+  patientShare?: number;
+  panelReceivable?: number;
 }
 
 /**
@@ -247,6 +252,18 @@ export function buildThermalReceiptData(
   const bedStr = bed ? (/^bed\b/i.test(String(bed).trim()) ? String(bed).trim() : `Bed ${String(bed).trim()}`) : '';
   const bedInfo = [ward, bedStr].filter(Boolean).join(' - ') || null;
 
+  const resolvedPanelName =
+    invoice.panelName ||
+    (invoice as any).corporatePanel?.organizationName ||
+    (invoice as any).corporatePanel?.name ||
+    (invoice as any).panelPatient?.corporatePanel?.organizationName ||
+    null;
+
+  const resolvedPanelMemberId =
+    invoice.panelMemberId ||
+    (invoice as any).panelPatient?.panelMemberId ||
+    null;
+
   return {
     receiptNumber,
     invoiceNumber,
@@ -267,6 +284,11 @@ export function buildThermalReceiptData(
     lines,
     fees,
     others,
+    payerType: invoice.payerType,
+    panelName: resolvedPanelName,
+    panelMemberId: resolvedPanelMemberId,
+    patientShare: invoice.patientShare,
+    panelReceivable: invoice.panelReceivable,
     subtotal: subtotal > 0 ? subtotal : netTotal,
     totalDiscount,
     totalTax: 0,
@@ -561,6 +583,16 @@ export function generateThermalReceiptHtml(
       <td class="label">MR No:</td>
       <td class="val">${escapeHtml(data.mrNumber || '—')}</td>
     </tr>
+    ${data.panelName ? `
+    <tr>
+      <td class="label">Panel:</td>
+      <td class="val-patient">${escapeHtml(data.panelName)}</td>
+    </tr>` : ''}
+    ${data.panelMemberId ? `
+    <tr>
+      <td class="label">Member ID:</td>
+      <td class="val font-mono">${escapeHtml(data.panelMemberId)}</td>
+    </tr>` : ''}
     ${(data.patientAge || data.patientGender) ? `
     <tr>
       <td class="label">Age / Sex:</td>
@@ -875,6 +907,20 @@ export const ThermalPaymentReceipt: React.FC<ThermalPaymentReceiptProps> = ({
               <span className="font-semibold text-black">MR No:</span>
               <span className="font-bold text-black">{receipt.mrNumber || '—'}</span>
             </div>
+            {receipt.panelName && (
+              <div className="flex justify-between items-center">
+                <span className="font-semibold text-black">Panel:</span>
+                <span className="font-bold text-black text-right max-w-[170px] truncate" title={receipt.panelName}>
+                  {receipt.panelName}
+                </span>
+              </div>
+            )}
+            {receipt.panelMemberId && (
+              <div className="flex justify-between items-center">
+                <span className="font-semibold text-black">Member ID:</span>
+                <span className="font-bold text-black font-mono">{receipt.panelMemberId}</span>
+              </div>
+            )}
             {(receipt.patientAge || receipt.patientGender) && (
               <div className="flex justify-between items-center">
                 <span className="font-semibold text-black">Age / Sex:</span>

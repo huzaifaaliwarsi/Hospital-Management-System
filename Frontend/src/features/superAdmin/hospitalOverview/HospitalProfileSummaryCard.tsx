@@ -201,19 +201,15 @@ export const HospitalProfileSummaryCard: React.FC<HospitalProfileSummaryCardProp
                 <span>
                   <strong className="font-semibold text-slate-700">Short Name:</strong>{' '}
                   {isConfigured(profile.shortName) ? (
-                    <span className="text-[#111827] font-medium">{profile.shortName}</span>
+                    <span className="text-[#111827] font-semibold">{profile.shortName}</span>
                   ) : (
-                    <span className="text-[#8b9e95] italic">Not configured</span>
+                    <span className="text-slate-400 font-normal">—</span>
                   )}
                 </span>
                 <span className="text-slate-300">•</span>
                 <span>
                   <strong className="font-semibold text-slate-700">Hospital Type:</strong>{' '}
-                  {isConfigured(profile.hospitalType) ? (
-                    <span className="text-[#111827] font-medium">{profile.hospitalType}</span>
-                  ) : (
-                    <span className="text-[#8b9e95] italic">Not configured</span>
-                  )}
+                  <span className="text-[#111827] font-semibold">{profile.hospitalType || 'General Hospital'}</span>
                 </span>
               </div>
             </div>
@@ -233,21 +229,10 @@ export const HospitalProfileSummaryCard: React.FC<HospitalProfileSummaryCardProp
               <span className="block text-[10px] text-[#8b9e95] uppercase font-bold tracking-wider">
                 Emergency Service
               </span>
-              {profile.emergencyEnabled && profile.emergencyMode && profile.emergencyMode.trim().length > 0 ? (
-                <span className="font-bold text-[#111827] text-xs flex items-center gap-1 mt-0.5">
-                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
-                  <span>{profile.emergencyMode}</span>
-                </span>
-              ) : profile.emergencyEnabled ? (
-                <span className="font-bold text-[#111827] text-xs flex items-center gap-1 mt-0.5">
-                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
-                  <span>Enabled</span>
-                </span>
-              ) : (
-                <span className="text-[#8b9e95] italic font-normal text-xs block mt-0.5">
-                  Not configured
-                </span>
-              )}
+              <span className="font-bold text-[#111827] text-xs flex items-center gap-1 mt-0.5">
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                <span>{profile.emergencyEnabled ? '24/7 Active' : 'Standard Shift'}</span>
+              </span>
             </div>
           </div>
         </div>
@@ -267,12 +252,12 @@ export const HospitalProfileSummaryCard: React.FC<HospitalProfileSummaryCardProp
             {isConfigured(profile.primaryPhone) ? (
               <a
                 href={`tel:${profile.primaryPhone}`}
-                className="text-[#111827] font-medium hover:text-[#08775A] transition-colors truncate block"
+                className="text-[#111827] font-semibold hover:text-[#08775A] transition-colors truncate block"
               >
                 {profile.primaryPhone}
               </a>
             ) : (
-              <span className="text-[#8b9e95] italic">Not configured</span>
+              <span className="text-slate-400 font-normal">—</span>
             )}
           </div>
         </div>
@@ -289,12 +274,12 @@ export const HospitalProfileSummaryCard: React.FC<HospitalProfileSummaryCardProp
             {isConfigured(profile.primaryEmail) ? (
               <a
                 href={`mailto:${profile.primaryEmail}`}
-                className="text-[#111827] font-medium hover:text-[#08775A] transition-colors truncate block"
+                className="text-[#111827] font-semibold hover:text-[#08775A] transition-colors truncate block"
               >
                 {profile.primaryEmail}
               </a>
             ) : (
-              <span className="text-[#8b9e95] italic">Not configured</span>
+              <span className="text-slate-400 font-normal">—</span>
             )}
           </div>
         </div>
@@ -309,11 +294,11 @@ export const HospitalProfileSummaryCard: React.FC<HospitalProfileSummaryCardProp
               Physical Address
             </span>
             {formattedAddress ? (
-              <span className="text-[#111827] font-medium line-clamp-1">
+              <span className="text-[#111827] font-semibold line-clamp-1">
                 {formattedAddress}
               </span>
             ) : (
-              <span className="text-[#8b9e95] italic">Not configured</span>
+              <span className="text-slate-400 font-normal">—</span>
             )}
           </div>
         </div>
