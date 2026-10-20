@@ -143,7 +143,7 @@ export const DoctorCommissionView: React.FC = () => {
     }
   };
 
-  const doctors = useMemo(() => staff.filter((s) => s.staffCategory === 'Doctor' && s.status === 'ACTIVE'), [staff]);
+  const doctors = useMemo(() => staff.filter((s) => (s.staffCategory === 'Doctor' || s.staffCategory === 'RMO') && s.status === 'ACTIVE'), [staff]);
 
   // staff.md §4/§7 — a commission rate can only be set for a service the
   // doctor is actually assigned to (Doctor Assignments, Staff Add/Edit).
@@ -326,16 +326,16 @@ export const DoctorCommissionView: React.FC = () => {
 
       {/* Section 4.4 Filter Toolbar */}
       <div className="bg-white rounded-xl border border-[#e2eae5] p-3 shadow-2xs flex items-center gap-2">
-        <span className="text-xs font-semibold text-[#52665e]">Doctor Filter:</span>
+        <span className="text-xs font-semibold text-[#52665e]">Doctor / RMO Filter:</span>
         <select
           value={doctorFilter}
           onChange={(e) => setDoctorFilter(e.target.value)}
           className="text-xs px-3 py-1.5 border border-[#c2e7db] rounded-lg bg-[#fbfdfc] focus:bg-white focus:outline-hidden focus:ring-1 focus:ring-[#08775A]"
         >
-          <option value="All">All Doctors</option>
+          <option value="All">All Doctors & RMOs</option>
           {doctors.map((d) => (
             <option key={d.id} value={d.id}>
-              {d.fullName}
+              {d.fullName} ({d.staffCategory})
             </option>
           ))}
         </select>
@@ -651,26 +651,26 @@ export const DoctorCommissionView: React.FC = () => {
         isLoading={isApprovingAll}
       />
 
-      <Modal isOpen={isFormOpen} onClose={() => setIsFormOpen(false)} title="Add Doctor Commission Rule" maxWidth="lg">
+      <Modal isOpen={isFormOpen} onClose={() => setIsFormOpen(false)} title="Add Doctor / RMO Commission Rule" maxWidth="lg">
         <form onSubmit={handleSave} className="space-y-4">
           {formError && (
             <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700 font-medium">{formError}</div>
           )}
           <Select
-            label="Doctor"
+            label="Doctor / RMO"
             required
-            options={doctors.map((d) => ({ label: `${d.fullName} (${d.designation})`, value: d.id }))}
+            options={doctors.map((d) => ({ label: `${d.fullName} (${d.designation || d.staffCategory})`, value: d.id }))}
             value={formValues.staffId}
             onChange={(e) => setFormValues({ ...formValues, staffId: e.target.value, serviceRateId: '' })}
           />
           <Select
-            label="Service (optional — leave blank for this doctor's default rule)"
+            label="Service (optional — leave blank for practitioner's default rule)"
             hint={
               !formValues.staffId
-                ? 'Select a doctor first.'
+                ? 'Select a doctor or RMO first.'
                 : doctorAssignedServices.length === 0
-                ? 'This doctor has no Assigned Services yet — set them from Staff Users → Edit before scoping a rule to a specific service.'
-                : "Only this doctor's Assigned Services are shown."
+                ? 'This practitioner has no Assigned Services yet — set them from Staff Users → Edit before scoping a rule to a specific service.'
+                : "Only this practitioner's Assigned Services are shown."
             }
             disabled={!formValues.staffId}
             options={doctorAssignedServices.map((s) => ({ label: s.name, value: s.id }))}

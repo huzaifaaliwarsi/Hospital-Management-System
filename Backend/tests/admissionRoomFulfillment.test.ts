@@ -15,13 +15,13 @@ const { db, api } = vi.hoisted(() => ({ api: { get: vi.fn() }, db: {
 vi.mock('@/modules/notifications/notifications.service', () => ({ notificationsService: { createNotification: vi.fn() } }));
 vi.mock('@/db/client', () => ({ prisma: { ...db, $transaction: (fn: any) => fn(db) } }));
 vi.mock('@/shared/idGenerator', () => ({ generateAdmissionNumber: () => 'ADM-TEST', generateInvoiceNumber: () => 'INV-TEST' }));
-vi.mock('../../ch-sharif-and-saeed-hospital---hms/src/services/apiClient', () => ({ default: api }));
-vi.mock('../../ch-sharif-and-saeed-hospital---hms/src/services/patientRegistryService', () => ({ getPatientById: () => undefined, getAllPatients: () => [] }));
+vi.mock('../../Frontend/src/services/apiClient', () => ({ default: api }));
+vi.mock('../../Frontend/src/services/patientRegistryService', () => ({ getPatientById: () => undefined, getAllPatients: () => [] }));
 import { admissionService } from '../src/modules/admission/admission.service';
 import { admissionBillingService } from '../src/modules/frontdesk/admissionBilling.service';
-import { fetchInvoiceDetail } from '../../ch-sharif-and-saeed-hospital---hms/src/services/invoiceService';
-import { fetchAdmissionLedger } from '../../ch-sharif-and-saeed-hospital---hms/src/services/admissionBillingService';
-import { fetchAdmissions } from '../../ch-sharif-and-saeed-hospital---hms/src/services/admissionService';
+import { fetchInvoiceDetail } from '../../Frontend/src/services/invoiceService';
+import { fetchAdmissionLedger } from '../../Frontend/src/services/admissionBillingService';
+import { fetchAdmissions } from '../../Frontend/src/services/admissionService';
 
 const admission = { id: 'admission', departmentId: 'department', bedId: 'bed', medicationMode: 'HOSPITAL_MANAGED', status: 'PLANNED', dischargeClearances: [{}] };
 beforeEach(() => {

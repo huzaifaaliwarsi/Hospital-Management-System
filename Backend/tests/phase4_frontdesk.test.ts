@@ -5,6 +5,11 @@ import { Decimal } from '@prisma/client/runtime/library';
 vi.mock('@/db/client', () => {
   const mockTx: any = {};
   const mockPrisma: any = {
+    $executeRaw: vi.fn(),
+    admissionRecord: { findUnique: vi.fn().mockResolvedValue({ id: 'adm-preq', status: 'ACTIVE', hospitalInvoices: [], dischargeClearances: [] }) },
+    pharmacyClearance: { count: vi.fn().mockResolvedValue(0) },
+    hmsPharmacyCharge: { count: vi.fn().mockResolvedValue(0) },
+    dualDischargeClearance: { create: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
     $transaction: vi.fn(async (cb: any) => cb(mockTx)),
     appointment: {
       findMany: vi.fn(),
@@ -37,6 +42,7 @@ vi.mock('@/db/client', () => {
       update: vi.fn(),
     },
     paymentReceipt: {
+      aggregate: vi.fn().mockResolvedValue({ _sum: { amount: null } }),
       create: vi.fn(),
       findMany: vi.fn(),
       updateMany: vi.fn(),
@@ -112,6 +118,7 @@ describe('Phase 4: Front Desk Billing, Appointments & Doctor Commission Engine',
   beforeEach(() => {
     vi.clearAllMocks();
     (prisma.invoiceLineItem.findMany as any).mockResolvedValue([]);
+    (prisma.hospitalInvoice.findMany as any).mockResolvedValue([]);
     (prisma.selfPayEncounter.create as any).mockResolvedValue({
       id: 'self-pay-mock-id',
       fullName: 'Ahmad Khan',

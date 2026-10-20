@@ -102,10 +102,19 @@ export const AdminDashboard: React.FC = () => {
       {
         category: 'DOCTORS ON DUTY',
         title: 'Active Clinicians',
-        value: `${infrastructure?.doctorsCount ?? 0}`,
+        value: `${doctorsOnDutyCount > 0 ? doctorsOnDutyCount : (infrastructure?.doctorsCount ?? 0)}`,
         icon: UserCheck,
-        subtitle: `${doctorsOnDutyCount} on duty today`,
-        tone: 'default',
+        subtitle:
+          doctorsOnDutyCount > 0
+            ? `${doctorsOnDutyCount} on duty today • ${infrastructure?.doctorsCount ?? 0} registered`
+            : `${infrastructure?.doctorsCount ?? 0} registered • 0 on duty`,
+        tone: doctorsOnDutyCount > 0 ? 'success' : 'default',
+        badge:
+          doctorsOnDutyCount > 0 ? (
+            <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+              {doctorsOnDutyCount} Present
+            </span>
+          ) : undefined,
       },
       {
         category: 'HOSPITAL PATIENTS',

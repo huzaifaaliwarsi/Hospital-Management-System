@@ -288,6 +288,13 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     window.print();
   };
 
+  // Active Clinicians & Duty Count
+  const doctorsOnDutyList = currentDataset.doctorsOnDuty || [];
+  const onDutyCount =
+    currentDataset.infrastructure.doctorsOnDutyCount ??
+    doctorsOnDutyList.filter((d) => d.status === 'On Duty').length;
+  const registeredDoctorsCount = currentDataset.infrastructure.doctorsCount || 0;
+
   // Executive KPI Items
   const primaryKpiItems: KpiItem[] = useMemo(() => {
     return [
@@ -367,11 +374,20 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
       },
       {
         category: 'CONSULTANTS ON DUTY',
-        title: 'Doctors Active',
-        value: `${currentDataset.infrastructure.doctorsCount || 0}`,
+        title: 'Clinicians On Duty',
+        value: `${onDutyCount > 0 ? onDutyCount : registeredDoctorsCount}`,
         icon: Stethoscope,
-        subtitle: `${currentDataset.infrastructure.activeDepartmentsCount} clinical depts`,
-        tone: 'default',
+        subtitle:
+          onDutyCount > 0
+            ? `${onDutyCount} on duty today • ${registeredDoctorsCount} registered`
+            : `${registeredDoctorsCount} registered • ${currentDataset.infrastructure.activeDepartmentsCount} clinical depts`,
+        tone: onDutyCount > 0 ? 'success' : 'default',
+        badge:
+          onDutyCount > 0 ? (
+            <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+              {onDutyCount} Present
+            </span>
+          ) : undefined,
       },
       {
         category: 'PHARMACY SALES',
@@ -516,7 +532,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 
             <div className="flex items-center gap-2 border-l border-emerald-400/25 pl-3 sm:pl-5 text-emerald-200">
               <Stethoscope className="h-4 w-4 text-emerald-300" />
-              <span>{currentDataset.infrastructure.doctorsCount || 0} Clinicians</span>
+              <span>{onDutyCount > 0 ? `${onDutyCount} On Duty (${registeredDoctorsCount} Reg)` : `${registeredDoctorsCount} Clinicians`}</span>
             </div>
 
             <div className="flex items-center gap-2 text-emerald-200">
@@ -1092,6 +1108,113 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             <span>Operational Departments: <strong className="text-slate-800">{currentDataset.infrastructure.activeDepartmentsCount}</strong></span>
             <span>Corporate Panels: <strong className="text-slate-800">{currentDataset.infrastructure.activePanelsCount} active</strong></span>
           </div>
+        </div>
+      </div>
+
+      {/* =========================================================================
+          5.5 ACTIVE CLINICIANS & DUTY ROSTER (DOCTORS & RMOS)
+      ========================================================================= */}
+      <div className="bg-white rounded-xl border border-[#e2eae5] shadow-2xs overflow-hidden flex flex-col">
+        {/* Dark Emerald Header Strip */}
+        <div className="bg-[#0e5944] text-white px-4 py-2.5 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Stethoscope className="h-4 w-4 text-emerald-300" />
+            <span className="font-semibold text-xs sm:text-sm tracking-wide">
+              Active Clinicians &amp; Duty Rosters Today
+            </span>
+            <span className="bg-emerald-700/60 text-emerald-200 px-2 py-0.5 rounded-full border border-emerald-500/30 text-[10px] font-semibold">
+              {doctorsOnDutyList.length} Registered • {onDutyCount} On Duty
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => onNavigateToModule?.('staff_users')}
+            className="text-xs text-emerald-200 hover:text-white font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+          >
+            <span>Staff Management →</span>
+          </button>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr className="bg-[#effaf5] border-b border-[#c2e7db] text-[11px] font-bold text-[#08775A] select-none">
+                <th className="py-2.5 px-4 border-r border-[#c2e7db]/60">Clinician Name</th>
+                <th className="py-2.5 px-4 border-r border-[#c2e7db]/60">Category / Role</th>
+                <th className="py-2.5 px-4 border-r border-[#c2e7db]/60">Department</th>
+                <th className="py-2.5 px-4 border-r border-[#c2e7db]/60">Shift Timings</th>
+                <th className="py-2.5 px-4 border-r border-[#c2e7db]/60 text-center">Patients Booked</th>
+                <th className="py-2.5 px-4 text-center">Duty / Attendance Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#e2eae5] text-slate-700">
+              {doctorsOnDutyList.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-slate-400">
+                    {isLoading ? (
+                      <div className="flex items-center justify-center gap-2">
+                        <RefreshCw className="h-4 w-4 animate-spin text-[#08775A]" />
+                        <span>Loading live roster…</span>
+                      </div>
+                    ) : (
+                      'No active clinicians (Doctors/RMOs) registered yet.'
+                    )}
+                  </td>
+                </tr>
+              ) : (
+                doctorsOnDutyList.map((doc, idx) => {
+                  const isEven = idx % 2 === 0;
+                  const isDuty = doc.status === 'On Duty';
+                  return (
+                    <tr
+                      key={doc.id}
+                      className={`transition-colors border-b border-[#e2eae5] ${
+                        isEven ? 'bg-white' : 'bg-[#fbfdfc]'
+                      } hover:bg-[#e7f6f1]/40`}
+                    >
+                      <td className="py-3 px-4 font-bold text-[#123e2b] border-r border-[#e2eae5]">
+                        {doc.name}
+                      </td>
+                      <td className="py-3 px-4 border-r border-[#e2eae5]">
+                        <span
+                          className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                            doc.category === 'RMO' || doc.designation?.includes('RMO')
+                              ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                              : 'bg-teal-50 text-teal-800 border border-teal-200'
+                          }`}
+                        >
+                          {doc.category || doc.designation || 'Doctor'}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-slate-600 border-r border-[#e2eae5]">{doc.department}</td>
+                      <td className="py-3 px-4 text-slate-500 font-mono text-[11px] border-r border-[#e2eae5]">
+                        {doc.shiftLabel}
+                      </td>
+                      <td className="py-3 px-4 text-center font-bold text-slate-800 font-mono border-r border-[#e2eae5]">
+                        {doc.patientsBooked}
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span
+                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            isDuty
+                              ? 'bg-[#effaf5] text-[#08775A] border border-[#c2e7db]'
+                              : 'bg-slate-100 text-slate-600 border border-slate-200'
+                          }`}
+                        >
+                          <span
+                            className={`h-1.5 w-1.5 rounded-full mr-1.5 ${
+                              isDuty ? 'bg-[#129b70] animate-pulse' : 'bg-slate-400'
+                            }`}
+                          />
+                          {isDuty ? 'On Duty (Present)' : 'On Roster'}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
 

@@ -27,6 +27,7 @@ export interface SuperAdminDashboardResponse {
     activeDepartmentsCount: number;
     totalStaffCount: number;
     doctorsCount: number;
+    doctorsOnDutyCount?: number;
     activePanelsCount: number;
     activePanelPatientsCount: number;
     activeAdminsCount: number;
@@ -74,6 +75,7 @@ export interface DoctorOnDutyItem {
   name: string;
   department: string;
   designation: string;
+  category?: string;
   shiftLabel: string;
   patientsBooked: number;
   status: 'On Duty' | 'On Roster';
@@ -94,6 +96,7 @@ export interface ResolvedDashboardState {
     activeDepartmentsCount: number;
     totalStaffCount: number;
     doctorsCount: number;
+    doctorsOnDutyCount?: number;
     activePanelsCount: number;
     activePanelPatientsCount: number;
     activeAdminsCount: number;
@@ -190,7 +193,8 @@ export const dashboardService = {
       infrastructure: d.infrastructure || {
         activeDepartmentsCount: 0,
         totalStaffCount: 0,
-        doctorsCount: 0,
+        doctorsCount: d.infrastructure?.doctorsCount || 0,
+        doctorsOnDutyCount: d.infrastructure?.doctorsOnDutyCount,
         activePanelsCount: 0,
         activePanelPatientsCount: 0,
         activeAdminsCount: 0,

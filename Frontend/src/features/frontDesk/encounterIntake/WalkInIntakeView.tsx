@@ -2,7 +2,7 @@ import apiClient from '../../../services/apiClient';
 import { ServiceSourcePicker } from '../../../components/forms/ServiceSourcePicker';
 import { selectionFromSource } from '../../../utils/serviceSelection';
 import type { PanelMembershipDetails } from '../../../types/patient';
-import { doctorsForEncounter } from '../../../utils/doctorAvailability';
+import { doctorsForEncounter, rmosForEncounter } from '../../../utils/doctorAvailability';
 import { InvoiceDetailModal } from '../billing/InvoiceDetailModal';
 import { useRouter } from '../../../context/RouterContext';
 import { HOSPITAL_SERVICE_SOURCE, NO_ACTIVE_DEPARTMENT_SERVICES, serviceSourceOptions, servicesForSource, retainAvailableServiceIds } from '../../../utils/serviceSelection';
@@ -212,6 +212,7 @@ export const WalkInIntakeView: React.FC = () => {
   const [departments, setDepartments] = useState<Department[]>(() => DepartmentService.getDepartments().filter((d) => d.status === 'Active'));
   const [departmentId, setDepartmentId] = useState<string>('');
   const [doctorId, setDoctorId] = useState('');
+  const [rmoStaffId, setRmoStaffId] = useState('');
   const [notes, setNotes] = useState('');
 
   // Additional billable services attached to the encounter (Emergency procedures,
@@ -290,6 +291,18 @@ export const WalkInIntakeView: React.FC = () => {
     () => doctorsForEncounter(staffUsers, encounterType),
     [staffUsers, encounterType]
   );
+
+  const rmosForEmergency = useMemo(
+    () => rmosForEncounter(staffUsers, encounterType),
+    [staffUsers, encounterType]
+  );
+
+  // If encounter type changes away from EMERGENCY, immediately clear assigned RMO.
+  useEffect(() => {
+    if (encounterType !== 'EMERGENCY' && rmoStaffId) {
+      setRmoStaffId('');
+    }
+  }, [encounterType, rmoStaffId]);
 
   // If the selected doctor no longer supports the (newly changed) Encounter
   // Service, clear the doctor so Front Desk re-picks an authorized doctor.
@@ -431,6 +444,7 @@ export const WalkInIntakeView: React.FC = () => {
     setEncounterType(queryType || '');
     setDepartmentId('');
     setDoctorId('');
+    setRmoStaffId('');
     setNotes('');
     setSelectedServiceIds([]);
     setFormError(null);
@@ -571,6 +585,7 @@ export const WalkInIntakeView: React.FC = () => {
           weightKg: weightNum,
           departmentId: effectiveDeptId || undefined,
           doctorStaffId: doctorId || undefined,
+          rmoStaffId: encounterType === 'EMERGENCY' ? (rmoStaffId || undefined) : undefined,
           notes: combinedNotes,
         });
         targetInvoiceId = invoice.id;
@@ -589,6 +604,7 @@ export const WalkInIntakeView: React.FC = () => {
           weightKg: weightNum,
           departmentId: effectiveDeptId || undefined,
           doctorStaffId: doctorId || undefined,
+          rmoStaffId: encounterType === 'EMERGENCY' ? (rmoStaffId || undefined) : undefined,
           notes: combinedNotes,
           authorizationNumber: authorizationNumber.trim() || undefined,
           authorizationLimit: authorizationLimit === '' ? undefined : Number(authorizationLimit),
@@ -1297,7 +1313,7 @@ export const WalkInIntakeView: React.FC = () => {
               </span>
             </div>
 
-            {/* Consulting Doctor Dropdown ONLY */}
+            {/* Consulting Doctor Dropdown */}
             <Select
               label="Consulting Doctor (Optional)"
               options={[
@@ -1310,6 +1326,22 @@ export const WalkInIntakeView: React.FC = () => {
               }}
               onKeyDown={handleDoctorSelectKeyDown}
             />
+
+            {/* Assigned RMO (Resident Medical Officer) - STRICTLY for EMERGENCY only */}
+            {encounterType === 'EMERGENCY' && (
+              <Select
+                label="Assigned RMO (Resident Medical Officer) (Optional)"
+                options={[
+                  { label: 'Not Assigned / Select Later', value: '' },
+                  ...rmosForEmergency.map((rmo) => ({
+                    label: `${rmo.fullName}${rmo.pmdcNumber ? ` (PMDC: ${rmo.pmdcNumber})` : ''}`,
+                    value: rmo.id,
+                  })),
+                ]}
+                value={rmoStaffId}
+                onChange={(e) => setRmoStaffId(e.target.value)}
+              />
+            )}
 
 
           </div>

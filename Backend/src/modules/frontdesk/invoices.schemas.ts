@@ -27,6 +27,7 @@ export const createEncounterSchema = z.object({
     .optional(),
   departmentId: z.string().uuid().optional(),
   doctorStaffId: z.string().uuid().optional(),
+  rmoStaffId: z.string().uuid().optional(),
   notes: z.string().optional(),
   weightKg: z.coerce.number().positive().max(999).optional(),
   // Panel case authorization / guarantee
@@ -36,7 +37,15 @@ export const createEncounterSchema = z.object({
 }).refine(
   (data) => data.panelPatientId || data.selfPayEncounterId || data.newSelfPayPatient,
   { message: 'Either panelPatientId, selfPayEncounterId, or newSelfPayPatient is required' },
-);
+).superRefine((data, ctx) => {
+  if (data.rmoStaffId && data.encounterType !== 'EMERGENCY') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'RMO can only be assigned to EMERGENCY encounters',
+      path: ['rmoStaffId'],
+    });
+  }
+});
 
 export type CreateEncounterBody = z.infer<typeof createEncounterSchema>;
 

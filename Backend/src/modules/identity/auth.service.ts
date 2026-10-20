@@ -28,7 +28,7 @@ async function issueRefreshToken(
   const tokenHash = hashToken(rawToken);
   const expiresAt = new Date(Date.now() + msToMillis(env.JWT_REFRESH_TTL));
 
-  await authRepository.createRefreshToken({
+  const session = await authRepository.createRefreshToken({
     portalUserId,
     tokenHash,
     expiresAt,
@@ -36,7 +36,7 @@ async function issueRefreshToken(
     ipAddress: meta.ipAddress,
   });
 
-  return { rawToken, expiresAt };
+  return { rawToken, expiresAt, sessionId: session.id };
 }
 
 function msToMillis(value: string): number {
@@ -62,14 +62,15 @@ export const authService = {
     const passwordOk = await bcrypt.compare(body.password, user.passwordHash);
     if (!passwordOk) throw new AuthenticationError('Invalid credentials');
 
+    const { rawToken: refreshToken, expiresAt, sessionId } = await issueRefreshToken(user.id, meta);
     const payload: AccessTokenPayload = {
       sub: user.id,
       role: user.role,
       staffId: user.staffId,
       mustResetPassword: user.mustResetPassword,
+      sessionId,
     };
     const accessToken = signAccessToken(payload);
-    const { rawToken: refreshToken, expiresAt } = await issueRefreshToken(user.id, meta);
     await authRepository.updateLastLogin(user.id);
 
     return {
@@ -112,7 +113,7 @@ export const authService = {
       throw new AuthenticationError('Account is not active');
     }
 
-    const { rawToken: newRefreshToken, expiresAt } = await issueRefreshToken(user.id, meta);
+    const { rawToken: newRefreshToken, expiresAt, sessionId } = await issueRefreshToken(user.id, meta);
     await authRepository.revokeRefreshToken(existing.id, newRefreshToken);
 
     const payload: AccessTokenPayload = {
@@ -120,6 +121,7 @@ export const authService = {
       role: user.role,
       staffId: user.staffId,
       mustResetPassword: user.mustResetPassword,
+      sessionId,
     };
     const accessToken = signAccessToken(payload);
 

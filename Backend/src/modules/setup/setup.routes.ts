@@ -84,6 +84,7 @@ router.put('/high-cost-medicine-policy', write, validate({ body: s.updateHighCos
 // Provider Settlements (HMS_V7.2_NEW_REQUIREMENTS.md §2.8)
 router.get('/provider-settlements', view, validate({ query: s.listProviderSettlementsQuerySchema }), asyncHandler(c.listProviderSettlements));
 router.post('/provider-settlements', create, validate({ body: s.createProviderSettlementSchema }), asyncHandler(c.createProviderSettlement));
+router.get('/department-payables-summary', view, validate({ query: s.departmentPayablesQuerySchema }), asyncHandler(c.getDepartmentPayablesSummary));
 
 // Reset Test / Transactional Data (Super Admin only)
 router.post('/reset-transactional-data', remove, asyncHandler(c.resetTransactionalData));

@@ -191,6 +191,9 @@ export const setupController = {
   createProviderSettlement: async (req: Request, res: Response) => {
     res.status(201).json({ data: await setupService.createProviderSettlement(req.body, actorId(req)) });
   },
+  getDepartmentPayablesSummary: async (req: Request, res: Response) => {
+    res.json({ data: await setupService.getDepartmentPayablesSummary(req.query as any) });
+  },
 
   // Reset Test / Transactional Data (Super Admin only)
   resetTransactionalData: async (req: Request, res: Response) => {

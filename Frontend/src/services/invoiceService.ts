@@ -76,6 +76,7 @@ export interface InvoiceDetail extends InvoiceSummary {
   lines: InvoiceLine[];
   receipts: PaymentReceiptRow[];
   doctorName: string;
+  rmoName?: string;
   departmentName: string;
   panelName: string;
   patientPhone?: string;
@@ -186,6 +187,7 @@ function toInvoiceDetail(raw: Record<string, any>): InvoiceDetail {
     ...toInvoiceSummary(raw),
     admissionDepartmentName: admissionDept,
     doctorName: doctor,
+    rmoName: raw.rmo?.fullName || raw.admissionRecord?.rmo?.fullName || undefined,
     departmentName: department,
     panelName: raw.panelPatient?.corporatePanel?.name || raw.panelPatient?.corporatePanel?.organizationName || '',
     patientPhone: raw.panelPatient?.primaryPhone || raw.selfPayEncounter?.phone || '',
@@ -311,6 +313,7 @@ export interface CreateEncounterFormValues {
   };
   departmentId?: string;
   doctorStaffId?: string;
+  rmoStaffId?: string;
   notes?: string;
   /** Case authorization/guarantee — required by the backend when the selected panel company's `authorizationRequired` policy is on (panel.md §15 backlog item 2). */
   authorizationNumber?: string;
@@ -328,6 +331,7 @@ export async function createEncounter(values: CreateEncounterFormValues): Promis
     newSelfPayPatient: values.newSelfPayPatient || undefined,
     departmentId: values.departmentId || undefined,
     doctorStaffId: values.doctorStaffId || undefined,
+    rmoStaffId: values.rmoStaffId || undefined,
     notes: values.notes?.trim() || undefined,
     authorizationNumber: values.authorizationNumber?.trim() || undefined,
     authorizationLimit: values.authorizationLimit,

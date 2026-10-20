@@ -11,7 +11,7 @@ const { tx } = vi.hoisted(() => ({ tx: {
 vi.mock('@/db/client', () => ({ prisma: { $transaction: (fn: any) => fn(tx) } }));
 import { admissionService } from '../src/modules/admission/admission.service';
 import { transferBedSchema } from '../src/modules/admission/admission.schemas';
-import { STANDALONE_ROOM, transferLocations } from '../../ch-sharif-and-saeed-hospital---hms/src/utils/admissionTransfer';
+import { STANDALONE_ROOM, transferLocations } from '../../Frontend/src/utils/admissionTransfer';
 
 beforeEach(() => {
   vi.resetAllMocks();

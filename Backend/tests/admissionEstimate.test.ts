@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => {
   const tx = {
     admissionRecord: { create: vi.fn() },
     hospitalInvoice: { create: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
-    invoiceLineItem: { create: vi.fn() },
+    invoiceLineItem: { create: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
     serviceRate: { findFirst: vi.fn() },
     ward: { findUnique: vi.fn() },
     paymentReceipt: { create: vi.fn() },
@@ -18,11 +18,11 @@ vi.mock('@/shared/idGenerator', () => ({
   generateAdmissionNumber: () => 'ADM-TEST', generateInvoiceNumber: () => 'INV-TEST',
   generateReceiptNumber: () => 'REC-TEST', generateMedicineRequestNumber: () => 'REQ-TEST',
 }));
-vi.mock('../../ch-sharif-and-saeed-hospital---hms/src/services/apiClient', () => ({ default: { get: mocks.get } }));
-vi.mock('../../ch-sharif-and-saeed-hospital---hms/src/services/patientRegistryService', () => ({ getPatientById: () => undefined }));
+vi.mock('../../Frontend/src/services/apiClient', () => ({ default: { get: mocks.get } }));
+vi.mock('../../Frontend/src/services/patientRegistryService', () => ({ getPatientById: () => undefined }));
 import { admissionService } from '../src/modules/admission/admission.service';
 import { createPlannedAdmissionSchema } from '../src/modules/admission/admission.schemas';
-import { fetchInvoiceDetail } from '../../ch-sharif-and-saeed-hospital---hms/src/services/invoiceService';
+import { fetchInvoiceDetail } from '../../Frontend/src/services/invoiceService';
 import { invoicePaymentStatus } from '../src/shared/invoicePaymentStatus';
 
 beforeEach(() => {
@@ -92,7 +92,7 @@ describe('informational admission estimate', () => {
   it.each([0, 90000])('preserves the configured ward charge independently of estimate %s', async (estimatedAmount) => {
     await admissionService.createPlannedAdmission({ ...base, estimatedAmount, wardId: 'ward' }, 'actor');
     expect(mocks.tx.invoiceLineItem.create.mock.calls[0][0].data.rateSnapshot.toString()).toBe('750');
-    expect(mocks.tx.hospitalInvoice.update.mock.calls[0][0].data.total.increment.toString()).toBe('750');
+    expect(mocks.tx.hospitalInvoice.update.mock.calls[0][0].data.total.toString()).toBe('750');
     expect(mocks.tx.paymentReceipt.create).not.toHaveBeenCalled();
   });
 

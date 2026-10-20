@@ -52,6 +52,33 @@ export const pharmacyBridgeClient = {
     return null;
   },
 
+  async getUnits() {
+    const urlsToTry = getPharmacyBaseUrls();
+
+    for (const baseUrl of urlsToTry) {
+      try {
+        const url = new URL(`${baseUrl}/units`);
+        const res = await fetch(url.toString(), {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-bridge-token': env.INTERNAL_BRIDGE_SECRET,
+          },
+        });
+
+        if (!res.ok) continue;
+        const data = await res.json();
+        if (data && (data as any).data) {
+          return (data as any).data;
+        }
+      } catch (err: any) {
+        // eslint-disable-next-line no-console
+        console.warn(`[pharmacyBridgeClient] getUnits failed on ${baseUrl}: ${err.message}`);
+      }
+    }
+    return [];
+  },
+
   async dispatchMedicineRequest(payload: {
     externalAdmissionRef: string;
     externalRequestRef: string;

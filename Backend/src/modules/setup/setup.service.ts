@@ -1,4 +1,8 @@
+import { Decimal } from '@prisma/client/runtime/library';
+import { lockMainFund } from '@/shared/mainFundLock';
+import { departmentCollectionLedger } from '@/shared/departmentCollections';
 import { isCoreEncounterService, serviceSelectionWhere, validateServiceMaster, type ServiceFilters } from '@/shared/serviceClassification';
+import { resolveDateRange } from '@/modules/reports/dashboard.service';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
 import { NotFoundError, ConflictError, ValidationError } from '@/shared/errors/AppError';
@@ -1566,56 +1570,247 @@ export const setupService = {
     return rows.map((row) => ({ ...row, settledByLabel: formatActorFromRelation(row.settledByUser as ActorRelation | null) }));
   },
 
-  /**
-   * Records a settlement voucher against an Outsourced Provider (§2.8).
-   * `eligibleRealizedAmount` is entered by the settling user for now — see
-   * the schema-file comment on `createProviderSettlementSchema` for why
-   * (Front Desk's department sub-invoice split, §2.2, is future work).
-   * `alreadySettledAmount` is always computed server-side from prior
-   * settlements for this exact (provider, department) pair, never trusted
-   * from the client, and settlement can never exceed what remains eligible.
-   */
+  /** Eligibility is calculated from receipts inside the same serializable transaction. */
   async createProviderSettlement(body: CreateProviderSettlementBody, settledById: string) {
-    await this.assertExists('outsourcedProvider', body.outsourcedProviderId);
-    if (body.departmentId) await this.assertExists('department', body.departmentId);
-
-    const priorSettlements = await prisma.providerSettlement.aggregate({
-      where: { outsourcedProviderId: body.outsourcedProviderId, departmentId: body.departmentId ?? null },
-      _sum: { settlementAmount: true },
-    });
-    const alreadySettledAmount = Number(priorSettlements._sum.settlementAmount ?? 0);
-    const remainingEligible = body.eligibleRealizedAmount - alreadySettledAmount;
-
-    if (body.settlementAmount > remainingEligible + 0.01) {
-      throw new ValidationError(
-        `Settlement amount (${body.settlementAmount}) exceeds the remaining eligible realized payable (${remainingEligible.toFixed(2)}). Already settled: ${alreadySettledAmount.toFixed(2)} of ${body.eligibleRealizedAmount}.`,
-      );
+    if (!body.departmentId) throw new ValidationError('Select a department for this settlement.');
+    const { requestKey, ...voucherBody } = body;
+    if (!requestKey) throw new ValidationError('A settlement request key is required.');
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const created = await prisma.$transaction(async (tx) => {
+          const existing = await tx.providerSettlement.findUnique({
+            where: { id: requestKey }, include: this.providerSettlementInclude,
+          });
+          if (existing) {
+            const fields = ['outsourcedProviderId', 'departmentId', 'paymentMethod', 'paymentReference',
+              'periodLabel', 'representativeName', 'representativeDesignation', 'remarks'] as const;
+            if (existing.settledById !== settledById || !existing.settlementAmount.eq(body.settlementAmount) ||
+                fields.some(key => (existing[key] ?? '') !== (body[key] ?? ''))) {
+              throw new ConflictError('This request key already belongs to a different settlement.');
+            }
+            return existing;
+          }
+          if (body.paymentMethod === 'CASH') await lockMainFund(tx);
+          const department = await tx.department.findUnique({
+            where: { id: body.departmentId }, include: { outsourcedProvider: true },
+          });
+          if (!department || department.fulfillmentOwnership !== 'OUTSOURCED' ||
+              department.outsourcedProviderId !== body.outsourcedProviderId || !department.outsourcedProvider?.isActive) {
+            throw new ValidationError('Select the active outsourced provider linked to this department.');
+          }
+          const methods = department.outsourcedProvider.allowedPaymentMethods;
+          if (methods.length && !methods.includes(body.paymentMethod)) {
+            throw new ValidationError('This payment method is not allowed by the provider.');
+          }
+          const ambiguous = await tx.providerSettlement.count({ where: { OR: [
+            { outsourcedProviderId: body.outsourcedProviderId, departmentId: null },
+            { departmentId: body.departmentId, outsourcedProviderId: { not: body.outsourcedProviderId } },
+          ] } });
+          if (ambiguous) throw new ValidationError('Existing vouchers are unassigned or belong to a different provider. Reconcile these vouchers before making another payment.');
+          const ledger = await departmentCollectionLedger(tx, new Date(), body.departmentId);
+          const eligible = ledger.filter(r => r.departmentId === body.departmentId)
+            .reduce((sum, r) => sum.plus(r.amount), new Decimal(0));
+          const prior = await tx.providerSettlement.aggregate({
+            where: { departmentId: body.departmentId }, _sum: { settlementAmount: true },
+          });
+          const settled = prior._sum.settlementAmount ?? new Decimal(0);
+          const remaining = eligible.minus(settled);
+          const amount = new Decimal(body.settlementAmount);
+          if (!amount.gt(0) || amount.decimalPlaces() > 2 || amount.gt(remaining)) {
+            throw new ValidationError('Settlement exceeds available payable (' + Decimal.max(remaining, 0).toFixed(2) + ') or is not a valid amount in cents.');
+          }
+          if (body.paymentMethod === 'CASH') {
+            const rows = await tx.mainCashFundEntry.findMany({ select: { direction: true, amount: true } });
+            const available = rows.reduce((sum, r) => r.direction === 'IN' ? sum.plus(r.amount) : sum.minus(r.amount), new Decimal(0));
+            if (available.lt(amount)) {
+              throw new ValidationError(`Insufficient Main Fund cash (${available.toFixed(2)} available). Deposit or accept cash handovers before paying the provider.`);
+            }
+          }
+          const voucher = await tx.providerSettlement.create({
+            data: {
+              ...voucherBody, id: requestKey, departmentId: department.id,
+              eligibleRealizedAmount: eligible, alreadySettledAmount: settled,
+              settlementAmount: amount, status: amount.eq(remaining) ? 'FULL' : 'PARTIAL',
+              settledById,
+            },
+            include: this.providerSettlementInclude,
+          });
+          if (body.paymentMethod === 'CASH') {
+            await tx.mainCashFundEntry.create({
+              data: {
+                // Same UUID gives a stable, unique link without a destructive schema migration.
+                id: voucher.id, direction: 'OUT', amount, type: 'WITHDRAWAL',
+                note: `Provider settlement ${voucher.id} — ${department.name}`,
+                performedById: settledById,
+              },
+            });
+          }
+          return voucher;
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+        return { ...created, settledByLabel: formatActorFromRelation(created.settledByUser as ActorRelation | null) };
+      } catch (error) {
+        if (['P2034', 'P2002'].includes((error as { code?: string }).code ?? '') && attempt < 2) continue;
+        throw error;
+      }
     }
-
-    const computedStatus = alreadySettledAmount + body.settlementAmount >= body.eligibleRealizedAmount - 0.01 ? 'FULL' : 'PARTIAL';
-
-    const created = await prisma.providerSettlement.create({
-      data: {
-        outsourcedProviderId: body.outsourcedProviderId,
-        departmentId: body.departmentId,
-        periodLabel: body.periodLabel,
-        eligibleRealizedAmount: body.eligibleRealizedAmount,
-        alreadySettledAmount,
-        settlementAmount: body.settlementAmount,
-        status: computedStatus,
-        paymentMethod: body.paymentMethod,
-        paymentReference: body.paymentReference,
-        representativeName: body.representativeName,
-        representativeDesignation: body.representativeDesignation,
-        remarks: body.remarks,
-        settledById,
-      },
-      include: this.providerSettlementInclude,
-    });
-    return { ...created, settledByLabel: formatActorFromRelation(created.settledByUser as ActorRelation | null) };
+    throw new ConflictError('Settlement changed concurrently. Please refresh and retry.');
   },
 
-  // ── shared existence guard ───────────────────────────────────────────
+  async getDepartmentPayablesSummary(query: {
+    preset?: string;
+    fromDate?: string;
+    toDate?: string;
+    type?: string;
+  }) {
+    const preset = query.preset || 'this_month';
+    const { start, end, label } = preset === 'all' ? { start: new Date(0), end: new Date(), label: 'All Time' } : resolveDateRange({
+      preset: preset as any,
+      fromDate: query.fromDate,
+      toDate: query.toDate,
+    });
+
+    const departments = await prisma.department.findMany({
+      where: {
+        ...(query.type === 'OUTSOURCED'
+          ? { fulfillmentOwnership: 'OUTSOURCED' }
+          : query.type === 'INTERNAL'
+            ? { fulfillmentOwnership: 'INTERNAL' }
+            : {}),
+      },
+      include: {
+        outsourcedProvider: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            allowedPaymentMethods: true,
+            settlementCycle: true,
+            isActive: true,
+          },
+        },
+      },
+      orderBy: [{ fulfillmentOwnership: 'desc' }, { name: 'asc' }],
+    });
+
+    const invoiceLines = await prisma.invoiceLineItem.findMany({
+      where: {
+        hospitalInvoice: {
+          status: { not: 'VOID' },
+          createdAt: { gte: start, lte: end },
+        },
+      },
+      select: {
+        id: true,
+        lineGross: true,
+        discountAmount: true,
+        lineNet: true,
+        serviceRateId: true,
+        serviceRate: {
+          select: {
+            departmentId: true,
+          },
+        },
+        hospitalInvoice: {
+          select: {
+            id: true,
+            departmentId: true,
+            total: true,
+            paidTotal: true,
+          },
+        },
+      },
+    });
+
+    const ledger = await departmentCollectionLedger(prisma, end);
+    const settlements = await prisma.providerSettlement.findMany({
+      where: { settledAt: { lte: end } },
+      select: {
+        id: true,
+        departmentId: true,
+        outsourcedProviderId: true,
+        settlementAmount: true,
+        settledAt: true,
+      },
+    });
+
+    const summaryRows = departments.map((d) => {
+      const matchingLines = invoiceLines.filter((l) => {
+        const lineDeptId = l.serviceRate?.departmentId;
+        if (lineDeptId) {
+          return lineDeptId === d.id;
+        }
+        return l.hospitalInvoice.departmentId === d.id;
+      });
+
+      const invoicesSet = new Set<string>();
+      let periodGross = 0;
+      let periodDiscount = 0;
+      let periodBilled = 0;
+      let periodRealized = 0;
+
+      for (const l of matchingLines) {
+        invoicesSet.add(l.hospitalInvoice.id);
+        const gross = Number(l.lineGross);
+        const disc = Number(l.discountAmount);
+        const net = Number(l.lineNet);
+        periodGross += gross;
+        periodDiscount += disc;
+        periodBilled += net;
+
+      }
+      const collections = ledger.filter(r => r.departmentId === d.id);
+      const sum = (values: Decimal[]) => values.reduce((a, b) => a.plus(b), new Decimal(0)).toNumber();
+      periodRealized = sum(collections.filter(r => r.collectedAt >= start).map(r => r.amount));
+      const cumulativeRealized = sum(collections.map(r => r.amount));
+      const deptSettlements = settlements.filter(s => s.departmentId === d.id);
+      const alreadySettled = sum(deptSettlements.map(s => s.settlementAmount));
+      const periodSettled = sum(deptSettlements.filter(s => s.settledAt >= start).map(s => s.settlementAmount));
+      const isOutsourced = d.fulfillmentOwnership === 'OUTSOURCED';
+      const closingBalance = isOutsourced ? new Decimal(cumulativeRealized).minus(alreadySettled).toNumber() : 0;
+      const openingBalance = isOutsourced ? new Decimal(closingBalance).minus(periodRealized).plus(periodSettled).toNumber() : 0;
+      const remainingPayable = Math.max(0, closingBalance);
+      const requiresSettlementReconciliation = settlements.some(s =>
+        (s.outsourcedProviderId === d.outsourcedProviderId && !s.departmentId) ||
+        (s.departmentId === d.id && s.outsourcedProviderId !== d.outsourcedProviderId));
+
+      return {
+        departmentId: d.id,
+        departmentName: d.name,
+        departmentCode: d.code,
+        fulfillmentOwnership: d.fulfillmentOwnership,
+        outsourcedProvider: d.outsourcedProvider,
+        invoicesCount: invoicesSet.size,
+        servicesCount: matchingLines.length,
+        periodGross: Math.round(periodGross * 100) / 100,
+        periodDiscount: Math.round(periodDiscount * 100) / 100,
+        periodBilled: Math.round(periodBilled * 100) / 100,
+        periodRealized: Math.round(periodRealized * 100) / 100,
+        cumulativeRealized,
+        periodSettled,
+        openingBalance,
+        closingBalance,
+        requiresSettlementReconciliation,
+        alreadySettled: Math.round(alreadySettled * 100) / 100,
+        remainingPayable: Math.round(remainingPayable * 100) / 100,
+      };
+    });
+
+    const totalBilled = summaryRows.reduce((sum, r) => sum + r.periodBilled, 0);
+    const totalRealized = summaryRows.reduce((sum, r) => sum + r.periodRealized, 0);
+    const totalSettled = summaryRows.reduce((sum, r) => sum + r.periodSettled, 0);
+    const totalRemaining = summaryRows.reduce((sum, r) => sum + r.remainingPayable, 0);
+
+    return {
+      period: { label, start: start.toISOString(), end: end.toISOString() },
+      kpis: {
+        totalBilled: Math.round(totalBilled * 100) / 100,
+        totalRealized: Math.round(totalRealized * 100) / 100,
+        totalSettled: Math.round(totalSettled * 100) / 100,
+        totalRemaining: Math.round(totalRemaining * 100) / 100,
+      },
+      departments: summaryRows,
+    };
+  },
   async assertExists(
     model: 'department' | 'serviceRate' | 'ward' | 'room' | 'bed' | 'corporatePanel' | 'shift' | 'outsourcedProvider',
     id: string,

@@ -1,9 +1,9 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { createShiftSchema, updateShiftSchema } from '../src/modules/setup/setup.schemas';
 const api = vi.hoisted(() => ({ post: vi.fn(), patch: vi.fn() }));
-vi.mock('../../ch-sharif-and-saeed-hospital---hms/src/services/apiClient', () => ({ default: api }));
-vi.mock('../../ch-sharif-and-saeed-hospital---hms/src/services/departmentService', () => ({ DepartmentService: { getDepartmentById: (id: string) => ({id,name:'Ward',status:'Active'}) } }));
-import { ShiftService } from '../../ch-sharif-and-saeed-hospital---hms/src/services/shiftService';
+vi.mock('../../Frontend/src/services/apiClient', () => ({ default: api }));
+vi.mock('../../Frontend/src/services/departmentService', () => ({ DepartmentService: { getDepartmentById: (id: string) => ({id,name:'Ward',status:'Active'}) } }));
+import { ShiftService } from '../../Frontend/src/services/shiftService';
 const departmentId = '11111111-1111-4111-8111-111111111111';
 const fields = { name:'Morning', startTime:'08:00', endTime:'16:00' };
 const form: any = { ...fields,code:'',departmentId:'',shiftType:'MORNING',breakMinutes:0,defaultArrivalGraceMinutes:0,defaultEarlyExitToleranceMinutes:0,defaultWeeklyOffDays:[],status:'ACTIVE' };

@@ -1,5 +1,5 @@
 import type { PanelMembershipDetails } from '../../../types/patient';
-import { doctorsForEncounter } from '../../../utils/doctorAvailability';
+import { doctorsForEncounter, rmosForEncounter } from '../../../utils/doctorAvailability';
 import { formatDateISO, getHospitalCurrentDate, formatDisplayDate } from '../../../utils/dateConstants';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
@@ -85,6 +85,7 @@ const emptyForm = (): CreateAdmissionFormValues => ({
   selfPayEncounterId: '',
   departmentId: '',
   doctorStaffId: '',
+  rmoStaffId: '',
   preferredBedId: '',
   expectedAt: formatDateISO(getHospitalCurrentDate()),
   diagnosis: '',
@@ -172,10 +173,15 @@ export const NewAdmissionView: React.FC = () => {
   const [allStaff, setAllStaff] = useState<StaffUser[]>(() => StaffUserService.getStaffUsers());
   const [departments, setDepartments] = useState<Department[]>(() => DepartmentService.getDepartments());
   const doctors = useMemo(() => doctorsForEncounter(allStaff, 'ADMISSION'), [allStaff]);
+  const rmos = useMemo(() => rmosForEncounter(allStaff, 'ADMISSION'), [allStaff]);
   useEffect(() => {
     setFormValues((prev) => prev.doctorStaffId && !doctors.some((doctor) => doctor.id === prev.doctorStaffId)
       ? { ...prev, doctorStaffId: '' } : prev);
   }, [doctors]);
+  useEffect(() => {
+    setFormValues((prev) => prev.rmoStaffId && !rmos.some((rmo) => rmo.id === prev.rmoStaffId)
+      ? { ...prev, rmoStaffId: '' } : prev);
+  }, [rmos]);
 
   // No separate Ward/Room selection is kept in CreateAdmissionFormValues — they only exist here
   // to narrow the Bed dropdown; the backend only needs the final preferredBedId + departmentId.
@@ -528,6 +534,7 @@ export const NewAdmissionView: React.FC = () => {
       admissionNumber: createdAdmission?.admissionNumber || '',
       departmentName: createdAdmission?.departmentName || '',
       doctorName: createdAdmission?.doctorName || 'Consultant',
+      rmoName: createdAdmission?.rmoName || '',
       wardName: createdAdmission?.bedLabel || '',
       admissionEstimatedAmount: createdAdmission?.estimatedAmount || null,
       subtotal: createdAdmission?.estimatedAmount || 0,
@@ -618,6 +625,7 @@ export const NewAdmissionView: React.FC = () => {
               <div class="meta-row"><span class="meta-label">Date &amp; Time:</span> <span class="meta-val">${inv.createdAt}</span></div>
               <div class="meta-row"><span class="meta-label">Department:</span> <span class="meta-val">${inv.departmentName || 'Inpatient'}</span></div>
               <div class="meta-row"><span class="meta-label">Doctor:</span> <span class="meta-val">${inv.doctorName || 'Consultant On Duty'}</span></div>
+              ${inv.rmoName ? `<div class="meta-row"><span class="meta-label">Assigned RMO:</span> <span class="meta-val">${inv.rmoName}</span></div>` : ''}
               <div class="meta-row"><span class="meta-label">Ward / Bed:</span> <span class="meta-val">${inv.wardName || 'Assigned'}</span></div>
               <div class="meta-row"><span class="meta-label">Status:</span> <span class="badge">${inv.status}</span></div>
             </div>
@@ -862,6 +870,15 @@ export const NewAdmissionView: React.FC = () => {
                 <span className="col-span-2 font-semibold text-slate-800">
                   {createdAdmission.doctorName || 'Consultant On Duty'}
                 </span>
+
+                {createdAdmission.rmoName && (
+                  <>
+                    <span className="text-slate-500 font-medium">Assigned RMO:</span>
+                    <span className="col-span-2 font-semibold text-slate-800">
+                      {createdAdmission.rmoName}
+                    </span>
+                  </>
+                )}
 
                 <span className="text-slate-500 font-medium">Ward / Room / Bed:</span>
                 <span className="col-span-2 font-semibold text-slate-900">
@@ -1520,6 +1537,19 @@ export const NewAdmissionView: React.FC = () => {
                 ]}
                 value={formValues.doctorStaffId}
                 onChange={(event) => setFormValues((prev) => ({ ...prev, doctorStaffId: event.target.value }))}
+                onKeyDown={handleSelectKeyDown}
+              />
+              <Select
+                label="Assigned RMO (Resident Medical Officer) (Optional)"
+                options={[
+                  { label: 'Not Assigned / Select Later', value: '' },
+                  ...rmos.map((rmo) => ({
+                    label: `${rmo.fullName}${rmo.pmdcNumber ? ` (PMDC: ${rmo.pmdcNumber})` : ''}`,
+                    value: rmo.id,
+                  })),
+                ]}
+                value={formValues.rmoStaffId || ''}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, rmoStaffId: event.target.value }))}
                 onKeyDown={handleSelectKeyDown}
               />
               <Select

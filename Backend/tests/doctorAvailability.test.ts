@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { doctorsForEncounter } from '../../ch-sharif-and-saeed-hospital---hms/src/utils/doctorAvailability';
-import type { StaffUser } from '../../ch-sharif-and-saeed-hospital---hms/src/types/staffUser';
+import { doctorsForEncounter } from '../../Frontend/src/utils/doctorAvailability';
+import type { StaffUser } from '../../Frontend/src/types/staffUser';
 import { createStaffBodySchema, updateStaffBodySchema } from '../src/modules/identity/staff.schemas';
 import { bookAppointmentSchema, updateAppointmentSchema } from '../src/modules/frontdesk/appointments.schemas';
 import { createEncounterSchema } from '../src/modules/frontdesk/invoices.schemas';
@@ -9,8 +9,8 @@ import { createPlannedAdmissionSchema } from '../src/modules/admission/admission
 const mocks = vi.hoisted(() => ({
   get: vi.fn(), findMany: vi.fn(), findById: vi.fn(), create: vi.fn(), update: vi.fn(),
 }));
-vi.mock('../../ch-sharif-and-saeed-hospital---hms/src/services/apiClient', () => ({ default: { get: mocks.get } }));
-vi.mock('../../ch-sharif-and-saeed-hospital---hms/src/services/departmentService', () => ({ DepartmentService: {} }));
+vi.mock('../../Frontend/src/services/apiClient', () => ({ default: { get: mocks.get } }));
+vi.mock('../../Frontend/src/services/departmentService', () => ({ DepartmentService: {} }));
 vi.mock('@/db/client', () => ({
   prisma: {
     // staffService.create writes the Staff row (plus any wizard sections)
@@ -41,7 +41,7 @@ vi.mock('@/db/client', () => ({
 }));
 vi.mock('@/shared/actorLabel', () => ({ resolveActorLabel: vi.fn().mockResolvedValue('Test Admin') }));
 vi.mock('../src/modules/identity/staff.repository', () => ({ staffRepository: mocks }));
-import { fetchStaffUsers } from '../../ch-sharif-and-saeed-hospital---hms/src/services/staffUserService';
+import { fetchStaffUsers } from '../../Frontend/src/services/staffUserService';
 import { staffService } from '../src/modules/identity/staff.service';
 
 const id = 'c90d3c00-ed54-4c87-b4e8-e6e3cfc37a01';

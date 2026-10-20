@@ -6,6 +6,8 @@ import bcrypt from 'bcryptjs';
 vi.mock('@/db/client', () => {
   const mockTx: any = {};
   const mockPrisma: any = {
+    $executeRaw: vi.fn(),
+    hmsPharmacyCharge: { findFirst: vi.fn().mockResolvedValue(null), count: vi.fn().mockResolvedValue(0), findMany: vi.fn().mockResolvedValue([]) },
     $queryRaw: vi.fn(),
     $transaction: vi.fn(async (cb: any) => cb(mockTx)),
     admissionRecord: {
@@ -34,6 +36,8 @@ vi.mock('@/db/client', () => {
       create: vi.fn(),
     },
     pharmacyClearance: {
+      count: vi.fn().mockResolvedValue(0),
+      findMany: vi.fn().mockResolvedValue([]),
       create: vi.fn(),
       findUnique: vi.fn(),
       update: vi.fn(),
@@ -58,6 +62,7 @@ vi.mock('@/db/client', () => {
       findFirst: vi.fn(),
     },
     medicineMaster: {
+      findUnique: vi.fn().mockResolvedValue({ id: 'medicine', isActive: true }),
       findMany: vi.fn(),
     },
     highCostMedicineAuthorization: {
@@ -71,6 +76,7 @@ vi.mock('@/db/client', () => {
       update: vi.fn(),
     },
     invoiceLineItem: {
+      findMany: vi.fn().mockResolvedValue([]),
       create: vi.fn(),
     },
     serviceRate: {
@@ -108,6 +114,10 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
 
   beforeEach(() => {
     vi.clearAllMocks();
+    (prisma.staff.findUnique as any).mockResolvedValue({ id: doctorStaffId, isActive: true, category: 'Doctor', fullName: 'Dr. Specialist' });
+    (prisma.paymentReceipt.aggregate as any).mockResolvedValue({ _sum: { amount: new Decimal(0) } });
+    (prisma.hospitalInvoice.create as any).mockImplementation(async ({ data }: any) => ({ id: "invoice-created", ...data }));
+    (prisma.dualDischargeClearance.findMany as any).mockResolvedValue([]);
     (prisma.bed.updateMany as any).mockResolvedValue({ count: 1 });
     (prisma.admissionRecord.updateMany as any).mockResolvedValue({ count: 1 });
     (prisma.selfPayEncounter.create as any).mockResolvedValue({
@@ -117,7 +127,7 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
   });
 
   describe('1. Planned Admission & Billing Hand-off (§4.7, D16 p.10)', () => {
-    it('creates planned admission without occupying bed at booking time', async () => {
+    it('occupies the selected bed during planned admission booking', async () => {
       (prisma.admissionRecord.create as any).mockResolvedValue({
         id: 'adm-001',
         admissionNumber: 'ADM-TEST-001',
@@ -158,8 +168,8 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
           }),
         }),
       );
-      // Confirms bed status was NOT updated to OCCUPIED during planned booking
-      expect(prisma.bed.update).not.toHaveBeenCalled();
+      // Planned booking reserves the selected bed as OCCUPIED (confirmed workflow).
+      expect(prisma.bed.update).toHaveBeenCalledWith({ where: { id: bedId1 }, data: { status: 'OCCUPIED' } });
       expect(result.admission.status).toBe('PLANNED');
       // No advanceAmount was passed, so no receipt should be created.
       expect(result.advanceReceipt).toBeNull();
@@ -193,7 +203,7 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
       expect(result.admission.doctorStaffId).toBeNull();
     });
 
-    it('rejects a preferred bed that does not belong to the admitting department', async () => {
+    it('keeps the explicitly selected admitting department when booking a bed from another ward', async () => {
       (prisma.bed.findUnique as any).mockResolvedValue({
         id: bedId1,
         status: 'AVAILABLE',
@@ -201,19 +211,10 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
         room: { ward: { departmentId: 'dept-cardiology' } },
       });
 
-      await expect(
-        admissionService.createPlannedAdmission(
-          {
-            departmentId,
-            doctorStaffId,
-            preferredBedId: bedId1,
-            medicationMode: 'SELF',
-            newSelfPayPatient: { fullName: 'Kamran Akmal', phone: '03211234567' },
-          },
-          staffUserId,
-        ),
-      ).rejects.toThrow('does not belong to the chosen admitting department');
-      expect(prisma.admissionRecord.create).not.toHaveBeenCalled();
+      (prisma.admissionRecord.create as any).mockImplementation(async ({ data }: any) => ({ id: 'adm-cross-ward', ...data }));
+      await admissionService.createPlannedAdmission({ departmentId, doctorStaffId, preferredBedId: bedId1, medicationMode: 'SELF', selfPayEncounterId: 'patient' }, staffUserId);
+      expect(prisma.admissionRecord.create).toHaveBeenCalledWith(expect.objectContaining({data: expect.objectContaining({departmentId, bedId: bedId1})}));
+      expect(prisma.bed.update).toHaveBeenCalledWith({where:{id:bedId1},data:{status:'OCCUPIED'}});
     });
 
     it('rejects a preferred bed that is not currently available', async () => {
@@ -235,7 +236,7 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
           },
           staffUserId,
         ),
-      ).rejects.toThrow('Only AVAILABLE beds can be preferred');
+      ).rejects.toThrow('Only AVAILABLE beds can be assigned');
       expect(prisma.admissionRecord.create).not.toHaveBeenCalled();
     });
 
@@ -868,6 +869,7 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
     it('blocks discharge when clearances are still pending', async () => {
       (prisma.admissionRecord.findUnique as any).mockResolvedValue({
         id: 'adm-001',
+        hospitalInvoices: [{id: 'unpaid', total: new Decimal(1000)}],
         status: 'ACTIVE',
         dischargeClearances: [
           { clearanceType: 'CLINICAL', status: 'CLEARED' },
@@ -878,7 +880,7 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
 
       await expect(
         admissionService.dischargePatient('adm-001', staffUserId),
-      ).rejects.toThrow(/The following clearances are still pending: \[HOSPITAL_BILLING, PHARMACY\]/);
+      ).rejects.toThrow(/Final discharge blocked/);
     });
 
     it('blocks hospital billing clearance if patient has outstanding unpaid invoices', async () => {
@@ -898,12 +900,13 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
           { clearanceType: 'HOSPITAL_BILLING' },
           staffUserId,
         ),
-      ).rejects.toThrow(/patient has unpaid hospital invoices/);
+      ).rejects.toThrow(/outstanding balance across their hospital invoices/);
     });
 
     it('allows final discharge when all 3 clearances are cleared and automatically frees bed to AVAILABLE', async () => {
       (prisma.admissionRecord.findUnique as any).mockResolvedValue({
         id: 'adm-001',
+        hospitalInvoices: [],
         status: 'ACTIVE',
         bedId: bedId1,
         dischargeClearances: [
@@ -924,6 +927,11 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
         status: 'AVAILABLE',
       });
 
+      (prisma.dualDischargeClearance.findMany as any).mockResolvedValue([
+        { clearanceType: 'CLINICAL', status: 'CLEARED' },
+        { clearanceType: 'HOSPITAL_BILLING', status: 'CLEARED' },
+        { clearanceType: 'PHARMACY', status: 'CLEARED' },
+      ]);
       const result = await admissionService.dischargePatient('adm-001', staffUserId);
 
       // Admission status set to DISCHARGED
@@ -953,6 +961,7 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
       (prisma.admissionRecord.findUnique as any).mockResolvedValue({
         id: 'adm-001',
         status: 'ACTIVE',
+        hospitalInvoices: [{id: 'unpaid', total: new Decimal(1000)}],
         dischargeClearances: [{ id: 'dc-clinical', clearanceType: 'CLINICAL', status: 'PENDING' }],
       });
       (prisma.staff.findUnique as any).mockResolvedValue({
@@ -969,6 +978,7 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
       (prisma.dualDischargeClearance.update as any).mockResolvedValue({ id: 'dc-clinical', status: 'CLEARED' });
       (prisma.admissionRecord.update as any).mockResolvedValue({ id: 'adm-001', status: 'DISCHARGE_PENDING' });
 
+      (prisma.dualDischargeClearance.findMany as any).mockResolvedValue([{ clearanceType: 'CLINICAL', status: 'CLEARED' }]);
       const result = await admissionService.clinicalDischarge(
         'adm-001',
         {
@@ -1262,7 +1272,7 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
     });
 
     it('auto-allocates one payment proportionally across outstanding department invoices', async () => {
-      (prisma.admissionRecord.findUnique as any).mockResolvedValue({ id: 'adm-alloc-1' });
+      (prisma.admissionRecord.findUnique as any).mockResolvedValue({ id: 'adm-alloc-1', hospitalInvoices: [], dischargeClearances: [] });
       (prisma.hospitalInvoice.findMany as any).mockResolvedValue([
         { id: 'inv-hs', invoiceNumber: 'INV-HS-1', total: new Decimal(25000), paidTotal: new Decimal(0) },
         { id: 'inv-lab', invoiceNumber: 'INV-LAB-1', total: new Decimal(12000), paidTotal: new Decimal(0) },
@@ -1281,7 +1291,7 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
     });
 
     it('banks the shortfall as an unallocated advance credit when explicit allocations sum to less than the collected amount, and still rejects when they exceed it', async () => {
-      (prisma.admissionRecord.findUnique as any).mockResolvedValue({ id: 'adm-alloc-2' });
+      (prisma.admissionRecord.findUnique as any).mockResolvedValue({ id: 'adm-alloc-2', hospitalInvoices: [], dischargeClearances: [] });
       (prisma.hospitalInvoice.findMany as any).mockResolvedValue([
         { id: 'inv-hs', invoiceNumber: 'INV-HS-2', total: new Decimal(25000), paidTotal: new Decimal(15000) }, // 10,000 outstanding
         { id: 'inv-lab', invoiceNumber: 'INV-LAB-2', total: new Decimal(12000), paidTotal: new Decimal(7000) }, // 5,000 outstanding
@@ -1334,7 +1344,7 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
     });
 
     it('rejects an explicit allocation that exceeds that invoice\'s own outstanding balance', async () => {
-      (prisma.admissionRecord.findUnique as any).mockResolvedValue({ id: 'adm-alloc-3' });
+      (prisma.admissionRecord.findUnique as any).mockResolvedValue({ id: 'adm-alloc-3', hospitalInvoices: [], dischargeClearances: [] });
       (prisma.hospitalInvoice.findMany as any).mockResolvedValue([
         { id: 'inv-hs', invoiceNumber: 'INV-HS-3', total: new Decimal(10000), paidTotal: new Decimal(8000) }, // 2,000 outstanding
       ]);
@@ -1403,7 +1413,7 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
     });
 
     it('settles outstanding invoices in full and banks the remainder as an unallocated advance credit when the auto-allocated amount exceeds total outstanding', async () => {
-      (prisma.admissionRecord.findUnique as any).mockResolvedValue({ id: 'adm-alloc-4' });
+      (prisma.admissionRecord.findUnique as any).mockResolvedValue({ id: 'adm-alloc-4', hospitalInvoices: [], dischargeClearances: [] });
       (prisma.hospitalInvoice.findMany as any).mockResolvedValue([
         { id: 'inv-hs', invoiceNumber: 'INV-HS-4', total: new Decimal(5000), paidTotal: new Decimal(4000) }, // 1,000 outstanding
       ]);
@@ -1425,7 +1435,7 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
     });
 
     it('collects a pure advance/deposit before any department invoice exists yet, instead of rejecting', async () => {
-      (prisma.admissionRecord.findUnique as any).mockResolvedValue({ id: 'adm-alloc-5' });
+      (prisma.admissionRecord.findUnique as any).mockResolvedValue({ id: 'adm-alloc-5', hospitalInvoices: [], dischargeClearances: [] });
       (prisma.hospitalInvoice.findMany as any).mockResolvedValue([]);
       (prisma.paymentReceipt.create as any).mockImplementation((args: any) => ({ id: 'rec-advance', ...args.data }));
 
@@ -1434,7 +1444,7 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
       expect(result.allocations).toEqual([{ invoiceId: null, amount: new Decimal(3000) }]);
       expect(prisma.paymentReceipt.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ admissionRecordId: 'adm-alloc-5', hospitalInvoiceId: undefined }),
+          data: expect.objectContaining({ admissionRecordId: 'adm-alloc-5', hospitalInvoiceId: null }),
         }),
       );
     });
@@ -1477,7 +1487,7 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
       expect(prisma.admissionRecord.update).toHaveBeenCalledTimes(1);
     });
 
-    it('getLedger flattens invoice-line charges and payment receipts into one chronological, running-balance list', async () => {
+    it('getLedger allocates the advance to service rows and reports unused credit separately', async () => {
       (prisma.admissionRecord.findUnique as any).mockResolvedValueOnce({
         ...baseAdmission,
         hospitalInvoices: [
@@ -1518,13 +1528,14 @@ describe('Phase 5: Inpatient Admission, Bed Lifecycle & Dual Clearance Discharge
 
       const ledger = await admissionBillingService.getLedger('adm-ledger-1');
 
-      expect(ledger.entries).toHaveLength(2);
-      expect(ledger.entries[0].type).toBe('Admission Advance');
-      expect(ledger.entries[0].credit).toEqual(new Decimal(5000));
-      expect(ledger.entries[0].runningBalance).toEqual(new Decimal(-5000));
-      expect(ledger.entries[1].type).toBe('CBC');
-      expect(ledger.entries[1].debit).toEqual(new Decimal(1500));
-      expect(ledger.entries[1].runningBalance).toEqual(new Decimal(-3500));
+      expect(ledger.entries).toHaveLength(1);
+      expect(ledger.entries[0].type).toBe('CBC');
+      expect(ledger.entries[0].debit).toEqual(new Decimal(1500));
+      expect(ledger.entries[0].paidAmount).toEqual(new Decimal(1500));
+      expect(ledger.entries[0].dueAmount).toEqual(new Decimal(0));
+      expect(ledger.entries[0].status).toBe('PAID');
+      expect(ledger.receipts).toHaveLength(1);
+      expect(ledger.receipts[0].amount).toEqual(new Decimal(5000));
       expect(ledger.summary.totalCharges).toEqual(new Decimal(1500));
       expect(ledger.summary.totalPaid).toEqual(new Decimal(5000));
       expect(ledger.summary.availableCredit).toEqual(new Decimal(3500));

@@ -42,6 +42,10 @@ export const dispensedCallbackSchema = z.object({
   deltaAmount: z.coerce.number().optional().nullable(),
   dispensedBy: z.string().optional().nullable(),
   dispensedAt: z.string().optional().nullable(),
+  requestStatuses: z.array(z.object({
+    externalRequestRef: z.string().min(1),
+    status: z.enum(['DISPENSED', 'PARTIALLY_FULFILLED']),
+  })).optional(),
   lines: z
     .array(
       z.object({

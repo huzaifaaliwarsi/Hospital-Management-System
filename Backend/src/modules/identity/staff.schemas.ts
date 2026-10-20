@@ -191,6 +191,10 @@ export const createStaffBodySchema = z
     designation: z.string().max(100).optional(),
     alternatePhone: z.string().max(30).optional(),
     email: z.string().email().optional(),
+    gender: z.string().max(20).optional(),
+    address: z.string().max(255).optional(),
+    qualification: z.string().max(255).optional(),
+    pmdcNumber: z.string().max(50).optional(),
     joiningDate: z.coerce.date().optional(),
     notes: z.string().optional(),
     assignedShiftId: z.string().uuid().optional(),
@@ -210,9 +214,13 @@ export const createStaffBodySchema = z
     clinicalAuth: clinicalAuthCredentialSchema.optional(),
   })
   .superRefine((body, ctx) => {
-    if (body.clinicalAuth && body.category !== 'Doctor') {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Discharge credentials can only be set for Doctors', path: ['clinicalAuth'] });
+    if (body.clinicalAuth && body.category !== 'Doctor' && body.category !== 'RMO') {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Discharge credentials can only be set for Doctors and RMOs', path: ['clinicalAuth'] });
     }
+    // PDF §9 — commission exists only for the "+ Commission" salary types, and
+    // those types must have their commission set up separately.
+    const commissionType = body.salaryProfile ? isCommissionBasis(body.salaryProfile.salaryBasis) : false;
+
     if (body.category === 'Doctor') {
       if (!body.departmentIds || body.departmentIds.length === 0) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Doctor requires at least one Clinical Department', path: ['departmentIds'] });
@@ -221,9 +229,17 @@ export const createStaffBodySchema = z
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Doctor requires at least one Assigned Service', path: ['serviceIds'] });
       }
     }
-    // PDF §9 — commission exists only for the "+ Commission" salary types, and
-    // those types must have their commission set up separately.
-    const commissionType = body.salaryProfile ? isCommissionBasis(body.salaryProfile.salaryBasis) : false;
+    if (body.category === 'RMO') {
+      if (body.availableForOpd) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'RMO cannot be made available for OPD', path: ['availableForOpd'] });
+      }
+      if (body.availableForObservation) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'RMO cannot be made available for Observation', path: ['availableForObservation'] });
+      }
+      if (commissionType && (!body.serviceIds || body.serviceIds.length === 0)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'RMO with commission requires at least one Assigned Service', path: ['serviceIds'] });
+      }
+    }
     if (body.commission && !commissionType) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Commission can only be set for Monthly + Commission or Daily + Commission salary types', path: ['commission'] });
     }
@@ -253,6 +269,10 @@ const updateStaffBaseSchema = z.object({
   designation: z.string().max(100).optional(),
   alternatePhone: z.string().max(30).optional(),
   email: z.string().email().optional(),
+  gender: z.string().max(20).optional(),
+  address: z.string().max(255).optional(),
+  qualification: z.string().max(255).optional(),
+  pmdcNumber: z.string().max(50).optional(),
   joiningDate: z.coerce.date().optional(),
   notes: z.string().optional(),
   assignedShiftId: z.string().uuid().nullable().optional(),
@@ -270,6 +290,14 @@ export const updateStaffBodySchema = updateStaffBaseSchema.superRefine((body, ct
     }
     if (body.serviceIds && body.serviceIds.length === 0) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Doctor requires at least one Assigned Service', path: ['serviceIds'] });
+    }
+  }
+  if (body.category === 'RMO') {
+    if (body.availableForOpd) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'RMO cannot be made available for OPD', path: ['availableForOpd'] });
+    }
+    if (body.availableForObservation) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'RMO cannot be made available for Observation', path: ['availableForObservation'] });
     }
   }
 });

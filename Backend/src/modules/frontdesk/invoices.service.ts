@@ -84,6 +84,21 @@ export const invoicesService = {
         });
       }
 
+      if (body.doctorStaffId) {
+        const doc = await tx.staff.findUnique({ where: { id: body.doctorStaffId } });
+        if (!doc || !doc.isActive) throw new ValidationError('Selected doctor not found or inactive');
+        if (doc.category !== 'Doctor') throw new ValidationError('Selected staff is not a Doctor');
+      }
+
+      if (body.rmoStaffId) {
+        if (body.encounterType !== 'EMERGENCY') {
+          throw new ValidationError('RMO can only be assigned to EMERGENCY encounters');
+        }
+        const rmo = await tx.staff.findUnique({ where: { id: body.rmoStaffId } });
+        if (!rmo || !rmo.isActive) throw new ValidationError('Selected RMO not found or inactive');
+        if (rmo.category !== 'RMO') throw new ValidationError('Selected staff is not an RMO');
+      }
+
       const invoiceNumber = await generateInvoiceNumber(tx);
       const queueToken = await generateQueueToken(body.encounterType, tx);
 
@@ -98,6 +113,8 @@ export const invoicesService = {
           panelPatientId: body.panelPatientId,
           selfPayEncounterId,
           departmentId: body.departmentId || null,
+          doctorStaffId: body.doctorStaffId || null,
+          rmoStaffId: body.rmoStaffId || null,
           notes: body.notes || null,
           weightKg: effectiveWeight,
           subtotal: new Decimal(0),
@@ -1059,6 +1076,8 @@ export const invoicesService = {
         corporatePanel: { select: { id: true, code: true, organizationName: true } },
         selfPayEncounter: { select: { id: true, fullName: true, mrNumber: true } },
         department: { select: { id: true, name: true, code: true } },
+        doctor: { select: { id: true, fullName: true, employeeId: true } },
+        rmo: { select: { id: true, fullName: true, employeeId: true } },
         lines: { select: { id: true, lineNet: true, quantity: true } },
         paymentReceipts: { select: { id: true, receiptNumber: true, amount: true, method: true, isReversed: true } },
       },
@@ -1080,11 +1099,14 @@ export const invoicesService = {
         panelPatient: { include: { corporatePanel: true } },
         selfPayEncounter: true,
         department: true,
+        doctor: true,
+        rmo: true,
         appointment: { include: { doctor: true, department: true } },
         admissionRecord: {
           include: {
             department: true,
             doctor: true,
+            rmo: true,
             bed: {
               include: {
                 room: {

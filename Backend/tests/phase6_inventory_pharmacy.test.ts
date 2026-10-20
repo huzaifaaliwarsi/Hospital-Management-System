@@ -6,6 +6,7 @@ vi.mock('@/db/client', () => {
   const mockTx: any = {};
   const mockPrisma: any = {
     $transaction: vi.fn(async (cb: any) => cb(mockTx)),
+    $executeRaw: vi.fn().mockResolvedValue(1),
     supplier: {
       create: vi.fn(),
       update: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock('@/db/client', () => {
       findMany: vi.fn(),
     },
     purchaseOrder: {
+      count: vi.fn().mockResolvedValue(0),
       create: vi.fn(),
     },
     department: {

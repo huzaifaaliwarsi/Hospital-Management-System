@@ -174,6 +174,10 @@ function toStaffUser(raw: Record<string, any>): StaffUser {
     email: raw.email || '',
     cnic: raw.cnic || undefined,
     dateOfBirth: raw.dateOfBirth || undefined,
+    gender: raw.gender ?? null,
+    address: raw.address ?? null,
+    qualification: raw.qualification ?? null,
+    pmdcNumber: raw.pmdcNumber ?? null,
     designation: raw.designation || '',
     departmentId: raw.departmentId || '',
     departmentName: raw.department?.name || '',
@@ -376,7 +380,7 @@ export class StaffUserService {
         ...(hasSalary(values) ? { salaryProfile: toSalaryPayload(values) } : {}),
         ...(hasSalary(values) && isCommissionBasis(values.salaryBasis) ? { commission: toCommissionPayload(values) } : {}),
         ...(values.bankEnabled ? { bankAccount: toBankPayload(values, values.joiningDate) } : {}),
-        ...(values.staffCategory === 'Doctor' && values.clinicalUsername.trim() && values.clinicalPassword
+        ...((values.staffCategory === 'Doctor' || values.staffCategory === 'RMO') && values.clinicalUsername.trim() && values.clinicalPassword
           ? { clinicalAuth: { username: values.clinicalUsername.trim(), password: values.clinicalPassword } }
           : {}),
       });
@@ -433,7 +437,7 @@ export class StaffUserService {
           apiClient.put(`/staff/${id}/commission`, toCommissionPayload(values))],
         [changed.bank && values.bankEnabled, 'bank account', () => apiClient.post(`/staff/${id}/bank-account`, toBankPayload(values, todayISO()))],
         // A new password (re)sets the discharge credential; blank keeps the current one.
-        [values.staffCategory === 'Doctor' && !!values.clinicalUsername.trim() && !!values.clinicalPassword, 'discharge credentials', () =>
+        [(values.staffCategory === 'Doctor' || values.staffCategory === 'RMO') && !!values.clinicalUsername.trim() && !!values.clinicalPassword, 'discharge credentials', () =>
           apiClient.post(`/staff/${id}/clinical-auth`, { username: values.clinicalUsername.trim(), password: values.clinicalPassword })],
       ];
       for (const [run, label, call] of steps) {
@@ -478,9 +482,17 @@ export class StaffUserService {
       alternatePhone: values.alternatePhone?.trim() || undefined,
       email: values.email?.trim() || undefined,
       designation: values.designation?.trim() || undefined,
-      // Only sync department/service assignments when this is a Doctor —
-      // never wipe an existing (Staff 360-set) department for other categories.
-      ...(values.staffCategory === 'Doctor' ? { departmentIds: values.departmentIds, serviceIds: values.serviceIds } : {}),
+      gender: values.gender?.trim() || undefined,
+      address: values.address?.trim() || undefined,
+      qualification: values.qualification?.trim() || undefined,
+      pmdcNumber: values.pmdcNumber?.trim() || undefined,
+      // Sync department/service assignments for Doctor or RMO
+      ...(values.staffCategory === 'Doctor' || values.staffCategory === 'RMO'
+        ? { departmentIds: values.departmentIds, serviceIds: values.serviceIds }
+        : {}),
+      ...(values.staffCategory === 'RMO'
+        ? { availableForOpd: false, availableForObservation: false, availableForEmergency: true }
+        : {}),
     };
   }
 
@@ -1039,6 +1051,10 @@ export class StaffUserService {
             phone: row.phone,
             alternatePhone: row.alternatePhone || '',
             email: row.email,
+            gender: 'Male',
+            address: '',
+            qualification: '',
+            pmdcNumber: '',
             designation: row.designation,
             staffCategory: row.staffCategory as StaffCategory,
             status: (row.status as StaffStatus) || 'ACTIVE',

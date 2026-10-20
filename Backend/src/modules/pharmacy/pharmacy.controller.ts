@@ -69,4 +69,9 @@ export const pharmacyController = {
     );
     res.status(201).json({ data: dispense });
   },
+
+  listUnits: async (_req: Request, res: Response) => {
+    const units = await pharmacyService.listUnits();
+    res.json({ data: units });
+  },
 };

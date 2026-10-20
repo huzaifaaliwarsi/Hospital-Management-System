@@ -146,7 +146,7 @@ export const pharmacyBridgeService = {
       if (
         existingCharge &&
         ((eventKey && existingCharge.processedEventIds.includes(eventKey)) ||
-         (reqKey && existingCharge.processedEventIds.includes(reqKey)))
+         (!eventKey && reqKey && existingCharge.processedEventIds.includes(reqKey)))
       ) {
         // Idempotent retry: this exact dispense event / request has already been processed!
         return { charge: existingCharge, hospitalInvoice, alreadyProcessed: true, advanceFolded: false };
@@ -317,7 +317,17 @@ export const pharmacyBridgeService = {
       for (const line of body.lines || []) {
         if (line.externalRequestRef) allRequestRefs.add(line.externalRequestRef);
       }
-      if (allRequestRefs.size > 0) {
+      if (body.requestStatuses) {
+        for (const request of body.requestStatuses) {
+          if (!allRequestRefs.has(request.externalRequestRef)) continue;
+          await tx.pharmacyClearance.updateMany({
+            where: { admissionRecordId: admission.id, OR: [
+              { medicineRequestNumber: request.externalRequestRef }, { id: request.externalRequestRef },
+            ] },
+            data: { status: request.status, fulfilledAt: request.status === 'DISPENSED' ? new Date() : null },
+          });
+        }
+      } else if (allRequestRefs.size > 0) {
         await tx.pharmacyClearance.updateMany({
           where: {
             admissionRecordId: admission.id,
@@ -328,17 +338,14 @@ export const pharmacyBridgeService = {
           },
           data: { status: 'DISPENSED', fulfilledAt: new Date() },
         });
-      } else {
-        await tx.pharmacyClearance.updateMany({
-          where: {
-            admissionRecordId: admission.id,
-            status: { in: ['REQUESTED', 'ACCEPTED', 'AUTHORIZATION_REQUIRED', 'PARTIALLY_FULFILLED'] },
-          },
-          data: { status: 'DISPENSED', fulfilledAt: new Date() },
-        });
       }
 
-      // Automatically update DualDischargeClearance (PHARMACY) to CLEARED
+      // Other requested/partially dispensed medicines still block pharmacy clearance.
+      const pendingRequests = await tx.pharmacyClearance.count({ where: {
+        admissionRecordId: admission.id,
+        status: { in: ['REQUESTED', 'ACCEPTED', 'PARTIALLY_FULFILLED', 'DISPENSING', 'INTEGRATION_ERROR', 'AUTHORIZATION_REQUIRED'] },
+      } });
+      const pharmacyGateStatus = pendingRequests > 0 ? 'PENDING' as const : 'CLEARED' as const;
       await tx.dualDischargeClearance.upsert({
         where: {
           admissionRecordId_clearanceType: {
@@ -347,14 +354,14 @@ export const pharmacyBridgeService = {
           },
         },
         update: {
-          status: 'CLEARED',
-          clearedAt: new Date(),
+          status: pharmacyGateStatus,
+          clearedAt: pendingRequests > 0 ? null : new Date(),
         },
         create: {
           admissionRecordId: admission.id,
           clearanceType: 'PHARMACY',
-          status: 'CLEARED',
-          clearedAt: new Date(),
+          status: pharmacyGateStatus,
+          clearedAt: pendingRequests > 0 ? null : new Date(),
         },
       });
 

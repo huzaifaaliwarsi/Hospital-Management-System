@@ -32,12 +32,16 @@ describe('patient responsibility on an invoice (panel.md §6: P + R = N)', () =>
 
 describe('discharge billing clearance for a panel admission (panel.md §5.3)', () => {
   function txFor(paid: number, invoice = panelInvoice) {
-    const clearances: any[] = [{ id: 'dc-clin', clearanceType: 'CLINICAL', status: 'CLEARED' }];
+    const clearances: any[] = [
+      { id: 'dc-clin', clearanceType: 'CLINICAL', status: 'CLEARED' },
+      { id: 'dc-pharm', clearanceType: 'PHARMACY', status: 'NOT_APPLICABLE' },
+    ];
     return {
       admissionRecord: {
         findUnique: vi.fn().mockResolvedValue({
           id: 'adm-1',
           status: 'DISCHARGE_PENDING',
+          medicationMode: 'SELF',
           bedId: null,
           hospitalInvoices: [{ id: 'inv-1', ...invoice }],
           dischargeClearances: clearances,
@@ -54,6 +58,8 @@ describe('discharge billing clearance for a panel admission (panel.md §5.3)', (
         findMany: vi.fn().mockImplementation(async () => clearances),
       },
       bed: { update: vi.fn() },
+      pharmacyClearance: { count: vi.fn().mockResolvedValue(0) },
+      hmsPharmacyCharge: { count: vi.fn().mockResolvedValue(0) },
     };
   }
 

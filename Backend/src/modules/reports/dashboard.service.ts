@@ -13,6 +13,7 @@ export interface SuperAdminDashboardData {
     activeDepartmentsCount: number;
     totalStaffCount: number;
     doctorsCount: number;
+    doctorsOnDutyCount?: number;
     activePanelsCount: number;
     activePanelPatientsCount: number;
     activeAdminsCount: number;
@@ -121,6 +122,7 @@ export interface SuperAdminDashboardData {
     name: string;
     department: string;
     designation: string;
+    category?: string;
     shiftLabel: string;
     patientsBooked: number;
     status: 'On Duty' | 'On Roster';
@@ -253,7 +255,13 @@ export const dashboardService = {
         where: {
           isActive: true,
           employmentStatus: 'ACTIVE',
-          category: { contains: 'Doctor', mode: 'insensitive' },
+          OR: [
+            { category: { contains: 'Doctor', mode: 'insensitive' } },
+            { category: { equals: 'RMO', mode: 'insensitive' } },
+            { category: { contains: 'RMO', mode: 'insensitive' } },
+            { category: { contains: 'Consultant', mode: 'insensitive' } },
+            { category: { contains: 'Medical Officer', mode: 'insensitive' } },
+          ],
         },
       }),
       prisma.corporatePanel.count({ where: { isActive: true } }),
@@ -650,21 +658,33 @@ export const dashboardService = {
       where: {
         isActive: true,
         employmentStatus: 'ACTIVE',
-        category: { contains: 'Doctor', mode: 'insensitive' },
+        OR: [
+          { category: { contains: 'Doctor', mode: 'insensitive' } },
+          { category: { equals: 'RMO', mode: 'insensitive' } },
+          { category: { contains: 'RMO', mode: 'insensitive' } },
+          { category: { contains: 'Consultant', mode: 'insensitive' } },
+          { category: { contains: 'Medical Officer', mode: 'insensitive' } },
+        ],
       },
       select: {
         id: true,
         fullName: true,
         designation: true,
+        category: true,
         department: { select: { name: true } },
       },
       orderBy: { fullName: 'asc' },
-      take: 10,
+      take: 50,
     });
 
     const doctorStaffIds = doctorStaff.map((d) => d.id);
 
-    const [currentShiftAssignments, doctorAppointmentCounts] = await Promise.all([
+    const todayStart = new Date(periodStart);
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(periodEnd);
+    todayEnd.setHours(23, 59, 59, 999);
+
+    const [currentShiftAssignments, doctorAppointmentCounts, doctorAttendanceRecords] = await Promise.all([
       doctorStaffIds.length === 0
         ? Promise.resolve([])
         : prisma.staffEmploymentHistory.findMany({
@@ -678,10 +698,21 @@ export const dashboardService = {
             where: { doctorStaffId: { in: doctorStaffIds }, slotAt: { gte: periodStart, lte: periodEnd } },
             _count: { _all: true },
           }),
+      doctorStaffIds.length === 0 || !prisma.attendanceRecord?.findMany
+        ? Promise.resolve([])
+        : prisma.attendanceRecord.findMany({
+            where: {
+              staffId: { in: doctorStaffIds },
+              attendanceDate: { gte: todayStart, lte: todayEnd },
+              status: { in: ['PRESENT', 'HALF_DAY'] },
+            },
+            select: { staffId: true, status: true, actualIn: true, actualOut: true },
+          }),
     ]);
 
     const shiftByStaffId = new Map(currentShiftAssignments.map((a) => [a.staffId, a]));
     const appointmentCountByStaffId = new Map(doctorAppointmentCounts.map((a) => [a.doctorStaffId, a._count._all]));
+    const attendanceByStaffId = new Map(doctorAttendanceRecords.map((a) => [a.staffId, a]));
 
     const formatShiftTime = (d: Date | null) =>
       d ? d.toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' }) : null;
@@ -689,6 +720,8 @@ export const dashboardService = {
     const doctorsOnDuty: SuperAdminDashboardData['doctorsOnDuty'] = doctorStaff.map((d) => {
       const shift = shiftByStaffId.get(d.id);
       const patientsBooked = appointmentCountByStaffId.get(d.id) ?? 0;
+      const attendance = attendanceByStaffId.get(d.id);
+      const isAttended = !!attendance;
       const shiftLabel =
         shift?.shiftStart && shift?.shiftEnd
           ? `${formatShiftTime(shift.shiftStart)} - ${formatShiftTime(shift.shiftEnd)}`
@@ -698,12 +731,15 @@ export const dashboardService = {
         id: d.id,
         name: d.fullName,
         department: d.department?.name || 'Unassigned',
-        designation: d.designation || 'Doctor',
+        designation: d.designation || (d.category === 'RMO' ? 'RMO' : 'Doctor'),
+        category: d.category,
         shiftLabel,
         patientsBooked,
-        status: patientsBooked > 0 ? 'On Duty' : 'On Roster',
+        status: (isAttended || patientsBooked > 0) ? 'On Duty' : 'On Roster',
       };
     });
+
+    const doctorsOnDutyCount = doctorsOnDuty.filter((d) => d.status === 'On Duty').length;
 
     // 8. Recent Activity (from AuditLog)
     const recentAuditLogs = await prisma.auditLog
@@ -939,6 +975,7 @@ export const dashboardService = {
         activeDepartmentsCount,
         totalStaffCount,
         doctorsCount,
+        doctorsOnDutyCount,
         activePanelsCount,
         activePanelPatientsCount,
         activeAdminsCount,

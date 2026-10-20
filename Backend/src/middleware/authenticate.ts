@@ -3,12 +3,14 @@ import jwt from 'jsonwebtoken';
 import { env } from '@/config/env';
 import { AuthenticationError } from '@/shared/errors/AppError';
 import type { PortalRole } from '@/config/constants';
+import { prisma } from '@/db/client';
 
 export interface AccessTokenPayload {
   sub: string; // portal user id
   role: PortalRole;
   staffId: string | null;
   mustResetPassword: boolean;
+  sessionId?: string;
 }
 
 declare global {
@@ -21,36 +23,56 @@ declare global {
 }
 
 /** Verifies the JWT access token and attaches `req.user` (§7.6 step 6, §7.8). */
-export function authenticate(req: Request, _res: Response, next: NextFunction) {
-  const bridgeToken = req.headers['x-bridge-token'] || req.headers['x-internal-secret'] || req.headers['x-bridge-key'];
-  if (bridgeToken && bridgeToken === env.INTERNAL_BRIDGE_SECRET) {
-    (req as any).isInternalBridge = true;
-    req.user = {
-      sub: 'bridge-system',
-      role: 'SUPER_ADMIN',
-      staffId: null,
-      mustResetPassword: false,
-    };
-    return next();
-  }
-
-  const header = req.headers.authorization;
-  if (!header?.startsWith('Bearer ')) {
-    throw new AuthenticationError('Missing or malformed Authorization header');
-  }
-
-  const token = header.slice('Bearer '.length);
-
+export async function authenticate(req: Request, _res: Response, next: NextFunction) {
   try {
-    const payload = jwt.verify(token, env.JWT_ACCESS_SECRET) as AccessTokenPayload;
-    req.user = payload;
+    const bridgeToken = req.headers['x-bridge-token'] || req.headers['x-internal-secret'] || req.headers['x-bridge-key'];
+    if (bridgeToken && bridgeToken === env.INTERNAL_BRIDGE_SECRET) {
+      (req as any).isInternalBridge = true;
+      req.user = {
+        sub: 'bridge-system',
+        role: 'SUPER_ADMIN',
+        staffId: null,
+        mustResetPassword: false,
+      };
+      return next();
+    }
+
+    const header = req.headers.authorization;
+    if (!header?.startsWith('Bearer ')) {
+      throw new AuthenticationError('Missing or malformed Authorization header');
+    }
+
+    const token = header.slice('Bearer '.length);
+
+    let payload: AccessTokenPayload;
+    try {
+      payload = jwt.verify(token, env.JWT_ACCESS_SECRET, { algorithms: ['HS256'] }) as AccessTokenPayload;
+    } catch {
+      throw new AuthenticationError('Invalid or expired access token');
+    }
+    if (!payload || typeof payload.sub !== 'string' || typeof payload.sessionId !== 'string') {
+      throw new AuthenticationError('Session refresh required');
+    }
+    const session = await prisma.refreshToken.findUnique({
+      where: { id: payload.sessionId },
+      select: {
+        portalUserId: true, revokedAt: true, expiresAt: true,
+        portalUser: { select: { id: true, status: true, role: true, staffId: true, mustResetPassword: true } },
+      },
+    });
+    if (!session || session.portalUserId !== payload.sub || session.revokedAt || session.expiresAt <= new Date()) {
+      throw new AuthenticationError('Session expired or revoked');
+    }
+    const user = session.portalUser;
+    if (user.status !== 'ACTIVE') throw new AuthenticationError('Account is not active');
+    // Permissions and reset requirements come from the current account, not stale JWT claims.
+    req.user = { sub: user.id, role: user.role, staffId: user.staffId,
+      mustResetPassword: user.mustResetPassword, sessionId: payload.sessionId };
     next();
-  } catch {
-    throw new AuthenticationError('Invalid or expired access token');
+  } catch (error) {
+    next(error); // Express 4 does not forward rejected async middleware automatically.
   }
 }
-
-import { prisma } from '@/db/client';
 
 /**
  * Blocks all non-auth routes until the user completes a forced password
@@ -58,19 +80,9 @@ import { prisma } from '@/db/client';
  * Reset Password action. Mount after `authenticate` on protected routers,
  * excluding the auth router itself.
  */
-export async function blockIfMustResetPassword(req: Request, _res: Response, next: NextFunction) {
+export function blockIfMustResetPassword(req: Request, _res: Response, next: NextFunction) {
   if (req.user?.mustResetPassword) {
-    if (req.user.sub) {
-      const dbUser = await prisma.portalUser.findUnique({
-        where: { id: req.user.sub },
-        select: { mustResetPassword: true },
-      }).catch(() => null);
-      if (dbUser && !dbUser.mustResetPassword) {
-        req.user.mustResetPassword = false;
-        return next();
-      }
-    }
-    throw new AuthenticationError('Password reset required before continuing');
+    return next(new AuthenticationError('Password reset required before continuing'));
   }
   next();
 }

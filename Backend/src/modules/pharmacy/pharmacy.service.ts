@@ -132,6 +132,9 @@ export const pharmacyService = {
           name: m.name,
           category: m.category,
           unit: m.unit || 'Unit',
+          baseUnitId: m.baseUnitId,
+          baseUnit: m.baseUnit,
+          packagingLevels: m.packagingLevels || [],
           batchManaged: m.batchManaged ?? true,
           purchaseRate: m.purchaseRate ? new Decimal(m.purchaseRate) : null,
           saleRate: m.saleRate ? new Decimal(m.saleRate) : new Decimal(0),
@@ -481,5 +484,25 @@ export const pharmacyService = {
 
       return dispense;
     });
+  },
+
+  async listUnits() {
+    try {
+      const units = await pharmacyBridgeClient.getUnits();
+      if (Array.isArray(units) && units.length > 0) return units;
+    } catch (err: any) {
+      // eslint-disable-next-line no-console
+      console.warn('[pharmacyService] listUnits remote error:', err.message);
+    }
+    return [
+      { id: 'u-tab', name: 'Tablet' },
+      { id: 'u-strip', name: 'Strip' },
+      { id: 'u-box', name: 'Box' },
+      { id: 'u-vial', name: 'Vial' },
+      { id: 'u-amp', name: 'Ampoule' },
+      { id: 'u-bottle', name: 'Bottle' },
+      { id: 'u-sachet', name: 'Sachet' },
+      { id: 'u-tube', name: 'Tube' },
+    ];
   },
 };

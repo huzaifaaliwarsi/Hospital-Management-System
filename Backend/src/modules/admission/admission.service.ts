@@ -374,6 +374,18 @@ export const admissionService = {
         departmentId = defaultDept.id;
       }
 
+      if (body.doctorStaffId) {
+        const doc = await tx.staff.findUnique({ where: { id: body.doctorStaffId } });
+        if (!doc || !doc.isActive) throw new ValidationError('Selected doctor not found or inactive');
+        if (doc.category !== 'Doctor') throw new ValidationError('Selected staff is not a Doctor');
+      }
+
+      if (body.rmoStaffId) {
+        const rmo = await tx.staff.findUnique({ where: { id: body.rmoStaffId } });
+        if (!rmo || !rmo.isActive) throw new ValidationError('Selected RMO not found or inactive');
+        if (rmo.category !== 'RMO') throw new ValidationError('Selected staff is not an RMO');
+      }
+
       const admissionNumber = await generateAdmissionNumber(tx);
 
       const admission = await tx.admissionRecord.create({
@@ -383,6 +395,7 @@ export const admissionService = {
           selfPayEncounterId,
           departmentId,
           doctorStaffId: body.doctorStaffId ?? null,
+          rmoStaffId: body.rmoStaffId ?? null,
           bedId: body.preferredBedId ?? null,
           status: 'PLANNED',
           medicationMode: body.medicationMode ?? 'HOSPITAL_MANAGED',
@@ -402,6 +415,7 @@ export const admissionService = {
           selfPayEncounter: true,
           department: true,
           doctor: true,
+          rmo: true,
           bed: { include: { room: { include: { ward: true } }, ward: true } },
         },
       });
@@ -420,6 +434,8 @@ export const admissionService = {
           sourceType: 'ADMISSION',
           admissionRecordId: admission.id,
           departmentId: admission.departmentId,
+          doctorStaffId: admission.doctorStaffId,
+          rmoStaffId: admission.rmoStaffId,
           panelPatientId: admission.panelPatientId,
           selfPayEncounterId: admission.selfPayEncounterId,
           subtotal: new Decimal(0),
@@ -510,6 +526,7 @@ export const admissionService = {
     if (query.status) where.status = query.status;
     if (query.departmentId) where.departmentId = query.departmentId;
     if (query.doctorStaffId) where.doctorStaffId = query.doctorStaffId;
+    if (query.rmoStaffId) where.rmoStaffId = query.rmoStaffId;
 
     if (query.search) {
       where.OR = [
@@ -527,6 +544,7 @@ export const admissionService = {
         selfPayEncounter: { select: { id: true, fullName: true, phone: true } },
         department: { select: { id: true, name: true } },
         doctor: { select: { id: true, fullName: true, designation: true } },
+        rmo: { select: { id: true, fullName: true, designation: true } },
         bed: {
           select: {
             id: true,
@@ -552,6 +570,7 @@ export const admissionService = {
         selfPayEncounter: true,
         department: true,
         doctor: true,
+        rmo: true,
         bed: { include: { room: { include: { ward: true } }, ward: true } },
         bedTransfers: {
           include: {
@@ -613,6 +632,18 @@ export const admissionService = {
       throw new ValidationError(`Cannot update admission in ${existing.status} status`);
     }
 
+    if (body.doctorStaffId) {
+      const doc = await prisma.staff.findUnique({ where: { id: body.doctorStaffId } });
+      if (!doc || !doc.isActive) throw new ValidationError('Selected doctor not found or inactive');
+      if (doc.category !== 'Doctor') throw new ValidationError('Selected staff is not a Doctor');
+    }
+
+    if (body.rmoStaffId) {
+      const rmo = await prisma.staff.findUnique({ where: { id: body.rmoStaffId } });
+      if (!rmo || !rmo.isActive) throw new ValidationError('Selected RMO not found or inactive');
+      if (rmo.category !== 'RMO') throw new ValidationError('Selected staff is not an RMO');
+    }
+
     return prisma.admissionRecord.update({
       where: { id },
       data: {
@@ -622,6 +653,7 @@ export const admissionService = {
       },
       include: {
         doctor: true,
+        rmo: true,
         department: true,
       },
     });
@@ -1203,11 +1235,25 @@ export const admissionService = {
           requestedById: actorId,
           notes: body.notes,
           lines: {
-            create: body.lines.map((l) => ({
-              medicineId: l.medicineId,
-              requestedQuantity: new Decimal(l.requestedQuantity),
-              notes: l.notes,
-            })),
+            create: body.lines.map((l) => {
+              const packagingNote =
+                l.unit && l.conversionToBase && l.conversionToBase > 1
+                  ? `${l.saleUnitQuantity || Math.round(l.requestedQuantity / l.conversionToBase)} ${l.unit} (${l.requestedQuantity} base units)`
+                  : l.unit
+                  ? `${l.requestedQuantity} ${l.unit}`
+                  : null;
+              const finalNotes = packagingNote
+                ? l.notes && l.notes !== packagingNote
+                  ? `${packagingNote} — ${l.notes}`
+                  : packagingNote
+                : l.notes;
+
+              return {
+                medicineId: l.medicineId,
+                requestedQuantity: new Decimal(l.requestedQuantity),
+                notes: finalNotes,
+              };
+            }),
           },
         },
         include: {
@@ -1587,13 +1633,24 @@ export const admissionService = {
         data: {
           admissionRecordId: admission.id,
           finalDiagnosis: body.dischargeSummary.finalDiagnosis,
-          treatmentSummary: body.dischargeSummary.treatmentSummary,
-          conditionAtDischarge: body.dischargeSummary.conditionAtDischarge,
-          medicinesInstructions: body.dischargeSummary.medicinesInstructions,
-          followUpAdvice: body.dischargeSummary.followUpAdvice,
-          followUpDoctorStaffId: body.dischargeSummary.followUpDoctorStaffId,
-          followUpDate: body.dischargeSummary.followUpDate,
-          additionalNotes: body.dischargeSummary.additionalNotes,
+          associatedDiagnosisA: body.dischargeSummary.associatedDiagnosisA ?? null,
+          associatedDiagnosisB: body.dischargeSummary.associatedDiagnosisB ?? null,
+          history: body.dischargeSummary.history ?? null,
+          examination: body.dischargeSummary.examination ?? null,
+          investigations: body.dischargeSummary.investigations ?? null,
+          treatmentSummary: body.dischargeSummary.treatmentSummary || '',
+          prescriptionOnDischarge: body.dischargeSummary.prescriptionOnDischarge ?? body.dischargeSummary.medicinesInstructions ?? null,
+          medicinesInstructions: body.dischargeSummary.medicinesInstructions || body.dischargeSummary.prescriptionOnDischarge || '',
+          conditionAtDischarge: body.dischargeSummary.conditionAtDischarge || 'Stable & Ambulatory',
+          followUpAdvice: body.dischargeSummary.followUpAdvice ?? null,
+          followUpDoctorStaffId: body.dischargeSummary.followUpDoctorStaffId ?? null,
+          followUpDate: body.dischargeSummary.followUpDate ?? null,
+          additionalNotes: body.dischargeSummary.additionalNotes ?? null,
+          nicu: body.dischargeSummary.nicu ?? null,
+          weightOnAdmission: body.dischargeSummary.weightOnAdmission ?? (admission.weightKg ? String(admission.weightKg) : null),
+          weightOnDischarge: body.dischargeSummary.weightOnDischarge ?? null,
+          finalOutcome: body.dischargeSummary.finalOutcome || 'Discharge',
+          dischargeDate: body.dischargeSummary.dischargeDate ?? new Date(),
           doctorStaffId: doctor.id,
           doctorNameSnapshot: doctor.fullName,
           doctorDepartmentSnapshot: doctor.department?.name ?? 'Unassigned',
@@ -1751,6 +1808,12 @@ export const admissionService = {
         selfPayEncounter: true,
         department: true,
         doctor: true,
+        rmo: true,
+        dischargeSummary: {
+          include: {
+            doctor: { select: { id: true, fullName: true, designation: true, pmdcNumber: true } },
+          },
+        },
         bed: { include: { room: { include: { ward: true } }, ward: true } },
         bedTransfers: {
           include: {
@@ -1793,18 +1856,29 @@ export const admissionService = {
         ? {
             type: 'PANEL',
             name: admission.panelPatient.fullName,
+            fatherGuardianName: admission.panelPatient.guardianName ?? null,
+            age: admission.panelPatient.age ?? null,
+            gender: admission.panelPatient.gender ?? null,
+            address: admission.panelPatient.address ?? null,
+            phone: admission.panelPatient.phone ?? null,
             mrNumber: admission.panelPatient.mrNumber,
             panel: admission.panelPatient.corporatePanel.organizationName,
           }
         : {
             type: 'SELF_PAY',
             name: admission.selfPayEncounter?.fullName ?? 'Inpatient',
-            phone: admission.selfPayEncounter?.phone,
+            fatherGuardianName: admission.selfPayEncounter?.guardianName ?? null,
+            age: admission.selfPayEncounter?.age ?? null,
+            gender: admission.selfPayEncounter?.gender ?? null,
+            address: admission.selfPayEncounter?.address ?? null,
+            phone: admission.selfPayEncounter?.phone ?? null,
           },
       doctor: admission.doctor?.fullName ?? null,
+      rmo: admission.rmo?.fullName ?? null,
       department: admission.department.name,
       diagnosis: admission.diagnosis,
       weightKg: admission.weightKg != null ? Number(admission.weightKg) : null,
+      dischargeSummary: admission.dischargeSummary ?? null,
       bedSummary: {
         currentBed: admission.bed?.bedNumber ?? null,
         room: admission.bed?.room?.name ?? null,

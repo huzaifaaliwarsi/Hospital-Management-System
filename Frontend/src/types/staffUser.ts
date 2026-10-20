@@ -72,6 +72,10 @@ export interface StaffUser {
   email: string;
   cnic?: string; // Pakistan CNIC: xxxxx-xxxxxxx-x
   dateOfBirth?: string; // ISO date
+  gender?: string | null;
+  address?: string | null;
+  qualification?: string | null;
+  pmdcNumber?: string | null;
 
   designation: string; // optional at creation — may be blank until set from Staff 360
 
@@ -161,6 +165,10 @@ export interface StaffUserFormValues {
   phone: string;
   alternatePhone: string;
   email: string;
+  gender: string;
+  address: string;
+  qualification: string;
+  pmdcNumber: string;
 
   designation: string;
   staffCategory: StaffCategory;

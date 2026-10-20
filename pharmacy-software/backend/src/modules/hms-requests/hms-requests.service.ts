@@ -316,6 +316,10 @@ export const hmsRequestsService = {
       });
 
       if (invoice) {
+        const linkedRequests = await prisma.medicineRequest.findMany({
+          where: { invoiceId: invoice.id },
+          select: { externalRequestRef: true, status: true },
+        });
         const dispenserName = dispenser?.fullName || dispenser?.username || 'Pharmacy Dispenser';
         const eventLines = fullLines.filter((l) => l.dispenseEventId === dispenseEventId);
         const deltaAmount = eventLines.reduce((s, l) => s + Number(l.lineNet), 0);
@@ -334,6 +338,8 @@ export const hmsRequestsService = {
             deltaAmount,
             dispensedBy: dispenserName,
             dispensedAt: new Date().toISOString(),
+            requestStatuses: linkedRequests.filter(r => r.externalRequestRef && ['DISPENSED', 'PARTIALLY_ACCEPTED'].includes(r.status))
+              .map(r => ({ externalRequestRef: r.externalRequestRef!, status: r.status === 'DISPENSED' ? 'DISPENSED' as const : 'PARTIALLY_FULFILLED' as const })),
             lines: fullLines.map((l) => ({
               dispenseEventId: l.dispenseEventId || dispenseEventId,
               externalRequestRef: l.externalRequestRef || updatedRequest.externalRequestRef,

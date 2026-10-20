@@ -33,6 +33,7 @@ export const hmsBridgeClient = {
     deltaAmount?: number;
     dispensedBy: string;
     dispensedAt: string;
+    requestStatuses?: Array<{ externalRequestRef: string; status: 'DISPENSED' | 'PARTIALLY_FULFILLED' }>;
     lines: Array<{
       dispenseEventId?: string;
       externalRequestRef?: string | null;

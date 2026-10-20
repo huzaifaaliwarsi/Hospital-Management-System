@@ -24,7 +24,7 @@ export function serviceSelectionWhere(filters: ServiceFilters = {}): Prisma.Serv
   if (providerType === 'INTERNAL' && !filters.departmentId && !filters.outsourcedProviderId) {
     const department = where.department;
     delete where.department;
-    where.OR = [{ department }, { departmentId: null }];
+    where.OR = [{ department }, { departmentId: null, isDefaultEncounterService: true }];
   }
   return where;
 }

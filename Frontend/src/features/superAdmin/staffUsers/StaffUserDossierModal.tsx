@@ -143,6 +143,14 @@ export const StaffUserDossierModal: React.FC<StaffUserDossierModalProps> = ({
                 <span className="text-[10px] text-[#8b9e95] block uppercase">Official Email</span>
                 <span className="font-medium">{staff.email || '—'}</span>
               </div>
+              <div>
+                <span className="text-[10px] text-[#8b9e95] block uppercase">Gender</span>
+                <span className="font-medium">{staff.gender || '—'}</span>
+              </div>
+              <div className="col-span-2">
+                <span className="text-[10px] text-[#8b9e95] block uppercase">Residential Address</span>
+                <span className="font-medium">{staff.address || '—'}</span>
+              </div>
             </div>
           </div>
 
@@ -164,6 +172,18 @@ export const StaffUserDossierModal: React.FC<StaffUserDossierModalProps> = ({
                 <span className="text-[10px] text-[#8b9e95] block uppercase">Staff Category</span>
                 <span className="font-medium">{staff.staffCategory}</span>
               </div>
+              {staff.qualification && (
+                <div>
+                  <span className="text-[10px] text-[#8b9e95] block uppercase">Medical Qualification</span>
+                  <span className="font-medium">{staff.qualification}</span>
+                </div>
+              )}
+              {staff.pmdcNumber && (
+                <div>
+                  <span className="text-[10px] text-[#8b9e95] block uppercase">PMDC / License Registration #</span>
+                  <span className="font-mono font-bold text-[#0e7d5a]">{staff.pmdcNumber}</span>
+                </div>
+              )}
             </div>
           </div>
 

@@ -390,6 +390,10 @@ model Staff {
   fatherGuardianName String?               @map("father_guardian_name")
   cnic               String?               @unique
   dateOfBirth        DateTime?             @map("date_of_birth") @db.Date
+  gender             String?
+  address            String?
+  qualification      String?
+  pmdcNumber         String?               @map("pmdc_number")
   category           String // Doctor/RMO/Nurse/Technician/... — lookup table candidate, kept as string for phase 1
   // Nullable — only Doctor-category staff are required to have a department
   // at creation (enforced in staff.service.ts, not the schema); every other
@@ -441,6 +445,9 @@ model Staff {
   headOfWards                  Ward[]                    @relation("WardHead")
   appointmentsAsDoctor         Appointment[]             @relation("AppointmentDoctor")
   admissionsAsDoctor           AdmissionRecord[]         @relation("AdmissionDoctor")
+  admissionsAsRmo              AdmissionRecord[]         @relation("AdmissionRmo")
+  invoicesAsDoctor             HospitalInvoice[]         @relation("InvoiceDoctor")
+  invoicesAsRmo                HospitalInvoice[]         @relation("InvoiceRmo")
   invoiceLinesPerformed        InvoiceLineItem[]         @relation("InvoiceLinePerformedBy")
   commissionRules              DoctorCommissionRule[]    @relation("CommissionRuleDoctor")
   commissionAccruals           DoctorCommissionAccrual[] @relation("CommissionAccrualDoctor")
@@ -1456,6 +1463,10 @@ model HospitalInvoice {
   // aggregation layer.
   departmentId       String?           @map("department_id")
   department         Department?       @relation(fields: [departmentId], references: [id])
+  doctorStaffId      String?           @map("doctor_staff_id")
+  doctor             Staff?            @relation("InvoiceDoctor", fields: [doctorStaffId], references: [id])
+  rmoStaffId         String?           @map("rmo_staff_id")
+  rmo                Staff?            @relation("InvoiceRmo", fields: [rmoStaffId], references: [id])
 
   // Case authorization / guarantee for non-admission encounters (Walk-In,
   // OPD, Observation, Emergency) — panel.md §4.5/§15 backlog item 2. The
@@ -1716,6 +1727,8 @@ model AdmissionRecord {
   department         Department        @relation(fields: [departmentId], references: [id])
   doctorStaffId      String?           @map("doctor_staff_id") // optional at planning time — a doctor may be assigned later at the Admission Portal
   doctor             Staff?            @relation("AdmissionDoctor", fields: [doctorStaffId], references: [id])
+  rmoStaffId         String?           @map("rmo_staff_id")
+  rmo                Staff?            @relation("AdmissionRmo", fields: [rmoStaffId], references: [id])
   bedId              String?           @map("bed_id") // NULL until bed assignment / confirm arrival
   bed                Bed?              @relation(fields: [bedId], references: [id])
   status             AdmissionStatus   @default(PLANNED)
@@ -1899,14 +1912,27 @@ model DischargeSummary {
   admissionRecord   AdmissionRecord @relation(fields: [admissionRecordId], references: [id])
 
   finalDiagnosis        String    @map("final_diagnosis")
-  treatmentSummary      String    @map("treatment_summary")
+  associatedDiagnosisA  String?   @map("associated_diagnosis_a")
+  associatedDiagnosisB  String?   @map("associated_diagnosis_b")
+  history               String?   @map("history") @db.Text
+  examination           String?   @map("examination") @db.Text
+  investigations        String?   @map("investigations") @db.Text
+  treatmentSummary      String    @map("treatment_summary") @db.Text
+  prescriptionOnDischarge String? @map("prescription_on_discharge") @db.Text
+  medicinesInstructions String    @map("medicines_instructions") @db.Text
   conditionAtDischarge  String    @map("condition_at_discharge")
-  medicinesInstructions String    @map("medicines_instructions")
   followUpAdvice        String?   @map("follow_up_advice")
   followUpDoctorStaffId String?   @map("follow_up_doctor_staff_id")
   followUpDoctor        Staff?    @relation("DischargeSummaryFollowUpDoctor", fields: [followUpDoctorStaffId], references: [id])
   followUpDate          DateTime? @map("follow_up_date") @db.Date
-  additionalNotes       String?   @map("additional_notes")
+  additionalNotes       String?   @map("additional_notes") @db.Text
+
+  // Physical discharge form metadata & outcomes
+  nicu                  String?   @map("nicu")
+  weightOnAdmission     String?   @map("weight_on_admission")
+  weightOnDischarge     String?   @map("weight_on_discharge")
+  finalOutcome          String?   @default("Discharge") @map("final_outcome")
+  dischargeDate         DateTime? @map("discharge_date") @db.Date
 
   doctorStaffId            String     @map("doctor_staff_id")
   doctor                   Staff      @relation("DischargeSummaryAuthorizedBy", fields: [doctorStaffId], references: [id])

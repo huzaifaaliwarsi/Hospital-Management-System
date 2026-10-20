@@ -383,15 +383,13 @@ export const updateHighCostMedicinePolicySchema = z.object({
 export type UpdateHighCostMedicinePolicyBody = z.infer<typeof updateHighCostMedicinePolicySchema>;
 
 // ── Provider Settlements (HMS_V7.2_NEW_REQUIREMENTS.md §2.8) ────────────
-// `eligibleRealizedAmount` is recorded by the settling user for now — the
-// Front Desk department sub-invoice split (§2.2) that would compute it
-// automatically from realized collections is future/out-of-phase work; see
-// the doc's Phase A/B split and this schema's service-layer validation.
+// Eligibility and status are server-computed; legacy fields are accepted for compatibility.
 export const createProviderSettlementSchema = z.object({
+  requestKey: z.string().uuid(),
   outsourcedProviderId: z.string().uuid(),
   departmentId: z.string().uuid().optional(),
   periodLabel: z.string().max(100).optional(),
-  eligibleRealizedAmount: z.coerce.number().positive(),
+  eligibleRealizedAmount: z.coerce.number().nonnegative().optional(),
   settlementAmount: z.coerce.number().positive(),
   status: z.enum(['FULL', 'PARTIAL']),
   paymentMethod: z.enum(['CASH', 'BANK_TRANSFER', 'CHEQUE', 'ONLINE']),
@@ -407,6 +405,17 @@ export const listProviderSettlementsQuerySchema = z.object({
   departmentId: z.string().uuid().optional(),
 });
 export type ListProviderSettlementsQuery = z.infer<typeof listProviderSettlementsQuerySchema>;
+
+export const departmentPayablesQuerySchema = z.object({
+  preset: z.enum(['today', 'yesterday', 'this_week', 'this_month', 'custom', 'all']).default('this_month'),
+  fromDate: z.string().date().optional(),
+  toDate: z.string().date().optional(),
+  type: z.enum(['OUTSOURCED', 'INTERNAL']).optional(),
+}).superRefine((value, ctx) => {
+  if (value.preset === 'custom' && (!value.fromDate || !value.toDate || value.fromDate > value.toDate)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Choose a valid start and end date.', path: ['fromDate'] });
+  }
+});
 
 export const createShiftSchema = z.object({
   // Optional: auto-generated when left blank (see Departments note above).

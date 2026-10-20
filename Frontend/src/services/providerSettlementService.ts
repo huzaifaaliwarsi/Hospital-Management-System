@@ -2,16 +2,7 @@ import apiClient from './apiClient';
 import { formatDisplayDate } from '../utils/dateConstants';
 import type { PaymentMethod } from './outsourcedProviderService';
 
-/**
- * Live Provider Settlements service — backed by
- * `/api/v1/setup/provider-settlements` (HMS_V7.2_NEW_REQUIREMENTS.md §2.8).
- *
- * `eligibleRealizedAmount` is entered by the settling user for now — the
- * Front Desk department sub-invoice split (§2.2) that would compute it
- * automatically from realized collections is future/out-of-phase work (see
- * the doc's Phase A/B split). `alreadySettledAmount` and the settlement-
- * amount ceiling are always computed/enforced server-side.
- */
+/** Provider eligibility and settlement limits are computed by the server. */
 
 export interface ProviderSettlement {
   id: string;
@@ -36,6 +27,7 @@ export interface ProviderSettlement {
 }
 
 export interface ProviderSettlementFormValues {
+  requestKey: string;
   outsourcedProviderId: string;
   departmentId: string;
   periodLabel: string;
@@ -94,6 +86,7 @@ export async function fetchProviderSettlements(outsourcedProviderId?: string): P
 
 export async function createProviderSettlement(values: ProviderSettlementFormValues): Promise<ProviderSettlement> {
   const res = await apiClient.post<{ data: Record<string, any> }>('/setup/provider-settlements', {
+    requestKey: values.requestKey,
     outsourcedProviderId: values.outsourcedProviderId,
     departmentId: values.departmentId || undefined,
     periodLabel: values.periodLabel?.trim() || undefined,
@@ -107,4 +100,55 @@ export async function createProviderSettlement(values: ProviderSettlementFormVal
     remarks: values.remarks?.trim() || undefined,
   });
   return toSettlement(res.data.data);
+}
+
+export interface DepartmentPayableRow {
+  departmentId: string;
+  departmentName: string;
+  departmentCode: string;
+  fulfillmentOwnership: 'INTERNAL' | 'OUTSOURCED';
+  outsourcedProvider: {
+    id: string;
+    name: string;
+    code: string;
+    allowedPaymentMethods: PaymentMethod[];
+    settlementCycle: string | null;
+    isActive: boolean;
+  } | null;
+  invoicesCount: number;
+  servicesCount: number;
+  periodGross: number;
+  periodDiscount: number;
+  periodBilled: number;
+  periodRealized: number;
+  alreadySettled: number;
+  remainingPayable: number;
+  cumulativeRealized: number;
+  periodSettled: number;
+  openingBalance: number;
+  closingBalance: number;
+  requiresSettlementReconciliation: boolean;
+}
+
+export interface DepartmentPayablesResponse {
+  period: { label: string; start: string; end: string };
+  kpis: {
+    totalBilled: number;
+    totalRealized: number;
+    totalSettled: number;
+    totalRemaining: number;
+  };
+  departments: DepartmentPayableRow[];
+}
+
+export async function fetchDepartmentPayablesSummary(params: {
+  preset?: string;
+  fromDate?: string;
+  toDate?: string;
+  type?: string;
+}): Promise<DepartmentPayablesResponse> {
+  const res = await apiClient.get<{ data: DepartmentPayablesResponse }>('/setup/department-payables-summary', {
+    params,
+  });
+  return res.data.data;
 }

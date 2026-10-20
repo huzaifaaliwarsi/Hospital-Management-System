@@ -22,6 +22,9 @@ vi.mock('@/db/client', () => {
           { staffId: 'doc-1', shiftName: 'Morning', shiftStart: new Date('2026-01-01T09:00:00Z'), shiftEnd: new Date('2026-01-01T14:00:00Z') },
         ]),
       },
+      attendanceRecord: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
       corporatePanel: {
         count: vi.fn().mockResolvedValue(3),
         findMany: vi.fn().mockResolvedValue([]),

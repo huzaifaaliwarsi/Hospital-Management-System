@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { servicesForSource, retainAvailableServiceIds, HOSPITAL_SERVICE_SOURCE, OUTSOURCED_SERVICE_SOURCE } from '../../ch-sharif-and-saeed-hospital---hms/src/utils/serviceSelection';
-import type { HospitalService } from '../../ch-sharif-and-saeed-hospital---hms/src/types/serviceRates';
+import { servicesForSource, retainAvailableServiceIds, HOSPITAL_SERVICE_SOURCE, OUTSOURCED_SERVICE_SOURCE } from '../../Frontend/src/utils/serviceSelection';
+import type { HospitalService } from '../../Frontend/src/types/serviceRates';
 const service = (id: string, patch: Partial<HospitalService> = {}): HospitalService => ({
   id, code: id, name: id, departmentId: 'ward', departmentName: 'General Ward',
   providerType: 'INTERNAL', billingSource: 'HOSPITAL_SERVICE', selectable: true,

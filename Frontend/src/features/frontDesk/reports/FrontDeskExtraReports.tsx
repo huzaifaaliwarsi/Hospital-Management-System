@@ -407,24 +407,32 @@ export const FinancialExceptionsReportView: React.FC = () => {
 };
 
 /** Reporting Guide v7.5 §4.4 — billing/collections by department and service. */
-export const DepartmentRevenueReportView: React.FC = () => (
-  <GenericReportView<DepartmentRevenueRow>
-    title="Department / Service Revenue Report"
-    subtitle="Billing and collections by department and service."
-    icon={Building2}
-    filenamePrefix="Department_Revenue"
-    fetchReport={fetchDepartmentRevenue}
-    rowKey={(r, i) => `${r.department}-${r.service}-${i}`}
-    columns={[
-      { header: 'Department', cell: (r) => r.department },
-      { header: 'Service', cell: (r) => r.service },
-      { header: 'Qty', align: 'right', cell: (r) => String(r.qty), excelValue: (r) => r.qty },
-      { header: 'Gross', align: 'right', cell: (r) => formatPKR(r.gross), excelValue: (r) => r.gross },
-      { header: 'Discount', align: 'right', cell: (r) => formatPKR(r.discount), excelValue: (r) => r.discount },
-      { header: 'Net', align: 'right', cell: (r) => formatPKR(r.net), excelValue: (r) => r.net },
-    ]}
-  />
-);
+export const DepartmentRevenueReportView: React.FC = () => {
+  const options = useFdOptions();
+  const { filters, bind, reset } = useReportFilters({ departmentId: '' });
+  return (
+    <GenericReportView<DepartmentRevenueRow>
+      title="Department / Service Revenue Report"
+      subtitle="Billing and collections by department and service."
+      icon={Building2}
+      filenamePrefix="Department_Revenue"
+      fetchReport={(range) => fetchDepartmentRevenue(range, filters)}
+      onResetExtraFilters={reset}
+      extraFilters={
+        <FilterSelect label="Department" options={options.departments} {...bind('departmentId')} />
+      }
+      rowKey={(r, i) => `${r.department}-${r.service}-${i}`}
+      columns={[
+        { header: 'Department', cell: (r) => r.department },
+        { header: 'Service', cell: (r) => r.service },
+        { header: 'Qty', align: 'right', cell: (r) => String(r.qty), excelValue: (r) => r.qty },
+        { header: 'Gross', align: 'right', cell: (r) => formatPKR(r.gross), excelValue: (r) => r.gross },
+        { header: 'Discount', align: 'right', cell: (r) => formatPKR(r.discount), excelValue: (r) => r.discount },
+        { header: 'Net', align: 'right', cell: (r) => formatPKR(r.net), excelValue: (r) => r.net },
+      ]}
+    />
+  );
+};
 
 
 /** reporting.md §2 #6 — Hospital payments Front Desk collected against Admission payment requests. */

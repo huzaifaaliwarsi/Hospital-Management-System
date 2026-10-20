@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Decimal } from '@prisma/client/runtime/library';
 
 const { tx } = vi.hoisted(() => ({ tx: {
+  $executeRaw: vi.fn(),
   hospitalInvoice: { findUnique: vi.fn(), update: vi.fn() },
   paymentReceipt: { create: vi.fn() },
   userCashBalance: { create: vi.fn() },

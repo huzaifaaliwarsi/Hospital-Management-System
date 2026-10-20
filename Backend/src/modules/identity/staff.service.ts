@@ -188,7 +188,7 @@ export const staffService = {
       const existing = await prisma.staff.findUnique({ where: { cnic: body.cnic } });
       if (existing) throw new ConflictError(`CNIC "${body.cnic}" is already registered to another staff member.`);
     }
-    if (body.category === 'Doctor' && body.serviceIds && body.serviceIds.length > 0) {
+    if ((body.category === 'Doctor' || body.category === 'RMO') && body.serviceIds && body.serviceIds.length > 0) {
       await assertServicesActive(body.serviceIds);
     }
     // Checked up front so a clash reports clearly instead of looking like an employeeId retry.
@@ -225,13 +225,25 @@ export const staffService = {
           phone: body.phone,
           alternatePhone: body.alternatePhone,
           email: body.email,
+          gender: body.gender,
+          address: body.address,
+          qualification: body.qualification,
+          pmdcNumber: body.pmdcNumber,
           joiningDate: body.joiningDate ?? new Date(),
           notes: body.notes,
           ...(body.assignedShiftId ? { assignedShift: { connect: { id: body.assignedShiftId } } } : {}),
           doctorSponsoredDiscountTrackingEnabled: body.doctorSponsoredDiscountTrackingEnabled ?? false,
-          availableForOpd: body.availableForOpd ?? false,
-          availableForObservation: body.availableForObservation ?? false,
-          availableForEmergency: body.availableForEmergency ?? false,
+          ...(body.category === 'RMO'
+            ? {
+                availableForOpd: false,
+                availableForObservation: false,
+                availableForEmergency: body.availableForEmergency ?? true,
+              }
+            : {
+                availableForOpd: body.availableForOpd ?? false,
+                availableForObservation: body.availableForObservation ?? false,
+                availableForEmergency: body.availableForEmergency ?? false,
+              }),
           ...clinicalAuthData,
           createdBy: actorLabel,
           updatedBy: actorLabel,
@@ -286,10 +298,10 @@ export const staffService = {
     }
 
     const nextCategory = body.category ?? existing.category;
-    if (nextCategory === 'Doctor' && body.serviceIds && body.serviceIds.length > 0) {
+    if ((nextCategory === 'Doctor' || nextCategory === 'RMO') && body.serviceIds && body.serviceIds.length > 0) {
       await assertServicesActive(body.serviceIds);
     }
-    const leavingDoctorCategory = existing.category === 'Doctor' && body.category !== undefined && body.category !== 'Doctor';
+    const leavingDoctorOrRmoCategory = (existing.category === 'Doctor' || existing.category === 'RMO') && body.category !== undefined && body.category !== 'Doctor' && body.category !== 'RMO';
 
     const actorLabel = await resolveActorLabel(updatedById);
     const data: Prisma.StaffUpdateInput = { ...body, updatedBy: actorLabel };
@@ -302,9 +314,16 @@ export const staffService = {
     if (body.assignedShiftId !== undefined) {
       data.assignedShift = body.assignedShiftId ? { connect: { id: body.assignedShiftId } } : { disconnect: true };
     }
+    if (nextCategory === 'RMO') {
+      data.availableForOpd = false;
+      data.availableForObservation = false;
+      if (body.availableForEmergency !== undefined) {
+        data.availableForEmergency = body.availableForEmergency;
+      }
+    }
 
     // Plain field update, no department/service junction work needed — skip the transaction.
-    const needsJunctionSync = body.departmentIds !== undefined || body.serviceIds !== undefined || leavingDoctorCategory;
+    const needsJunctionSync = body.departmentIds !== undefined || body.serviceIds !== undefined || leavingDoctorOrRmoCategory;
     if (!needsJunctionSync) {
       return staffRepository.update(id, data);
     }
@@ -336,9 +355,9 @@ export const staffService = {
         }
       }
 
-      // Doctor ↔ Service assignments: soft-deactivate rather than delete, so
+      // Doctor / RMO ↔ Service assignments: soft-deactivate rather than delete, so
       // commission history on `DoctorCommissionRule` for the same service stays intact.
-      if (leavingDoctorCategory) {
+      if (leavingDoctorOrRmoCategory) {
         await tx.staffService.updateMany({ where: { staffId: id, isActive: true }, data: { isActive: false } });
       } else if (body.serviceIds !== undefined) {
         const targetIds = new Set(body.serviceIds);

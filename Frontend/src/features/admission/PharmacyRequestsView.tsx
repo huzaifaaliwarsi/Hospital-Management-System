@@ -130,6 +130,26 @@ export const PharmacyRequestsView: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter]);
 
+  useEffect(() => {
+    let disposed = false;
+    let refreshing = false;
+    const sync = async () => {
+      if (document.hidden || refreshing) return;
+      refreshing = true;
+      try {
+        const raw = await pharmacyApiService.getInpatientRequests(statusFilter || undefined);
+        if (!disposed) setRows(raw.map(toRow));
+      } catch {
+        // Preserve the last successful list; manual refresh reports failures.
+      } finally {
+        refreshing = false;
+      }
+    };
+    const timer = window.setInterval(sync, 5000);
+    window.addEventListener('focus', sync);
+    return () => { disposed = true; window.clearInterval(timer); window.removeEventListener('focus', sync); };
+  }, [statusFilter]);
+
   const filtered = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
     if (!q) return rows;

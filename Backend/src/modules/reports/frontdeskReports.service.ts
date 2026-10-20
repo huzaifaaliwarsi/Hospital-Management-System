@@ -41,7 +41,14 @@ export const frontdeskReportsService = {
     const where: Prisma.HospitalInvoiceWhereInput = {
       sourceType: { not: 'ADMISSION' },
       createdAt: { gte: start, lte: end },
-      ...(query.departmentId ? { departmentId: query.departmentId } : {}),
+      ...(query.departmentId
+        ? {
+            OR: [
+              { departmentId: query.departmentId },
+              { lines: { some: { serviceRate: { departmentId: query.departmentId } } } },
+            ],
+          }
+        : {}),
       ...(query.encounterType ? { encounterType: query.encounterType } : {}),
       ...(query.status ? { status: query.status } : {}),
       ...(query.doctorStaffId ? { appointment: { doctorStaffId: query.doctorStaffId } } : {}),
@@ -52,6 +59,7 @@ export const frontdeskReportsService = {
       include: {
         ...patientNameSelect,
         department: { select: { id: true, name: true } },
+        lines: { select: { serviceRate: { select: { department: { select: { id: true, name: true } } } } } },
         appointment: { select: { doctor: { select: { id: true, fullName: true } } } },
         createdByUser: { select: userSummarySelect },
       },
@@ -62,28 +70,49 @@ export const frontdeskReportsService = {
     return {
       period: { label, start: start.toISOString(), end: end.toISOString() },
       totalVisits: rows.length,
-      rows: rows.map((r) => ({
-        invoiceNumber: r.invoiceNumber,
-        occurredAt: r.createdAt,
-        patient: patientDisplayName(r),
-        payer: r.panelPatient ? 'Panel' : 'Self-Pay',
-        department: r.department?.name ?? null,
-        doctor: r.appointment?.doctor?.fullName ?? null,
-        visitType: r.sourceType,
-        encounterType: r.encounterType,
-        status: r.status,
-        createdBy: r.createdByUser?.displayName || r.createdByUser?.username || null,
-      })),
+      rows: rows.map((r) => {
+        const depts = Array.from(
+          new Set(
+            [r.department?.name, ...r.lines.map((l) => l.serviceRate?.department?.name)].filter(
+              (name): name is string => Boolean(name),
+            ),
+          ),
+        );
+        return {
+          invoiceNumber: r.invoiceNumber,
+          occurredAt: r.createdAt,
+          patient: patientDisplayName(r),
+          payer: r.panelPatient ? 'Panel' : 'Self-Pay',
+          department: query.departmentId
+            ? depts.find((d) => d.toLowerCase().includes('lab')) || depts[0] || 'Hospital Department'
+            : depts.length > 0
+              ? depts.join(', ')
+              : 'Hospital Department',
+          doctor: r.appointment?.doctor?.fullName ?? null,
+          visitType: r.sourceType,
+          encounterType: r.encounterType,
+          status: r.status,
+          createdBy: r.createdByUser?.displayName || r.createdByUser?.username || null,
+        };
+      }),
     };
   },
 
   /** Guide §3.3 — primary billing register across all Hospital-side invoices (visit + Admission bills). */
   async getInvoiceRegister(query: InvoiceRegisterQuery) {
     const { start, end, label } = resolveDateRange(query);
+    const deptId = query.departmentId;
     const where: Prisma.HospitalInvoiceWhereInput = {
       createdAt: { gte: start, lte: end },
       ...(query.createdById ? { createdById: query.createdById } : {}),
-      ...(query.departmentId ? { departmentId: query.departmentId } : {}),
+      ...(deptId
+        ? {
+            OR: [
+              { departmentId: deptId },
+              { lines: { some: { serviceRate: { departmentId: deptId } } } },
+            ],
+          }
+        : {}),
       ...(query.sourceType ? { sourceType: query.sourceType } : {}),
       ...(query.corporatePanelId ? { corporatePanelId: query.corporatePanelId } : {}),
       ...(query.payerType === 'PANEL' ? { corporatePanelId: { not: null } } : {}),
@@ -96,6 +125,14 @@ export const frontdeskReportsService = {
       include: {
         ...patientNameSelect,
         department: { select: { id: true, name: true } },
+        lines: {
+          select: {
+            lineGross: true,
+            discountAmount: true,
+            lineNet: true,
+            serviceRate: { select: { departmentId: true, department: { select: { id: true, name: true } } } },
+          },
+        },
         createdByUser: { select: userSummarySelect },
       },
       orderBy: { createdAt: 'desc' },
@@ -106,31 +143,61 @@ export const frontdeskReportsService = {
     let discount = new Decimal(0);
     let net = new Decimal(0);
     let paid = new Decimal(0);
-    for (const r of rows) {
-      gross = gross.plus(r.subtotal);
-      discount = discount.plus(r.discountTotal);
-      net = net.plus(r.total);
-      paid = paid.plus(r.paidTotal);
-    }
 
-    return {
-      period: { label, start: start.toISOString(), end: end.toISOString() },
-      summary: { grossBilled: gross, discount, netBilled: net, paid, outstanding: net.minus(paid), invoiceCount: rows.length },
-      rows: rows.map((r) => ({
+    const mappedRows = rows.map((r) => {
+      let rowGross = r.subtotal;
+      let rowDiscount = r.discountTotal;
+      let rowNet = r.total;
+      let rowPaid = r.paidTotal;
+
+      if (deptId && r.lines && r.lines.length > 0) {
+        const matchingLines = r.lines.filter(
+          (l) => l.serviceRate?.departmentId === deptId || (!l.serviceRate?.departmentId && r.departmentId === deptId),
+        );
+        rowGross = matchingLines.reduce((s, l) => s.plus(l.lineGross), new Decimal(0));
+        rowDiscount = matchingLines.reduce((s, l) => s.plus(l.discountAmount), new Decimal(0));
+        rowNet = matchingLines.reduce((s, l) => s.plus(l.lineNet), new Decimal(0));
+        rowPaid = r.total.greaterThan(0) ? r.paidTotal.times(rowNet).dividedBy(r.total) : new Decimal(0);
+      }
+
+      gross = gross.plus(rowGross);
+      discount = discount.plus(rowDiscount);
+      net = net.plus(rowNet);
+      paid = paid.plus(rowPaid);
+
+      const depts = Array.from(
+        new Set(
+          [r.department?.name, ...r.lines.map((l) => l.serviceRate?.department?.name)].filter(
+            (name): name is string => Boolean(name),
+          ),
+        ),
+      );
+
+      return {
         id: r.id,
         invoiceNumber: r.invoiceNumber,
         createdAt: r.createdAt,
         patient: patientDisplayName(r),
         sourceType: r.sourceType,
-        department: r.department?.name ?? null,
-        gross: r.subtotal,
-        discount: r.discountTotal,
-        net: r.total,
-        paid: r.paidTotal,
-        balance: r.total.minus(r.paidTotal),
+        department: deptId
+          ? depts.find((d) => d.toLowerCase().includes('lab')) || depts[0] || 'Hospital Department'
+          : depts.length > 0
+            ? depts.join(', ')
+            : 'Hospital Department',
+        gross: rowGross,
+        discount: rowDiscount,
+        net: rowNet,
+        paid: rowPaid,
+        balance: rowNet.minus(rowPaid),
         createdBy: r.createdByUser?.displayName || r.createdByUser?.username || null,
         status: r.status,
-      })),
+      };
+    });
+
+    return {
+      period: { label, start: start.toISOString(), end: end.toISOString() },
+      summary: { grossBilled: gross, discount, netBilled: net, paid, outstanding: net.minus(paid), invoiceCount: rows.length },
+      rows: mappedRows,
     };
   },
 
@@ -187,10 +254,18 @@ export const frontdeskReportsService = {
   /** Guide §4.1 — open receivable list. */
   async getOutstandingInvoices(query: OutstandingInvoicesQuery) {
     const { start, end, label } = resolveDateRange(query);
+    const deptId = query.departmentId;
     const where: Prisma.HospitalInvoiceWhereInput = {
       createdAt: { gte: start, lte: end },
       status: query.status ? query.status : { in: ['UNPAID', 'PARTIALLY_PAID'] },
-      ...(query.departmentId ? { departmentId: query.departmentId } : {}),
+      ...(deptId
+        ? {
+            OR: [
+              { departmentId: deptId },
+              { lines: { some: { serviceRate: { departmentId: deptId } } } },
+            ],
+          }
+        : {}),
       ...(query.payerType === 'PANEL' ? { corporatePanelId: { not: null } } : {}),
       ...(query.payerType === 'SELF_PAY' ? { corporatePanelId: null } : {}),
     };
@@ -200,6 +275,12 @@ export const frontdeskReportsService = {
       include: {
         ...patientNameSelect,
         department: { select: { id: true, name: true } },
+        lines: {
+          select: {
+            lineNet: true,
+            serviceRate: { select: { departmentId: true, department: { select: { name: true } } } },
+          },
+        },
         createdByUser: { select: userSummarySelect },
         paymentReceipts: { where: { isReversed: false }, select: { collectedAt: true }, orderBy: { collectedAt: 'desc' }, take: 1 },
       },
@@ -208,12 +289,31 @@ export const frontdeskReportsService = {
     });
 
     const filtered = rows.filter((r) => {
-      const diff = r.total.minus(r.paidTotal);
+      let net = r.total;
+      let paid = r.paidTotal;
+      if (deptId && r.lines && r.lines.length > 0) {
+        const matchingLines = r.lines.filter(
+          (l) => l.serviceRate?.departmentId === deptId || (!l.serviceRate?.departmentId && r.departmentId === deptId),
+        );
+        net = matchingLines.reduce((s, l) => s.plus(l.lineNet), new Decimal(0));
+        paid = r.total.greaterThan(0) ? r.paidTotal.times(net).dividedBy(r.total) : new Decimal(0);
+      }
+      const diff = net.minus(paid);
       if (query.minOutstanding != null) return diff.toNumber() >= query.minOutstanding;
       return diff.greaterThan(0);
     });
+
     const totalOutstanding = filtered.reduce((s, r) => {
-      const diff = r.total.minus(r.paidTotal);
+      let net = r.total;
+      let paid = r.paidTotal;
+      if (deptId && r.lines && r.lines.length > 0) {
+        const matchingLines = r.lines.filter(
+          (l) => l.serviceRate?.departmentId === deptId || (!l.serviceRate?.departmentId && r.departmentId === deptId),
+        );
+        net = matchingLines.reduce((s, l) => s.plus(l.lineNet), new Decimal(0));
+        paid = r.total.greaterThan(0) ? r.paidTotal.times(net).dividedBy(r.total) : new Decimal(0);
+      }
+      const diff = net.minus(paid);
       return diff.greaterThan(0) ? s.plus(diff) : s;
     }, new Decimal(0));
 
@@ -221,13 +321,34 @@ export const frontdeskReportsService = {
       period: { label, start: start.toISOString(), end: end.toISOString() },
       summary: { totalOutstanding, invoiceCount: filtered.length },
       rows: filtered.map((r) => {
-        const diff = r.total.minus(r.paidTotal);
+        let net = r.total;
+        let paid = r.paidTotal;
+        if (deptId && r.lines && r.lines.length > 0) {
+          const matchingLines = r.lines.filter(
+            (l) => l.serviceRate?.departmentId === deptId || (!l.serviceRate?.departmentId && r.departmentId === deptId),
+          );
+          net = matchingLines.reduce((s, l) => s.plus(l.lineNet), new Decimal(0));
+          paid = r.total.greaterThan(0) ? r.paidTotal.times(net).dividedBy(r.total) : new Decimal(0);
+        }
+        const diff = net.minus(paid);
+        const depts = Array.from(
+          new Set(
+            [r.department?.name, ...r.lines.map((l) => l.serviceRate?.department?.name)].filter(
+              (name): name is string => Boolean(name),
+            ),
+          ),
+        );
+
         return {
           invoiceNumber: r.invoiceNumber,
           patient: patientDisplayName(r),
-          department: r.department?.name ?? null,
-          net: r.total,
-          paid: r.paidTotal,
+          department: deptId
+            ? depts.find((d) => d.toLowerCase().includes('lab')) || depts[0] || 'Hospital Department'
+            : depts.length > 0
+              ? depts.join(', ')
+              : 'Hospital Department',
+          net,
+          paid,
           outstanding: diff.greaterThan(0) ? diff : new Decimal(0),
           lastPaymentAt: r.paymentReceipts[0]?.collectedAt ?? null,
           payer: r.corporatePanelId ? 'Panel' : 'Self-Pay',
@@ -246,11 +367,25 @@ export const frontdeskReportsService = {
         discountAmount: { gt: 0 },
         createdAt: { gte: start, lte: end },
         ...(query.corporatePanelId ? { hospitalInvoice: { corporatePanelId: query.corporatePanelId } } : {}),
-        ...(query.departmentId ? { hospitalInvoice: { departmentId: query.departmentId } } : {}),
+        ...(query.departmentId
+          ? {
+              OR: [
+                { serviceRate: { departmentId: query.departmentId } },
+                { hospitalInvoice: { departmentId: query.departmentId } },
+              ],
+            }
+          : {}),
       },
       include: {
-        serviceRate: { select: { name: true } },
-        hospitalInvoice: { select: { invoiceNumber: true, ...patientNameSelect, corporatePanel: { select: { organizationName: true } } } },
+        serviceRate: { select: { name: true, department: { select: { name: true } } } },
+        hospitalInvoice: {
+          select: {
+            invoiceNumber: true,
+            department: { select: { name: true } },
+            ...patientNameSelect,
+            corporatePanel: { select: { organizationName: true } },
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
       take: 500,
@@ -337,20 +472,55 @@ export const frontdeskReportsService = {
     const rows = await prisma.invoiceLineItem.findMany({
       where: {
         createdAt: { gte: start, lte: end },
-        ...(query.departmentId ? { hospitalInvoice: { departmentId: query.departmentId } } : {}),
+        ...(query.departmentId
+          ? {
+              OR: [
+                { serviceRate: { departmentId: query.departmentId } },
+                { hospitalInvoice: { departmentId: query.departmentId } },
+              ],
+            }
+          : {}),
       },
-      include: { serviceRate: { select: { name: true } }, hospitalInvoice: { select: { departmentId: true, department: { select: { name: true } }, paidTotal: true, total: true } } },
+      include: {
+        serviceRate: {
+          select: {
+            name: true,
+            departmentId: true,
+            department: { select: { id: true, name: true } },
+          },
+        },
+        hospitalInvoice: {
+          select: {
+            departmentId: true,
+            department: { select: { id: true, name: true } },
+            paidTotal: true,
+            total: true,
+          },
+        },
+      },
       take: 2000,
     });
 
     type Bucket = { department: string; service: string; qty: Decimal; gross: Decimal; discount: Decimal; net: Decimal };
     const byKey = new Map<string, Bucket>();
     for (const r of rows) {
-      const dept = r.hospitalInvoice.department?.name || 'Unassigned';
-      const key = `${dept}::${(r.descriptionSnapshot ?? r.serviceRate?.name ?? r.billingSource)}`;
+      if (query.departmentId) {
+        const matchesRateDept = r.serviceRate?.departmentId === query.departmentId;
+        const matchesInvDept = r.hospitalInvoice.departmentId === query.departmentId;
+        if (r.serviceRate?.departmentId && !matchesRateDept) {
+          continue;
+        }
+        if (!r.serviceRate?.departmentId && !matchesInvDept) {
+          continue;
+        }
+      }
+
+      const dept = r.serviceRate?.department?.name || r.hospitalInvoice.department?.name || 'Hospital Department';
+      const serviceName = r.descriptionSnapshot ?? r.serviceRate?.name ?? r.billingSource ?? 'Service';
+      const key = `${dept}::${serviceName}`;
       let bucket = byKey.get(key);
       if (!bucket) {
-        bucket = { department: dept, service: (r.descriptionSnapshot ?? r.serviceRate?.name ?? r.billingSource), qty: new Decimal(0), gross: new Decimal(0), discount: new Decimal(0), net: new Decimal(0) };
+        bucket = { department: dept, service: serviceName, qty: new Decimal(0), gross: new Decimal(0), discount: new Decimal(0), net: new Decimal(0) };
         byKey.set(key, bucket);
       }
       bucket.qty = bucket.qty.plus(r.quantity);

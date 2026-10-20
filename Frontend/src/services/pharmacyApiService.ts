@@ -1,11 +1,43 @@
 import apiClient from './apiClient';
 
+export interface PackagingLevel {
+  id?: string;
+  medicineId?: string;
+  unitId: string;
+  level: number;
+  conversionToBase: number | string;
+  isPurchaseUnit?: boolean;
+  isSaleUnit?: boolean;
+  overrideSaleRate?: number | string | null;
+  isActive?: boolean;
+  unit: {
+    id: string;
+    name: string;
+    shortCode?: string | null;
+  };
+}
+
+export interface PharmacyUnit {
+  id: string;
+  name: string;
+  shortCode?: string | null;
+  isSystem?: boolean;
+  isActive?: boolean;
+}
+
 export interface BackendMedicine {
   id: string;
   code: string;
   name: string;
   category?: string;
   unit: string;
+  baseUnitId?: string;
+  baseUnit?: {
+    id: string;
+    name: string;
+    shortCode?: string | null;
+  };
+  packagingLevels?: PackagingLevel[];
   batchManaged: boolean;
   purchaseRate?: string | number;
   saleRate?: string | number;
@@ -28,6 +60,11 @@ export const pharmacyApiService = {
     const res = await apiClient.get<{ data: BackendMedicine[] }>('/pharmacy/medicines', {
       params: { search },
     });
+    return res.data.data;
+  },
+
+  async getUnits() {
+    const res = await apiClient.get<{ data: PharmacyUnit[] }>('/pharmacy/units');
     return res.data.data;
   },
 

@@ -8,9 +8,9 @@ const { db, api } = vi.hoisted(() => ({ api: { post: vi.fn() }, db: {
 } }));
 vi.mock('@/db/client', () => ({ prisma: { $transaction: (fn: any) => fn(db) } }));
 vi.mock('@/shared/idGenerator', () => ({ generateAdmissionNumber: () => 'ADM', generateInvoiceNumber: () => 'INV' }));
-vi.mock('../../ch-sharif-and-saeed-hospital---hms/src/services/apiClient', () => ({ default: api }));
-vi.mock('../../ch-sharif-and-saeed-hospital---hms/src/services/patientRegistryService', () => ({ getAllPatients: () => [], getPatientById: () => undefined }));
-import { createAdmission } from '../../ch-sharif-and-saeed-hospital---hms/src/services/admissionService';
+vi.mock('../../Frontend/src/services/apiClient', () => ({ default: api }));
+vi.mock('../../Frontend/src/services/patientRegistryService', () => ({ getAllPatients: () => [], getPatientById: () => undefined }));
+import { createAdmission } from '../../Frontend/src/services/admissionService';
 import { createPlannedAdmissionSchema, addAdmissionServiceSchema } from '../src/modules/admission/admission.schemas';
 import { admissionService } from '../src/modules/admission/admission.service';
 

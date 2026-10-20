@@ -24,6 +24,12 @@ router.get(
   asyncHandler(c.listMedicines),
 );
 
+router.get(
+  '/units',
+  view,
+  asyncHandler(c.listUnits),
+);
+
 router.patch(
   '/medicines/:id',
   edit,

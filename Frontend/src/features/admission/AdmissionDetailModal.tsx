@@ -23,6 +23,7 @@ import {
   CreditCard,
   Bed,
   RefreshCw,
+  Printer,
 } from 'lucide-react';
 import { Modal } from '../../components/common/Modal';
 import { PanelBadge } from '../../components/common/PanelBadge';
@@ -53,6 +54,7 @@ import {
 } from '../../services/admissionService';
 import { ClinicalDischargeModal } from './ClinicalDischargeModal';
 import { HighCostMedicineAuthorizationModal } from './HighCostMedicineAuthorizationModal';
+import { DischargeSlipPrintModal } from './DischargeSlipPrintModal';
 
 type Tab = 'overview' | 'services' | 'medication' | 'pharmacy' | 'bed' | 'clearances';
 
@@ -144,6 +146,29 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [admissionId]);
+
+  useEffect(() => {
+    let disposed = false;
+    let refreshing = false;
+    const syncPharmacy = async () => {
+      if (document.hidden || refreshing) return;
+      refreshing = true;
+      try {
+        const [admission, ledger] = await Promise.all([fetchAdmissionDetail(admissionId), fetchAdmissionLedger(admissionId, true)]);
+        if (!disposed) {
+          setDetail(previous => previous ? { ...previous, pharmacyRequests: admission.pharmacyRequests } : previous);
+          setLedgerSummary(ledger.summary);
+        }
+      } catch {
+        // Retain the last successful view; the regular refresh surfaces errors.
+      } finally {
+        refreshing = false;
+      }
+    };
+    const timer = window.setInterval(syncPharmacy, 5000);
+    window.addEventListener('focus', syncPharmacy);
+    return () => { disposed = true; window.clearInterval(timer); window.removeEventListener('focus', syncPharmacy); };
   }, [admissionId]);
 
   const refresh = async (message: string) => {
@@ -266,10 +291,52 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
   };
 
   // ── Pharmacy Requests ────────────────────────────────────────────────
+  interface PharmLineState {
+    medicineId: string;
+    requestedQuantity: number;
+    unit: string;
+    conversionToBase: number;
+    overrideSaleRate?: number | null;
+  }
+
   const [medicines, setMedicines] = useState<BackendMedicine[]>([]);
   const [isLoadingMedicines, setIsLoadingMedicines] = useState(false);
-  const [pharmLines, setPharmLines] = useState<{ medicineId: string; requestedQuantity: number }[]>([{ medicineId: '', requestedQuantity: 1 }]);
+  const [pharmLines, setPharmLines] = useState<PharmLineState[]>([
+    { medicineId: '', requestedQuantity: 1, unit: 'Unit', conversionToBase: 1 },
+  ]);
   const [pharmNotes, setPharmNotes] = useState('');
+
+  const getAvailableUnitsForMedicine = (med?: BackendMedicine) => {
+    if (!med) return [{ label: 'Unit', value: 'Unit', conversionToBase: 1, overrideSaleRate: null }];
+    const baseName = med.baseUnit?.name || med.unit || 'Unit';
+    const map = new Map<string, { label: string; value: string; conversionToBase: number; overrideSaleRate?: number | null }>();
+
+    // Base Unit is always conversion 1
+    map.set(baseName.toLowerCase(), {
+      label: `${baseName} (Base Unit)`,
+      value: baseName,
+      conversionToBase: 1,
+      overrideSaleRate: null,
+    });
+
+    // Add all packaging levels configured by pharmacy staff
+    if (Array.isArray(med.packagingLevels)) {
+      for (const lvl of med.packagingLevels) {
+        const uName = lvl.unit?.name;
+        if (!uName) continue;
+        const conv = Number(lvl.conversionToBase) || 1;
+        const override = lvl.overrideSaleRate !== undefined && lvl.overrideSaleRate !== null ? Number(lvl.overrideSaleRate) : null;
+        map.set(uName.toLowerCase(), {
+          label: conv > 1 ? `${uName} (${conv} ${baseName})` : uName,
+          value: uName,
+          conversionToBase: conv,
+          overrideSaleRate: override,
+        });
+      }
+    }
+
+    return Array.from(map.values());
+  };
 
   const loadMedicines = async (showToast = false) => {
     setIsLoadingMedicines(true);
@@ -293,7 +360,29 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
 
   const handleCreatePharmacyRequest = async (e: React.FormEvent) => {
     e.preventDefault();
-    const validLines = pharmLines.filter((l) => l.medicineId && l.requestedQuantity > 0);
+    const validLines = pharmLines
+      .filter((l) => l.medicineId && l.requestedQuantity > 0)
+      .map((l) => {
+        const med = medicines.find((m) => m.id === l.medicineId);
+        const conv = l.conversionToBase || 1;
+        const totalBaseQty = Math.round((l.requestedQuantity || 1) * conv * 1000) / 1000;
+        const baseUnitName = med?.baseUnit?.name || med?.unit || 'Unit';
+        const unitName = l.unit || baseUnitName;
+        const linePackagingNote =
+          conv > 1
+            ? `${l.requestedQuantity} ${unitName} (${totalBaseQty} ${baseUnitName})`
+            : `${l.requestedQuantity} ${unitName}`;
+
+        return {
+          medicineId: l.medicineId,
+          requestedQuantity: totalBaseQty,
+          unit: unitName,
+          conversionToBase: conv,
+          saleUnitQuantity: l.requestedQuantity,
+          notes: linePackagingNote,
+        };
+      });
+
     if (validLines.length === 0) {
       setActionError('Add at least one medicine with a quantity.');
       return;
@@ -302,7 +391,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
     setActionError(null);
     try {
       const created = await createAdmissionPharmacyRequest(admissionId, { notes: pharmNotes.trim() || undefined, lines: validLines });
-      setPharmLines([{ medicineId: '', requestedQuantity: 1 }]);
+      setPharmLines([{ medicineId: '', requestedQuantity: 1, unit: 'Unit', conversionToBase: 1 }]);
       setPharmNotes('');
       if (created.status === 'AUTHORIZATION_REQUIRED') {
         toast.success('Pharmacy request created.');
@@ -365,6 +454,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
   };
 
   const [isClinicalDischargeOpen, setIsClinicalDischargeOpen] = useState(false);
+  const [isPrintSlipOpen, setIsPrintSlipOpen] = useState(false);
   const [highCostTarget, setHighCostTarget] = useState<AdmissionPharmacyRequestRecord | null>(null);
   const [isDischarging, setIsDischarging] = useState(false);
 
@@ -433,6 +523,12 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
             <span className="font-semibold text-slate-700">{detail.departmentName}</span>
             <span className="text-slate-300">•</span>
             <span>Dr. {detail.doctorName || 'Not assigned'}</span>
+            {detail.rmoName && (
+              <>
+                <span className="text-slate-300">•</span>
+                <span>RMO: {detail.rmoName}</span>
+              </>
+            )}
             <span className="text-slate-300">•</span>
             <span className="font-medium text-slate-700 bg-slate-50 px-2 py-0.5 rounded border border-slate-200/80">
               {detail.bedLabel || 'No bed assigned'}
@@ -490,17 +586,30 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                       Patient Inpatient File — <span className="font-mono text-emerald-200">{detail.patientMrNumber}</span>
                     </span>
                   </div>
-                  <AdmissionLedgerButton
-                    admissionId={admissionId}
-                    className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg text-emerald-200 hover:text-white bg-emerald-950/60 hover:bg-emerald-950 border border-emerald-700/50 transition-colors cursor-pointer"
-                  >
-                    <FileText className="h-3.5 w-3.5" />
-                    <span>View Ledger</span>
-                  </AdmissionLedgerButton>
+                  <div className="flex items-center gap-2">
+                    {detail.dischargeSummary && (
+                      <button
+                        type="button"
+                        onClick={() => setIsPrintSlipOpen(true)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg text-emerald-100 hover:text-white bg-emerald-800/80 hover:bg-emerald-800 border border-emerald-600/50 transition-colors cursor-pointer"
+                        title="Print Official Physical Discharge Slip"
+                      >
+                        <Printer className="h-3.5 w-3.5" />
+                        <span>Print Discharge Form</span>
+                      </button>
+                    )}
+                    <AdmissionLedgerButton
+                      admissionId={admissionId}
+                      className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg text-emerald-200 hover:text-white bg-emerald-950/60 hover:bg-emerald-950 border border-emerald-700/50 transition-colors cursor-pointer"
+                    >
+                      <FileText className="h-3.5 w-3.5" />
+                      <span>View Ledger</span>
+                    </AdmissionLedgerButton>
+                  </div>
                 </div>
 
-                {/* Card Body: Balanced 4-Column Metadata Layout */}
-                <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs bg-slate-50/40">
+                {/* Card Body: Balanced Metadata Layout */}
+                <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 text-xs bg-slate-50/40">
                   <div className="bg-white p-3 rounded-xl border border-slate-200/80 shadow-2xs">
                     <span className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wider block">Department</span>
                     <span className="font-bold text-slate-900 truncate block mt-0.5" title={detail.departmentName}>
@@ -517,6 +626,12 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                     <span className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wider block">Attending Doctor</span>
                     <span className="font-bold text-slate-900 truncate block mt-0.5" title={detail.doctorName}>
                       {detail.doctorName || 'Not assigned'}
+                    </span>
+                  </div>
+                  <div className="bg-white p-3 rounded-xl border border-slate-200/80 shadow-2xs">
+                    <span className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wider block">Assigned RMO</span>
+                    <span className="font-bold text-slate-900 truncate block mt-0.5" title={detail.rmoName || ''}>
+                      {detail.rmoName || 'None assigned'}
                     </span>
                   </div>
                   <div className="bg-white p-3 rounded-xl border border-slate-200/80 shadow-2xs">
@@ -1305,26 +1420,52 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                   <form onSubmit={handleCreatePharmacyRequest} className="p-4 space-y-3.5">
                     {pharmLines.map((line, idx) => {
                       const selMed = medicines.find((m) => m.id === line.medicineId);
+                      const availableUnits = getAvailableUnitsForMedicine(selMed);
+                      const conv = line.conversionToBase || 1;
+                      const baseUnitName = selMed?.baseUnit?.name || selMed?.unit || 'Unit';
+                      const selectedUnitName = line.unit || baseUnitName;
+                      const effectiveUnitPrice =
+                        line.overrideSaleRate !== undefined && line.overrideSaleRate !== null
+                          ? Number(line.overrideSaleRate)
+                          : Number(selMed?.saleRate || 0) * conv;
+                      const subtotal = effectiveUnitPrice * (line.requestedQuantity || 1);
+                      const totalBaseQty = Math.round((line.requestedQuantity || 1) * conv * 1000) / 1000;
+
                       return (
                         <div key={idx} className="space-y-2 p-3 bg-slate-50/60 border border-slate-200/80 rounded-xl">
-                          <div className="flex items-start gap-2.5">
+                          <div className="flex flex-col sm:flex-row sm:items-start gap-2.5">
                             <div className="flex-1">
                               <Select
                                 label={idx === 0 ? 'Select Medicine from Pharmacy Stock' : undefined}
                                 placeholder="Choose medicine from pharmacy…"
-                                options={medicines.map((m) => ({
-                                  label: `${m.name}${m.code ? ` (${m.code})` : ''} — Stock: ${m.currentStock} ${m.unit || ''} (Rs. ${m.saleRate})`,
-                                  value: m.id,
-                                }))}
+                                options={medicines.map((m) => {
+                                  const packNames = (m.packagingLevels || []).map((p) => p.unit?.name).filter(Boolean);
+                                  const packInfo = packNames.length > 0 ? ` • ${packNames.join('/')}` : '';
+                                  return {
+                                    label: `${m.name}${m.code ? ` (${m.code})` : ''} — Stock: ${m.currentStock} ${m.unit || ''} (Rs. ${m.saleRate}${packInfo})`,
+                                    value: m.id,
+                                  };
+                                })}
                                 value={line.medicineId}
                                 onChange={(e) => {
+                                  const chosenMed = medicines.find((m) => m.id === e.target.value);
+                                  const units = getAvailableUnitsForMedicine(chosenMed);
+                                  const defaultUnit = units[0]?.value || chosenMed?.unit || 'Unit';
+                                  const defaultConv = units[0]?.conversionToBase ?? 1;
+                                  const defaultOverride = units[0]?.overrideSaleRate ?? null;
                                   const next = [...pharmLines];
-                                  next[idx] = { ...next[idx], medicineId: e.target.value };
+                                  next[idx] = {
+                                    medicineId: e.target.value,
+                                    requestedQuantity: next[idx]?.requestedQuantity || 1,
+                                    unit: defaultUnit,
+                                    conversionToBase: defaultConv,
+                                    overrideSaleRate: defaultOverride,
+                                  };
                                   setPharmLines(next);
                                 }}
                               />
                             </div>
-                            <div className="w-28 shrink-0">
+                            <div className="w-full sm:w-28 shrink-0">
                               <NumberInput
                                 label={idx === 0 ? 'Requested Qty' : undefined}
                                 min={1}
@@ -1336,8 +1477,30 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                                 }}
                               />
                             </div>
+                            <div className="w-full sm:w-44 shrink-0">
+                              <Select
+                                label={idx === 0 ? 'Packaging / Unit' : undefined}
+                                options={availableUnits.map((u) => ({
+                                  label: u.label,
+                                  value: u.value,
+                                }))}
+                                value={line.unit || baseUnitName}
+                                onChange={(e) => {
+                                  const units = getAvailableUnitsForMedicine(selMed);
+                                  const matched = units.find((u) => u.value === e.target.value);
+                                  const next = [...pharmLines];
+                                  next[idx] = {
+                                    ...next[idx],
+                                    unit: e.target.value,
+                                    conversionToBase: matched?.conversionToBase ?? 1,
+                                    overrideSaleRate: matched?.overrideSaleRate ?? null,
+                                  };
+                                  setPharmLines(next);
+                                }}
+                              />
+                            </div>
                             {pharmLines.length > 1 && (
-                              <div className={idx === 0 ? 'pt-6' : 'pt-1'}>
+                              <div className={idx === 0 ? 'sm:pt-6 pt-0' : 'sm:pt-1 pt-0 self-end sm:self-auto'}>
                                 <button
                                   type="button"
                                   title="Remove item"
@@ -1356,8 +1519,14 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                               <div>
                                 <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block">Unit Price</span>
                                 <span className="font-bold text-slate-900 block mt-0.5 font-mono">
-                                  {formatPKR(Number(selMed.saleRate || 0))}
+                                  {formatPKR(effectiveUnitPrice)}
+                                  <span className="text-[10.5px] font-normal text-slate-500 ml-1">/ {selectedUnitName}</span>
                                 </span>
+                                {conv > 1 && (
+                                  <span className="text-[10px] text-slate-400 font-normal block">
+                                    ({formatPKR(Number(selMed.saleRate || 0))} / {baseUnitName})
+                                  </span>
+                                )}
                               </div>
                               <div>
                                 <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block">Available Stock</span>
@@ -1366,19 +1535,29 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                                     Number(selMed.currentStock) > 0 ? 'text-emerald-700' : 'text-rose-600'
                                   }`}
                                 >
-                                  {selMed.currentStock} {selMed.unit || 'units'}
+                                  {selMed.currentStock} {baseUnitName}
                                 </span>
+                                {conv > 1 && Number(selMed.currentStock) > 0 && (
+                                  <span className="text-[10px] text-slate-400 font-normal block">
+                                    (~{(Number(selMed.currentStock) / conv).toFixed(1)} {selectedUnitName})
+                                  </span>
+                                )}
                               </div>
                               <div>
-                                <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block">Category</span>
-                                <span className="font-bold text-slate-900 block mt-0.5 truncate" title={selMed.category || 'General'}>
-                                  {selMed.category || 'General'}
+                                <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block">Requested In Base</span>
+                                <span className="font-bold text-indigo-700 block mt-0.5 font-mono">
+                                  {line.requestedQuantity || 1} {selectedUnitName}
                                 </span>
+                                {conv > 1 && (
+                                  <span className="text-slate-500 font-normal text-[10px] block">
+                                    = {totalBaseQty} {baseUnitName}
+                                  </span>
+                                )}
                               </div>
                               <div>
                                 <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block">Estimated Subtotal</span>
                                 <span className="font-bold text-emerald-800 block mt-0.5 font-mono">
-                                  {formatPKR(Number(selMed.saleRate || 0) * (line.requestedQuantity || 1))}
+                                  {formatPKR(subtotal)}
                                 </span>
                               </div>
                             </div>
@@ -1389,7 +1568,12 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
 
                     <button
                       type="button"
-                      onClick={() => setPharmLines([...pharmLines, { medicineId: '', requestedQuantity: 1 }])}
+                      onClick={() =>
+                        setPharmLines([
+                          ...pharmLines,
+                          { medicineId: '', requestedQuantity: 1, unit: 'Unit', conversionToBase: 1 },
+                        ])
+                      }
                       className="inline-flex items-center gap-1.5 text-xs font-bold text-[#08775A] hover:text-[#065f46] hover:bg-[#effaf5] px-2.5 py-1 rounded-lg border border-[#c2e7db] transition-colors cursor-pointer"
                     >
                       <Plus className="h-3.5 w-3.5" />
@@ -1473,7 +1657,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                             ) : (
                               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-sky-50 text-sky-700 border border-sky-200">
                                 <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse" />
-                                REQUESTED
+                                {r.status.replaceAll('_', ' ')}
                               </span>
                             )}
                           </div>
@@ -1536,7 +1720,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                   </span>
                 </div>
 
-                <div className="p-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs bg-slate-50/40">
+                <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs bg-slate-50/40">
                   <div className="bg-white p-3 rounded-xl border border-slate-200/80 shadow-2xs">
                     <span className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wider block">Assigned Department</span>
                     <span className="font-bold text-slate-900 truncate block mt-0.5 text-sm" title={detail.departmentName}>
@@ -1553,6 +1737,12 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                     <span className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wider block">Attending Physician</span>
                     <span className="font-bold text-slate-900 truncate block mt-0.5 text-sm" title={detail.doctorName}>
                       {detail.doctorName || 'Not assigned'}
+                    </span>
+                  </div>
+                  <div className="bg-white p-3 rounded-xl border border-slate-200/80 shadow-2xs">
+                    <span className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wider block">Assigned RMO</span>
+                    <span className="font-bold text-slate-900 truncate block mt-0.5 text-sm" title={detail.rmoName || ''}>
+                      {detail.rmoName || 'None assigned'}
                     </span>
                   </div>
                 </div>
@@ -1769,13 +1959,35 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                   <div className="bg-[#0e5944] px-4 py-2.5 text-xs font-bold text-white flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <Stethoscope className="h-4 w-4 text-emerald-300" />
-                      <span className="tracking-wide">Doctor Discharge Summary Record</span>
+                      <span className="tracking-wide">Doctor / RMO Discharge Summary Record</span>
                     </div>
-                    <span className="text-emerald-200 font-mono text-[11px] font-normal">{detail.dischargeSummary.authorizedAt}</span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsPrintSlipOpen(true)}
+                        className="px-2.5 py-1 text-[11px] font-bold bg-white text-[#0e5944] hover:bg-emerald-50 rounded-lg shadow-xs flex items-center gap-1.5 cursor-pointer transition-colors"
+                      >
+                        <Printer className="h-3.5 w-3.5" />
+                        <span>Print Official Discharge Form</span>
+                      </button>
+                      <span className="text-emerald-200 font-mono text-[11px] font-normal">{detail.dischargeSummary.authorizedAt}</span>
+                    </div>
                   </div>
                   <div className="p-4 space-y-2 text-xs bg-slate-50/40">
                     <p><strong className="text-slate-700">Final Diagnosis:</strong> <span className="text-slate-900 font-medium">{detail.dischargeSummary.finalDiagnosis}</span></p>
+                    {detail.dischargeSummary.associatedDiagnosisA && (
+                      <p><strong className="text-slate-700">(a) Ass Diagnosis:</strong> <span className="text-slate-800">{detail.dischargeSummary.associatedDiagnosisA}</span></p>
+                    )}
+                    {detail.dischargeSummary.associatedDiagnosisB && (
+                      <p><strong className="text-slate-700">(b) Ass Diagnosis:</strong> <span className="text-slate-800">{detail.dischargeSummary.associatedDiagnosisB}</span></p>
+                    )}
+                    {detail.dischargeSummary.weightOnDischarge && (
+                      <p><strong className="text-slate-700">Discharge Weight:</strong> <span className="text-slate-900 font-bold">{detail.dischargeSummary.weightOnDischarge}</span></p>
+                    )}
                     <p><strong className="text-slate-700">Condition at Discharge:</strong> <span className="text-slate-900 font-medium">{detail.dischargeSummary.conditionAtDischarge}</span></p>
+                    {detail.dischargeSummary.prescriptionOnDischarge && (
+                      <p><strong className="text-slate-700">Prescription on Discharge:</strong> <span className="text-slate-800 font-medium">{detail.dischargeSummary.prescriptionOnDischarge}</span></p>
+                    )}
                     <p className="text-[11px] text-slate-500 pt-1.5 border-t border-slate-200/60">
                       Authorized by <strong className="text-slate-800">{detail.dischargeSummary.doctorNameSnapshot}</strong>
                       {detail.dischargeSummary.doctorDepartmentSnapshot && ` (${detail.dischargeSummary.doctorDepartmentSnapshot})`}
@@ -1834,6 +2046,14 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
             await load();
             onChanged?.();
           }}
+        />
+      )}
+
+      {isPrintSlipOpen && detail && detail.dischargeSummary && (
+        <DischargeSlipPrintModal
+          admission={detail}
+          summary={detail.dischargeSummary}
+          onClose={() => setIsPrintSlipOpen(false)}
         />
       )}
     </Modal>

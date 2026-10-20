@@ -1,5 +1,6 @@
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '@/db/client';
+import { lockMainFund } from '@/shared/mainFundLock';
 import { BusinessRuleError } from '@/shared/errors/AppError';
 import { resolveDateRange } from '@/modules/reports/dashboard.service';
 import type { ListMainFundEntriesQuery, MainFundTransactionBody } from './mainFund.schemas';
@@ -78,19 +79,23 @@ export const mainFundService = {
   },
 
   async withdraw(body: MainFundTransactionBody, actorPortalUserId: string) {
-    const balance = await getMainFundBalance();
-    if (balance.lessThan(body.amount)) {
-      throw new BusinessRuleError(`Insufficient Main Fund balance — PKR ${balance.toFixed(2)} available.`);
-    }
-    return prisma.mainCashFundEntry.create({
-      data: {
-        direction: 'OUT',
-        amount: body.amount,
-        type: 'WITHDRAWAL',
-        note: body.note,
-        performedById: actorPortalUserId,
-      },
-      include: { performedByUser: { select: userSummarySelect } },
+    return prisma.$transaction(async tx => {
+      await lockMainFund(tx);
+      const entries = await tx.mainCashFundEntry.findMany({ select: { direction: true, amount: true } });
+      const balance = entries.reduce((sum, row) => row.direction === 'IN' ? sum.plus(row.amount) : sum.minus(row.amount), new Decimal(0));
+      if (balance.lessThan(body.amount)) {
+        throw new BusinessRuleError(`Insufficient Main Fund balance — PKR ${balance.toFixed(2)} available.`);
+      }
+      return tx.mainCashFundEntry.create({
+        data: {
+          direction: 'OUT',
+          amount: body.amount,
+          type: 'WITHDRAWAL',
+          note: body.note,
+          performedById: actorPortalUserId,
+        },
+        include: { performedByUser: { select: userSummarySelect } },
+      });
     });
   },
 };

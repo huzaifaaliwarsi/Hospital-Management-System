@@ -261,7 +261,10 @@ export const PlannedAdmissionsView: React.FC<PlannedAdmissionsViewProps> = ({
                         {a.departmentName}
                       </td>
                       <td className="py-2.5 px-4 border-r border-[#e2eae5] whitespace-nowrap text-slate-700">
-                        {a.doctorName || <span className="text-slate-400 italic">Unassigned</span>}
+                        <div>{a.doctorName || <span className="text-slate-400 italic">Unassigned</span>}</div>
+                        {a.rmoName && (
+                          <div className="text-[11px] text-[#08775A] font-medium">RMO: {a.rmoName}</div>
+                        )}
                       </td>
                       <td className="py-2.5 px-4 border-r border-[#e2eae5] whitespace-nowrap text-slate-600 font-mono text-[11px]">
                         {a.expectedAt || '—'}

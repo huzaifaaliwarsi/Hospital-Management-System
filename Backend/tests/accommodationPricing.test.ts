@@ -14,9 +14,9 @@ const { tx, api } = vi.hoisted(() => ({ api: { get: vi.fn(), post: vi.fn(), patc
   hospitalInvoice: { update: vi.fn(), findFirst: vi.fn(), findUniqueOrThrow: vi.fn() },
 } }));
 vi.mock('@/db/client', () => ({ prisma: { ...tx, $transaction: (fn: any) => fn(tx) } }));
-vi.mock('../../ch-sharif-and-saeed-hospital---hms/src/services/apiClient', () => ({ default: api }));
-vi.mock('../../ch-sharif-and-saeed-hospital---hms/src/services/departmentService', () => ({ DepartmentService: {} }));
-import { WardsRoomsBedsService } from '../../ch-sharif-and-saeed-hospital---hms/src/services/wardsRoomsBedsService';
+vi.mock('../../Frontend/src/services/apiClient', () => ({ default: api }));
+vi.mock('../../Frontend/src/services/departmentService', () => ({ DepartmentService: {} }));
+import { WardsRoomsBedsService } from '../../Frontend/src/services/wardsRoomsBedsService';
 import { admissionService } from '../src/modules/admission/admission.service';
 import { createBedSchema, updateBedSchema, createRoomSchema, createWardSchema } from '../src/modules/setup/setup.schemas';
 

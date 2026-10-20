@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Landmark, ArrowDownCircle, ArrowUpCircle, Loader2 } from 'lucide-react';
+import { Landmark, ArrowDownCircle, ArrowUpCircle, Loader2, AlertCircle } from 'lucide-react';
 import { GenericReportView, ReportDatePreset } from '../../../components/reports/GenericReportView';
 import { Modal } from '../../../components/common/Modal';
 import { CurrencyInput, Textarea } from '../../../components/forms/FormControls';
@@ -58,12 +58,32 @@ export const MainCashFundView: React.FC = () => {
     setFormError(null);
   };
 
+  const handleAmountChange = (val: string) => {
+    setForm((f) => ({ ...f, amount: val }));
+    if (formError) setFormError(null);
+  };
+
+  const handleNoteChange = (val: string) => {
+    setForm((f) => ({ ...f, note: val }));
+    if (formError) setFormError(null);
+  };
+
+  const addQuickAmount = (delta: number) => {
+    const current = Number(form.amount) || 0;
+    const next = current + delta;
+    setForm((f) => ({ ...f, amount: String(next) }));
+    if (formError) setFormError(null);
+  };
+
   const submitTx = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
     const amount = Number(form.amount);
-    if (!amount || amount <= 0) return setFormError('Enter an amount greater than zero.');
-    if (!form.note.trim()) return setFormError('Note is required.');
+    if (!amount || amount <= 0) return setFormError('Please enter a valid amount greater than zero.');
+    if (!form.note.trim()) return setFormError('Audit note is required (enter description or bank slip reference).');
+    if (txKind === 'withdraw' && liveBalance != null && amount > liveBalance) {
+      return setFormError(`Insufficient funds: withdrawal amount (${formatPKR(amount)}) exceeds current balance (${formatPKR(liveBalance)}).`);
+    }
 
     setIsSaving(true);
     try {
@@ -95,20 +115,22 @@ export const MainCashFundView: React.FC = () => {
         allTimeOption
         showKpis
         headerActions={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
             <button
               type="button"
               onClick={() => openTx('withdraw')}
-              className="h-9 px-4 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-bold inline-flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+              className="h-9 px-4 rounded-xl bg-white border border-rose-200/90 hover:bg-rose-50/70 hover:border-rose-300 text-rose-700 text-xs font-bold inline-flex items-center gap-2 shadow-2xs hover:shadow-xs active:scale-[0.98] transition-all cursor-pointer"
             >
-              <ArrowUpCircle className="h-4 w-4 text-rose-600" /> Withdraw
+              <ArrowUpCircle className="h-4 w-4 text-rose-600" />
+              <span>Withdraw</span>
             </button>
             <button
               type="button"
               onClick={() => openTx('deposit')}
-              className="h-9 px-4 rounded-lg bg-[#08775A] hover:bg-[#065f46] text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+              className="h-9 px-4.5 rounded-xl bg-gradient-to-r from-[#08775A] to-[#0d946d] hover:from-[#065f46] hover:to-[#08775A] text-white text-xs font-bold inline-flex items-center gap-2 shadow-xs hover:shadow-sm active:scale-[0.98] transition-all cursor-pointer"
             >
-              <ArrowDownCircle className="h-4 w-4" /> Deposit Funds
+              <ArrowDownCircle className="h-4 w-4" />
+              <span>Deposit Funds</span>
             </button>
           </div>
         }
@@ -173,57 +195,147 @@ export const MainCashFundView: React.FC = () => {
         }}
       />
 
-      {/* Deposit / Withdraw */}
+      {/* Deposit / Withdraw Modal */}
       <Modal
         isOpen={txKind !== null}
         onClose={() => !isSaving && setTxKind(null)}
-        title={txKind === 'deposit' ? 'Deposit Funds' : 'Withdraw Funds'}
+        title={txKind === 'deposit' ? 'Deposit Funds into Main Cash' : 'Withdraw Funds from Main Cash'}
         subtitle={
           txKind === 'deposit'
-            ? 'Money brought into the Main Cash Fund (e.g. a bank withdrawal into hospital cash reserve).'
-            : `Money taken back out of the fund. Current balance: ${liveBalance != null ? formatPKR(liveBalance) : '—'}.`
+            ? 'Record physical bank cash withdrawal deposited into the hospital central cash reserve.'
+            : 'Record physical cash withdrawal from the central reserve back to bank or emergency reserve.'
         }
-        maxWidth="sm"
+        maxWidth="md"
       >
-        <form onSubmit={submitTx} className="space-y-4">
-          <CurrencyInput
-            label="Amount (PKR)"
-            required
-            value={form.amount}
-            onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
-            min={1}
-          />
-          <Textarea
-            label="Note"
-            required
-            rows={3}
-            value={form.note}
-            onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
-            placeholder={txKind === 'deposit' ? 'e.g. Weekly bank withdrawal for hospital cash reserve' : 'e.g. Surplus cash banked back'}
-          />
+        <form onSubmit={submitTx} className="space-y-4 sm:space-y-5">
+          {/* Reserve Balance Callout Banner */}
+          <div className="flex items-center justify-between p-3.5 rounded-xl border border-slate-200/90 bg-gradient-to-r from-slate-50 to-slate-100/60 shadow-2xs">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-white border border-slate-200 shadow-2xs flex items-center justify-center text-[#08775A]">
+                <Landmark className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                  Current Main Cash Fund Balance
+                </p>
+                <p className="text-base font-extrabold text-slate-900 font-mono tracking-tight">
+                  {liveBalance != null ? formatPKR(liveBalance) : 'PKR 0'}
+                </p>
+              </div>
+            </div>
+            <span className="text-[10.5px] font-bold px-2.5 py-1 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-200/80 shadow-2xs">
+              Live Vault
+            </span>
+          </div>
 
+          {/* Amount Section */}
+          <div className="space-y-2">
+            <CurrencyInput
+              label="Amount (PKR)"
+              required
+              value={form.amount}
+              onChange={(e) => handleAmountChange(e.target.value)}
+              min={1}
+              autoFocus
+            />
+
+            {/* Quick Amount Chips */}
+            <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+              <span className="text-[11px] font-medium text-slate-400 mr-1">Quick add:</span>
+              {[5000, 10000, 25000, 50000, 100000, 500000].map((amt) => (
+                <button
+                  key={amt}
+                  type="button"
+                  onClick={() => addQuickAmount(amt)}
+                  className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-100 hover:bg-[#effaf5] hover:text-[#08775A] hover:border-[#c2e7db] text-slate-600 border border-slate-200/80 transition-all cursor-pointer shadow-2xs active:scale-95"
+                >
+                  +{amt >= 100000 ? `${amt / 100000} Lakh` : `${amt / 1000}k`}
+                </button>
+              ))}
+              {form.amount && Number(form.amount) > 0 && (
+                <button
+                  type="button"
+                  onClick={() => handleAmountChange('')}
+                  className="px-2 py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+
+            {/* Formatted Amount Display */}
+            {form.amount && Number(form.amount) > 0 && (
+              <div className="flex items-center justify-between text-xs px-3 py-1.5 rounded-lg bg-emerald-50/60 border border-emerald-100 text-emerald-800 animate-in fade-in">
+                <span className="font-medium text-slate-600">Total Transaction Value:</span>
+                <span className="font-extrabold font-mono text-emerald-800 text-sm">
+                  {formatPKR(Number(form.amount))}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Note Section */}
+          <div className="space-y-1">
+            <Textarea
+              label="Audit Note & Reference"
+              required
+              rows={3}
+              value={form.note}
+              onChange={(e) => handleNoteChange(e.target.value)}
+              placeholder={
+                txKind === 'deposit'
+                  ? 'e.g. Bank withdrawal slip #BR-4921 / replenishment for hospital physical cash reserve'
+                  : 'e.g. Surplus cash banked into Hospital Current Account #9821'
+              }
+            />
+            <p className="text-[11px] text-slate-400">
+              Provide a clear description or bank slip reference for accounting audit verification.
+            </p>
+          </div>
+
+          {/* Error Banner */}
           {formError && (
-            <div className="px-3 py-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium">{formError}</div>
+            <div className="flex items-center gap-2 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold animate-in fade-in">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+              <span>{formError}</span>
+            </div>
           )}
 
-          <div className="pt-3 border-t border-slate-100 flex justify-end gap-2">
+          {/* Footer Actions */}
+          <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2.5">
             <button
               type="button"
               onClick={() => setTxKind(null)}
               disabled={isSaving}
-              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg disabled:opacity-60 cursor-pointer"
+              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-colors disabled:opacity-60 cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isSaving}
-              className={`px-4 py-2 text-white text-xs font-semibold rounded-lg shadow-xs disabled:opacity-60 cursor-pointer flex items-center gap-1.5 ${
-                txKind === 'deposit' ? 'bg-[#08775A] hover:bg-[#065f46]' : 'bg-rose-600 hover:bg-rose-700'
+              className={`px-5 py-2 text-white text-xs font-bold rounded-xl shadow-sm hover:shadow-md disabled:opacity-60 cursor-pointer flex items-center gap-2 transition-all active:scale-95 ${
+                txKind === 'deposit'
+                  ? 'bg-gradient-to-r from-[#08775A] to-[#0a8d6b] hover:from-[#065f46] hover:to-[#08775A]'
+                  : 'bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-700 hover:to-rose-800'
               }`}
             >
-              {isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              <span>{isSaving ? 'Saving…' : txKind === 'deposit' ? 'Deposit Funds' : 'Confirm Withdrawal'}</span>
+              {isSaving ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Recording…</span>
+                </>
+              ) : txKind === 'deposit' ? (
+                <>
+                  <ArrowDownCircle className="h-4 w-4" />
+                  <span>Confirm Deposit</span>
+                </>
+              ) : (
+                <>
+                  <ArrowUpCircle className="h-4 w-4" />
+                  <span>Confirm Withdrawal</span>
+                </>
+              )}
             </button>
           </div>
         </form>

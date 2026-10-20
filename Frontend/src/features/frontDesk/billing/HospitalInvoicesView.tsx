@@ -836,6 +836,17 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
                             <span>Pay</span>
                           </button>
                         )}
+                        {!isVoid && inv.paidTotal > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => openInvoice(inv.id, 'refund')}
+                            className="inline-flex items-center gap-1 px-2 py-1 bg-white hover:bg-rose-50 text-rose-700 hover:text-rose-800 border border-rose-200 hover:border-rose-300 rounded text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
+                            title="Process refund for this invoice"
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                            <span>Refund</span>
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

@@ -185,8 +185,8 @@ export interface DepartmentRevenueRow {
   net: number;
 }
 
-export async function fetchDepartmentRevenue(range: RangeParams): Promise<ReportResult<DepartmentRevenueRow>> {
-  const d = await get<any>('/reports/frontdesk/department-revenue', params(range));
+export async function fetchDepartmentRevenue(range: RangeParams, filters?: ReportFilters): Promise<ReportResult<DepartmentRevenueRow>> {
+  const d = await get<any>('/reports/frontdesk/department-revenue', params(range, filters));
   return {
     periodLabel: d.period.label,
     kpis: [

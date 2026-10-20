@@ -14,6 +14,9 @@ import {
   ChevronRight,
   Loader2,
   ShieldCheck,
+  Sparkles,
+  Copy,
+  CheckCheck,
 } from 'lucide-react';
 import {
   StaffUser,
@@ -77,6 +80,10 @@ const emptyForm = (): StaffUserFormValues => ({
   phone: '',
   alternatePhone: '',
   email: '',
+  gender: 'Male',
+  address: '',
+  qualification: '',
+  pmdcNumber: '',
   designation: '',
   staffCategory: 'Nurse',
   status: 'ACTIVE',
@@ -176,6 +183,12 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
+  // Bulk commission fill / sync options
+  const [bulkRate, setBulkRate] = useState<number | ''>('');
+  const [bulkType, setBulkType] = useState<CommissionRuleForm['ruleType']>('PERCENTAGE');
+  const [bulkBasis, setBulkBasis] = useState<'NET' | 'GROSS'>('NET');
+  const [syncAllCommission, setSyncAllCommission] = useState(false);
+
   const set = (patch: Partial<StaffUserFormValues>) => setFormData((prev) => ({ ...prev, ...patch }));
 
   useEffect(() => {
@@ -199,6 +212,10 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
       phone: editingStaff.phone,
       alternatePhone: editingStaff.alternatePhone || '',
       email: editingStaff.email || '',
+      gender: editingStaff.gender || 'Male',
+      address: editingStaff.address || '',
+      qualification: editingStaff.qualification || '',
+      pmdcNumber: editingStaff.pmdcNumber || '',
       designation: editingStaff.designation || '',
       staffCategory: editingStaff.staffCategory,
       status: editingStaff.status,
@@ -225,6 +242,10 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
           if (ov.phone) next.phone = ov.phone;
           if (ov.alternatePhone) next.alternatePhone = ov.alternatePhone;
           if (ov.email) next.email = ov.email;
+          if (ov.gender) next.gender = ov.gender;
+          if (ov.address) next.address = ov.address;
+          if (ov.qualification) next.qualification = ov.qualification;
+          if (ov.pmdcNumber) next.pmdcNumber = ov.pmdcNumber;
           if (ov.designation) next.designation = ov.designation;
           if (ov.assignedShiftId || ov.assignedShift?.id) {
             next.assignedShiftId = ov.assignedShiftId || ov.assignedShift?.id;
@@ -304,12 +325,14 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
   }, [isOpen, editingStaff]);
 
   const isDoctor = formData.staffCategory === 'Doctor';
+  const isRmo = formData.staffCategory === 'RMO';
+  const isClinical = isDoctor || isRmo;
   const hasCommission = isCommissionBasis(formData.salaryBasis);
   const selectedShift = activeShifts.find((s) => s.id === formData.assignedShiftId);
 
   const steps = useMemo<StepKey[]>(
-    () => ['basic', ...(isDoctor ? (['assign', 'discharge'] as StepKey[]) : []), 'shift', 'salary', ...(hasCommission ? (['commission'] as StepKey[]) : []), 'bank', 'review'],
-    [isDoctor, hasCommission],
+    () => ['basic', ...(isClinical ? (['assign'] as StepKey[]) : []), ...(isClinical ? (['discharge'] as StepKey[]) : []), 'shift', 'salary', ...(hasCommission ? (['commission'] as StepKey[]) : []), 'bank', 'review'],
+    [isClinical, hasCommission],
   );
   const stepIndex = Math.max(0, steps.indexOf(step));
 
@@ -326,11 +349,11 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
     });
   }, [formData.serviceIds, isOpen]);
 
-  // Commission types need assigned services — only Doctors have them.
+  // Commission types need assigned services — Doctors and RMOs have them.
   useEffect(() => {
-    if (!isDoctor && hasCommission) set({ salaryBasis: isDailyBasis(formData.salaryBasis) ? 'PER_DAY' : 'MONTHLY' });
+    if (!isClinical && hasCommission) set({ salaryBasis: isDailyBasis(formData.salaryBasis) ? 'PER_DAY' : 'MONTHLY' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isDoctor]);
+  }, [isClinical]);
 
   if (!isOpen) return null;
 
@@ -350,12 +373,18 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
       if (f.email?.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email.trim())) e.email = 'Enter a valid email address.';
       if (!f.joiningDate) e.joiningDate = 'Joining date is required.';
     }
-    if (key === 'assign' && isDoctor) {
-      if (f.departmentIds.length === 0) e.departmentIds = 'Select at least one Clinical Department.';
-      if (f.serviceIds.length === 0) e.serviceIds = 'Select at least one Assigned Service.';
+    if (key === 'assign') {
+      if (isDoctor) {
+        if (f.departmentIds.length === 0) e.departmentIds = 'Select at least one Clinical Department.';
+        if (f.serviceIds.length === 0) e.serviceIds = 'Select at least one Assigned Service.';
+      }
+      if (isRmo) {
+        if (f.departmentIds.length === 0) e.departmentIds = 'Select at least one Clinical Department.';
+        if (hasCommission && f.serviceIds.length === 0) e.serviceIds = 'Select at least one Assigned Service for commission.';
+      }
     }
-    if (key === 'discharge' && isDoctor) {
-      // Discharge credential: required for a new doctor (or one who never had it);
+    if (key === 'discharge' && isClinical) {
+      // Discharge credential: required for a new doctor/RMO (or one who never had it);
       // on Edit a blank password keeps the current one unless the username changes.
       const user = f.clinicalUsername.trim();
       const hasExisting = !!f.clinicalExistingUsername;
@@ -461,8 +490,49 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
       ),
     });
 
-  const updateRule = (serviceRateId: string | null, patch: Partial<CommissionRuleForm>) =>
-    set({ commissionRules: formData.commissionRules.map((r) => (r.serviceRateId === serviceRateId ? { ...r, ...patch } : r)) });
+  const updateRule = (serviceRateId: string | null, patch: Partial<CommissionRuleForm>) => {
+    if (syncAllCommission && (patch.rate !== undefined || patch.ruleType !== undefined || patch.basis !== undefined)) {
+      set({
+        commissionRules: formData.commissionRules.map((r) => ({
+          ...r,
+          ...patch,
+        })),
+      });
+    } else {
+      set({ commissionRules: formData.commissionRules.map((r) => (r.serviceRateId === serviceRateId ? { ...r, ...patch } : r)) });
+    }
+  };
+
+  const handleApplyToAll = (
+    customRate?: number | '',
+    customType?: CommissionRuleForm['ruleType'],
+    customBasis?: 'NET' | 'GROSS'
+  ) => {
+    const rateToApply = customRate !== undefined ? customRate : bulkRate;
+    const typeToApply = customType !== undefined ? customType : bulkType;
+    const basisToApply = customBasis !== undefined ? customBasis : bulkBasis;
+
+    if (rateToApply === '') {
+      toast.error('Please enter a percentage or value first.');
+      return;
+    }
+    const num = Number(rateToApply);
+    if (typeToApply === 'PERCENTAGE' && (num < 0 || num > 100)) {
+      toast.error('Percentage must be between 0 and 100%.');
+      return;
+    }
+
+    set({
+      commissionRules: formData.commissionRules.map((r) => ({
+        ...r,
+        enabled: true,
+        rate: num,
+        ruleType: typeToApply,
+        basis: typeToApply === 'PERCENTAGE' ? basisToApply : r.basis,
+      })),
+    });
+    toast.success(`Applied ${num}${typeToApply === 'PERCENTAGE' ? '%' : ' PKR'} to all services.`);
+  };
 
   const serviceName = (id: string | null) => (id ? activeServices.find((s) => s.id === id)?.name ?? services.find((s) => s.id === id)?.name ?? 'Service' : 'All other assigned services');
   const serviceRate = (id: string | null) => (id ? activeServices.find((s) => s.id === id)?.standardRate ?? 0 : 0);
@@ -508,12 +578,32 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
           <Field label="Alternate Mobile">
             <input className={inputCls()} maxLength={12} placeholder="0300-1234567" value={formData.alternatePhone} onChange={(e) => set({ alternatePhone: formatPhoneInput(e.target.value) })} />
           </Field>
-          <Field label="Email" error={errors.email} className="lg:col-span-2">
+          <Field label="Gender" required>
+            <select className={inputCls()} value={formData.gender || 'Male'} onChange={(e) => set({ gender: e.target.value })}>
+              <option value="Male">Male</option>
+              <option value="Female">Female</option>
+              <option value="Other">Other</option>
+            </select>
+          </Field>
+          <Field label="Email">
             <input type="email" className={inputCls(errors.email)} value={formData.email} onChange={(e) => set({ email: e.target.value })} />
           </Field>
           <Field label="Employee Code" hint="Auto-generated">
             <input readOnly className={`${inputCls()} bg-slate-100 font-bold text-[#08775A]`} value={formData.employeeCode} />
           </Field>
+          <Field label="Residential Address" className="sm:col-span-2 lg:col-span-3">
+            <input className={inputCls()} placeholder="e.g. House # 12, Street 4, Sector G-9, Islamabad" value={formData.address} onChange={(e) => set({ address: e.target.value })} />
+          </Field>
+          {isClinical && (
+            <>
+              <Field label="Medical Qualification" hint="e.g. MBBS, FCPS">
+                <input className={inputCls()} placeholder="e.g. MBBS, FCPS" value={formData.qualification} onChange={(e) => set({ qualification: e.target.value })} />
+              </Field>
+              <Field label="PMDC / License Registration #" hint="e.g. 12345-P" className="sm:col-span-2">
+                <input className={`${inputCls()} tabular-nums`} placeholder="e.g. 12345-P" value={formData.pmdcNumber} onChange={(e) => set({ pmdcNumber: e.target.value })} />
+              </Field>
+            </>
+          )}
         </div>
       </div>
       <div>
@@ -549,7 +639,7 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
   const renderAssign = () => (
     <div className="space-y-5">
       <div>
-        <SectionTitle title="Clinical Departments" note="A doctor can belong to several departments" />
+        <SectionTitle title="Clinical Departments" note="A doctor or RMO can belong to several departments" />
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
           {activeDepartments.map((d) => {
             const on = formData.departmentIds.includes(d.id);
@@ -564,7 +654,7 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
         {errors.departmentIds && <p className="text-[11px] text-rose-600 mt-1.5">{errors.departmentIds}</p>}
       </div>
       <div>
-        <SectionTitle title="Assigned Services" note="Services this doctor performs — commission is set per service later" />
+        <SectionTitle title="Assigned Services" note="Services this practitioner performs — commission is set per service later" />
         <div className="border border-slate-200 rounded-lg overflow-hidden max-h-72 overflow-y-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 sticky top-0">
@@ -852,7 +942,7 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
           {SALARY_BASIS_OPTIONS.map((o) => {
             const on = formData.salaryBasis === o.value;
-            const locked = isCommissionBasis(o.value) && !isDoctor;
+            const locked = isCommissionBasis(o.value) && !isClinical;
             return (
               <button
                 key={o.value}
@@ -872,7 +962,7 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
             );
           })}
         </div>
-        {!isDoctor && <p className="text-[11px] text-slate-500 mt-2">Commission types need assigned services, so they are available for Doctors only.</p>}
+        {!isClinical && <p className="text-[11px] text-slate-500 mt-2">Commission types need assigned services, so they are available for Doctors and RMOs only.</p>}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
@@ -941,14 +1031,98 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
       </div>
       <div>
         <SectionTitle title="Service-wise Commission" note="Percentage of the service amount, or a fixed amount per service" />
+
+        {/* Quick Bulk Setting Toolbar */}
+        <div className="mb-3 p-3 bg-emerald-50/70 border border-emerald-200/90 rounded-lg flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2 font-medium text-emerald-950">
+            <span className="p-1 rounded bg-emerald-100 text-[#08775A]">
+              <Sparkles className="w-4 h-4" />
+            </span>
+            <div>
+              <span className="font-semibold text-slate-900">Same in All Services:</span>
+              <span className="text-[11px] text-emerald-800 ml-1.5 block sm:inline">Type once to apply across all fields</span>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              className="h-8 px-2 border border-emerald-300 rounded-md text-xs bg-white text-slate-700 focus:ring-1 focus:ring-[#08775A]"
+              value={bulkType}
+              onChange={(e) => setBulkType(e.target.value as CommissionRuleForm['ruleType'])}
+            >
+              <option value="PERCENTAGE">Percentage (%)</option>
+              <option value="FIXED_PER_SERVICE">Fixed per service (PKR)</option>
+            </select>
+
+            <div className="relative">
+              <input
+                type="number"
+                min={0}
+                max={bulkType === 'PERCENTAGE' ? 100 : undefined}
+                placeholder={bulkType === 'PERCENTAGE' ? 'e.g. 20' : 'e.g. 500'}
+                value={bulkRate}
+                onChange={(e) => setBulkRate(e.target.value === '' ? '' : Number(e.target.value))}
+                className="h-8 w-24 pl-2 pr-6 border border-emerald-300 rounded-md text-xs tabular-nums bg-white font-semibold focus:ring-1 focus:ring-[#08775A]"
+              />
+              <span className="absolute right-2 top-1.5 text-slate-400 font-semibold text-[11px]">
+                {bulkType === 'PERCENTAGE' ? '%' : 'Rs'}
+              </span>
+            </div>
+
+            {bulkType === 'PERCENTAGE' && (
+              <select
+                className="h-8 px-2 border border-emerald-300 rounded-md text-xs bg-white text-slate-700 focus:ring-1 focus:ring-[#08775A]"
+                value={bulkBasis}
+                onChange={(e) => setBulkBasis(e.target.value as 'NET' | 'GROSS')}
+              >
+                <option value="NET">Net (after discount)</option>
+                <option value="GROSS">Gross</option>
+              </select>
+            )}
+
+            <button
+              type="button"
+              onClick={() => handleApplyToAll()}
+              className="h-8 px-3.5 rounded-md text-xs font-semibold bg-[#08775A] text-white hover:bg-[#065f46] transition-colors shadow-sm flex items-center gap-1.5"
+            >
+              <CheckCheck className="w-3.5 h-3.5" />
+              <span>Apply to All</span>
+            </button>
+          </div>
+        </div>
+
         <div className="border border-slate-200 rounded-lg overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-slate-50">
               <tr>
-                <th className={`${TH} w-10`} />
+                <th className={`${TH} w-10 text-center`}>
+                  <input
+                    type="checkbox"
+                    checked={formData.commissionRules.length > 0 && formData.commissionRules.every((r) => r.enabled)}
+                    onChange={() => {
+                      const allOn = formData.commissionRules.every((r) => r.enabled);
+                      set({ commissionRules: formData.commissionRules.map((r) => ({ ...r, enabled: !allOn })) });
+                    }}
+                    title="Select / Deselect all services"
+                    className="rounded text-[#08775A] focus:ring-[#08775A]"
+                  />
+                </th>
                 <th className={TH}>Service</th>
                 <th className={TH}>Commission Type</th>
-                <th className={TH}>Value</th>
+                <th className={TH}>
+                  <div className="flex items-center justify-between gap-1">
+                    <span>Value</span>
+                    <label className="inline-flex items-center gap-1 text-[10px] font-normal text-slate-500 cursor-pointer capitalize">
+                      <input
+                        type="checkbox"
+                        checked={syncAllCommission}
+                        onChange={(e) => setSyncAllCommission(e.target.checked)}
+                        className="rounded text-[#08775A] focus:ring-[#08775A] scale-90"
+                      />
+                      <span>Same in all</span>
+                    </label>
+                  </div>
+                </th>
                 <th className={TH}>Calculated On</th>
                 <th className={`${TH} text-right`}>Per Service</th>
               </tr>
@@ -980,15 +1154,27 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
                       </select>
                     </td>
                     <td className={TD}>
-                      <input
-                        type="number"
-                        min={0}
-                        disabled={!r.enabled}
-                        onWheel={(e) => e.currentTarget.blur()}
-                        className={`h-8 w-24 px-2 border rounded-md text-xs tabular-nums disabled:bg-slate-100 ${err ? 'border-rose-400' : 'border-slate-300'}`}
-                        value={r.rate}
-                        onChange={(e) => updateRule(r.serviceRateId, { rate: e.target.value === '' ? '' : Number(e.target.value) })}
-                      />
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          min={0}
+                          disabled={!r.enabled}
+                          onWheel={(e) => e.currentTarget.blur()}
+                          className={`h-8 w-20 px-2 border rounded-md text-xs tabular-nums disabled:bg-slate-100 ${err ? 'border-rose-400' : 'border-slate-300'}`}
+                          value={r.rate}
+                          onChange={(e) => updateRule(r.serviceRateId, { rate: e.target.value === '' ? '' : Number(e.target.value) })}
+                        />
+                        {r.enabled && r.rate !== '' && (
+                          <button
+                            type="button"
+                            onClick={() => handleApplyToAll(r.rate, r.ruleType, r.basis)}
+                            title="Apply this value to all services"
+                            className="p-1 text-slate-400 hover:text-[#08775A] hover:bg-emerald-50 rounded transition-colors"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                       {err && <span className="block text-[10px] text-rose-600">{err}</span>}
                     </td>
                     <td className={TD}>
@@ -1139,8 +1325,12 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
             ['Name', formData.fullName],
             ['Father / Guardian', formData.fatherGuardianName],
             ['CNIC', formData.cnic],
+            ['Gender', formData.gender],
             ['Mobile', formData.phone],
             ['Category / Designation', [formData.staffCategory, formData.designation].filter(Boolean).join(' · ')],
+            ...(formData.qualification ? [['Qualification', formData.qualification] as [string, React.ReactNode]] : []),
+            ...(formData.pmdcNumber ? [['PMDC #', formData.pmdcNumber] as [string, React.ReactNode]] : []),
+            ...(formData.address ? [['Address', formData.address] as [string, React.ReactNode]] : []),
             ['Joining Date', formData.joiningDate],
           ]}
         />
@@ -1221,7 +1411,7 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
             ]}
           />
         )}
-        {isDoctor && (
+        {isClinical && (
           <ReviewTable
             title="Departments & Services"
             target="assign"
@@ -1231,7 +1421,7 @@ export const StaffUserModal: React.FC<StaffUserModalProps> = ({ isOpen, onClose,
             ]}
           />
         )}
-        {isDoctor && (
+        {isClinical && (
           <ReviewTable
             title="Discharge Credentials"
             target="discharge"

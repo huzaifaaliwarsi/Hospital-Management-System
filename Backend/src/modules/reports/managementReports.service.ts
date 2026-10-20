@@ -1,3 +1,4 @@
+import { allocateCollection, allocateInvoiceAmount, collectionSelect, collectionInvoiceSelect, invoiceBalance, panelCollectionLedger, panelPaymentFilter } from '@/shared/departmentCollections';
 import { Decimal } from '@prisma/client/runtime/library';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
@@ -47,8 +48,7 @@ const periodOf = (start: Date, end: Date, label: string) => ({
   end: end.toISOString(),
 });
 /** Amount still owed on an invoice; an overpaid invoice is a credit, not negative debt. */
-const dueOf = (i: { total: Decimal; paidTotal: Decimal }) =>
-  Decimal.max(i.total.minus(i.paidTotal), 0);
+const dueOf = (i: Parameters<typeof invoiceBalance>[0]) => invoiceBalance(i).due;
 
 /** Settlements that actually moved cash off a user's custody. */
 const ACCEPTED_SETTLEMENT = ['ACCEPTED', 'PARTIALLY_ACCEPTED'] as const;
@@ -90,21 +90,51 @@ export const managementReportsService = {
       pendingSettlements,
       hospitalExpenses,
       staffFinance,
+      panelCollections,
     ] = await Promise.all([
       prisma.hospitalInvoice.findMany({
         where: {
           createdAt: { gte: start, lte: end },
           status: { not: 'VOID' },
-          ...(dept ? { departmentId: dept } : {}),
+          ...(dept
+            ? {
+                OR: [
+                  { departmentId: dept },
+                  { lines: { some: { serviceRate: { departmentId: dept } } } },
+                ],
+              }
+            : {}),
           ...(user ? { createdById: user } : {}),
-          ...(method ? { paymentReceipts: { some: receiptFilter } } : {}),
+          ...(method ? { AND: [{ OR: [
+            { paymentReceipts: { some: receiptFilter } },
+            { panelRemittanceAllocations: { some: { panelRemittance: panelPaymentFilter(method) } } },
+          ] }] } : {}),
         },
         select: {
+          id: true,
           subtotal: true,
           discountTotal: true,
           total: true,
           paidTotal: true,
-          department: { select: { name: true } },
+          panelReceivable: true,
+          panelRemittanceAllocations: { select: { allocatedAmount: true } },
+          departmentId: true,
+          department: { select: { id: true, name: true } },
+          lines: {
+            select: {
+              lineGross: true,
+              discountAmount: true,
+              lineNet: true,
+              patientShare: true,
+              panelReceivable: true,
+              serviceRate: {
+                select: {
+                  departmentId: true,
+                  department: { select: { id: true, name: true } },
+                },
+              },
+            },
+          },
         },
       }),
       prisma.paymentReceipt.findMany({
@@ -117,16 +147,14 @@ export const managementReportsService = {
             ? {
                 OR: [
                   { hospitalInvoice: { departmentId: dept } },
+                  { hospitalInvoice: { lines: { some: { serviceRate: { departmentId: dept } } } } },
                   { hospitalInvoiceId: null, admissionRecord: { departmentId: dept } },
+                  { hospitalInvoiceId: null, appointment: { departmentId: dept } },
                 ],
               }
             : {}),
         },
-        select: {
-          amount: true,
-          hospitalInvoice: { select: { department: { select: { name: true } } } },
-          admissionRecord: { select: { department: { select: { name: true } } } },
-        },
+        select: collectionSelect,
       }),
       prisma.userCashBalance.aggregate({
         where: {
@@ -150,6 +178,7 @@ export const managementReportsService = {
       }),
       expensesService.totalBetween(start, end, dept, method),
       staffFinanceSummary(start, end, dept, user, method),
+      panelCollectionLedger(prisma, end, { start, departmentId: dept, method, userId: user }),
     ]);
 
     type Row = {
@@ -181,18 +210,75 @@ export const managementReportsService = {
       return r;
     };
 
+    const countedInvoicesPerDept = new Map<string, Set<string>>();
+
     for (const i of invoices) {
-      const r = rowFor(i.department?.name ?? 'Unassigned');
-      r.invoices += 1;
-      r.gross = r.gross.plus(i.subtotal);
-      r.discount = r.discount.plus(i.discountTotal);
-      r.net = r.net.plus(i.total);
-      r.outstanding = r.outstanding.plus(dueOf(i));
+      if (i.lines && i.lines.length > 0) {
+        for (const l of i.lines) {
+          const lineDept = l.serviceRate?.department;
+          const targetDeptId = lineDept?.id ?? i.departmentId ?? null;
+          const targetDeptName = lineDept?.name ?? i.department?.name ?? 'General Hospital Services';
+
+          if (dept && targetDeptId !== dept) {
+            continue;
+          }
+
+          const r = rowFor(targetDeptName);
+          let invSet = countedInvoicesPerDept.get(targetDeptName);
+          if (!invSet) {
+            invSet = new Set<string>();
+            countedInvoicesPerDept.set(targetDeptName, invSet);
+          }
+          if (!invSet.has(i.id)) {
+            invSet.add(i.id);
+            r.invoices += 1;
+          }
+
+          r.gross = r.gross.plus(l.lineGross);
+          r.discount = r.discount.plus(l.discountAmount);
+          r.net = r.net.plus(l.lineNet);
+
+
+        }
+      } else {
+        const targetDeptId = i.departmentId;
+        const targetDeptName = i.department?.name ?? 'Unassigned';
+        if (dept && targetDeptId !== dept) {
+          continue;
+        }
+        const r = rowFor(targetDeptName);
+        r.invoices += 1;
+        r.gross = r.gross.plus(i.subtotal);
+        r.discount = r.discount.plus(i.discountTotal);
+        r.net = r.net.plus(i.total);
+
+      }
+      const balance = invoiceBalance(i);
+      for (const allocation of [
+        ...allocateInvoiceAmount(balance.patientDue, i, 'patientShare'),
+        ...allocateInvoiceAmount(balance.panelDue, i, 'panelReceivable'),
+      ]) {
+        if (!dept || allocation.departmentId === dept) {
+          const row = rowFor(allocation.name);
+          row.outstanding = row.outstanding.plus(allocation.amount);
+        }
+      }
     }
-    for (const p of receipts) {
-      const name =
-        p.hospitalInvoice?.department?.name ?? p.admissionRecord?.department?.name ?? 'Unassigned';
-      rowFor(name).collected = rowFor(name).collected.plus(p.amount);
+
+    // Collections follow receipt date, method and collector, including old invoices.
+    for (const receipt of receipts) {
+      for (const allocation of allocateCollection(receipt)) {
+        if (!dept || allocation.departmentId === dept) {
+          const row = rowFor(allocation.name);
+          row.collected = row.collected.plus(allocation.amount);
+        }
+      }
+    }
+    for (const allocation of panelCollections) {
+      if (!dept || allocation.departmentId === dept) {
+        const row = rowFor(allocation.name);
+        row.collected = row.collected.plus(allocation.amount);
+      }
     }
     if (activeAdmissions.length) {
       const departments = await prisma.department.findMany({
@@ -244,16 +330,36 @@ export const managementReportsService = {
     const invoices = await prisma.hospitalInvoice.findMany({
       where: {
         createdAt: { gte: start, lte: end },
-        ...(query.departmentId ? { departmentId: query.departmentId } : {}),
+        ...(query.departmentId
+          ? {
+              OR: [
+                { departmentId: query.departmentId },
+                { lines: { some: { serviceRate: { departmentId: query.departmentId } } } },
+              ],
+            }
+          : {}),
         ...(query.status ? { status: query.status } : {}),
         ...(query.corporatePanelId ? { corporatePanelId: query.corporatePanelId } : {}),
         ...(query.method || query.collectedById
-          ? { paymentReceipts: { some: receiptFilter } }
+          ? { AND: [{ OR: [
+              { paymentReceipts: { some: receiptFilter } },
+              { panelRemittanceAllocations: { some: { panelRemittance: panelPaymentFilter(query.method, query.collectedById) } } },
+            ] }] }
           : {}),
       },
       include: {
         ...patientSelect,
+        panelRemittanceAllocations: { include: { panelRemittance: { include: { receivedByUser: userSelect } } } },
         department: { select: { name: true } },
+        lines: {
+          select: {
+            serviceRate: {
+              select: {
+                department: { select: { name: true } },
+              },
+            },
+          },
+        },
         corporatePanel: { select: { organizationName: true } },
         paymentReceipts: {
           where: { isReversed: false },
@@ -261,27 +367,33 @@ export const managementReportsService = {
         },
       },
       orderBy: { createdAt: 'desc' },
-      take: 1000,
+      // Reports and exports include the entire selected period; never silently truncate.
     });
 
     return {
       period: periodOf(start, end, label),
-      rows: invoices.map((i) => ({
-        id: i.id,
-        invoiceNumber: i.invoiceNumber,
-        createdAt: i.createdAt,
-        patient: patientName(i),
-        payer: i.corporatePanel?.organizationName ?? 'Self-Pay',
-        department: i.department?.name ?? null,
-        gross: i.subtotal,
-        discount: i.discountTotal,
-        net: i.total,
-        collected: i.paidTotal,
-        outstanding: dueOf(i),
-        methods: unique(i.paymentReceipts.map((p) => p.method)).join(', '),
-        collectedBy: unique(i.paymentReceipts.map((p) => userName(p.collectedBy))).join(', '),
-        status: i.status,
-      })),
+      rows: invoices.map((i) => {
+        const deptNames = unique([
+          i.department?.name,
+          ...i.lines.map((l) => l.serviceRate?.department?.name),
+        ]);
+        return {
+          id: i.id,
+          invoiceNumber: i.invoiceNumber,
+          createdAt: i.createdAt,
+          patient: patientName(i),
+          payer: i.corporatePanel?.organizationName ?? 'Self-Pay',
+          department: deptNames.length > 0 ? deptNames.join(', ') : null,
+          gross: i.subtotal,
+          discount: i.discountTotal,
+          net: i.total,
+          collected: invoiceBalance(i).collected,
+          outstanding: dueOf(i),
+          methods: unique([...i.paymentReceipts.map((p) => p.method), ...i.panelRemittanceAllocations.map(a => a.panelRemittance.method)]).join(', '),
+          collectedBy: unique([...i.paymentReceipts.map((p) => userName(p.collectedBy)), ...i.panelRemittanceAllocations.map(a => userName(a.panelRemittance.receivedByUser))]).join(', '),
+          status: i.status,
+        };
+      }),
     };
   },
 
@@ -296,27 +408,39 @@ export const managementReportsService = {
       where: {
         createdAt: { gte: start, lte: end },
         status: query.status ?? { not: 'VOID' },
-        ...(query.departmentId ? { departmentId: query.departmentId } : {}),
+        ...(query.departmentId ? { OR: [
+          { departmentId: query.departmentId },
+          { lines: { some: { serviceRate: { departmentId: query.departmentId } } } },
+        ] } : {}),
         ...(query.corporatePanelId ? { corporatePanelId: query.corporatePanelId } : {}),
         ...(query.payerType === 'PANEL' ? { corporatePanelId: { not: null } } : {}),
         ...(query.payerType === 'SELF_PAY' ? { corporatePanelId: null } : {}),
       },
       include: {
         ...patientSelect,
-        department: { select: { name: true } },
+        panelRemittanceAllocations: { select: { allocatedAmount: true } },
+        department: { select: { id: true, name: true } },
+        lines: collectionInvoiceSelect.lines,
         corporatePanel: { select: { organizationName: true } },
       },
       orderBy: { createdAt: 'asc' },
-      take: 1000,
+      // Reports and exports include the entire selected period; never silently truncate.
     });
 
     return {
       period: periodOf(start, end, label),
-      rows: invoices
-        .filter((i) => dueOf(i).greaterThan(0))
-        .map((i) => {
-          const due = dueOf(i);
-          const panelDue = i.corporatePanelId ? Decimal.min(due, i.panelReceivable) : ZERO();
+      rows: invoices.map((i) => {
+          const balance = invoiceBalance(i);
+          const scoped = (amount: Decimal, basis: 'lineNet' | 'patientShare' | 'panelReceivable') => !query.departmentId ? amount :
+            allocateInvoiceAmount(amount, i, basis).filter(r => r.departmentId === query.departmentId)
+              .reduce((sum, r) => sum.plus(r.amount), ZERO());
+          const patientDue = scoped(balance.patientDue, 'patientShare');
+          const panelDue = scoped(balance.panelDue, 'panelReceivable');
+          const due = patientDue.plus(panelDue);
+          const collected = scoped(i.paidTotal, 'patientShare').plus(scoped(balance.panelPaid, 'panelReceivable'));
+          const departmentName = query.departmentId
+            ? i.lines.find(l => l.serviceRate?.department?.id === query.departmentId)?.serviceRate?.department?.name ?? i.department?.name
+            : i.department?.name;
           return {
             id: i.id,
             invoiceNumber: i.invoiceNumber,
@@ -324,15 +448,15 @@ export const managementReportsService = {
             patient: patientName(i),
             payerType: i.corporatePanelId ? 'Panel' : 'Self-Pay',
             panel: i.corporatePanel?.organizationName ?? null,
-            department: i.department?.name ?? null,
-            net: i.total,
-            paid: i.paidTotal,
-            patientDue: due.minus(panelDue),
+            department: departmentName ?? null,
+            net: scoped(i.total, 'lineNet'),
+            paid: collected,
+            patientDue,
             panelDue,
             due,
             status: i.status,
           };
-        }),
+        }).filter(row => row.due.gt(0)),
     };
   },
 

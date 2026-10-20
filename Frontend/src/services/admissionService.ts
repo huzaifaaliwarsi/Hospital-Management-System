@@ -36,12 +36,20 @@ export interface AdmissionRecord {
   id: string;
   admissionNumber: string;
   patientName: string;
+  patientFatherName?: string;
+  patientGender?: string;
+  patientAge?: string;
+  patientAddress?: string;
+  patientPhone?: string;
+  weightKg?: number | null;
   patientMrNumber: string;
   payerType: 'Corporate / Panel' | 'Self Pay';
   departmentId: string;
   departmentName: string;
   doctorId: string;
   doctorName: string;
+  rmoId?: string | null;
+  rmoName?: string | null;
   bedId: string | null;
   bedLabel: string | null;
   status: AdmissionStatus;
@@ -67,6 +75,7 @@ export interface CreateAdmissionFormValues {
   departmentId: string;
   wardId?: string;
   doctorStaffId: string;
+  rmoStaffId?: string;
   preferredBedId: string;
   expectedAt: string;
   diagnosis: string;
@@ -180,14 +189,28 @@ export interface AdmissionPaymentRequestSummary {
 
 export interface AdmissionDischargeSummary {
   finalDiagnosis: string;
+  associatedDiagnosisA?: string;
+  associatedDiagnosisB?: string;
+  history?: string;
+  examination?: string;
+  investigations?: string;
   treatmentSummary: string;
-  conditionAtDischarge: string;
+  prescriptionOnDischarge?: string;
   medicinesInstructions: string;
+  conditionAtDischarge: string;
   followUpAdvice?: string;
+  followUpDoctorStaffId?: string;
   followUpDate?: string;
   additionalNotes?: string;
+  nicu?: string;
+  weightOnAdmission?: string;
+  weightOnDischarge?: string;
+  finalOutcome?: string;
+  dischargeDate?: string;
   doctorNameSnapshot: string;
   doctorDepartmentSnapshot?: string;
+  doctorDesignation?: string;
+  doctorPmdcNumber?: string;
   authorizedAt: string;
 }
 
@@ -249,12 +272,20 @@ function toAdmissionRecord(raw: Record<string, any>): AdmissionRecord {
     id: raw.id,
     admissionNumber: raw.admissionNumber,
     patientName: patient?.fullName || 'Unknown',
+    patientFatherName: patient?.guardianName || patient?.fatherGuardianName || '',
+    patientGender: patient?.gender || '',
+    patientAge: patient?.age != null ? String(patient.age) : '',
+    patientAddress: patient?.address || '',
+    patientPhone: patient?.phone || '',
+    weightKg: raw.weightKg != null ? Number(raw.weightKg) : null,
     patientMrNumber: resolvedMr,
     payerType: isPanel ? 'Corporate / Panel' : 'Self Pay',
     departmentId: raw.departmentId,
     departmentName: raw.department?.name || '',
     doctorId: raw.doctorStaffId,
     doctorName: raw.doctor?.fullName || '',
+    rmoId: raw.rmoStaffId || raw.rmo?.id || null,
+    rmoName: raw.rmo?.fullName || '',
     bedId: raw.bedId || null,
     bedLabel: bedLabel(raw.bed),
     status: raw.status,
@@ -389,14 +420,28 @@ function toAdmissionDetail(raw: Record<string, any>): AdmissionDetail {
     dischargeSummary: raw.dischargeSummary
       ? {
           finalDiagnosis: raw.dischargeSummary.finalDiagnosis,
-          treatmentSummary: raw.dischargeSummary.treatmentSummary,
-          conditionAtDischarge: raw.dischargeSummary.conditionAtDischarge,
-          medicinesInstructions: raw.dischargeSummary.medicinesInstructions,
+          associatedDiagnosisA: raw.dischargeSummary.associatedDiagnosisA || undefined,
+          associatedDiagnosisB: raw.dischargeSummary.associatedDiagnosisB || undefined,
+          history: raw.dischargeSummary.history || undefined,
+          examination: raw.dischargeSummary.examination || undefined,
+          investigations: raw.dischargeSummary.investigations || undefined,
+          treatmentSummary: raw.dischargeSummary.treatmentSummary || '',
+          prescriptionOnDischarge: raw.dischargeSummary.prescriptionOnDischarge || raw.dischargeSummary.medicinesInstructions || undefined,
+          medicinesInstructions: raw.dischargeSummary.medicinesInstructions || raw.dischargeSummary.prescriptionOnDischarge || '',
+          conditionAtDischarge: raw.dischargeSummary.conditionAtDischarge || 'Stable & Ambulatory',
           followUpAdvice: raw.dischargeSummary.followUpAdvice || undefined,
+          followUpDoctorStaffId: raw.dischargeSummary.followUpDoctorStaffId || undefined,
           followUpDate: raw.dischargeSummary.followUpDate ? String(raw.dischargeSummary.followUpDate).slice(0, 10) : undefined,
           additionalNotes: raw.dischargeSummary.additionalNotes || undefined,
+          nicu: raw.dischargeSummary.nicu || undefined,
+          weightOnAdmission: raw.dischargeSummary.weightOnAdmission || (raw.weightKg ? String(raw.weightKg) : undefined),
+          weightOnDischarge: raw.dischargeSummary.weightOnDischarge || undefined,
+          finalOutcome: raw.dischargeSummary.finalOutcome || 'Discharge',
+          dischargeDate: raw.dischargeSummary.dischargeDate ? String(raw.dischargeSummary.dischargeDate).slice(0, 10) : undefined,
           doctorNameSnapshot: raw.dischargeSummary.doctorNameSnapshot,
           doctorDepartmentSnapshot: raw.dischargeSummary.doctorDepartmentSnapshot || undefined,
+          doctorDesignation: raw.dischargeSummary.doctor?.designation || undefined,
+          doctorPmdcNumber: raw.dischargeSummary.doctor?.pmdcNumber || undefined,
           authorizedAt: formatTimestamp(raw.dischargeSummary.authorizedAt),
         }
       : null,
@@ -438,6 +483,7 @@ export async function createAdmission(
         departmentId: values.departmentId || undefined,
         wardId: values.wardId || undefined,
         doctorStaffId: values.doctorStaffId || undefined,
+        rmoStaffId: values.rmoStaffId || undefined,
         preferredBedId: values.preferredBedId || undefined,
         expectedAt: values.expectedAt || undefined,
         diagnosis: values.diagnosis?.trim() || undefined,
@@ -474,6 +520,30 @@ export async function createAdmission(
           }
         : null,
     };
+  } catch (err) {
+    throw new Error(toErrorMessage(err));
+  }
+}
+
+export async function updatePlannedAdmission(
+  id: string,
+  values: {
+    departmentId?: string;
+    wardId?: string;
+    doctorStaffId?: string;
+    rmoStaffId?: string;
+    preferredBedId?: string;
+    expectedAt?: string;
+    diagnosis?: string;
+    estimatedAmount?: number;
+    medicationMode?: MedicationMode;
+    outsourcedFulfillmentMode?: MedicationMode;
+    notes?: string;
+  },
+): Promise<AdmissionRecord> {
+  try {
+    const res = await apiClient.patch<{ data: Record<string, any> }>(`/admissions/${id}`, values);
+    return toAdmissionRecord(res.data.data);
   } catch (err) {
     throw new Error(toErrorMessage(err));
   }
@@ -528,7 +598,17 @@ export async function requestAdmissionPayment(
 
 export async function createAdmissionPharmacyRequest(
   id: string,
-  values: { notes?: string; lines: { medicineId: string; requestedQuantity: number; notes?: string }[] },
+  values: {
+    notes?: string;
+    lines: {
+      medicineId: string;
+      requestedQuantity: number;
+      unit?: string;
+      conversionToBase?: number;
+      saleUnitQuantity?: number;
+      notes?: string;
+    }[];
+  },
 ): Promise<AdmissionPharmacyRequestRecord> {
   try {
     const res = await apiClient.post<{ data: Record<string, any> }>(`/admissions/${id}/pharmacy-requests`, values);
@@ -591,13 +671,24 @@ export async function clinicalDischarge(
     doctorPassword: string;
     dischargeSummary: {
       finalDiagnosis: string;
-      treatmentSummary: string;
-      conditionAtDischarge: string;
-      medicinesInstructions: string;
+      associatedDiagnosisA?: string;
+      associatedDiagnosisB?: string;
+      history?: string;
+      examination?: string;
+      investigations?: string;
+      treatmentSummary?: string;
+      prescriptionOnDischarge?: string;
+      medicinesInstructions?: string;
+      conditionAtDischarge?: string;
       followUpAdvice?: string;
       followUpDoctorStaffId?: string;
       followUpDate?: string;
       additionalNotes?: string;
+      nicu?: string;
+      weightOnAdmission?: string;
+      weightOnDischarge?: string;
+      finalOutcome?: string;
+      dischargeDate?: string;
     };
   },
 ): Promise<AdmissionRecord> {

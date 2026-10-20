@@ -296,21 +296,47 @@ export const CurrencyInput: React.FC<CurrencyInputProps> = ({
   className,
   id,
   currencyCode = 'PKR',
+  disabled,
+  onWheel,
   ...props
 }) => {
+  const inputId = id || (label ? label.toLowerCase().replace(/\s+/g, '-') : undefined);
+  const handleWheel = (e: React.WheelEvent<HTMLInputElement>) => {
+    onWheel?.(e);
+    e.currentTarget.blur();
+  };
+
   return (
-    <TextInput
-      type="number"
-      label={label}
-      error={error}
-      hint={hint}
-      required={required}
-      className={className}
-      id={id}
-      icon={<span className="text-xs font-bold text-slate-600">{currencyCode}</span>}
-      placeholder="0"
-      {...props}
-    />
+    <div className={cn('w-full flex flex-col gap-1', className)}>
+      {label && (
+        <label htmlFor={inputId} className="text-xs font-semibold text-slate-700">
+          {label} {required && <span className="text-rose-500">*</span>}
+        </label>
+      )}
+      <div className="relative flex items-center">
+        <div className="absolute left-2.5 flex items-center pointer-events-none select-none z-10">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600 bg-slate-100/90 border border-slate-200 px-2 py-0.5 rounded shadow-2xs font-mono">
+            {currencyCode}
+          </span>
+        </div>
+        <input
+          id={inputId}
+          type="number"
+          disabled={disabled}
+          onWheel={handleWheel}
+          placeholder="0"
+          className={cn(
+            'w-full rounded-lg border bg-white pl-16 pr-3 py-2 text-xs font-medium text-slate-900 placeholder:text-slate-400 transition-colors',
+            'focus:outline-hidden focus:ring-2 focus:ring-[#129b70]/20 focus:border-[#129b70]',
+            disabled && 'bg-slate-50 text-slate-400 cursor-not-allowed border-slate-200',
+            error ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500/20' : 'border-slate-300'
+          )}
+          {...props}
+        />
+      </div>
+      {error && <span className="text-[11px] text-rose-600 font-medium">{error}</span>}
+      {!error && hint && <span className="text-[11px] text-slate-500">{hint}</span>}
+    </div>
   );
 };
 

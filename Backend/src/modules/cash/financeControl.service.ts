@@ -1,3 +1,4 @@
+import { lockMainFund } from '@/shared/mainFundLock';
 import { Decimal } from '@prisma/client/runtime/library';
 import type { CashModuleScope } from '@prisma/client';
 import { prisma } from '@/db/client';
@@ -237,6 +238,9 @@ export const financeControlService = {
     const newStatus = REVIEW_ACTION_TO_STATUS[body.action];
 
     return prisma.$transaction(async (tx) => {
+      await lockMainFund(tx);
+      const current = await tx.accountSettlement.findUnique({ where: { id } });
+      if (current?.status !== 'SUBMITTED') throw new BusinessRuleError('Only a submitted settlement can be reviewed.');
       const reviewed = await tx.accountSettlement.update({
         where: { id },
         data: {
@@ -289,6 +293,9 @@ export const financeControlService = {
     if (!body.reason.trim()) throw new ValidationError('A reversal reason is required.');
 
     return prisma.$transaction(async (tx) => {
+      await lockMainFund(tx);
+      const current = await tx.accountSettlement.findUnique({ where: { id } });
+      if (!current || !['ACCEPTED', 'PARTIALLY_ACCEPTED'].includes(current.status)) throw new BusinessRuleError('Only an accepted settlement can be reversed.');
       const reversed = await tx.accountSettlement.update({
         where: { id },
         data: {
@@ -464,6 +471,7 @@ export const financeControlService = {
     // the fund's matching debit, linked by `relatedUserCashBalanceId` so
     // every issuance traces back to the fund entry that paid for it.
     return prisma.$transaction(async (tx) => {
+      await lockMainFund(tx);
       const fundRows = await tx.mainCashFundEntry.findMany({ select: { direction: true, amount: true } });
       const fundBalance = fundRows.reduce(
         (sum, r) => (r.direction === 'IN' ? sum.plus(r.amount) : sum.minus(r.amount)),

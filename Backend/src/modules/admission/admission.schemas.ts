@@ -25,6 +25,7 @@ export const createPlannedAdmissionSchema = z.object({
   // Optional at planning time — Front Desk may not always know the attending doctor yet; the
   // Admission Portal can assign/change one later via `updatePlannedAdmissionSchema`.
   doctorStaffId: z.string().uuid().optional(),
+  rmoStaffId: z.string().uuid().optional(),
   wardId: z.string().uuid().optional(),
   preferredBedId: z.string().uuid().optional(),
   expectedAt: z.coerce.date().optional(),
@@ -52,6 +53,7 @@ export type CreatePlannedAdmissionBody = z.infer<typeof createPlannedAdmissionSc
 export const updatePlannedAdmissionSchema = z.object({
   departmentId: z.string().uuid().optional(),
   doctorStaffId: z.string().uuid().optional(),
+  rmoStaffId: z.string().uuid().nullable().optional(),
   expectedAt: z.coerce.date().optional(),
   diagnosis: z.string().optional(),
   estimatedAmount: z.coerce.number().nonnegative().optional(),
@@ -115,6 +117,9 @@ export const createPharmacyRequestSchema = z.object({
       z.object({
         medicineId: z.string().uuid(),
         requestedQuantity: z.coerce.number().positive('Quantity must be greater than zero'),
+        unit: z.string().optional(),
+        conversionToBase: z.coerce.number().positive().optional(),
+        saleUnitQuantity: z.coerce.number().positive().optional(),
         notes: z.string().optional(),
       }),
     )
@@ -130,19 +135,29 @@ export const grantClearanceSchema = z.object({
 
 export type GrantClearanceBody = z.infer<typeof grantClearanceSchema>;
 
-// v7.2 §2.4 — Doctor Clinical Discharge Authorization + Discharge Summary.
 export const clinicalDischargeSchema = z.object({
-  doctorUsername: z.string().min(1, 'Doctor username is required'),
-  doctorPassword: z.string().min(1, 'Doctor password is required'),
+  doctorUsername: z.string().min(1, 'Doctor / RMO username is required'),
+  doctorPassword: z.string().min(1, 'Doctor / RMO password is required'),
   dischargeSummary: z.object({
     finalDiagnosis: z.string().min(1, 'Final diagnosis is required'),
-    treatmentSummary: z.string().min(1, 'Treatment / procedures summary is required'),
-    conditionAtDischarge: z.string().min(1, 'Condition at discharge is required'),
-    medicinesInstructions: z.string().min(1, 'Medicines / instructions is required'),
-    followUpAdvice: z.string().optional(),
-    followUpDoctorStaffId: z.string().uuid().optional(),
-    followUpDate: z.coerce.date().optional(),
-    additionalNotes: z.string().optional(),
+    associatedDiagnosisA: z.string().optional().nullable(),
+    associatedDiagnosisB: z.string().optional().nullable(),
+    history: z.string().optional().nullable(),
+    examination: z.string().optional().nullable(),
+    investigations: z.string().optional().nullable(),
+    treatmentSummary: z.string().optional().default(''),
+    prescriptionOnDischarge: z.string().optional().nullable(),
+    medicinesInstructions: z.string().optional().default(''),
+    conditionAtDischarge: z.string().optional().default('Stable & Ambulatory'),
+    followUpAdvice: z.string().optional().nullable(),
+    followUpDoctorStaffId: z.string().uuid().optional().nullable(),
+    followUpDate: z.coerce.date().optional().nullable(),
+    additionalNotes: z.string().optional().nullable(),
+    nicu: z.string().optional().nullable(),
+    weightOnAdmission: z.string().optional().nullable(),
+    weightOnDischarge: z.string().optional().nullable(),
+    finalOutcome: z.string().optional().default('Discharge'),
+    dischargeDate: z.coerce.date().optional().nullable(),
   }),
 });
 
@@ -185,6 +200,7 @@ export const listAdmissionsQuerySchema = z.object({
     .optional(),
   departmentId: z.string().uuid().optional(),
   doctorStaffId: z.string().uuid().optional(),
+  rmoStaffId: z.string().uuid().optional(),
   search: z.string().optional(),
 });
 

@@ -16,6 +16,13 @@ import type {
 } from './inventory.schemas';
 import type { StockAdjustmentType } from '@prisma/client';
 
+/** Reject repeated rows before validating balances against a shared snapshot. */
+function assertUniqueItems(ids: string[]) {
+  if (new Set(ids).size !== ids.length) {
+    throw new ValidationError('Each item or return line may appear only once. Combine quantities into one line.');
+  }
+}
+
 // inventory.md §4.2 — the type dictates the direction for every type except
 // COUNT_CORRECTION, which genuinely can go either way.
 const FIXED_ADJUSTMENT_DIRECTION: Partial<Record<StockAdjustmentType, 'INCREASE' | 'DECREASE'>> = {
@@ -162,6 +169,9 @@ export const inventoryService = {
    * (mirrors createPurchase's cash-purchase deduction). */
   async paySupplier(supplierId: string, body: PaySupplierBody, actorId: string) {
     return prisma.$transaction(async (tx) => {
+      // All inventory stock mutations share this transaction-scoped lock.
+      // The next request reads balances only after the prior transaction commits.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('hms-inventory-ledger'))`;
       const supplier = await tx.supplier.findUnique({ where: { id: supplierId }, include: { supplierLedger: true } });
       if (!supplier || !supplier.isActive) throw new NotFoundError('Supplier not found or inactive');
 
@@ -261,6 +271,9 @@ export const inventoryService = {
     }
 
     return prisma.$transaction(async (tx) => {
+      // All inventory stock mutations share this transaction-scoped lock.
+      // The next request reads balances only after the prior transaction commits.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('hms-inventory-ledger'))`;
       const item = await tx.stockItem.create({
         data: {
           code: itemCode,
@@ -465,6 +478,9 @@ export const inventoryService = {
    */
   async createInventoryExpense(body: CreateInventoryExpenseBody, actorId: string) {
     return prisma.$transaction(async (tx) => {
+      // All inventory stock mutations share this transaction-scoped lock.
+      // The next request reads balances only after the prior transaction commits.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('hms-inventory-ledger'))`;
       const amount = new Decimal(body.amount);
 
       let expRef = body.reference?.trim();
@@ -518,6 +534,9 @@ export const inventoryService = {
    */
   async createPurchase(body: CreatePurchaseBody, actorId: string) {
     return prisma.$transaction(async (tx) => {
+      // All inventory stock mutations share this transaction-scoped lock.
+      // The next request reads balances only after the prior transaction commits.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('hms-inventory-ledger'))`;
       const supplier = await tx.supplier.findUnique({ where: { id: body.supplierId } });
       if (!supplier || !supplier.isActive) {
         throw new NotFoundError('Supplier not found or inactive');
@@ -653,7 +672,11 @@ export const inventoryService = {
    * Negative stock is blocked (§4.8, D06 p.1).
    */
   async issueToDepartment(body: CreateDepartmentIssueBody, actorId: string) {
+    assertUniqueItems(body.lines.map(line => line.stockItemId));
     return prisma.$transaction(async (tx) => {
+      // All inventory stock mutations share this transaction-scoped lock.
+      // The next request reads balances only after the prior transaction commits.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('hms-inventory-ledger'))`;
       const department = await tx.department.findUnique({ where: { id: body.departmentId } });
       if (!department) throw new NotFoundError('Department not found');
 
@@ -725,7 +748,11 @@ export const inventoryService = {
    * department can never be credited for returning more than was issued.
    */
   async receiveDepartmentReturn(body: CreateDepartmentReturnBody, actorId: string) {
+    assertUniqueItems(body.lines.map(line => line.departmentRequisitionLineId));
     return prisma.$transaction(async (tx) => {
+      // All inventory stock mutations share this transaction-scoped lock.
+      // The next request reads balances only after the prior transaction commits.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('hms-inventory-ledger'))`;
       const requisition = await tx.departmentRequisition.findUnique({
         where: { id: body.departmentRequisitionId },
         include: { lines: true },
@@ -801,7 +828,11 @@ export const inventoryService = {
    * Sheet (PROJECT_MASTER_SPEC.md §4.8 Sub-flow C).
    */
   async returnToSupplier(body: CreateSupplierReturnBody, actorId: string) {
+    assertUniqueItems(body.lines.map(line => line.stockItemId));
     return prisma.$transaction(async (tx) => {
+      // All inventory stock mutations share this transaction-scoped lock.
+      // The next request reads balances only after the prior transaction commits.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('hms-inventory-ledger'))`;
       const supplier = await tx.supplier.findUnique({ where: { id: body.supplierId } });
       if (!supplier || !supplier.isActive) {
         throw new NotFoundError('Supplier not found or inactive');
@@ -896,6 +927,9 @@ export const inventoryService = {
     }
 
     return prisma.$transaction(async (tx) => {
+      // All inventory stock mutations share this transaction-scoped lock.
+      // The next request reads balances only after the prior transaction commits.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('hms-inventory-ledger'))`;
       const item = await tx.stockItem.findUnique({
         where: { id: body.stockItemId },
         include: { stockLedgerEntries: { select: { quantityDelta: true } } },

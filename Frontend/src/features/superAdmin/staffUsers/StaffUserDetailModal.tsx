@@ -123,8 +123,16 @@ export const StaffUserDetailModal: React.FC<StaffUserDetailModalProps> = ({
                 <span className="font-medium">{staff.alternatePhone || '—'}</span>
               </div>
               <div>
+                <span className="text-[#8b9e95] block text-[10px] uppercase">Gender</span>
+                <span className="font-medium">{staff.gender || '—'}</span>
+              </div>
+              <div>
                 <span className="text-[#8b9e95] block text-[10px] uppercase">Email</span>
                 <span className="font-medium">{staff.email || '—'}</span>
+              </div>
+              <div className="col-span-2">
+                <span className="text-[#8b9e95] block text-[10px] uppercase">Residential Address</span>
+                <span className="font-medium">{staff.address || '—'}</span>
               </div>
             </div>
           </div>
@@ -154,6 +162,18 @@ export const StaffUserDetailModal: React.FC<StaffUserDetailModalProps> = ({
                 <span className="text-[#8b9e95] block text-[10px] uppercase">Staff Category</span>
                 <span className="font-medium">{staff.staffCategory}</span>
               </div>
+              {staff.qualification && (
+                <div>
+                  <span className="text-[#8b9e95] block text-[10px] uppercase">Qualification</span>
+                  <span className="font-medium">{staff.qualification}</span>
+                </div>
+              )}
+              {staff.pmdcNumber && (
+                <div>
+                  <span className="text-[#8b9e95] block text-[10px] uppercase">PMDC / License #</span>
+                  <span className="font-mono font-bold text-[#08775A]">{staff.pmdcNumber}</span>
+                </div>
+              )}
             </div>
           </div>
 

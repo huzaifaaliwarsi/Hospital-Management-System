@@ -91,18 +91,6 @@ export const admissionBillingService = {
       orderBy: { createdAt: 'desc' },
     });
 
-    const pendingClearances = await prisma.pharmacyClearance.findMany({
-      where: {
-        admissionRecordId: admissionId,
-        status: { in: ['REQUESTED', 'AUTHORIZATION_REQUIRED', 'ACCEPTED', 'PARTIALLY_FULFILLED'] },
-      },
-      include: {
-        lines: { include: { medicine: true, batch: true } },
-        requestedBy: { select: { id: true, displayName: true, username: true } },
-      },
-      orderBy: { requestedAt: 'asc' },
-    });
-
     const unallocated = await prisma.paymentReceipt.aggregate({
       where: { admissionRecordId: admissionId, hospitalInvoiceId: null, isReversed: false },
       _sum: { amount: true },
@@ -164,57 +152,8 @@ export const admissionBillingService = {
       },
     );
 
-    const pendingItems = pendingClearances.flatMap((c) =>
-      c.lines.map((l) => {
-        const rate = Number(l.medicine?.saleRate ?? l.batch?.costRate ?? 0);
-        const qty = Number(l.requestedQuantity);
-        const amount = rate * qty;
-        return {
-          medicineName: l.medicine?.name || 'Medicine',
-          quantity: qty,
-          unitPrice: rate,
-          totalPrice: amount,
-          status: 'REQUESTED',
-          requestNumber: c.medicineRequestNumber,
-        };
-      }),
-    );
-    const pendingTotal = pendingItems.reduce((sum, it) => sum + it.totalPrice, 0);
-
-    let effectivePharmacyCharge: any = pharmacyCharge;
-    if (pendingClearances.length > 0) {
-      if (effectivePharmacyCharge) {
-        const existingItems = Array.isArray(effectivePharmacyCharge.itemsJson) ? effectivePharmacyCharge.itemsJson : [];
-        effectivePharmacyCharge = {
-          ...effectivePharmacyCharge,
-          subtotal: effectivePharmacyCharge.subtotal.plus(pendingTotal),
-          totalAmount: effectivePharmacyCharge.totalAmount.plus(pendingTotal),
-          patientOutstanding: effectivePharmacyCharge.patientOutstanding.plus(pendingTotal),
-          itemsJson: [...existingItems, ...pendingItems],
-        };
-      } else {
-        effectivePharmacyCharge = {
-          id: 'pending',
-          pharmacyInvoiceNumber: pendingClearances[0]?.medicineRequestNumber ?? 'REQ-PENDING',
-          subtotal: new Decimal(pendingTotal),
-          taxTotal: new Decimal(0),
-          discountTotal: new Decimal(0),
-          totalAmount: new Decimal(pendingTotal),
-          patientPaid: new Decimal(0),
-          patientOutstanding: new Decimal(pendingTotal),
-          patientPaymentStatus: 'PENDING',
-          settlementStatus: 'NOT_DUE',
-          itemsJson: pendingItems,
-          dispensedBySnapshot: pendingClearances[0]?.requestedBy?.displayName ?? 'Doctor (Pending Dispense)',
-          dispensedAt: null,
-        };
-      }
-
-      consolidated.subtotal = consolidated.subtotal.plus(pendingTotal);
-      consolidated.total = consolidated.total.plus(pendingTotal);
-      consolidated.patientShare = consolidated.patientShare.plus(pendingTotal);
-      consolidated.outstanding = consolidated.outstanding.plus(pendingTotal);
-    }
+    // Requisitions are not charges. Only posted dispense invoices affect balances.
+    const effectivePharmacyCharge = pharmacyCharge;
 
     // Real money collected includes the unallocated advance/deposit that
     // isn't sitting in any invoice's own `paidTotal`; any of it not yet
@@ -306,15 +245,7 @@ export const admissionBillingService = {
     return admissions.map((a) => {
       // Patient-facing: what the patient owes (patient share on panel invoices), not the company's part.
       const billedCharges = a.hospitalInvoices.reduce((sum, inv) => sum.plus(patientResponsibility(inv)), new Decimal(0));
-      const pendingPharmacyTotal = (a.pharmacyClearances || []).reduce((clearanceSum, c) => {
-        const lineTotal = (c.lines || []).reduce((sum, l) => {
-          const rate = l.medicine?.saleRate ?? l.batch?.costRate ?? new Decimal(0);
-          return sum.plus(new Decimal(rate).mul(l.requestedQuantity));
-        }, new Decimal(0));
-        return clearanceSum.plus(lineTotal);
-      }, new Decimal(0));
-
-      const currentCharges = billedCharges.plus(pendingPharmacyTotal);
+      const currentCharges = billedCharges;
       const totalPaid = paidByAdmission.get(a.id) ?? new Decimal(0);
       const outstanding = Decimal.max(0, currentCharges.minus(totalPaid));
       const availableCredit = Decimal.max(0, totalPaid.minus(currentCharges));
@@ -398,32 +329,8 @@ export const admissionBillingService = {
       orderBy: { collectedAt: 'asc' },
     });
 
-    const pendingPharmacyLines = (admission.pharmacyClearances || []).flatMap((c) =>
-      c.lines.map((l) => {
-        const rate = l.medicine?.saleRate ?? l.batch?.costRate ?? new Decimal(0);
-        const amount = new Decimal(rate).mul(l.requestedQuantity);
-        return {
-          id: l.id,
-          date: c.requestedAt,
-          type: 'Pharmacy',
-          department: 'Pharmacy',
-          description: `${l.medicine?.name || 'Medicine'} [Requested - Pending Dispense]`,
-          qty: l.requestedQuantity,
-          rate: rate,
-          grossAmount: amount,
-          discountAmount: new Decimal(0),
-          discountReason: `Req: ${c.medicineRequestNumber}`,
-          amount: amount,
-          reference: c.medicineRequestNumber,
-          postedBy: c.requestedBy?.displayName ?? c.requestedBy?.username ?? 'Doctor',
-          isPendingPharmacy: true,
-        };
-      }),
-    );
-
     const billedCharges = admission.hospitalInvoices.reduce((sum, inv) => sum.plus(patientResponsibility(inv)), new Decimal(0));
-    const pendingPharmacyTotal = pendingPharmacyLines.reduce((sum, pl) => sum.plus(pl.amount), new Decimal(0));
-    const totalCharges = billedCharges.plus(pendingPharmacyTotal);
+    const totalCharges = billedCharges;
     const totalPaid = receipts.reduce((sum, r) => sum.plus(r.amount), new Decimal(0));
     const outstandingBalance = Decimal.max(0, totalCharges.minus(totalPaid));
     const availableCredit = Decimal.max(0, totalPaid.minus(totalCharges));
@@ -467,7 +374,7 @@ export const admissionBillingService = {
         }),
       );
 
-    const allLines = [...invoiceLines, ...pendingPharmacyLines].sort((a, b) => a.date.getTime() - b.date.getTime());
+    const allLines = invoiceLines.sort((a, b) => a.date.getTime() - b.date.getTime());
 
     // Settle payments against services in FIFO order so each service row shows its exact paid & due amounts
     let remainingPaymentPool = new Decimal(totalPaid);

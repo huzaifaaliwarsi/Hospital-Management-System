@@ -2,17 +2,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServiceRateSchema, updateServiceRateSchema } from '../src/modules/setup/setup.schemas';
 
 const { post, patch } = vi.hoisted(() => ({ post: vi.fn(), patch: vi.fn() }));
-vi.mock('../../ch-sharif-and-saeed-hospital---hms/src/services/apiClient', () => ({
+vi.mock('../../Frontend/src/services/apiClient', () => ({
   default: { post, patch },
 }));
-vi.mock('../../ch-sharif-and-saeed-hospital---hms/src/services/departmentService', () => ({
+vi.mock('../../Frontend/src/services/departmentService', () => ({
   DepartmentService: { getDepartmentById: vi.fn() },
 }));
-vi.mock('../../ch-sharif-and-saeed-hospital---hms/src/services/hospitalProfileService', () => ({
+vi.mock('../../Frontend/src/services/hospitalProfileService', () => ({
   getHospitalProfile: () => ({ currency: 'PKR' }),
 }));
-import { ServiceRatesService } from '../../ch-sharif-and-saeed-hospital---hms/src/services/serviceRatesService';
-import type { ServiceFormValues } from '../../ch-sharif-and-saeed-hospital---hms/src/types/serviceRates';
+import { ServiceRatesService } from '../../Frontend/src/services/serviceRatesService';
+import type { ServiceFormValues } from '../../Frontend/src/types/serviceRates';
 
 const values: ServiceFormValues = {
   code: '', name: 'Database service', description: '',

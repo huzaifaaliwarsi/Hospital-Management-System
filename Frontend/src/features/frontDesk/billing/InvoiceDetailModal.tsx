@@ -245,6 +245,23 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
     }
   }, [activeAction, invoice, isDiscountDisabled]);
 
+  // Pre-fill refund amount and focus directly when opened in refund action
+  useEffect(() => {
+    if (activeAction === 'refund' && invoice) {
+      if ((refundAmount === '' || refundAmount === 0) && invoice.paidTotal > 0) {
+        setRefundAmount(invoice.paidTotal);
+      }
+      const timer = setTimeout(() => {
+        const el = document.getElementById('modal-refund-input') as HTMLInputElement | null;
+        if (el) {
+          el.focus();
+          el.select();
+        }
+      }, 120);
+      return () => clearTimeout(timer);
+    }
+  }, [activeAction, invoice]);
+
   const closeAction = () => {
     setActiveAction(null);
     setActionError(null);
@@ -493,6 +510,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
               ${invoice?.sourceType === 'ADMISSION' && invoice.admissionEstimatedAmount != null ? `<div class="meta-row"><span class="meta-label">Estimated Amount — Subject to Final Billing:</span> <span class="meta-val">${formatPKR(invoice.admissionEstimatedAmount)}</span></div>` : ''}
               ${invoice?.wardName || invoice?.bedNumber ? `<div class="meta-row"><span class="meta-label">Ward / Bed:</span> <span class="meta-val">${[invoice.wardName, invoice.bedNumber ? (/^bed\b/i.test(invoice.bedNumber.trim()) ? invoice.bedNumber.trim() : `Bed ${invoice.bedNumber.trim()}`) : ''].filter(Boolean).join(' - ')}</span></div>` : ''}
               <div class="meta-row"><span class="meta-label">Doctor:</span> <span class="meta-val">${invoice?.doctorName || 'Consultant'}</span></div>
+              ${invoice?.rmoName ? `<div class="meta-row"><span class="meta-label">Assigned RMO:</span> <span class="meta-val">${invoice.rmoName}</span></div>` : ''}
 ${invoice?.admissionMedicationMode ? `<div class="meta-row"><span class="meta-label">Medication Fulfillment:</span> ${invoice.admissionMedicationMode === 'HOSPITAL_MANAGED' ? 'Hospital Managed' : 'Self Arranged'}</div>` : ''}
 ${invoice?.sourceType === 'ADMISSION' ? `<div class="meta-row"><span class="meta-label">Admission Department:</span> ${invoice.admissionDepartmentName || invoice.departmentName || 'Not assigned'}</div>` : ''}
               <div class="meta-row"><span class="meta-label">Status:</span> <span class="badge ${invoice?.status === 'PAID' ? 'badge-paid' : 'badge-unpaid'}">${invoice?.status}</span></div>
@@ -645,6 +663,12 @@ ${invoice?.sourceType === 'ADMISSION' ? `<div class="meta-row"><span class="meta
                 <div className="flex justify-between">
                   <span className="text-slate-500 font-semibold">Consultant:</span>
                   <span className="font-semibold text-slate-800">{invoice.doctorName}</span>
+                </div>
+              )}
+              {invoice.rmoName && (
+                <div className="flex justify-between">
+                  <span className="text-slate-500 font-semibold">Assigned RMO:</span>
+                  <span className="font-semibold text-slate-800">{invoice.rmoName}</span>
                 </div>
               )}
             </div>
@@ -1209,6 +1233,7 @@ ${invoice?.sourceType === 'ADMISSION' ? `<div class="meta-row"><span class="meta
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <NumberInput
+                  id="modal-refund-input"
                   label="Refund Amount (PKR)"
                   required
                   min={0}
