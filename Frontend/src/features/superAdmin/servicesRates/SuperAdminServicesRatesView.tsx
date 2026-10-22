@@ -8,6 +8,7 @@ import {
   AlertCircle,
   AlertTriangle,
   Loader2,
+  Layers,
 } from 'lucide-react';
 import { useAuth } from '../../../context/AuthContext';
 import {
@@ -25,6 +26,7 @@ import { ServiceModal } from './ServiceModal';
 import { ServiceDetailModal } from './ServiceDetailModal';
 import { ServiceExportModal } from './ServiceExportModal';
 import { ServiceImportModal } from './ServiceImportModal';
+import { BulkAddServicesModal } from './BulkAddServicesModal';
 import { downloadServicesPDF } from '../../../services/serviceRatesExportService';
 import { useToast } from '../../../context/ToastContext';
 
@@ -54,6 +56,7 @@ export const SuperAdminServicesRatesView: React.FC = () => {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isBulkAddModalOpen, setIsBulkAddModalOpen] = useState(false);
   const [serviceToDelete, setServiceToDelete] = useState<HospitalService | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -262,6 +265,18 @@ export const SuperAdminServicesRatesView: React.FC = () => {
             <span>Import Excel</span>
           </button>
 
+          {/* Bulk Add Services */}
+          <button
+            id="services-bulk-add-btn"
+            type="button"
+            onClick={() => setIsBulkAddModalOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-2 bg-emerald-50 hover:bg-emerald-100/80 text-[#08775A] border border-[#08775A]/30 text-xs font-bold rounded-lg shadow-2xs transition-colors cursor-pointer"
+            title="Add multiple billable services with auto-generated IDs"
+          >
+            <Layers className="w-3.5 h-3.5 text-[#08775A]" />
+            <span>Bulk Add Services</span>
+          </button>
+
           {/* Add Service (Primary) */}
           <button
             id="services-add-btn"
@@ -347,6 +362,17 @@ export const SuperAdminServicesRatesView: React.FC = () => {
         existingServices={services}
         departments={departments}
         currentUser={currentUser}
+      />
+
+      {/* Bulk Add Services Modal */}
+      <BulkAddServicesModal
+        isOpen={isBulkAddModalOpen}
+        onClose={() => setIsBulkAddModalOpen(false)}
+        onSuccess={() => {
+          setIsBulkAddModalOpen(false);
+          loadData();
+        }}
+        departments={departments}
       />
 
       {/* Delete Confirmation Modal */}

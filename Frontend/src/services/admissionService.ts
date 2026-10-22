@@ -257,17 +257,61 @@ function toAdmissionRecord(raw: Record<string, any>): AdmissionRecord {
   const isPanel = !!raw.panelPatientId;
   const patient = raw.panelPatient || raw.selfPayEncounter;
   const encounterId = raw.selfPayEncounterId || raw.selfPayEncounter?.id;
+  const panelPatientId = raw.panelPatientId || raw.panelPatient?.id;
+  const fromRegistry = encounterId
+    ? getPatientById(encounterId)
+    : panelPatientId
+    ? getPatientById(panelPatientId)
+    : null;
+
   let resolvedMr = patient?.mrNumber || '';
-  if (!resolvedMr && encounterId) {
-    const fromRegistry = getPatientById(encounterId);
-    if (fromRegistry?.mrNumber) {
-      resolvedMr = fromRegistry.mrNumber;
-    } else {
-      const rawId = String(encounterId);
-      const cleanId = rawId.replace(/\D/g, '').slice(0, 6) || rawId.replace(/-/g, '').slice(0, 6).toUpperCase();
-      resolvedMr = `MR-${cleanId.padStart(6, '0')}`;
+  if (!resolvedMr && fromRegistry?.mrNumber) {
+    resolvedMr = fromRegistry.mrNumber;
+  } else if (!resolvedMr && encounterId) {
+    const rawId = String(encounterId);
+    const cleanId = rawId.replace(/\D/g, '').slice(0, 6) || rawId.replace(/-/g, '').slice(0, 6).toUpperCase();
+    resolvedMr = `MR-${cleanId.padStart(6, '0')}`;
+  }
+
+  // Calculate age accurately from patient dob or registry
+  let resolvedAge = '';
+  if (patient?.age != null && patient.age !== '') {
+    resolvedAge = String(patient.age);
+  } else {
+    const rawDob = patient?.dob || fromRegistry?.dateOfBirth;
+    if (rawDob) {
+      const dobDate = new Date(rawDob);
+      if (!isNaN(dobDate.getTime())) {
+        const now = new Date();
+        let years = now.getFullYear() - dobDate.getFullYear();
+        let months = now.getMonth() - dobDate.getMonth();
+        if (now.getDate() < dobDate.getDate()) months--;
+        if (months < 0) {
+          years--;
+          months += 12;
+        }
+        if (years > 0) {
+          resolvedAge = `${years} Y`;
+        } else if (months > 0) {
+          resolvedAge = `${months} M`;
+        } else {
+          const days = Math.max(1, Math.floor((now.getTime() - dobDate.getTime()) / (1000 * 60 * 60 * 24)));
+          resolvedAge = `${days} D`;
+        }
+      }
+    }
+    if (!resolvedAge && fromRegistry?.age != null && fromRegistry.age > 0) {
+      resolvedAge = `${fromRegistry.age} Y`;
     }
   }
+
+  // Clean address from artificial ", Karachi, Sindh, Pakistan" suffix if present
+  let resolvedAddress = patient?.address || fromRegistry?.addressLine1 || '';
+  resolvedAddress = resolvedAddress
+    .replace(/,\s*Karachi\s*,\s*Sindh\s*,\s*Pakistan\s*$/i, '')
+    .replace(/,\s*Sindh\s*,\s*Pakistan\s*$/i, '')
+    .replace(/,\s*Pakistan\s*$/i, '')
+    .trim();
 
   return {
     id: raw.id,
@@ -276,8 +320,8 @@ function toAdmissionRecord(raw: Record<string, any>): AdmissionRecord {
     patientFatherName: patient?.guardianName || patient?.fatherGuardianName || '',
     patientCnic: patient?.cnic || raw.selfPayEncounter?.cnicOrPassport || raw.panelPatient?.cnic || '',
     patientGender: patient?.gender || '',
-    patientAge: patient?.age != null ? String(patient.age) : '',
-    patientAddress: patient?.address || '',
+    patientAge: resolvedAge,
+    patientAddress: resolvedAddress,
     patientPhone: patient?.phone || '',
     weightKg: raw.weightKg != null ? Number(raw.weightKg) : null,
     patientMrNumber: resolvedMr,
@@ -570,7 +614,16 @@ export async function transferAdmissionBed(id: string, values: { targetBedId: st
 
 export async function addAdmissionService(
   id: string,
-  values: { serviceRateId: string; quantity: number; notes?: string; performedByStaffId?: string; arrangementMode?: 'HOSPITAL_MANAGED' | 'SELF' },
+  values: {
+    serviceRateId: string;
+    quantity: number;
+    notes?: string;
+    performedByStaffId?: string;
+    arrangementMode?: 'HOSPITAL_MANAGED' | 'SELF';
+    departmentId?: string;
+    providerType?: 'INTERNAL' | 'OUTSOURCED';
+    outsourcedProviderId?: string;
+  },
 ): Promise<void> {
   try {
     await apiClient.post(`/admissions/${id}/add-service`, values);

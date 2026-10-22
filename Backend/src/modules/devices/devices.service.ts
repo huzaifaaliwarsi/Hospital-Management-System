@@ -13,7 +13,19 @@ function publicDevice(device: BiometricDevice) {
   return { ...safe, hasSharedSecret: !!sharedSecretEncrypted };
 }
 function allowedIps() {
-  return (process.env.BIOMETRIC_ALLOWED_IPS ?? '').split(',').map(s => s.trim().replace(/^::ffff:/, '')).filter(Boolean);
+  const envVal = process.env.BIOMETRIC_ALLOWED_IPS;
+  if (!envVal || envVal.trim() === '' || envVal.trim() === '*') {
+    return ['*'];
+  }
+  return envVal.split(',').map(s => s.trim().replace(/^::ffff:/, '')).filter(Boolean);
+}
+
+function isIpAllowed(ip?: string) {
+  const list = allowedIps();
+  if (list.includes('*')) return true;
+  if (!ip) return false;
+  const cleanIp = ip.replace(/^::ffff:/, '');
+  return list.includes(cleanIp) || list.some(allowed => allowed.endsWith('*') && cleanIp.startsWith(allowed.slice(0, -1)));
 }
 
 export class DevicesService {
@@ -29,7 +41,7 @@ export class DevicesService {
       if (actual.length !== expected.length || !timingSafeEqual(Buffer.from(actual), Buffer.from(expected))) throw new AuthenticationError('Invalid device credentials');
     } else if (device.authMode === 'DEVICE_SERIAL' && device.protocol === 'HTTP_ADMS') {
       const ip = credentials.ip?.replace(/^::ffff:/, '');
-      if (!ip || !allowedIps().includes(ip)) throw new AuthenticationError('ADMS source IP is not allowlisted');
+      if (!isIpAllowed(ip)) throw new AuthenticationError(`ADMS source IP (${ip}) is not allowlisted`);
     } else throw new AuthenticationError('Configure supported device authentication');
     return device;
   }

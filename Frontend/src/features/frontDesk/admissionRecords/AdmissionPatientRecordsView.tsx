@@ -87,6 +87,15 @@ export const AdmissionPatientRecordsView: React.FC = () => {
 
   useEffect(() => {
     load();
+    const params = new URLSearchParams(window.location.search);
+    const targetAdmId = params.get('admissionId');
+    if (targetAdmId) {
+      setOpenAdmissionId(targetAdmId);
+    }
+    const targetSearch = params.get('search');
+    if (targetSearch) {
+      setSearchTerm(targetSearch);
+    }
   }, []);
 
   const filteredRows = useMemo(() => {
@@ -534,7 +543,14 @@ export const AdmissionPatientRecordsView: React.FC = () => {
       {openAdmissionId && (
         <AdmissionLedgerModal
           admissionId={openAdmissionId}
-          onClose={() => setOpenAdmissionId(null)}
+          onClose={() => {
+            setOpenAdmissionId(null);
+            if (typeof window !== 'undefined' && window.history.replaceState) {
+              const url = new URL(window.location.href);
+              url.searchParams.delete('admissionId');
+              window.history.replaceState({}, '', url.pathname + (url.search ? url.search : ''));
+            }
+          }}
           onChanged={() => load(true)}
         />
       )}

@@ -12,6 +12,7 @@ import type {
   CreateDepartmentBody,
   UpdateDepartmentBody,
   CreateServiceRateBody,
+  BulkCreateServiceRatesBody,
   UpdateServiceRateBody,
   CreateWardBody,
   UpdateWardBody,
@@ -734,6 +735,15 @@ export const setupService = {
       }
       throw error;
     }
+  },
+
+  async bulkCreateServiceRates(body: BulkCreateServiceRatesBody, createdById: string) {
+    const results = [];
+    for (const item of body.services) {
+      const created = await this.createServiceRate(item, createdById);
+      results.push(created);
+    }
+    return { count: results.length, services: results };
   },
 
   async updateServiceRate(id: string, body: UpdateServiceRateBody, updatedById: string) {

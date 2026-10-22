@@ -53,7 +53,8 @@ export const ClinicalDischargeModal: React.FC<ClinicalDischargeModalProps> = ({
   // Form Fields - Top Metadata
   const defaultDischargeDate = new Date().toISOString().slice(0, 10);
   const [dischargeDate, setDischargeDate] = useState(defaultDischargeDate);
-  const [nicu, setNicu] = useState('');
+  const autoWardBed = [admission.departmentName, admission.bedLabel].filter(Boolean).join(' • ');
+  const [nicu, setNicu] = useState(autoWardBed || '');
   const [weightOnAdmission, setWeightOnAdmission] = useState(
     admission.weightKg ? `${admission.weightKg} kg` : ''
   );
@@ -66,9 +67,38 @@ export const ClinicalDischargeModal: React.FC<ClinicalDischargeModalProps> = ({
       .replace(/\[\s*\]/g, '')
       .trim()
   );
-  const [patientAge, setPatientAge] = useState(admission.patientAge || '');
+
+  const resolveInitialAge = (): string => {
+    if (admission.patientAge) return admission.patientAge;
+    const rawDob = (admission as any).selfPayEncounter?.dob || (admission as any).panelPatient?.dob || (admission as any).dob;
+    if (rawDob) {
+      const dobDate = new Date(rawDob);
+      if (!isNaN(dobDate.getTime())) {
+        const now = new Date();
+        let years = now.getFullYear() - dobDate.getFullYear();
+        let months = now.getMonth() - dobDate.getMonth();
+        if (now.getDate() < dobDate.getDate()) months--;
+        if (months < 0) {
+          years--;
+          months += 12;
+        }
+        if (years > 0) return `${years} Y`;
+        if (months > 0) return `${months} M`;
+        const days = Math.max(1, Math.floor((now.getTime() - dobDate.getTime()) / (1000 * 60 * 60 * 24)));
+        return `${days} D`;
+      }
+    }
+    return '';
+  };
+  const [patientAge, setPatientAge] = useState(resolveInitialAge);
   const [patientGender, setPatientGender] = useState(admission.patientGender || '');
-  const [patientAddress, setPatientAddress] = useState(admission.patientAddress || '');
+
+  const cleanInitialAddress = (admission.patientAddress || '')
+    .replace(/,\s*Karachi\s*,\s*Sindh\s*,\s*Pakistan\s*$/i, '')
+    .replace(/,\s*Sindh\s*,\s*Pakistan\s*$/i, '')
+    .replace(/,\s*Pakistan\s*$/i, '')
+    .trim();
+  const [patientAddress, setPatientAddress] = useState(cleanInitialAddress);
 
   // Form Fields - Numbered Sections (1 to 8)
   const [finalDiagnosis, setFinalDiagnosis] = useState(admission.diagnosis || '');
@@ -141,12 +171,12 @@ export const ClinicalDischargeModal: React.FC<ClinicalDischargeModalProps> = ({
         history: history.trim() || undefined,
         examination: examination.trim() || undefined,
         investigations: investigations.trim() || undefined,
-        treatmentSummary: treatmentSummary.trim() || 'Patient managed conservatively in ward and responded satisfactorily.',
+        treatmentSummary: treatmentSummary.trim() || '',
         conditionAtDischarge: 'Stable',
         prescriptionOnDischarge: prescriptionOnDischarge.trim() || undefined,
         medicinesInstructions: prescriptionOnDischarge.trim() || undefined,
         followUpAdvice: followUpVisit.trim() || undefined,
-        nicu: nicu.trim() || undefined,
+        nicu: (autoWardBed || nicu).trim() || undefined,
         weightOnAdmission: weightOnAdmission.trim() || undefined,
         weightOnDischarge: weightOnDischarge.trim() || undefined,
         finalOutcome,
@@ -396,11 +426,15 @@ export const ClinicalDischargeModal: React.FC<ClinicalDischargeModalProps> = ({
                   />
                 </div>
                 <div>
-                  <TextInput
-                    label="NICU (Manual Entry)"
-                    placeholder="e.g. Cot 3 / Ward / N/A"
-                    value={nicu}
-                    onChange={(e) => setNicu(e.target.value)}
+                  <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                    Department / Ward / Room / Bed (from Admission)
+                  </label>
+                  <input
+                    type="text"
+                    disabled
+                    value={autoWardBed || 'General Ward'}
+                    className="w-full px-3 py-2 text-xs font-semibold bg-slate-100 border border-slate-200 rounded-xl text-slate-800 cursor-not-allowed truncate"
+                    title={autoWardBed}
                   />
                 </div>
               </div>

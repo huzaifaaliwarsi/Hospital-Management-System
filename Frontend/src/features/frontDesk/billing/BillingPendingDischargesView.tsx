@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { ClipboardCheck, Loader2, AlertTriangle, Receipt, CheckCircle2 } from 'lucide-react';
+import { ClipboardCheck, Loader2, AlertTriangle, Receipt, CheckCircle2, FileText } from 'lucide-react';
 import { fetchAdmissions, dischargeAdmission, AdmissionRecord } from '../../../services/admissionService';
 import { fetchInvoices, InvoiceSummary } from '../../../services/invoiceService';
 import { AdmissionStatementModal } from './AdmissionStatementModal';
+import { AdmissionLedgerModal } from '../admissionRecords/AdmissionLedgerModal';
 import { useToast } from '../../../context/ToastContext';
 
 /**
@@ -21,6 +22,7 @@ export const BillingPendingDischargesView: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [statementAdmissionId, setStatementAdmissionId] = useState<string | null>(null);
+  const [ledgerAdmissionId, setLedgerAdmissionId] = useState<string | null>(null);
   const [dischargingId, setDischargingId] = useState<string | null>(null);
 
   const load = async () => {
@@ -42,6 +44,11 @@ export const BillingPendingDischargesView: React.FC = () => {
 
   useEffect(() => {
     load();
+    const params = new URLSearchParams(window.location.search);
+    const targetAdmId = params.get('admissionId');
+    if (targetAdmId) {
+      setStatementAdmissionId(targetAdmId);
+    }
   }, []);
 
   const handleDirectDischarge = async (admId: string, patientName: string) => {
@@ -107,9 +114,25 @@ export const BillingPendingDischargesView: React.FC = () => {
             <tbody className="divide-y divide-slate-100 text-slate-700">
               {admissions.map((a) => (
                 <tr key={a.id} className="hover:bg-slate-50/80">
-                  <td className="py-2.5 px-4 font-mono font-bold text-slate-900 whitespace-nowrap">{a.admissionNumber}</td>
+                  <td className="py-2.5 px-4 font-mono font-bold text-slate-900 whitespace-nowrap">
+                    <button
+                      type="button"
+                      onClick={() => setStatementAdmissionId(a.id)}
+                      className="hover:text-[#08775A] hover:underline cursor-pointer text-left font-mono font-bold"
+                      title="Open Billing Statement"
+                    >
+                      {a.admissionNumber}
+                    </button>
+                  </td>
                   <td className="py-2.5 px-4 whitespace-nowrap">
-                    <span className="font-semibold text-slate-900 block whitespace-nowrap">{a.patientName}</span>
+                    <button
+                      type="button"
+                      onClick={() => setStatementAdmissionId(a.id)}
+                      className="font-semibold text-slate-900 hover:text-[#08775A] hover:underline text-left cursor-pointer block whitespace-nowrap"
+                      title="Open Billing Statement"
+                    >
+                      {a.patientName}
+                    </button>
                     <span className="text-[10px] text-slate-400 block whitespace-nowrap">{a.payerType}</span>
                   </td>
                   <td className="py-2.5 px-4 whitespace-nowrap">{a.departmentName}</td>
@@ -123,6 +146,14 @@ export const BillingPendingDischargesView: React.FC = () => {
                         className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#08775A] hover:underline cursor-pointer whitespace-nowrap"
                       >
                         <Receipt className="h-3 w-3" /> View Statement / Collect
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setLedgerAdmissionId(a.id)}
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-700 hover:text-[#08775A] hover:underline cursor-pointer whitespace-nowrap"
+                        title="View Full Inpatient Ledger"
+                      >
+                        <FileText className="h-3 w-3" /> Ledger
                       </button>
                       <button
                         type="button"
@@ -160,7 +191,29 @@ export const BillingPendingDischargesView: React.FC = () => {
       {statementAdmissionId && (
         <AdmissionStatementModal
           admissionId={statementAdmissionId}
-          onClose={() => setStatementAdmissionId(null)}
+          onClose={() => {
+            setStatementAdmissionId(null);
+            if (typeof window !== 'undefined' && window.history.replaceState) {
+              const url = new URL(window.location.href);
+              url.searchParams.delete('admissionId');
+              window.history.replaceState({}, '', url.pathname + (url.search ? url.search : ''));
+            }
+          }}
+          onChanged={load}
+        />
+      )}
+
+      {ledgerAdmissionId && (
+        <AdmissionLedgerModal
+          admissionId={ledgerAdmissionId}
+          onClose={() => {
+            setLedgerAdmissionId(null);
+            if (typeof window !== 'undefined' && window.history.replaceState) {
+              const url = new URL(window.location.href);
+              url.searchParams.delete('admissionId');
+              window.history.replaceState({}, '', url.pathname + (url.search ? url.search : ''));
+            }
+          }}
           onChanged={load}
         />
       )}

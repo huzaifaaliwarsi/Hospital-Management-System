@@ -240,16 +240,16 @@ export const DischargeSlipPrintModal: React.FC<DischargeSlipPrintModalProps> = (
           >
             {/* Header with Circular / Crest Logo and Dynamic Hospital Details */}
             <div className="relative border-b-2 border-slate-800 pb-3 mb-4 min-h-[96px] flex items-center">
-              {/* Circular / Emblem Logo from Hospital Overview */}
-              <div className="absolute left-0 top-0 w-20 h-20 sm:w-24 sm:h-24 rounded-full border-2 border-slate-800 flex items-center justify-center p-1.5 bg-white text-slate-800 shrink-0 overflow-hidden shadow-xs print:border-slate-900">
+              {/* Logo from Hospital Overview */}
+              <div className="absolute left-0 top-0 w-20 h-20 sm:w-24 sm:h-24 flex items-center justify-center shrink-0">
                 {profile.logo ? (
                   <img
                     src={profile.logo}
                     alt={profile.name || 'Hospital Logo'}
-                    className="w-full h-full object-contain"
+                    className="max-w-full max-h-full object-contain"
                   />
                 ) : (
-                  <div className="w-full h-full rounded-full bg-slate-100 flex flex-col items-center justify-center font-bold text-slate-800 font-sans">
+                  <div className="w-full h-full rounded-full border-2 border-slate-800 bg-slate-100 flex flex-col items-center justify-center font-bold text-slate-800 font-sans">
                     <span className="text-lg sm:text-xl tracking-wider leading-none">
                       {profile.shortName ? profile.shortName.slice(0, 3).toUpperCase() : 'HMS'}
                     </span>
@@ -294,9 +294,9 @@ export const DischargeSlipPrintModal: React.FC<DischargeSlipPrintModalProps> = (
                 </span>
               </div>
               <div className="col-span-5 flex items-baseline pl-4">
-                <span className="font-bold shrink-0">NICU:</span>
-                <span className="ml-2 flex-1 border-b border-dotted border-slate-700 pb-0.5">
-                  {summary.nicu || '—'}
+                <span className="font-bold shrink-0">Ward / Bed:</span>
+                <span className="ml-2 flex-1 border-b border-dotted border-slate-700 pb-0.5 truncate">
+                  {summary.nicu || [admission.departmentName, admission.bedLabel].filter(Boolean).join(' • ') || '—'}
                 </span>
               </div>
 
@@ -358,7 +358,11 @@ export const DischargeSlipPrintModal: React.FC<DischargeSlipPrintModalProps> = (
               <div className="col-span-12 flex items-baseline">
                 <span className="font-bold shrink-0">Address:</span>
                 <span className="ml-2 flex-1 border-b border-dotted border-slate-700 pb-0.5">
-                  {admission.patientAddress || '—'}
+                  {(admission.patientAddress || '')
+                    .replace(/,\s*Karachi\s*,\s*Sindh\s*,\s*Pakistan\s*$/i, '')
+                    .replace(/,\s*Sindh\s*,\s*Pakistan\s*$/i, '')
+                    .replace(/,\s*Pakistan\s*$/i, '')
+                    .trim() || '—'}
                 </span>
               </div>
             </div>
@@ -393,7 +397,7 @@ export const DischargeSlipPrintModal: React.FC<DischargeSlipPrintModalProps> = (
               <div>
                 <span className="font-bold text-slate-900 block mb-0.5">2. History:</span>
                 <div className="pl-4 min-h-[48px] discharge-ruled-lines whitespace-pre-wrap text-slate-800">
-                  {summary.history || 'No significant prior medical history noted.'}
+                  {summary.history || ''}
                 </div>
               </div>
 
@@ -401,7 +405,7 @@ export const DischargeSlipPrintModal: React.FC<DischargeSlipPrintModalProps> = (
               <div>
                 <span className="font-bold text-slate-900 block mb-0.5">3. Examination:</span>
                 <div className="pl-4 min-h-[48px] discharge-ruled-lines whitespace-pre-wrap text-slate-800">
-                  {summary.examination || `Condition: ${summary.conditionAtDischarge || 'Stable'}`}
+                  {summary.examination || ''}
                 </div>
               </div>
 
@@ -409,7 +413,7 @@ export const DischargeSlipPrintModal: React.FC<DischargeSlipPrintModalProps> = (
               <div>
                 <span className="font-bold text-slate-900 block mb-0.5">4. Investigations:</span>
                 <div className="pl-4 min-h-[48px] discharge-ruled-lines whitespace-pre-wrap text-slate-800">
-                  {summary.investigations || 'Routine baseline labs & diagnostics performed.'}
+                  {summary.investigations || ''}
                 </div>
               </div>
 
@@ -417,7 +421,7 @@ export const DischargeSlipPrintModal: React.FC<DischargeSlipPrintModalProps> = (
               <div>
                 <span className="font-bold text-slate-900 block mb-0.5">5. Summary:</span>
                 <div className="pl-4 min-h-[48px] discharge-ruled-lines whitespace-pre-wrap text-slate-800">
-                  {summary.treatmentSummary || 'Patient managed conservatively in ward and responded satisfactorily to treatment.'}
+                  {summary.treatmentSummary || ''}
                 </div>
               </div>
 
@@ -425,7 +429,7 @@ export const DischargeSlipPrintModal: React.FC<DischargeSlipPrintModalProps> = (
               <div>
                 <span className="font-bold text-slate-900 block mb-0.5">6. Prescription on Discharge:</span>
                 <div className="pl-4 min-h-[72px] discharge-ruled-lines whitespace-pre-wrap font-sans text-xs text-slate-800">
-                  {summary.prescriptionOnDischarge || summary.medicinesInstructions || 'As per prescription slip.'}
+                  {summary.prescriptionOnDischarge || summary.medicinesInstructions || ''}
                 </div>
               </div>
 
@@ -433,7 +437,7 @@ export const DischargeSlipPrintModal: React.FC<DischargeSlipPrintModalProps> = (
               <div className="flex items-start gap-2">
                 <span className="font-bold text-slate-900 shrink-0 leading-[24px]">7. Follow-up Visit:</span>
                 <div className="flex-1 discharge-ruled-lines min-h-[24px] whitespace-pre-wrap text-slate-800">
-                  {summary.followUpAdvice || (summary.followUpDate ? `Review on ${summary.followUpDate}` : 'In OPD as advised.')}
+                  {summary.followUpAdvice || (summary.followUpDate ? `Review on ${summary.followUpDate}` : '')}
                 </div>
               </div>
 

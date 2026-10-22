@@ -18,6 +18,7 @@ import { Select } from '../../../components/forms/FormControls';
 import { formatPKR } from '../../../utils/formatters';
 import { fetchPaymentRequests, PaymentRequestRecord, PaymentRequestStatus } from '../../../services/paymentRequestService';
 import { CollectPaymentRequestModal } from './CollectPaymentRequestModal';
+import { AdmissionLedgerModal } from '../admissionRecords/AdmissionLedgerModal';
 import { PanelBadge } from '../../../components/common/PanelBadge';
 import { HospitalKpiHeader } from '../../../components/common/HospitalKpiHeader';
 
@@ -48,6 +49,7 @@ export const AdmissionPaymentRequestsView: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [collectTarget, setCollectTarget] = useState<PaymentRequestRecord | null>(null);
+  const [ledgerAdmissionId, setLedgerAdmissionId] = useState<string | null>(null);
 
   // Pharmacy pagination states
   const [pageSize, setPageSize] = useState(15);
@@ -67,6 +69,11 @@ export const AdmissionPaymentRequestsView: React.FC = () => {
 
   useEffect(() => {
     load();
+    const params = new URLSearchParams(window.location.search);
+    const targetAdmId = params.get('admissionId');
+    if (targetAdmId) {
+      setLedgerAdmissionId(targetAdmId);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter]);
 
@@ -360,10 +367,24 @@ export const AdmissionPaymentRequestsView: React.FC = () => {
                         {rowNumber}
                       </td>
                       <td className="py-3.5 px-4 border-r border-slate-100 whitespace-nowrap font-mono font-bold text-slate-900">
-                        {r.admissionNumber}
+                        <button
+                          type="button"
+                          onClick={() => setLedgerAdmissionId(r.admissionId)}
+                          className="hover:text-[#08775A] hover:underline cursor-pointer text-left font-mono font-bold"
+                          title="Open Patient Ledger"
+                        >
+                          {r.admissionNumber}
+                        </button>
                       </td>
                       <td className="py-3.5 px-4 border-r border-slate-100 whitespace-nowrap">
-                        <div className="font-semibold text-slate-900">{r.patientName}</div>
+                        <button
+                          type="button"
+                          onClick={() => setLedgerAdmissionId(r.admissionId)}
+                          className="font-semibold text-slate-900 hover:text-[#08775A] hover:underline text-left cursor-pointer block"
+                          title="Open Patient Ledger"
+                        >
+                          {r.patientName}
+                        </button>
                         <div className="text-[10px] text-slate-400 font-mono mt-0.5">{r.patientPhone}</div>
                       </td>
                       <td className="py-3.5 px-4 border-r border-slate-100 whitespace-nowrap">
@@ -398,17 +419,28 @@ export const AdmissionPaymentRequestsView: React.FC = () => {
                         {r.requestedByLabel}
                       </td>
                       <td className="py-3.5 px-4 whitespace-nowrap text-center">
-                        {(r.status === 'PENDING' || r.status === 'PARTIALLY_FULFILLED') && (
+                        <div className="flex items-center justify-center gap-1.5">
                           <button
                             type="button"
-                            title="Collect Payment"
-                            onClick={() => setCollectTarget(r)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-[#08775A] text-[#08775A] hover:text-white border border-[#c2e7db] hover:border-[#08775A] text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer"
+                            title="Open Patient Ledger"
+                            onClick={() => setLedgerAdmissionId(r.admissionId)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-50 hover:bg-[#08775A] text-slate-700 hover:text-white border border-slate-200 hover:border-[#08775A] text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer"
                           >
-                            <Wallet className="h-3 w-3" />
-                            <span>Collect</span>
+                            <Receipt className="h-3 w-3" />
+                            <span>Ledger</span>
                           </button>
-                        )}
+                          {(r.status === 'PENDING' || r.status === 'PARTIALLY_FULFILLED') && (
+                            <button
+                              type="button"
+                              title="Collect Payment"
+                              onClick={() => setCollectTarget(r)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-[#08775A] text-[#08775A] hover:text-white border border-[#c2e7db] hover:border-[#08775A] text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer"
+                            >
+                              <Wallet className="h-3 w-3" />
+                              <span>Collect</span>
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -477,6 +509,21 @@ export const AdmissionPaymentRequestsView: React.FC = () => {
             setCollectTarget(null);
             load();
           }}
+        />
+      )}
+
+      {ledgerAdmissionId && (
+        <AdmissionLedgerModal
+          admissionId={ledgerAdmissionId}
+          onClose={() => {
+            setLedgerAdmissionId(null);
+            if (typeof window !== 'undefined' && window.history.replaceState) {
+              const url = new URL(window.location.href);
+              url.searchParams.delete('admissionId');
+              window.history.replaceState({}, '', url.pathname + (url.search ? url.search : ''));
+            }
+          }}
+          onChanged={load}
         />
       )}
     </div>

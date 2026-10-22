@@ -67,6 +67,9 @@ export const setupController = {
   createServiceRate: async (req: Request, res: Response) => {
     res.status(201).json({ data: await setupService.createServiceRate(req.body, actorId(req)) });
   },
+  bulkCreateServiceRates: async (req: Request, res: Response) => {
+    res.status(201).json({ data: await setupService.bulkCreateServiceRates(req.body, actorId(req)) });
+  },
   updateServiceRate: async (req: Request, res: Response) => {
     res.json({ data: await setupService.updateServiceRate(req.params.id as string, req.body, actorId(req)) });
   },

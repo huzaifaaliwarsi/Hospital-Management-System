@@ -179,11 +179,21 @@ export const Header: React.FC<HeaderProps> = ({
       if (targetUrl.startsWith('/admissions')) {
         targetUrl = '/admission/planned_admissions';
       } else if (targetUrl.startsWith('/billing/inpatient') || targetUrl === '/billing/inpatient') {
-        targetUrl = '/front-desk/admission_patient_records';
+        targetUrl = notif.referenceId
+          ? `/front-desk/admission_patient_records?admissionId=${notif.referenceId}`
+          : '/front-desk/admission_patient_records';
+      } else if (targetUrl.includes('admission_patient_records')) {
+        targetUrl = notif.referenceId
+          ? `/front-desk/admission_patient_records?admissionId=${notif.referenceId}`
+          : '/front-desk/admission_patient_records';
       } else if (targetUrl.includes('billing_pending_discharges')) {
-        targetUrl = '/front-desk/billing_pending_discharges';
+        targetUrl = notif.referenceId
+          ? `/front-desk/admission_patient_records?admissionId=${notif.referenceId}`
+          : '/front-desk/billing_pending_discharges';
       } else if (targetUrl.includes('payment_requests')) {
-        targetUrl = '/front-desk/admission_payment_requests';
+        targetUrl = notif.referenceId
+          ? `/front-desk/admission_patient_records?admissionId=${notif.referenceId}`
+          : '/front-desk/admission_payment_requests';
       } else if (targetUrl === '/billing' || targetUrl === '/billing/invoices') {
         targetUrl = '/front-desk/hospital_invoices';
       }

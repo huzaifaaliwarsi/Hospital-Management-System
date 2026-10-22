@@ -13,6 +13,7 @@ export interface ModalProps {
   maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '3xl' | '4xl' | '5xl';
   showCloseButton?: boolean;
   closeOnBackdropClick?: boolean;
+  zIndexClass?: string;
 }
 
 export const Modal: React.FC<ModalProps> = ({
@@ -25,6 +26,7 @@ export const Modal: React.FC<ModalProps> = ({
   maxWidth = 'lg',
   showCloseButton = true,
   closeOnBackdropClick = false,
+  zIndexClass = 'z-50',
 }) => {
   const mouseDownTargetRef = React.useRef<EventTarget | null>(null);
 
@@ -61,7 +63,10 @@ export const Modal: React.FC<ModalProps> = ({
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/65 flex items-center justify-center p-4 text-left"
+      className={cn(
+        'fixed inset-0 overflow-y-auto bg-slate-900/65 flex items-center justify-center p-4 text-left',
+        zIndexClass
+      )}
       onMouseDown={(e) => {
         mouseDownTargetRef.current = e.target;
       }}

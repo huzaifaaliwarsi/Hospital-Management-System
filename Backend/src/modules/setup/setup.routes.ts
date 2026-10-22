@@ -39,6 +39,7 @@ router.patch('/doctor-fees/:id', write, validate({ params: s.idParamsSchema, bod
 router.get('/services-rates', view, asyncHandler(c.listServiceRates));
 router.get('/services-rates/next-code', view, asyncHandler(c.getNextServiceCode));
 router.post('/services-rates/bulk-discount', write, validate({ body: s.bulkServiceDiscountSchema }), asyncHandler(c.updateBulkDiscount));
+router.post('/services-rates/bulk', create, validate({ body: s.bulkCreateServiceRatesSchema }), asyncHandler(c.bulkCreateServiceRates));
 router.post('/services-rates', create, validate({ body: s.createServiceRateSchema }), asyncHandler(c.createServiceRate));
 router.patch('/services-rates/:id', write, validate({ params: s.idParamsSchema, body: s.updateServiceRateSchema }), asyncHandler(c.updateServiceRate));
 router.post('/services-rates/:id/deactivate', write, validate({ params: s.idParamsSchema }), asyncHandler(c.deactivateServiceRate));

@@ -169,6 +169,11 @@ export const bulkServiceDiscountSchema = z.object({
 });
 export type BulkServiceDiscountBody = z.infer<typeof bulkServiceDiscountSchema>;
 
+export const bulkCreateServiceRatesSchema = z.object({
+  services: z.array(createServiceRateSchema).min(1).max(200),
+});
+export type BulkCreateServiceRatesBody = z.infer<typeof bulkCreateServiceRatesSchema>;
+
 // ── Wards / Rooms / Beds ─────────────────────────────────────────────
 export const createWardSchema = z.object({
   code: z.string().max(20).optional(),

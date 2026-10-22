@@ -846,7 +846,7 @@ export const admissionService = {
       const message = isDischargeReq
         ? `Discharge billing clearance requested for ${patientName}${mrNumber} (${admission.admissionNumber}). Outstanding balance: Rs. ${amountStr}. Please collect clearance payment at Front Desk.`
         : `Payment request of Rs. ${amountStr} raised for ${patientName}${mrNumber} (${admission.admissionNumber}) by ${actorDisplayName} (User ID: ${actor?.username || actorId}).`;
-      const actionUrl = isDischargeReq ? '/front-desk/billing_pending_discharges' : '/front-desk/admission_payment_requests';
+      const actionUrl = `/front-desk/admission_patient_records?admissionId=${admission.id}`;
 
       await notificationsService.createNotification({
         title,
@@ -1743,7 +1743,7 @@ export const admissionService = {
               type: 'urgent',
               module: 'BILLING',
               targetPortal: 'front-desk',
-              actionUrl: '/front-desk/billing_pending_discharges',
+              actionUrl: `/front-desk/admission_patient_records?admissionId=${admission.id}`,
               referenceId: admission.id,
               createdById: actorId,
             });

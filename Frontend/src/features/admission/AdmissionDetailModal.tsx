@@ -22,6 +22,7 @@ import {
   Clock,
   CreditCard,
   Bed,
+  Building2,
   RefreshCw,
   Printer,
   Send,
@@ -61,6 +62,7 @@ import {
 import { ClinicalDischargeModal } from './ClinicalDischargeModal';
 import { HighCostMedicineAuthorizationModal } from './HighCostMedicineAuthorizationModal';
 import { DischargeSlipPrintModal } from './DischargeSlipPrintModal';
+import { AddAdmissionServicesModal } from './AddAdmissionServicesModal';
 
 type Tab = 'overview' | 'services' | 'medication' | 'pharmacy' | 'bed' | 'clearances';
 
@@ -106,6 +108,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [isServicesModalOpen, setIsServicesModalOpen] = useState(false);
 
   const [allStaff, setAllStaff] = useState<StaffUser[]>(() => StaffUserService.getStaffUsers());
   const doctors = useMemo(() => allStaff.filter((s) => s.staffCategory === 'Doctor' && s.status === 'ACTIVE'), [allStaff]);
@@ -285,7 +288,12 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
     try {
       await changeAdmissionMedicationMode(admissionId, { mode: newMode, reason: modeReason.trim() });
       setModeReason('');
-      await refresh('Medication mode updated.');
+      const successMsg =
+        newMode === 'HOSPITAL_MANAGED'
+          ? 'Switched to Hospital Managed. Central pharmacy fulfillment is now active.'
+          : 'Switched to Self Arranged. Patient procures externally (PKR 0).';
+      toast.success(successMsg, 'Medication Policy Updated');
+      await refresh(successMsg);
     } catch (err: any) {
       setActionError(err?.message || 'Failed to change medication mode.');
     } finally {
@@ -538,45 +546,106 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
       onClose={onClose}
       title={
         detail ? (
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <span className="font-mono text-xs font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">
-              {detail.admissionNumber}
-            </span>
-            <span className="text-base font-bold text-slate-900 tracking-tight">{detail.patientName}</span>
-            {detail.payerType === 'Corporate / Panel' ? (
-              <PanelBadge />
-            ) : (
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
-                Self-Pay
-              </span>
-            )}
-            <span
-              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${
-                detail.status === 'ACTIVE'
-                  ? 'bg-[#effaf5] text-[#08775A] border-[#c2e7db]'
-                  : detail.status === 'DISCHARGE_PENDING'
-                  ? 'bg-amber-50 text-amber-800 border-amber-200'
-                  : detail.status === 'DISCHARGED'
-                  ? 'bg-slate-100 text-slate-700 border-slate-200'
-                  : 'bg-blue-50 text-blue-700 border-blue-200'
-              }`}
-            >
-              <span
-                className={`h-1.5 w-1.5 rounded-full ${
-                  detail.status === 'ACTIVE' ? 'bg-[#08775A]' : 'bg-amber-500'
-                }`}
-              />
-              {detail.status.replace(/_/g, ' ')}
-            </span>
+          <div className="flex items-center justify-between gap-4 w-full">
+            <div className="flex items-center gap-3.5 min-w-0">
+              <div className="h-11 w-11 rounded-xl bg-[#08775A]/10 text-[#08775A] border border-[#08775A]/20 flex items-center justify-center font-bold text-sm shrink-0 select-none shadow-2xs">
+                {(() => {
+                  const parts = (detail.patientName || '').trim().split(/\s+/);
+                  if (!parts[0]) return 'PT';
+                  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+                  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+                })()}
+              </div>
+              <div className="min-w-0 flex flex-col gap-1">
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <span className="text-lg font-extrabold text-slate-900 tracking-tight leading-none">
+                    {detail.patientName}
+                  </span>
+
+                  {detail.status === 'ACTIVE' && (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#effaf5] text-[#08775A] border border-[#c2e7db]">
+                      <span className="h-1.5 w-1.5 rounded-full bg-[#08775A]" />
+                      Active Stay
+                    </span>
+                  )}
+                  {detail.status === 'DISCHARGE_PENDING' && (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                      <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                      Discharge Pending
+                    </span>
+                  )}
+                  {detail.status === 'DISCHARGED' && (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                      <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
+                      Discharged
+                    </span>
+                  )}
+                  {detail.status !== 'ACTIVE' && detail.status !== 'DISCHARGE_PENDING' && detail.status !== 'DISCHARGED' && (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                      {detail.status.replace(/_/g, ' ')}
+                    </span>
+                  )}
+
+                  {detail.payerType === 'Corporate / Panel' ? (
+                    <PanelBadge />
+                  ) : (
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                      Self-Pay
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 text-xs text-slate-500 font-normal flex-wrap">
+                  {detail.patientMrNumber && (
+                    <>
+                      <span className="text-slate-600">
+                        MRN: <strong className="font-mono text-slate-800 font-semibold">{detail.patientMrNumber}</strong>
+                      </span>
+                      <span className="text-slate-300">•</span>
+                    </>
+                  )}
+                  <span className="text-slate-600">
+                    ADM: <strong className="font-mono text-slate-800 font-semibold">{detail.admissionNumber}</strong>
+                  </span>
+                  <span className="text-slate-300">•</span>
+                  <span className="inline-flex items-center gap-1 text-slate-700 font-medium">
+                    <Bed className="h-3.5 w-3.5 text-[#08775A] shrink-0" />
+                    <span>{detail.bedLabel || 'No bed assigned'}</span>
+                  </span>
+                  <span className="text-slate-300">•</span>
+                  <span className="inline-flex items-center gap-1 text-slate-600">
+                    <Building2 className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                    <span>{detail.departmentName}</span>
+                  </span>
+                  {detail.doctorName && (
+                    <>
+                      <span className="text-slate-300">•</span>
+                      <span className="inline-flex items-center gap-1 text-slate-600">
+                        <Stethoscope className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                        <span>Dr. {detail.doctorName}</span>
+                      </span>
+                    </>
+                  )}
+                  {detail.rmoName && (
+                    <>
+                      <span className="text-slate-300">•</span>
+                      <span className="text-slate-500">RMO: {detail.rmoName}</span>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+
             {detail.status === 'DISCHARGE_PENDING' && (
               <button
                 type="button"
                 onClick={handleResumeActive}
                 disabled={isResuming}
-                className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-white text-emerald-700 border border-emerald-300 hover:bg-emerald-50 shadow-2xs transition-colors cursor-pointer disabled:opacity-60"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white text-[#08775A] border border-[#08775A]/30 hover:bg-[#effaf5] shadow-2xs transition-colors cursor-pointer disabled:opacity-60 shrink-0"
                 title="Revert back to Active Inpatient Stay"
               >
-                {isResuming ? 'Resuming…' : '↺ Resume Active Stay'}
+                <RefreshCw className={`h-3.5 w-3.5 ${isResuming ? 'animate-spin' : ''}`} />
+                <span>{isResuming ? 'Resuming…' : 'Resume Active Stay'}</span>
               </button>
             )}
           </div>
@@ -584,25 +653,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
           'Admission'
         )
       }
-      subtitle={
-        detail ? (
-          <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5 flex-wrap">
-            <span className="font-semibold text-slate-700">{detail.departmentName}</span>
-            <span className="text-slate-300">•</span>
-            <span>Dr. {detail.doctorName || 'Not assigned'}</span>
-            {detail.rmoName && (
-              <>
-                <span className="text-slate-300">•</span>
-                <span>RMO: {detail.rmoName}</span>
-              </>
-            )}
-            <span className="text-slate-300">•</span>
-            <span className="font-medium text-slate-700 bg-slate-50 px-2 py-0.5 rounded border border-slate-200/80">
-              {detail.bedLabel || 'No bed assigned'}
-            </span>
-          </div>
-        ) : undefined
-      }
+      subtitle={undefined}
       maxWidth="5xl"
     >
       {isLoading ? (
@@ -734,6 +785,12 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                     <span>
                       <strong className="font-bold text-slate-700">Discharged:</strong> {detail.dischargedAt || '—'}
                     </span>
+                    {detail.estimatedAmount != null && detail.estimatedAmount > 0 && (
+                      <span className="bg-emerald-50 text-emerald-800 border border-emerald-200/80 px-2 py-0.5 rounded-md">
+                        <strong className="font-bold text-emerald-900">Front Desk Estimate:</strong>{' '}
+                        <span className="font-mono font-bold">{formatPKR(detail.estimatedAmount)}</span>
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -767,7 +824,18 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                     </button>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 text-xs">
+                  <div className="bg-slate-50/70 p-3 rounded-xl border border-slate-200/80">
+                    <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
+                      Estimated Cost
+                    </span>
+                    <span className="text-base font-bold font-mono text-slate-900 tabular-nums block mt-0.5">
+                      {detail.estimatedAmount != null && detail.estimatedAmount > 0
+                        ? formatPKR(detail.estimatedAmount)
+                        : '—'}
+                    </span>
+                    <span className="text-[10px] text-slate-400 block mt-0.5">Front Desk Estimate</span>
+                  </div>
                   <div className="bg-slate-50/70 p-3 rounded-xl border border-slate-200/80">
                     <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
                       Total Billed
@@ -775,6 +843,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                     <span className="text-base font-bold font-mono text-slate-900 tabular-nums block mt-0.5">
                       {formatPKR(detail.invoices.reduce((s, i) => s + i.total, 0))}
                     </span>
+                    <span className="text-[10px] text-slate-400 block mt-0.5">Services & Charges</span>
                   </div>
                   <div className="bg-slate-50/70 p-3 rounded-xl border border-slate-200/80">
                     <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
@@ -783,6 +852,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                     <span className="text-base font-bold font-mono text-emerald-700 tabular-nums block mt-0.5">
                       {formatPKR(detail.unallocatedAdvanceTotal || 0)}
                     </span>
+                    <span className="text-[10px] text-slate-400 block mt-0.5">Collected Deposit</span>
                   </div>
                   <div className="bg-slate-50/70 p-3 rounded-xl border border-slate-200/80">
                     <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
@@ -791,6 +861,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                     <span className="text-base font-bold font-mono text-emerald-800 tabular-nums block mt-0.5">
                       {formatPKR(ledgerSummary?.availableCredit || 0)}
                     </span>
+                    <span className="text-[10px] text-slate-400 block mt-0.5">Unallocated Balance</span>
                   </div>
                   <div
                     className={`p-3 rounded-xl border ${
@@ -811,6 +882,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                     >
                       {formatPKR(ledgerSummary?.outstandingBalance ?? detail.totalOutstanding)}
                     </span>
+                    <span className="text-[10px] text-slate-400 block mt-0.5">Net Balance Due</span>
                   </div>
                 </div>
               </div>
@@ -842,10 +914,10 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
             <div className="space-y-4">
               {/* Unified Inpatient Financial Telemetry & Fulfillment Surface */}
               <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-[0_2px_8px_rgba(0,0,0,0.03)] space-y-3.5">
-                {/* Top Action Row: Fulfillment Mode + Ledger Drill-down */}
-                <div className="flex items-center justify-between flex-wrap gap-2.5 pb-3 border-b border-slate-100">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs font-semibold text-slate-500">Fulfillment Mode:</span>
+                {/* Top Action Toolbar: Clean, Aligned, High Signal */}
+                <div className="flex items-center justify-between gap-3 flex-wrap pb-3 border-b border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-slate-500">Medication Policy:</span>
                     <span
                       className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border ${
                         detail.medicationMode === 'HOSPITAL_MANAGED'
@@ -860,33 +932,33 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                       />
                       {detail.medicationMode === 'HOSPITAL_MANAGED' ? 'Hospital Managed' : 'Self Arranged'}
                     </span>
-                    <span className="text-[11px] text-slate-400 hidden sm:inline">
-                      (Default for new procedures)
-                    </span>
+                  </div>
 
+                  <div className="flex items-center gap-2">
                     {(detail.status === 'ACTIVE' || detail.status === 'DISCHARGE_PENDING') && (
                       <button
                         type="button"
-                        onClick={() => setTab('medication')}
-                        className="inline-flex items-center gap-1 text-[11px] font-bold text-[#08775A] hover:text-[#065f46] hover:bg-[#effaf5] px-2 py-0.5 rounded-md border border-[#c2e7db] transition-colors cursor-pointer"
-                        title="Configure policy in Medication tab"
+                        onClick={() => setIsServicesModalOpen(true)}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-xl text-white bg-[#08775A] hover:bg-[#065f46] shadow-xs hover:shadow-sm transition-all cursor-pointer"
+                        title="Open full service catalog modal with department filters & live search"
                       >
-                        <Pill className="h-3 w-3" /> Manage in Medication Tab
+                        <Plus className="h-4 w-4" />
+                        <span>Add Services</span>
                       </button>
                     )}
+                    <AdmissionLedgerButton
+                      admissionId={admissionId}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 shadow-2xs transition-colors cursor-pointer"
+                    >
+                      <FileText className="h-3.5 w-3.5 text-slate-400" />
+                      <span>Patient Ledger</span>
+                    </AdmissionLedgerButton>
                   </div>
-
-                  <AdmissionLedgerButton
-                    admissionId={admissionId}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl text-[#08775A] bg-[#effaf5] hover:bg-[#c2e7db]/50 border border-[#c2e7db] shadow-2xs transition-colors cursor-pointer"
-                  >
-                    <FileText className="h-3.5 w-3.5" /> View Full Patient Ledger
-                  </AdmissionLedgerButton>
                 </div>
 
-                {/* Balanced 4-Column Financial Telemetry Strip */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                  <div className="bg-slate-50/70 p-3 rounded-xl border border-slate-200/80">
+                {/* Clean 4-Column Financial Telemetry Strip */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                  <div className="bg-slate-50/80 p-3 rounded-xl border border-slate-200/80">
                     <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
                       Total Billed
                     </span>
@@ -894,7 +966,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                       {formatPKR(detail.invoices.reduce((s, i) => s + i.total, 0))}
                     </span>
                   </div>
-                  <div className="bg-slate-50/70 p-3 rounded-xl border border-slate-200/80">
+                  <div className="bg-slate-50/80 p-3 rounded-xl border border-slate-200/80">
                     <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
                       Advance / Deposit
                     </span>
@@ -902,7 +974,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                       {formatPKR(detail.unallocatedAdvanceTotal || 0)}
                     </span>
                   </div>
-                  <div className="bg-slate-50/70 p-3 rounded-xl border border-slate-200/80">
+                  <div className="bg-slate-50/80 p-3 rounded-xl border border-slate-200/80">
                     <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
                       Available Credit
                     </span>
@@ -913,8 +985,8 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                   <div
                     className={`p-3 rounded-xl border ${
                       (ledgerSummary?.outstandingBalance ?? detail.totalOutstanding) > 0
-                        ? 'bg-amber-50/80 border-amber-200'
-                        : 'bg-slate-50/70 border-slate-200/80'
+                        ? 'bg-amber-50 border-amber-200'
+                        : 'bg-slate-50/80 border-slate-200/80'
                     }`}
                   >
                     <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
@@ -934,23 +1006,22 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
 
                 {/* Outstanding Alert Strip with Front Desk Clearance Action */}
                 {(ledgerSummary?.outstandingBalance ?? detail.totalOutstanding) > 0 && (
-                  <div className="mt-3 p-3.5 rounded-xl bg-amber-50/90 border border-amber-200/90 flex items-center justify-between flex-wrap gap-2.5 text-xs text-amber-900">
+                  <div className="mt-2.5 px-3.5 py-2.5 rounded-xl bg-amber-50 border border-amber-200/80 flex items-center justify-between flex-wrap gap-2.5 text-xs text-amber-900">
                     <div className="flex items-center gap-2">
                       <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
-                      <div>
-                        <span className="font-bold block text-amber-950">Patient has unpaid dues ({formatPKR(ledgerSummary?.outstandingBalance ?? detail.totalOutstanding)})</span>
-                        <span className="text-[11px] text-amber-800">Discharge clearance requires settlement of this balance at Front Desk.</span>
-                      </div>
+                      <span className="font-semibold text-amber-950">
+                        Unsettled Balance: <strong className="font-mono font-bold text-amber-900">{formatPKR(ledgerSummary?.outstandingBalance ?? detail.totalOutstanding)}</strong> (Requires Front Desk settlement)
+                      </span>
                     </div>
                     <button
                       type="button"
                       disabled={isSaving}
                       onClick={handleRequestBillingClearance}
-                      className="px-3.5 py-1.5 text-xs font-bold text-white bg-amber-700 hover:bg-amber-800 rounded-lg shadow-xs disabled:opacity-60 transition-colors cursor-pointer flex items-center gap-1.5"
+                      className="px-3 py-1.5 text-xs font-bold text-white bg-amber-700 hover:bg-amber-800 rounded-lg shadow-2xs disabled:opacity-60 transition-colors cursor-pointer flex items-center gap-1.5 shrink-0"
                       title="Send clearance and payment notification to Front Desk"
                     >
                       <Send className="h-3 w-3" />
-                      <span>Request Front Desk Clearance</span>
+                      <span>Request Clearance</span>
                     </button>
                   </div>
                 )}
@@ -1046,136 +1117,18 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
               )}
 
               {(detail.status === 'ACTIVE' || detail.status === 'DISCHARGE_PENDING') && (
-                <form onSubmit={handleAddService} className="space-y-3.5 p-4 bg-slate-50/60 rounded-2xl border border-slate-200/80 shadow-[0_2px_8px_rgba(0,0,0,0.02)]">
-                  <div className="flex items-center justify-between pb-2.5 border-b border-slate-200/80">
-                    <h4 className="text-xs font-bold text-slate-900 flex items-center gap-2">
-                      <div className="h-6 w-6 rounded-lg bg-[#effaf5] border border-[#c2e7db] text-[#08775A] flex items-center justify-center font-bold">
-                        <Plus className="h-3.5 w-3.5" />
-                      </div>
-                      <span>Add Clinical Service / Procedure</span>
-                    </h4>
-                    <span className="text-[11px] font-medium text-slate-500">
-                      Auto-posted to inpatient stay invoice
-                    </span>
-                  </div>
-
-                  {/* 1. Doctor / Consultant (Optional) */}
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1">
-                      Doctor / Consultant <span className="font-normal text-slate-400 lowercase">(optional)</span>
-                    </label>
-                    <select
-                      aria-label="Doctor (Optional)"
-                      className="block w-full text-xs px-2.5 py-2 border border-[#c2e7db] rounded-lg bg-white text-[#111827] font-medium focus:outline-none focus:ring-2 focus:ring-[#08775A]/20 focus:border-[#08775A] cursor-pointer transition-colors"
-                      value={linePerformedBy}
-                      onChange={(e) => setLinePerformedBy(e.target.value)}
-                    >
-                      <option value="">Select Doctor (Optional)</option>
-                      {doctors.map((d) => (
-                        <option key={d.id} value={d.id}>
-                          {d.fullName} {d.designation ? `(${d.designation})` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* 2. Department / Source Filter */}
-                  <ServiceSourcePicker
-                    value={selectedDeptFilter}
-                    onChange={(value) => {
-                      setSelectedDeptFilter(value);
-                      setSelectedServiceIds([]);
-                    }}
-                    departments={allDepartments}
-                    onServices={setAllServices}
-                  />
-
-                  {/* 3. Searchable Multi-Select Service Checklist */}
-                  <ServiceChecklist
-                    label="Select Services / Procedures / Investigations"
-                    services={availableServices}
-                    selectedServiceIds={selectedServiceIds}
-                    onChange={setSelectedServiceIds}
-                    maxHeightClass="max-h-48"
-                    emptyMessage={
-                      availableServices.length === 0
-                        ? NO_ACTIVE_DEPARTMENT_SERVICES
-                        : 'No services available in this department'
-                    }
-                  />
-
-                  {selectedServiceIds.length > 0 && (
-                    <div className="flex items-center justify-between gap-3 p-2.5 bg-[#effaf5] border border-[#c2e7db] rounded-xl text-xs flex-wrap">
-                      <div className="flex items-center gap-1.5 font-bold text-[#08775A]">
-                        <CheckCircle2 className="h-4 w-4 shrink-0" />
-                        <span>{selectedServiceIds.length} {selectedServiceIds.length === 1 ? 'service' : 'services'} selected ({formatPKR(selectedServicesTotal)})</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const btn = document.getElementById('btn-add-service-submit');
-                            btn?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                            btn?.focus();
-                          }}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-[#08775A] bg-white hover:bg-slate-50 border border-[#c2e7db] rounded-lg shadow-2xs cursor-pointer transition-colors"
-                          title="Scroll down to customize quantity or arrangement"
-                        >
-                          <ArrowDown className="h-3.5 w-3.5" />
-                          <span>Scroll Down to Actions</span>
-                        </button>
-                        <button
-                          type="submit"
-                          disabled={isSaving}
-                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg shadow-xs cursor-pointer transition-colors disabled:opacity-60"
-                        >
-                          {isSaving ? 'Adding…' : 'Add Now'}
-                        </button>
-                      </div>
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsServicesModalOpen(true)}
+                    className="w-full py-3 px-4 bg-white hover:bg-emerald-50/50 border border-dashed border-[#c2e7db] hover:border-[#08775A] rounded-xl text-xs font-bold text-[#08775A] flex items-center justify-center gap-2 transition-all cursor-pointer shadow-2xs group"
+                  >
+                    <div className="h-6 w-6 rounded-lg bg-emerald-100 group-hover:bg-[#08775A] text-[#08775A] group-hover:text-white flex items-center justify-center transition-colors">
+                      <Plus className="h-3.5 w-3.5" />
                     </div>
-                  )}
-
-                  {selectedServices.length > 0 && (
-                    <div className="flex flex-wrap items-center justify-between gap-3 text-xs bg-white px-4 py-3 rounded-xl border border-slate-200 shadow-2xs">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-slate-500 font-medium">Selected:</span>
-                        <span className="font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md">
-                          {selectedServices.length} {selectedServices.length === 1 ? 'service' : 'services'}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-slate-500 font-medium">Destination:</span>
-                        <span className="font-semibold text-slate-800">
-                          {detail.invoices[0]?.invoiceNumber || 'Inpatient Stay Invoice'}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-slate-500 font-medium">Total:</span>
-                        <span className="font-bold font-mono text-base text-[#08775A] tabular-nums">
-                          {formatPKR(selectedServicesTotal)}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex items-center justify-between gap-3 pt-1">
-                    <div className="w-48">
-                      <NumberInput label="Quantity (per service)" min={1} value={lineQty} onChange={(e) => setLineQty(Number(e.target.value) || 1)} />
-                    </div>
-                    <button
-                      id="btn-add-service-submit"
-                      type="submit"
-                      disabled={isSaving || selectedServiceIds.length === 0}
-                      className="px-5 py-2.5 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded-xl shadow-xs disabled:opacity-60 cursor-pointer transition-colors"
-                    >
-                      {isSaving
-                        ? 'Adding…'
-                        : selectedServiceIds.length > 1
-                        ? `Add ${selectedServiceIds.length} Services to Patient`
-                        : 'Add Service to Patient'}
-                    </button>
-                  </div>
-                </form>
+                    <span>+ Add Clinical Services &amp; Procedures to Patient Stay</span>
+                  </button>
+                </div>
               )}
             </div>
           )}
@@ -1211,42 +1164,6 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                 </div>
 
                 <form onSubmit={handleChangeMode} className="p-4 space-y-4">
-                  {/* 3 Prominent Safety & Audit Alerts */}
-                  <div className="space-y-2.5">
-                    {/* Alert 1: Financial Reporting & Audit Integrity */}
-                    <div className="p-3 rounded-xl bg-amber-50/90 border border-amber-200/90 flex items-start gap-2.5 text-xs text-amber-950">
-                      <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-                      <div>
-                        <span className="font-bold text-amber-900">Financial Reporting &amp; Audit Alert: </span>
-                        <span>
-                          Altering this policy changes pharmaceutical revenue attribution, daily IPD ledger settlement balances, and shift-end financial reports. Verify with clinical/admin lead before switching.
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Alert 2: Stock Deduction Policy */}
-                    <div className="p-3 rounded-xl bg-blue-50/90 border border-blue-200/90 flex items-start gap-2.5 text-xs text-blue-950">
-                      <Pill className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
-                      <div>
-                        <span className="font-bold text-blue-900">Central Pharmacy Inventory Policy: </span>
-                        <span>
-                          Under <strong>Hospital Managed</strong>, medicines are fulfilled and deducted from live pharmacy batch inventory. Under <strong>Self Arranged (PKR 0)</strong>, pharmacy stock requisitions are locked to prevent unaccounted drug leakage.
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Alert 3: Discharge Clearance Rule */}
-                    <div className="p-3 rounded-xl bg-rose-50/90 border border-rose-200/90 flex items-start gap-2.5 text-xs text-rose-950">
-                      <ShieldAlert className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
-                      <div>
-                        <span className="font-bold text-rose-900">Discharge Balance &amp; Dues Notice: </span>
-                        <span>
-                          Any medicines already dispensed prior to a policy switch remain permanently on the patient's billing ledger. Switching to Self Arranged does not cancel past charges — all dues must be settled at Front Desk prior to discharge.
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
                   {/* Visual Policy Selector Cards */}
                   <div>
                     <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block mb-2">
@@ -1255,7 +1172,12 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <button
                         type="button"
-                        onClick={() => setNewMode('HOSPITAL_MANAGED')}
+                        onClick={() => {
+                          if (newMode !== 'HOSPITAL_MANAGED' && detail.medicationMode !== 'HOSPITAL_MANAGED') {
+                            toast.info('Switching to Hospital Managed: Medicines will be fulfilled via Central Pharmacy.');
+                          }
+                          setNewMode('HOSPITAL_MANAGED');
+                        }}
                         className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer relative ${
                           newMode === 'HOSPITAL_MANAGED'
                             ? 'border-[#08775A] bg-[#effaf5] text-[#08775A] ring-1 ring-[#08775A] shadow-xs'
@@ -1280,7 +1202,12 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
 
                       <button
                         type="button"
-                        onClick={() => setNewMode('SELF')}
+                        onClick={() => {
+                          if (newMode !== 'SELF' && detail.medicationMode !== 'SELF') {
+                            toast.info('Switching to Self Arranged: Patient procures medications externally (PKR 0).');
+                          }
+                          setNewMode('SELF');
+                        }}
                         className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer relative ${
                           newMode === 'SELF'
                             ? 'border-slate-800 bg-slate-100 text-slate-900 ring-1 ring-slate-800 shadow-xs'
@@ -1903,18 +1830,13 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                 const visibleClearances = detail.clearances.filter((c) => c.clearanceType !== 'PHARMACY');
                 return (
                   <div className="bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-[0_2px_8px_rgba(0,0,0,0.03)]">
-                    <div className="bg-[#0e5944] px-4 py-3 flex items-center justify-between text-white flex-wrap gap-2">
+                    <div className="bg-[#0e5944] px-4 py-2.5 flex items-center justify-between text-white">
                       <div className="flex items-center gap-2">
                         <ShieldCheck className="h-4 w-4 text-emerald-300" />
-                        <div>
-                          <h4 className="text-xs font-bold tracking-wide">Inpatient Discharge Protocol &amp; Gate Verification</h4>
-                          <p className="text-[11px] text-emerald-200/90 font-normal">
-                            Mandatory clearances required prior to patient release and bed clearance (Clinical &amp; Hospital Billing)
-                          </p>
-                        </div>
+                        <h4 className="text-xs font-bold tracking-wide">Discharge Verification Gates</h4>
                       </div>
-                      <span className="px-2.5 py-1 text-xs font-bold rounded-full bg-emerald-950/70 text-emerald-200 border border-emerald-700/60">
-                        {visibleClearances.filter((c) => c.status === 'CLEARED' || c.status === 'NOT_APPLICABLE').length} / {visibleClearances.length} Gates Approved
+                      <span className="px-2.5 py-0.5 text-[11px] font-bold rounded-full bg-emerald-950/70 text-emerald-200 border border-emerald-700/60">
+                        {visibleClearances.filter((c) => c.status === 'CLEARED' || c.status === 'NOT_APPLICABLE').length} / {visibleClearances.length} Gates Satisfied
                       </span>
                     </div>
 
@@ -1955,10 +1877,10 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
 
                           <p className="text-[11px] text-slate-500 leading-relaxed">
                             {c.clearanceType === 'CLINICAL'
-                              ? 'Attending physician clinical authorization, final diagnosis, and discharge summary.'
+                              ? 'Attending physician authorization & discharge summary.'
                               : c.clearanceType === 'HOSPITAL_BILLING'
-                              ? 'Finance clearance verifying settlement of room charges, services, and inpatient dues.'
-                              : 'Reconciliation of inpatient medications, drug returns, and pharmacy billing closure.'}
+                              ? 'Financial settlement of inpatient room, services & dues.'
+                              : 'Reconciliation of inpatient medications.'}
                           </p>
 
                           {isCleared && c.clearedByLabel && (
@@ -2062,53 +1984,31 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
 
           {/* Ready for Final Release Card */}
           {isAllClearancesReady && detail.status !== 'DISCHARGED' && (
-            <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between gap-3 text-xs">
+            <div className="p-3.5 bg-emerald-50 border border-emerald-300 rounded-2xl flex items-center justify-between gap-3 text-xs shadow-xs">
               <div className="flex items-center gap-2.5 text-emerald-900 font-semibold">
                 <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
                 <div>
-                  <p className="font-bold text-emerald-950 text-sm">All Discharge Clearances Satisfied</p>
-                  <p className="text-[11px] text-emerald-800 font-normal">
-                    Clinical and Hospital Billing gates are fully approved. Patient is cleared for discharge (all hospital &amp; pharmacy dues settled).
+                  <p className="font-bold text-emerald-950 text-xs">All Clearances Satisfied</p>
+                  <p className="text-[11px] text-emerald-700 font-normal">
+                    Clinical &amp; Billing gates approved. Ready for final release and bed turnover.
                   </p>
                 </div>
               </div>
-                  <button
-                    type="button"
-                    onClick={handleFinalDischarge}
-                    disabled={isDischarging}
-                    className="px-5 py-2.5 bg-[#08775A] hover:bg-[#065f46] text-white font-bold rounded-xl shadow-xs flex items-center gap-1.5 shrink-0 cursor-pointer disabled:opacity-60 text-xs transition-colors"
-                  >
-                    {isDischarging && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                    <span>Complete Final Discharge &amp; Release Bed</span>
-                  </button>
-                </div>
-              )}
-
-              {/* Financial Settlement Complete but Awaiting Doctor Clinical Authorization */}
-              {!isClinicalAuthorized && (ledgerSummary?.outstandingBalance ?? detail.totalOutstanding) <= 0 && detail.status !== 'DISCHARGED' && (
-                <div className="p-4 bg-blue-50/80 border border-blue-200 rounded-2xl flex items-center justify-between gap-3 text-xs">
-                  <div className="flex items-center gap-2.5 text-blue-900 font-semibold">
-                    <Clock className="h-5 w-5 text-blue-600 shrink-0" />
-                    <div>
-                      <p className="font-bold text-blue-950 text-sm">Bills Fully Settled (PKR 0 Balance) • Awaiting Doctor Clinical Authorization</p>
-                      <p className="text-[11px] text-blue-800 font-normal">
-                        Financial dues are cleared. Patient discharge and bed release will be enabled as soon as the attending doctor completes the clinical authorization &amp; discharge summary above.
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setIsClinicalDischargeOpen(true)}
-                    className="px-4 py-2 bg-[#08775A] hover:bg-[#065f46] text-white font-bold rounded-xl shadow-xs shrink-0 cursor-pointer text-xs transition-colors whitespace-nowrap"
-                  >
-                    Doctor Authorization Form
-                  </button>
-                </div>
-              )}
+              <button
+                type="button"
+                onClick={handleFinalDischarge}
+                disabled={isDischarging}
+                className="px-4 py-2 bg-[#08775A] hover:bg-[#065f46] text-white font-bold rounded-xl shadow-xs flex items-center gap-1.5 shrink-0 cursor-pointer disabled:opacity-60 text-xs transition-colors"
+              >
+                {isDischarging && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                <span>Complete Final Discharge &amp; Release Bed</span>
+              </button>
             </div>
           )}
         </div>
       )}
+    </div>
+  )}
 
       {isClinicalDischargeOpen && (
         <ClinicalDischargeModal
@@ -2141,6 +2041,23 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
           admission={detail}
           summary={detail.dischargeSummary}
           onClose={() => setIsPrintSlipOpen(false)}
+        />
+      )}
+
+      {isServicesModalOpen && detail && (
+        <AddAdmissionServicesModal
+          isOpen={isServicesModalOpen}
+          onClose={() => setIsServicesModalOpen(false)}
+          admissionId={admissionId}
+          patientName={detail.patientName}
+          mrNumber={detail.patientMrNumber}
+          bedLabel={detail.bedLabel || undefined}
+          destinationInvoiceNumber={detail.invoices[0]?.invoiceNumber || 'Inpatient Stay Invoice'}
+          departments={allDepartments}
+          doctors={doctors}
+          onServicesAdded={async () => {
+            await refresh('Services added to patient stay invoice successfully.');
+          }}
         />
       )}
     </Modal>

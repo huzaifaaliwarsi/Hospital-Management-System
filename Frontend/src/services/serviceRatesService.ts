@@ -206,6 +206,20 @@ export class ServiceRatesService {
     return created;
   }
 
+  /** `POST /setup/services-rates/bulk` */
+  static async bulkCreateServices(items: ServiceFormValues[], _currentUser?: User | null): Promise<{ count: number; services: HospitalService[] }> {
+    const payloads = items.map((values) => {
+      if (values.standardRate < 0) throw new Error(`Standard rate for "${values.name || 'unnamed'}" cannot be negative.`);
+      return toBackendPayload(values);
+    });
+    const res = await apiClient.post<{ data: { count: number; services: Record<string, any>[] } }>('/setup/services-rates/bulk', {
+      services: payloads,
+    });
+    const createdList = (res.data?.data?.services || []).map(toHospitalService);
+    cachedServices = [...createdList, ...cachedServices];
+    return { count: res.data?.data?.count || createdList.length, services: createdList };
+  }
+
   /** `PATCH /setup/services-rates/:id` */
   static async updateService(id: string, values: ServiceFormValues, _currentUser?: User | null): Promise<HospitalService> {
     if (values.standardRate < 0) throw new Error('Standard rate cannot be negative.');

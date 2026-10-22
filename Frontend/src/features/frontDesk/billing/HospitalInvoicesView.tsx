@@ -126,7 +126,40 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
   const closeInvoiceModal = () => {
     setOpenInvoiceId(null);
     setOpenInvoiceAction(undefined);
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has('invoiceId')) {
+        url.searchParams.delete('invoiceId');
+        window.history.replaceState({}, '', url.pathname + (url.search ? url.search : ''));
+      }
+    } catch {
+      // ignore
+    }
   };
+
+  // Auto-detect and handle deep-linking query parameters (?search=, ?admissionNumber=, ?invoiceId=, ?invoiceNumber=, ?queue=)
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const urlSearch = params.get('search') || params.get('admissionNumber') || params.get('mrNumber') || params.get('invoiceNumber');
+      const urlInvoiceId = params.get('invoiceId');
+      const urlQueue = params.get('queue') as CareQueueFilter | null;
+
+      if (urlSearch) {
+        setSearchTerm(urlSearch);
+      }
+      if (urlQueue && ['ALL', 'OPD', 'ER', 'OBS', 'ADM', 'CUSTOM'].includes(urlQueue)) {
+        setActiveQueue(urlQueue);
+      } else if (params.get('admissionNumber')) {
+        setActiveQueue('ADM');
+      }
+      if (urlInvoiceId) {
+        setOpenInvoiceId(urlInvoiceId);
+      }
+    } catch {
+      // Ignore URL parsing errors
+    }
+  }, []);
 
   const load = useCallback(async (mode: boolean | 'background' = false) => {
     if (mode === true) {
