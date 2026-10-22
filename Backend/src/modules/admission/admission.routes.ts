@@ -150,6 +150,13 @@ router.post(
   asyncHandler(c.dischargePatient),
 );
 
+router.post(
+  '/:id/resume-active',
+  write,
+  validate({ params: s.admissionIdParamsSchema }),
+  asyncHandler(c.resumeActiveStay),
+);
+
 router.get(
   '/:id/discharge-summary',
   view,

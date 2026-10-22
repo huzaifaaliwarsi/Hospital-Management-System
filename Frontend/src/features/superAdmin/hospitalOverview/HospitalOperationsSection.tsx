@@ -11,6 +11,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { HospitalProfile } from '../../../types/hospital';
+import { RoomChargeDayCloseSection } from './RoomChargeDayCloseSection';
 
 interface HospitalOperationsSectionProps {
   profile: HospitalProfile;
@@ -234,6 +235,9 @@ export const HospitalOperationsSection: React.FC<HospitalOperationsSectionProps>
           </div>
         </div>
       </div>
+
+      {/* 3. Inpatient Day-Close Accommodation Billing */}
+      <RoomChargeDayCloseSection profile={profile} />
     </div>
   );
 };

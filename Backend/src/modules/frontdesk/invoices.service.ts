@@ -244,14 +244,27 @@ export const invoicesService = {
       }
 
       const qty = new Decimal(body.quantity);
-      const lineGross = rate.mul(qty);
+
+      // Check if line already exists for this service to increment quantity
+      const existingLine = invoice.lines.find((l) => {
+        if (l.billingSource === 'ROOM_BED') return false;
+        if (l.serviceRateId !== serviceRate.id) return false;
+        if (!new Decimal(l.rateSnapshot).equals(rate)) return false;
+        if (body.performedByStaffId && l.performedByStaffId && l.performedByStaffId !== body.performedByStaffId) {
+          return false;
+        }
+        return true;
+      });
+
+      const effectiveQty = existingLine ? new Decimal(existingLine.quantity).plus(qty) : qty;
+      const lineGross = rate.mul(effectiveQty);
 
       // Discount calculation:
       let discountAmount = new Decimal(0);
-      let discountReason = body.discountReason ?? null;
+      let discountReason = body.discountReason ?? existingLine?.discountReason ?? null;
 
       const coverage = resolvePanelCoverage(lineGross, invoice.panelPatient?.corporatePanel?.discountRules,
-        serviceRate.id, new Date(), serviceRate.departmentId, qty, invoice.panelPatient);
+        serviceRate.id, new Date(), serviceRate.departmentId, effectiveQty, invoice.panelPatient);
       if (invoice.panelPatientId) {
         if (!invoice.panelPatient?.isActive || invoice.panelPatient.status !== 'ACTIVE' || !invoice.panelPatient.corporatePanel.isActive) throw new ValidationError('Panel patient and company must be active');
         if (invoice.sourceType !== 'ADMISSION') {
@@ -277,6 +290,11 @@ export const invoicesService = {
           discountAmount = lineGross.mul(body.discountPercent).div(100);
         } else if (body.discountAmount !== undefined && body.discountAmount > 0) {
           discountAmount = new Decimal(body.discountAmount);
+        } else if (existingLine && existingLine.discountAmount.greaterThan(0)) {
+          // Proportionately scale existing discount if manual discount was previously set
+          discountAmount = existingLine.lineGross.greaterThan(0)
+            ? lineGross.mul(existingLine.discountAmount).div(existingLine.lineGross)
+            : new Decimal(0);
         }
       }
 
@@ -292,31 +310,56 @@ export const invoicesService = {
 
       const lineNet = lineGross.minus(discountAmount);
 
-      const createdLine = await tx.invoiceLineItem.create({
-        data: {
-          hospitalInvoiceId: invoice.id,
-          serviceRateId: serviceRate.id,
-          billingSource: serviceRate.billingSource, descriptionSnapshot: serviceRate.name,
-          rateSnapshot: rate,
-          quantity: qty,
-          lineGross,
-          discountAmount,
-          discountReason,
-          lineNet,
-          patientShare: invoice.panelPatientId ? coverage.patientShare : lineNet,
-          panelReceivable: invoice.panelPatientId ? coverage.panelReceivable : new Decimal(0),
-          coverageSnapshot: invoice.panelPatientId ? coverage.coverageSnapshot : undefined,
-          performedByStaffId: body.performedByStaffId ?? null,
-          isCompleted: true,
-        },
-        include: {
-          serviceRate: true,
-          performedBy: true,
-        },
-      });
+      let targetLine: any;
+      if (existingLine) {
+        targetLine = await tx.invoiceLineItem.update({
+          where: { id: existingLine.id },
+          data: {
+            rateSnapshot: rate,
+            quantity: effectiveQty,
+            lineGross,
+            discountAmount,
+            discountReason,
+            lineNet,
+            patientShare: invoice.panelPatientId ? coverage.patientShare : lineNet,
+            panelReceivable: invoice.panelPatientId ? coverage.panelReceivable : new Decimal(0),
+            coverageSnapshot: invoice.panelPatientId ? coverage.coverageSnapshot : undefined,
+            performedByStaffId: existingLine.performedByStaffId ?? (body.performedByStaffId ?? null),
+            isCompleted: true,
+          },
+          include: {
+            serviceRate: true,
+            performedBy: true,
+          },
+        });
+      } else {
+        targetLine = await tx.invoiceLineItem.create({
+          data: {
+            hospitalInvoiceId: invoice.id,
+            serviceRateId: serviceRate.id,
+            billingSource: serviceRate.billingSource, descriptionSnapshot: serviceRate.name,
+            rateSnapshot: rate,
+            quantity: qty,
+            lineGross,
+            discountAmount,
+            discountReason,
+            lineNet,
+            patientShare: invoice.panelPatientId ? coverage.patientShare : lineNet,
+            panelReceivable: invoice.panelPatientId ? coverage.panelReceivable : new Decimal(0),
+            coverageSnapshot: invoice.panelPatientId ? coverage.coverageSnapshot : undefined,
+            performedByStaffId: body.performedByStaffId ?? null,
+            isCompleted: true,
+          },
+          include: {
+            serviceRate: true,
+            performedBy: true,
+          },
+        });
+      }
 
       // Recalculate invoice header totals
-      const allLines = [...invoice.lines, createdLine];
+      const otherLines = invoice.lines.filter((l) => l.id !== targetLine.id);
+      const allLines = [...otherLines, targetLine];
       const newSubtotal = allLines.reduce((acc, l) => acc.plus(l.lineGross), new Decimal(0));
       const newDiscountTotal = allLines.reduce((acc, l) => acc.plus(l.discountAmount), new Decimal(0));
       const newTotal = allLines.reduce((acc, l) => acc.plus(l.lineNet), new Decimal(0));
@@ -342,16 +385,16 @@ export const invoicesService = {
       });
 
       // Automatically accrue doctor commission if doctor is attached (§4.5, §8.6)
-      if (body.performedByStaffId) {
+      if (targetLine.performedByStaffId) {
         await commissionService.calculateAndAccrueCommission(
           tx,
-          createdLine,
-          body.performedByStaffId,
+          targetLine,
+          targetLine.performedByStaffId,
           _actorId,
         );
       }
 
-      return createdLine;
+      return targetLine;
     });
   },
 

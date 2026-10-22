@@ -374,7 +374,34 @@ export const admissionBillingService = {
         }),
       );
 
-    const allLines = invoiceLines.sort((a, b) => a.date.getTime() - b.date.getTime());
+    // Consolidate identical service lines on the same invoice so same service increases Qty instead of appearing multiple times
+    const consolidatedLines: typeof invoiceLines = [];
+    for (const line of invoiceLines) {
+      if (line.accommodation) {
+        consolidatedLines.push(line);
+        continue;
+      }
+      const existing = consolidatedLines.find(
+        (c) =>
+          !c.accommodation &&
+          c.reference === line.reference &&
+          c.type === line.type &&
+          new Decimal(c.rate ?? 0).equals(new Decimal(line.rate ?? 0)) &&
+          c.department === line.department &&
+          (c.description === '[Self-Arranged]') === (line.description === '[Self-Arranged]')
+      );
+      if (existing) {
+        existing.qty = new Decimal(existing.qty).plus(new Decimal(line.qty));
+        existing.grossAmount = new Decimal(existing.grossAmount ?? 0).plus(new Decimal(line.grossAmount ?? 0));
+        existing.discountAmount = new Decimal(existing.discountAmount ?? 0).plus(new Decimal(line.discountAmount ?? 0));
+        existing.amount = new Decimal(existing.amount ?? 0).plus(new Decimal(line.amount ?? 0));
+        if (!existing.postedBy && line.postedBy) existing.postedBy = line.postedBy;
+      } else {
+        consolidatedLines.push({ ...line, qty: new Decimal(line.qty) });
+      }
+    }
+
+    const allLines = consolidatedLines.sort((a, b) => a.date.getTime() - b.date.getTime());
 
     // Settle payments against services in FIFO order so each service row shows its exact paid & due amounts
     let remainingPaymentPool = new Decimal(totalPaid);

@@ -75,7 +75,7 @@ export const RoomChargeDayCloseSection: React.FC<RoomChargeDayCloseSectionProps>
           <div>
             <h3 className="text-sm font-bold text-[#111827]">Room / Bed Charge — Close Day</h3>
             <p className="text-[11px] text-[#52665e]">
-              Automatically posts one daily charge per active admission. Manual retry is available after the posting time.
+              Automatically posts one daily charge per active or discharge-pending admission. Manual retry is available after the posting time.
               {profile.ipdDailyRoomBedPostingTime ? ` Automatic posting (Asia/Karachi): ${profile.ipdDailyRoomBedPostingTime}.` : ''}
             </p>
           </div>
@@ -131,7 +131,7 @@ export const RoomChargeDayCloseSection: React.FC<RoomChargeDayCloseSectionProps>
             <span>Confirm: post room/bed charges for {businessDate}?</span>
           </div>
           <p className="text-[11px] text-amber-800">
-            Every currently ACTIVE, bed-assigned admission with a configured daily room rate will get one
+            Every currently ACTIVE or DISCHARGE PENDING, bed-assigned admission with a configured daily room rate will get one
             charge line for this date if it has not already been posted. Repeating this action is safe.
           </p>
           <div className="flex items-center justify-end gap-2.5">

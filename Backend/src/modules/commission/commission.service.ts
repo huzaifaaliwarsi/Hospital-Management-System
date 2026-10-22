@@ -46,7 +46,13 @@ export const commissionService = {
     const existing = await tx.doctorCommissionAccrual.findUnique({
       where: { invoiceLineItemId: lineItem.id },
     });
-    if (existing) return existing;
+    if (existing) {
+      if (existing.status === 'ACCRUED') {
+        await tx.doctorCommissionAccrual.delete({ where: { id: existing.id } });
+      } else {
+        return existing;
+      }
+    }
 
     const source = await tx.invoiceLineItem.findUnique({ where: { id: lineItem.id }, include: { hospitalInvoice: true } });
     if (!source?.serviceRateId || !source.isCompleted || source.hospitalInvoice.status === 'VOID' || source.performedByStaffId !== doctorStaffId) return null;

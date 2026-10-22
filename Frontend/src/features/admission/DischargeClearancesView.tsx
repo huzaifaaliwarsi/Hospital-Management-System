@@ -24,7 +24,6 @@ import { HospitalKpiHeader, KpiItem } from '../../components/common/HospitalKpiH
 const GATES: { type: ClearanceType; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { type: 'CLINICAL', label: 'Clinical', icon: Stethoscope },
   { type: 'HOSPITAL_BILLING', label: 'Hospital Billing', icon: Receipt },
-  { type: 'PHARMACY', label: 'Pharmacy', icon: Pill },
 ];
 
 const STATUS_STYLE: Record<string, { badge: string; dot: string; label: string }> = {
@@ -54,7 +53,7 @@ function isAdmissionFullyCleared(admission: AdmissionRecord): boolean {
 }
 
 /**
- * Discharge Clearances — 3-gate status board (Clinical, Hospital Billing, Pharmacy)
+ * Discharge Clearances — Dual-gate status board (Clinical & Hospital Billing)
  * formatted to Hospital Design System (design.md) standards.
  */
 export const DischargeClearancesView: React.FC = () => {
@@ -252,13 +251,13 @@ export const DischargeClearancesView: React.FC = () => {
         <div className="bg-[#0e5944] px-5 py-3.5 flex items-center justify-between text-white">
           <div className="flex items-center gap-2.5">
             <ShieldCheck className="h-4 w-4 text-emerald-300" />
-            <h2 className="text-sm font-bold text-white tracking-wide">3-Gate Discharge Clearance Matrix</h2>
+            <h2 className="text-sm font-bold text-white tracking-wide">Discharge Clearance Matrix</h2>
             <span className="px-2 py-0.5 rounded-full bg-emerald-950/70 text-emerald-200 border border-emerald-700/50 text-xs font-mono font-bold">
               {filtered.length} Inpatient{filtered.length === 1 ? '' : 's'}
             </span>
           </div>
           <span className="text-[11px] text-emerald-200/80 font-medium hidden sm:inline">
-            Clinical Doctor Auth • Front Desk Billing Audit • Inpatient Pharmacy Hold
+            Clinical Doctor Auth • Front Desk Billing Audit (Includes Pharmacy Dues)
           </span>
         </div>
 

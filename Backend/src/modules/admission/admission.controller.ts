@@ -128,6 +128,14 @@ export const admissionController = {
     res.json({ data: result });
   },
 
+  resumeActiveStay: async (req: Request, res: Response) => {
+    const result = await admissionService.resumeActiveStay(
+      req.params.id as string,
+      actorId(req),
+    );
+    res.json({ data: result });
+  },
+
   getDischargeSummary: async (req: Request, res: Response) => {
     const summary = await admissionService.getDischargeSummary(req.params.id as string);
     res.json({ data: summary });

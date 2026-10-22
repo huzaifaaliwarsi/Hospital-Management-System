@@ -667,6 +667,15 @@ export async function dischargeAdmission(id: string): Promise<{ message: string 
   }
 }
 
+export async function resumeAdmissionActive(id: string): Promise<{ message: string }> {
+  try {
+    const res = await apiClient.post<{ data: { message: string } }>(`/admissions/${id}/resume-active`, {});
+    return res.data.data;
+  } catch (err) {
+    throw new Error(toErrorMessage(err));
+  }
+}
+
 export async function clinicalDischarge(
   id: string,
   values: {
