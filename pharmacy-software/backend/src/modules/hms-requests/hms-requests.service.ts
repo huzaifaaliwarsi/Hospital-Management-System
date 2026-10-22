@@ -100,7 +100,68 @@ export const hmsRequestsService = {
     return created;
   },
 
+  // ── Sync queued requests from HMS Outbox (when Pharmacy was offline) ──────
+  async syncFromHmsOutbox() {
+    try {
+      const pending = await hmsBridgeClient.getPendingRequests();
+      if (!Array.isArray(pending) || pending.length === 0) {
+        return { synced: 0 };
+      }
+
+      let syncedCount = 0;
+      for (const req of pending) {
+        if (!req.externalRequestRef) continue;
+
+        // Check if already ingested in Pharmacy
+        const existing = await prisma.medicineRequest.findFirst({
+          where: { externalRequestRef: req.externalRequestRef },
+        });
+        if (existing) continue;
+
+        const validLines: Array<{ medicineId: string; requestedQuantity: number; notes?: string }> = [];
+        for (const l of req.lines || []) {
+          let med = await prisma.medicineMaster.findUnique({ where: { id: l.medicineId } });
+          if (!med && l.medicineName) {
+            med = await prisma.medicineMaster.findFirst({
+              where: { name: { equals: l.medicineName, mode: 'insensitive' } },
+            });
+          }
+          if (med) {
+            validLines.push({
+              medicineId: med.id,
+              requestedQuantity: Number(l.requestedQuantity),
+              notes: l.notes,
+            });
+          }
+        }
+
+        if (validLines.length === 0) continue;
+
+        await this.createRequest(
+          {
+            externalAdmissionRef: req.externalAdmissionRef,
+            externalRequestRef: req.externalRequestRef,
+            patientNameSnapshot: req.patientNameSnapshot,
+            urgency: req.urgency || 'ROUTINE',
+            requestedByExternal: req.requestedByExternal,
+            lines: validLines,
+          },
+          'bridge-system',
+        );
+        syncedCount++;
+      }
+
+      return { synced: syncedCount };
+    } catch (err: any) {
+      // eslint-disable-next-line no-console
+      console.warn('[hmsRequestsService.syncFromHmsOutbox] sync warning:', err?.message || err);
+      return { synced: 0, error: err?.message };
+    }
+  },
+
   async list(query: ListRequestsQuery) {
+    // Proactively pull any pending requests that were queued while Pharmacy was offline
+    await this.syncFromHmsOutbox().catch(() => null);
     return prisma.medicineRequest.findMany({ where: { status: query.status }, include: requestInclude, orderBy: { requestedAt: 'desc' } });
   },
 

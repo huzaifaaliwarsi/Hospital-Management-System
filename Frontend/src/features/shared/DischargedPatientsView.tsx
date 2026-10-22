@@ -32,6 +32,10 @@ import { AdmissionDetailModal } from '../admission/AdmissionDetailModal';
 import { AdmissionLedgerModal } from '../frontDesk/admissionRecords/AdmissionLedgerModal';
 import { HospitalKpiHeader } from '../../components/common/HospitalKpiHeader';
 import { formatPKR, formatDateTimeDDMMYYYY } from '../../utils/formatters';
+import {
+  useHospitalProfile,
+  formatHospitalAddress,
+} from '../../services/hospitalProfileService';
 
 function formatDisplayDateTime(iso?: string | null): string {
   if (!iso) return '—';
@@ -53,6 +57,7 @@ function computeStayDuration(admittedAt?: string | null, dischargedAt?: string |
 
 export const DischargedPatientsView: React.FC = () => {
   const { navigate, currentPortal } = useRouter();
+  const hospitalProfile = useHospitalProfile();
 
   const [patients, setPatients] = useState<AdmissionRecord[]>([]);
   const [departments, setDepartments] = useState<Department[]>(() => DepartmentService.getDepartments());
@@ -786,6 +791,28 @@ export const DischargedPatientsView: React.FC = () => {
           maxWidth="md"
         >
           <div className="space-y-4">
+            {/* Isolation print styles for summary slip */}
+            <style>{`
+              @media print {
+                body * {
+                  visibility: hidden !important;
+                }
+                #discharge-slip-content,
+                #discharge-slip-content * {
+                  visibility: visible !important;
+                }
+                #discharge-slip-content {
+                  position: absolute !important;
+                  left: 0 !important;
+                  top: 0 !important;
+                  width: 100% !important;
+                  border: none !important;
+                  box-shadow: none !important;
+                  margin: 0 !important;
+                }
+              }
+            `}</style>
+
             {/* Slip Paper Preview */}
             <div
               id="discharge-slip-content"
@@ -793,9 +820,23 @@ export const DischargedPatientsView: React.FC = () => {
             >
               {/* Slip Header */}
               <div className="text-center pb-3 border-b border-slate-200">
+                {hospitalProfile.logo && (
+                  <div className="w-12 h-12 mx-auto mb-1 rounded-full border border-slate-300 p-0.5 overflow-hidden flex items-center justify-center bg-white shadow-xs">
+                    <img
+                      src={hospitalProfile.logo}
+                      alt={hospitalProfile.name || 'Hospital Logo'}
+                      className="w-full h-full object-contain"
+                    />
+                  </div>
+                )}
                 <h3 className="text-sm font-bold uppercase tracking-wider text-slate-900">
-                  CH Sharif &amp; Saeed Hospital
+                  {hospitalProfile.name || hospitalProfile.shortName || 'CH Sharif & Saeed Hospital'}
                 </h3>
+                {formatHospitalAddress(hospitalProfile) !== 'Not configured' && (
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    {formatHospitalAddress(hospitalProfile)}
+                  </p>
+                )}
                 <p className="text-[10px] text-slate-500">Inpatient Discharge Summary Slip</p>
                 <div className="mt-1 font-mono text-[10px] font-bold text-slate-700">
                   Admission #{printSlipPatient.admissionNumber}

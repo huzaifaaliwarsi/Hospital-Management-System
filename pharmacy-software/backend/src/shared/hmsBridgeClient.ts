@@ -108,4 +108,47 @@ export const hmsBridgeClient = {
     }
     throw lastError;
   },
+
+  async getPendingRequests(): Promise<Array<{
+    clearanceId: string;
+    externalAdmissionRef: string;
+    externalRequestRef: string;
+    patientNameSnapshot?: string;
+    urgency?: 'ROUTINE' | 'URGENT' | 'STAT';
+    requestedByExternal?: string;
+    requestedAt?: string;
+    lines: Array<{
+      medicineId: string;
+      medicineName?: string;
+      requestedQuantity: number;
+      notes?: string;
+    }>;
+  }>> {
+    const urlsToTry = getHmsBaseUrls();
+    for (const baseUrl of urlsToTry) {
+      try {
+        const url = `${baseUrl}/pharmacy-bridge/pending-requests`;
+        const res = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-bridge-token': env.INTERNAL_BRIDGE_SECRET,
+          },
+        });
+
+        if (!res.ok) {
+          continue;
+        }
+
+        const data = await res.json();
+        if (data && Array.isArray((data as any).data)) {
+          return (data as any).data;
+        }
+      } catch (err: any) {
+        // eslint-disable-next-line no-console
+        console.warn(`[hmsBridgeClient] getPendingRequests failed on ${baseUrl}: ${err.message}`);
+      }
+    }
+    return [];
+  },
 };

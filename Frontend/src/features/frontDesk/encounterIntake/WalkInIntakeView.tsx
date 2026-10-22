@@ -272,6 +272,14 @@ export const WalkInIntakeView: React.FC = () => {
     () => allActiveDoctors.find((d) => d.id === doctorId),
     [allActiveDoctors, doctorId]
   );
+  const selectedDeptObj = useMemo(
+    () => departments.find((d) => d.id === departmentId),
+    [departments, departmentId]
+  );
+  const deptFee = useMemo(
+    () => (selectedDeptObj?.fixedPrice != null && Number(selectedDeptObj.fixedPrice) > 0 ? Number(selectedDeptObj.fixedPrice) : 0),
+    [selectedDeptObj]
+  );
 
   const handleDoctorChange = (selectedDocId: string) => {
     setDoctorId(selectedDocId);
@@ -552,8 +560,11 @@ export const WalkInIntakeView: React.FC = () => {
       return;
     }
 
-    if (selectedDoctorObj?.consultationFee == null && !defaultEncounterService && selectedServiceIds.length === 0) {
-      showValidationError('Configure the doctor visit fee or select a hospital service.');
+    const chosenDept = departments.find((d) => d.id === effectiveDeptId || d.id === departmentId);
+    const hasDeptFee = chosenDept?.fixedPrice != null && Number(chosenDept.fixedPrice) > 0;
+
+    if (!hasDeptFee && selectedDoctorObj?.consultationFee == null && !defaultEncounterService && selectedServiceIds.length === 0) {
+      showValidationError('Configure the doctor visit fee, department fee, or select a hospital service.');
       return;
     }
 
@@ -570,9 +581,11 @@ export const WalkInIntakeView: React.FC = () => {
 
       if (payerType === 'Self Pay') {
         // Direct Self Pay: Instant Encounter & Invoice shell
+        const isExistingSelfPay = Boolean(selectedExistingPatient?.id && !selectedExistingPatient?.panelId);
         const invoice: InvoiceDetail = await createEncounter({
           encounterType,
-          newSelfPayPatient: {
+          selfPayEncounterId: isExistingSelfPay ? selectedExistingPatient!.id : undefined,
+          newSelfPayPatient: isExistingSelfPay ? undefined : {
             fullName: fullName.trim(),
             guardianName: fatherGuardianName.trim(),
             gender,
@@ -1083,10 +1096,10 @@ export const WalkInIntakeView: React.FC = () => {
                   : 'bg-slate-100 text-slate-500'
               }`}>
                 {selectedExistingPatient
-                  ? `From Panel Registry (${selectedExistingPatient.mrNumber})`
+                  ? `${selectedExistingPatient.panelId ? 'Panel Patient' : 'Existing Patient'} (${selectedExistingPatient.mrNumber})`
                   : payerType === 'Corporate / Panel'
                   ? 'Panel Search Required'
-                  : 'Instant Walk-In Entry'}
+                  : 'New or Existing Patient'}
               </span>
             </div>
 
@@ -1096,6 +1109,19 @@ export const WalkInIntakeView: React.FC = () => {
                 selectedPatient={selectedExistingPatient}
                 onSelectPatient={handleUseExistingPatient}
                 onClearPatient={handleClearExistingPatient}
+                mode="PANEL"
+                placeholder="Search panel patient by Name, MR#, Phone, or CNIC..."
+              />
+            )}
+
+            {/* Self Pay Search Section (Optional lookup for returning patients) */}
+            {payerType === 'Self Pay' && (
+              <PanelPatientSearchSection
+                selectedPatient={selectedExistingPatient}
+                onSelectPatient={handleUseExistingPatient}
+                onClearPatient={handleClearExistingPatient}
+                mode="ALL"
+                placeholder="Search old / existing patient by Name, MR#, Phone, or CNIC (optional)..."
               />
             )}
 
@@ -1655,7 +1681,7 @@ export const WalkInIntakeView: React.FC = () => {
                 !encounterType ||
                 isSelectedCoreServiceInactive ||
                 (encounterType === 'OPD' && !defaultEncounterService) ||
-                (!defaultEncounterService && selectedServiceIds.length === 0)
+                (!defaultEncounterService && selectedServiceIds.length === 0 && deptFee === 0)
               }
               className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] focus:bg-[#065f46] focus:ring-4 focus:ring-[#08775A]/40 focus:outline-none rounded-xl shadow-sm disabled:opacity-60 transition-all cursor-pointer"
             >
@@ -1668,10 +1694,10 @@ export const WalkInIntakeView: React.FC = () => {
                     ? `${getEncounterLabel(encounterType)} Service Deactivated in Setup`
                     : encounterType === 'OPD' && !defaultEncounterService
                       ? 'Missing OPD Consultation Service'
-                      : !defaultEncounterService && selectedServiceIds.length === 0
+                      : !defaultEncounterService && selectedServiceIds.length === 0 && deptFee === 0
                         ? `Select Services for ${getEncounterLabel(encounterType)}`
                         : payerType === 'Self Pay'
-                          ? `Register & Create ${getEncounterLabel(encounterType)} Invoice (${formatPKR((defaultEncounterService?.standardRate || 0) + (selectedDoctorObj?.consultationFee ?? 0) + selectedServicesTotal)})`
+                          ? `Register & Create ${getEncounterLabel(encounterType)} Invoice (${formatPKR((defaultEncounterService?.standardRate || 0) + (selectedDoctorObj?.consultationFee ?? 0) + deptFee + selectedServicesTotal)})`
                           : `Register Panel & Create ${getEncounterLabel(encounterType)} Invoice`}
             </button>
             <div className="flex items-center justify-between text-[11px] text-slate-400 px-1">

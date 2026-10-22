@@ -93,10 +93,10 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     <ToastContext.Provider value={{ showToast, removeToast, success, error, warning, info }}>
       {children}
 
-      {/* ── Global Toast Container (Solid pill card matching screenshot) ──────────────── */}
+      {/* ── Global Toast Container (Clean single-toast display, never stacks/spams) ──────────────── */}
       <ToastContainer
         position="top-right"
-        autoClose={4000}
+        autoClose={3500}
         hideProgressBar={false}
         newestOnTop
         closeOnClick
@@ -104,7 +104,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         draggable
         pauseOnHover
         theme="colored"
-        limit={4}
+        limit={1}
       />
     </ToastContext.Provider>
   );

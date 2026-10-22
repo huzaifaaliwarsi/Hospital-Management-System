@@ -132,8 +132,69 @@ export const invoicesService = {
           selfPayEncounter: true,
           lines: true,
           paymentReceipts: true,
+          doctor: true,
+          rmo: true,
+          department: true,
         },
       });
+
+      if (body.departmentId && (tx as any).department?.findUnique) {
+        const dept = await (tx as any).department.findUnique({ where: { id: body.departmentId } });
+        if (dept?.fixedPrice && Number(dept.fixedPrice) > 0) {
+          const deptFee = new Decimal(dept.fixedPrice);
+          const panelPatient = invoice.panelPatientId ? await tx.panelPatient.findUnique({
+            where: { id: invoice.panelPatientId }, include: { corporatePanel: { include: { discountRules: true } } },
+          }) : null;
+          const coverage = resolvePanelCoverage(
+            deptFee,
+            panelPatient?.corporatePanel?.discountRules,
+            'HOSPITAL_SERVICE',
+            new Date(),
+            dept.id,
+            new Decimal(1),
+            panelPatient,
+          );
+          const deptLine = await tx.invoiceLineItem.create({
+            data: {
+              hospitalInvoiceId: invoice.id,
+              billingSource: 'HOSPITAL_SERVICE',
+              descriptionSnapshot: `Department Fee - ${dept.name}`,
+              rateSnapshot: deptFee,
+              quantity: new Decimal(1),
+              lineGross: deptFee,
+              discountAmount: coverage.discountAmount,
+              discountReason: coverage.discountReason,
+              lineNet: coverage.eligibleNet,
+              patientShare: coverage.patientShare,
+              panelReceivable: coverage.panelReceivable,
+              coverageSnapshot: coverage.coverageSnapshot,
+              isCompleted: true,
+            },
+          });
+          const newStatus = patientPaymentStatus(
+            { panelPatientId: invoice.panelPatientId, total: coverage.eligibleNet, patientShare: coverage.patientShare, panelReceivable: coverage.panelReceivable },
+            invoice.paidTotal,
+          );
+          await tx.hospitalInvoice.update({
+            where: { id: invoice.id },
+            data: {
+              subtotal: deptFee,
+              discountTotal: coverage.discountAmount,
+              total: coverage.eligibleNet,
+              patientShare: coverage.patientShare,
+              panelReceivable: coverage.panelReceivable,
+              status: newStatus,
+            },
+          });
+          invoice.lines = [deptLine as any];
+          invoice.subtotal = deptFee;
+          invoice.discountTotal = coverage.discountAmount;
+          invoice.total = coverage.eligibleNet;
+          invoice.patientShare = coverage.patientShare;
+          invoice.panelReceivable = coverage.panelReceivable;
+          invoice.status = newStatus;
+        }
+      }
 
       return invoice;
     });
@@ -1039,13 +1100,39 @@ export const invoicesService = {
     }
 
     if (query.search) {
+      const s = query.search.trim();
+      const sDigits = s.replace(/\D/g, '');
       where.OR = [
-        { invoiceNumber: { contains: query.search, mode: 'insensitive' } },
-        { queueNumber: { contains: query.search, mode: 'insensitive' } },
-        { panelPatient: { fullName: { contains: query.search, mode: 'insensitive' } } },
-        { panelPatient: { mrNumber: { contains: query.search, mode: 'insensitive' } } },
-        { selfPayEncounter: { fullName: { contains: query.search, mode: 'insensitive' } } },
-        { selfPayEncounter: { mrNumber: { contains: query.search, mode: 'insensitive' } } },
+        { invoiceNumber: { contains: s, mode: 'insensitive' } },
+        { queueNumber: { contains: s, mode: 'insensitive' } },
+        { panelPatient: { fullName: { contains: s, mode: 'insensitive' } } },
+        { panelPatient: { mrNumber: { contains: s, mode: 'insensitive' } } },
+        { panelPatient: { phone: { contains: s, mode: 'insensitive' } } },
+        { panelPatient: { cnicOrPassport: { contains: s, mode: 'insensitive' } } },
+        { selfPayEncounter: { fullName: { contains: s, mode: 'insensitive' } } },
+        { selfPayEncounter: { mrNumber: { contains: s, mode: 'insensitive' } } },
+        { selfPayEncounter: { phone: { contains: s, mode: 'insensitive' } } },
+        { selfPayEncounter: { cnicOrPassport: { contains: s, mode: 'insensitive' } } },
+        { admissionRecord: { panelPatient: { fullName: { contains: s, mode: 'insensitive' } } } },
+        { admissionRecord: { panelPatient: { mrNumber: { contains: s, mode: 'insensitive' } } } },
+        { admissionRecord: { panelPatient: { phone: { contains: s, mode: 'insensitive' } } } },
+        { admissionRecord: { panelPatient: { cnicOrPassport: { contains: s, mode: 'insensitive' } } } },
+        { admissionRecord: { selfPayEncounter: { fullName: { contains: s, mode: 'insensitive' } } } },
+        { admissionRecord: { selfPayEncounter: { mrNumber: { contains: s, mode: 'insensitive' } } } },
+        { admissionRecord: { selfPayEncounter: { phone: { contains: s, mode: 'insensitive' } } } },
+        { admissionRecord: { selfPayEncounter: { cnicOrPassport: { contains: s, mode: 'insensitive' } } } },
+        ...(sDigits.length >= 4
+          ? [
+              { panelPatient: { phone: { contains: sDigits, mode: 'insensitive' as const } } },
+              { panelPatient: { cnicOrPassport: { contains: sDigits, mode: 'insensitive' as const } } },
+              { selfPayEncounter: { phone: { contains: sDigits, mode: 'insensitive' as const } } },
+              { selfPayEncounter: { cnicOrPassport: { contains: sDigits, mode: 'insensitive' as const } } },
+              { admissionRecord: { panelPatient: { phone: { contains: sDigits, mode: 'insensitive' as const } } } },
+              { admissionRecord: { panelPatient: { cnicOrPassport: { contains: sDigits, mode: 'insensitive' as const } } } },
+              { admissionRecord: { selfPayEncounter: { phone: { contains: sDigits, mode: 'insensitive' as const } } } },
+              { admissionRecord: { selfPayEncounter: { cnicOrPassport: { contains: sDigits, mode: 'insensitive' as const } } } },
+            ]
+          : []),
       ];
     }
 
@@ -1069,12 +1156,34 @@ export const invoicesService = {
             id: true,
             fullName: true,
             mrNumber: true,
+            phone: true,
+            cnicOrPassport: true,
             panelMemberId: true,
             corporatePanel: { select: { id: true, code: true, organizationName: true } },
           },
         },
         corporatePanel: { select: { id: true, code: true, organizationName: true } },
-        selfPayEncounter: { select: { id: true, fullName: true, mrNumber: true } },
+        selfPayEncounter: {
+          select: {
+            id: true,
+            fullName: true,
+            mrNumber: true,
+            phone: true,
+            cnicOrPassport: true,
+          },
+        },
+        admissionRecord: {
+          select: {
+            id: true,
+            admissionNumber: true,
+            panelPatient: {
+              select: { id: true, fullName: true, mrNumber: true, phone: true, cnicOrPassport: true },
+            },
+            selfPayEncounter: {
+              select: { id: true, fullName: true, mrNumber: true, phone: true, cnicOrPassport: true },
+            },
+          },
+        },
         department: { select: { id: true, name: true, code: true } },
         doctor: { select: { id: true, fullName: true, employeeId: true } },
         rmo: { select: { id: true, fullName: true, employeeId: true } },

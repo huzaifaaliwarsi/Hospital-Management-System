@@ -93,6 +93,8 @@ export async function fetchPublicHospitalProfile(): Promise<HospitalProfile> {
         name: (res.data.data.name as string) || cachedProfile.name,
         shortName: (res.data.data.shortName as string) || cachedProfile.shortName,
         logo: (res.data.data.logo as string | null) ?? cachedProfile.logo,
+        primaryPhone: (res.data.data.primaryPhone as string) || cachedProfile.primaryPhone,
+        addressLine1: (res.data.data.address as string) || cachedProfile.addressLine1,
       };
       notifyProfileSubscribers(cachedProfile);
     }

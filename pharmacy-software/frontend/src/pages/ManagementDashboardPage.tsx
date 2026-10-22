@@ -256,7 +256,7 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
           <div className="pt-2 flex flex-wrap items-center gap-4 sm:gap-6 text-xs font-medium text-emerald-100">
             <button
               type="button"
-              onClick={() => onNavigate && onNavigate('reports')}
+              onClick={() => onNavigate && onNavigate('reports-sales')}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white text-[#0e7d5a] font-semibold hover:bg-emerald-50 transition-all shadow-sm cursor-pointer"
             >
               <BarChart3 className="h-4 w-4" /> Generate Report
@@ -288,7 +288,10 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
           ═════════════════════════════════════════════════════════════════════ */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         {/* Card 1: Total Revenue (Blue top accent) */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200/60 border-t-[3.5px] border-t-blue-600 shadow-[0_2px_8px_rgba(0,0,0,0.03)] flex flex-col justify-between hover:shadow-md transition-all">
+        <div
+          onClick={() => onNavigate && onNavigate('reports-sales')}
+          className="bg-white rounded-2xl p-5 border border-slate-200/60 border-t-[3.5px] border-t-blue-600 shadow-[0_2px_8px_rgba(0,0,0,0.03)] flex flex-col justify-between hover:shadow-md transition-all cursor-pointer"
+        >
           <div>
             <div className="flex items-center justify-between mb-3">
               <div className="h-9 w-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
@@ -313,7 +316,10 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
         </div>
 
         {/* Card 2: Medicines in Stock (Teal top accent) */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200/60 border-t-[3.5px] border-t-teal-600 shadow-[0_2px_8px_rgba(0,0,0,0.03)] flex flex-col justify-between hover:shadow-md transition-all">
+        <div
+          onClick={() => onNavigate && onNavigate('medicines')}
+          className="bg-white rounded-2xl p-5 border border-slate-200/60 border-t-[3.5px] border-t-teal-600 shadow-[0_2px_8px_rgba(0,0,0,0.03)] flex flex-col justify-between hover:shadow-md transition-all cursor-pointer"
+        >
           <div>
             <div className="flex items-center justify-between mb-3">
               <div className="h-9 w-9 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center">
@@ -335,7 +341,10 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
         </div>
 
         {/* Card 3: Active Prescriptions (Emerald top accent) */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200/60 border-t-[3.5px] border-t-emerald-500 shadow-[0_2px_8px_rgba(0,0,0,0.03)] flex flex-col justify-between hover:shadow-md transition-all">
+        <div
+          onClick={() => onNavigate && onNavigate('hms-requests')}
+          className="bg-white rounded-2xl p-5 border border-slate-200/60 border-t-[3.5px] border-t-emerald-500 shadow-[0_2px_8px_rgba(0,0,0,0.03)] flex flex-col justify-between hover:shadow-md transition-all cursor-pointer"
+        >
           <div>
             <div className="flex items-center justify-between mb-3">
               <div className="h-9 w-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
@@ -355,7 +364,10 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
         </div>
 
         {/* Card 4: Low Stock Alerts (Amber/Yellow top accent) */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200/60 border-t-[3.5px] border-t-amber-500 shadow-[0_2px_8px_rgba(0,0,0,0.03)] flex flex-col justify-between hover:shadow-md transition-all">
+        <div
+          onClick={() => onNavigate && onNavigate('medicines')}
+          className="bg-white rounded-2xl p-5 border border-slate-200/60 border-t-[3.5px] border-t-amber-500 shadow-[0_2px_8px_rgba(0,0,0,0.03)] flex flex-col justify-between hover:shadow-md transition-all cursor-pointer"
+        >
           <div>
             <div className="flex items-center justify-between mb-3">
               <div className="h-9 w-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
@@ -378,7 +390,10 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
         </div>
 
         {/* Card 5: Expiring Soon (Rose/Red top accent) */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200/60 border-t-[3.5px] border-t-rose-500 shadow-[0_2px_8px_rgba(0,0,0,0.03)] flex flex-col justify-between hover:shadow-md transition-all">
+        <div
+          onClick={() => onNavigate && onNavigate('stock-movements')}
+          className="bg-white rounded-2xl p-5 border border-slate-200/60 border-t-[3.5px] border-t-rose-500 shadow-[0_2px_8px_rgba(0,0,0,0.03)] flex flex-col justify-between hover:shadow-md transition-all cursor-pointer"
+        >
           <div>
             <div className="flex items-center justify-between mb-3">
               <div className="h-9 w-9 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center">
@@ -398,7 +413,10 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
         </div>
 
         {/* Card 6: Today's Purchases / Sales (Blue top accent) */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200/60 border-t-[3.5px] border-t-blue-600 shadow-[0_2px_8px_rgba(0,0,0,0.03)] flex flex-col justify-between hover:shadow-md transition-all">
+        <div
+          onClick={() => onNavigate && onNavigate('purchases')}
+          className="bg-white rounded-2xl p-5 border border-slate-200/60 border-t-[3.5px] border-t-blue-600 shadow-[0_2px_8px_rgba(0,0,0,0.03)] flex flex-col justify-between hover:shadow-md transition-all cursor-pointer"
+        >
           <div>
             <div className="flex items-center justify-between mb-3">
               <div className="h-9 w-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
@@ -450,7 +468,7 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
                 </select>
                 <button
                   type="button"
-                  onClick={() => onNavigate && onNavigate('reports')}
+                  onClick={() => onNavigate && onNavigate('reports-sales')}
                   className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
                   title="View full reports"
                 >
@@ -730,7 +748,7 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
 
               <button
                 type="button"
-                onClick={() => onNavigate && onNavigate('reports')}
+                onClick={() => onNavigate && onNavigate('reports-stock-movement')}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#0e7d5a] text-white text-xs font-medium hover:bg-[#0c6b50] cursor-pointer shadow-xs"
               >
                 <Download className="h-3.5 w-3.5" /> Export
@@ -862,35 +880,46 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
 
             {/* Insight cards */}
             <div className="space-y-3 mt-4">
-              {(data.smartInsights || []).map((ins) => (
-                <div
-                  key={ins.id}
-                  className="p-3.5 rounded-xl bg-white/5 border border-white/10 backdrop-blur-xs flex items-start gap-3 hover:bg-white/10 transition-colors"
-                >
-                  <div className="h-7 w-7 rounded-lg bg-emerald-400/20 text-emerald-300 flex items-center justify-center shrink-0 mt-0.5">
-                    {ins.type === 'revenue' ? (
-                      <TrendingUp className="h-3.5 w-3.5" />
-                    ) : ins.type === 'warning' ? (
-                      <AlertTriangle className="h-3.5 w-3.5 text-amber-300" />
-                    ) : ins.type === 'alert' ? (
-                      <CalendarX className="h-3.5 w-3.5 text-rose-300" />
-                    ) : (
-                      <ShieldCheck className="h-3.5 w-3.5" />
-                    )}
+              {(data.smartInsights || []).map((ins) => {
+                const targetPage =
+                  ins.type === 'revenue'
+                    ? 'reports-sales'
+                    : ins.type === 'warning'
+                    ? 'medicines'
+                    : ins.type === 'alert'
+                    ? 'stock-movements'
+                    : 'hms-requests';
+                return (
+                  <div
+                    key={ins.id}
+                    onClick={() => onNavigate && onNavigate(targetPage)}
+                    className="p-3.5 rounded-xl bg-white/5 border border-white/10 backdrop-blur-xs flex items-start gap-3 hover:bg-white/15 transition-all cursor-pointer"
+                  >
+                    <div className="h-7 w-7 rounded-lg bg-emerald-400/20 text-emerald-300 flex items-center justify-center shrink-0 mt-0.5">
+                      {ins.type === 'revenue' ? (
+                        <TrendingUp className="h-3.5 w-3.5" />
+                      ) : ins.type === 'warning' ? (
+                        <AlertTriangle className="h-3.5 w-3.5 text-amber-300" />
+                      ) : ins.type === 'alert' ? (
+                        <CalendarX className="h-3.5 w-3.5 text-rose-300" />
+                      ) : (
+                        <ShieldCheck className="h-3.5 w-3.5" />
+                      )}
+                    </div>
+                    <div className="leading-snug">
+                      <span className="text-xs font-semibold text-white block">{ins.title}</span>
+                      <span className="text-[11px] text-emerald-100/80 mt-0.5 block">{ins.message}</span>
+                    </div>
                   </div>
-                  <div className="leading-snug">
-                    <span className="text-xs font-semibold text-white block">{ins.title}</span>
-                    <span className="text-[11px] text-emerald-100/80 mt-0.5 block">{ins.message}</span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
           <div className="pt-6">
             <button
               type="button"
-              onClick={() => onNavigate && onNavigate('reports')}
+              onClick={() => onNavigate && onNavigate('reports-sales')}
               className="w-full py-2.5 px-4 rounded-xl bg-white text-[#0e7d5a] font-semibold text-xs hover:bg-emerald-50 transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
             >
               View Detailed Analytics <ArrowRight className="h-3.5 w-3.5" />

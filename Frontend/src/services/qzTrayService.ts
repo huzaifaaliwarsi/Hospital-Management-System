@@ -166,6 +166,9 @@ export function buildEscPosReceiptCommands(
   const weightStr = data.patientWeight ? (String(data.patientWeight).toLowerCase().includes('kg') ? String(data.patientWeight) : `${data.patientWeight} kg`) : '—';
   out += padRow('Weight:', weightStr);
   out += padRow('Doctor:', data.doctorName || 'Consultant');
+  if (data.rmoName && (data.encounterType === 'EMERGENCY' || data.encounterType === 'ADMISSION' || data.encounterType === 'IPD')) {
+    out += padRow('RMO:', data.rmoName);
+  }
   if (data.admissionNumber) {
     out += padRow('Admission:', data.admissionNumber);
   }

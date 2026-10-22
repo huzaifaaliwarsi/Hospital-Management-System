@@ -37,6 +37,7 @@ export interface AdmissionRecord {
   admissionNumber: string;
   patientName: string;
   patientFatherName?: string;
+  patientCnic?: string;
   patientGender?: string;
   patientAge?: string;
   patientAddress?: string;
@@ -273,6 +274,7 @@ function toAdmissionRecord(raw: Record<string, any>): AdmissionRecord {
     admissionNumber: raw.admissionNumber,
     patientName: patient?.fullName || 'Unknown',
     patientFatherName: patient?.guardianName || patient?.fatherGuardianName || '',
+    patientCnic: patient?.cnic || raw.selfPayEncounter?.cnicOrPassport || raw.panelPatient?.cnic || '',
     patientGender: patient?.gender || '',
     patientAge: patient?.age != null ? String(patient.age) : '',
     patientAddress: patient?.address || '',
@@ -647,9 +649,10 @@ export async function rejectHighCostMedicine(admissionId: string, clearanceId: s
   }
 }
 
-export async function grantAdmissionClearance(id: string, values: { clearanceType: ClearanceType; notes?: string }): Promise<void> {
+export async function grantAdmissionClearance(id: string, values: { clearanceType: ClearanceType; notes?: string }): Promise<any> {
   try {
-    await apiClient.post(`/admissions/${id}/clearances`, values);
+    const res = await apiClient.post<{ data: any }>(`/admissions/${id}/clearances`, values);
+    return res.data?.data;
   } catch (err) {
     throw new Error(toErrorMessage(err));
   }

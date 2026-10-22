@@ -16,9 +16,21 @@ export async function requirePharmacyDepartment(tx: Pick<Prisma.TransactionClien
   if (provisioned) return provisioned;
   const existing = await tx.department.findFirst({ where: { OR: [
     { isDefaultPharmacy: true }, { code: 'DEP-0004' }, { departmentType: 'PHARMACY' },
-    { name: { equals: 'Pharmacy', mode: 'insensitive' } },
   ] } });
-  if (existing) throw new ValidationError('Default Pharmacy department is missing or inactive. Configure it before billing.');
+  if (existing) {
+    if (existing.name?.toLowerCase() === 'pharmacy' && existing.isActive && (existing as any).id !== 'ward') {
+      return tx.department.update({
+        where: { id: existing.id },
+        data: {
+          isDefaultPharmacy: true,
+          departmentType: 'PHARMACY',
+          pharmacyRelated: true,
+          fulfillmentOwnership: 'INTERNAL',
+        },
+      });
+    }
+    throw new ValidationError('Default Pharmacy department is missing or inactive. Configure it before billing.');
+  }
   return tx.department.create({ data: {
     code: 'DEP-0004', name: 'Pharmacy', departmentType: 'PHARMACY',
     isDefaultPharmacy: true, pharmacyRelated: true, isActive: true, fulfillmentOwnership: 'INTERNAL',

@@ -13,6 +13,23 @@ export interface CreateNotificationParams {
 
 export const notificationsService = {
   async createNotification(params: CreateNotificationParams) {
+    if (!prisma.hospitalNotification?.create) return null as any;
+
+    // Deduplicate: if an unread notification with same title and referenceId was created recently, skip
+    if (params.referenceId && params.title) {
+      const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+      const existing = await prisma.hospitalNotification.findFirst({
+        where: {
+          referenceId: params.referenceId,
+          targetPortal: params.targetPortal || 'all',
+          title: params.title,
+          isRead: false,
+          createdAt: { gte: tenMinutesAgo },
+        },
+      });
+      if (existing) return existing;
+    }
+
     return prisma.hospitalNotification.create({
       data: {
         title: params.title,
@@ -134,6 +151,55 @@ export const notificationsService = {
               actionUrl: '/front-desk/billing_pending_discharges',
               referenceId: adm.id,
               createdAt: adm.updatedAt,
+            },
+          });
+        }
+      }
+
+      // 3. Check for active PENDING AdmissionPaymentRequests (Admission Portal -> Front Desk)
+      const pendingPaymentRequests = await prisma.admissionPaymentRequest.findMany({
+        where: { status: 'PENDING' },
+        include: {
+          admissionRecord: {
+            include: {
+              panelPatient: { select: { fullName: true, mrNumber: true } },
+              selfPayEncounter: { select: { fullName: true } },
+            },
+          },
+        },
+        take: 10,
+        orderBy: { requestedAt: 'desc' },
+      });
+
+      for (const req of pendingPaymentRequests) {
+        const adm = req.admissionRecord;
+        if (!adm) continue;
+        const patientName = adm.panelPatient?.fullName || adm.selfPayEncounter?.fullName || 'Patient';
+        const existing = await prisma.hospitalNotification.findFirst({
+          where: {
+            targetPortal: 'front-desk',
+            OR: [
+              { referenceId: req.id },
+              { referenceId: adm.id },
+            ],
+          },
+        });
+
+        if (!existing) {
+          const amountStr = Number(req.requestedAmount).toLocaleString('en-PK', { maximumFractionDigits: 0 });
+          const isFinal = req.requestType === 'FINAL';
+          await prisma.hospitalNotification.create({
+            data: {
+              title: isFinal ? `Discharge Clearance Needed: ${patientName}` : `Payment Request: ${patientName}`,
+              message: isFinal
+                ? `Discharge billing clearance requested for ${patientName} (${adm.admissionNumber}). Outstanding balance: Rs. ${amountStr}. Please collect clearance payment at Front Desk.`
+                : `Payment request of Rs. ${amountStr} pending for ${patientName} (${adm.admissionNumber}). Please collect at Front Desk.`,
+              type: 'urgent',
+              module: 'Billing',
+              targetPortal: 'front-desk',
+              actionUrl: isFinal ? '/front-desk/billing_pending_discharges' : '/front-desk/admission_payment_requests',
+              referenceId: req.id,
+              createdAt: req.requestedAt,
             },
           });
         }

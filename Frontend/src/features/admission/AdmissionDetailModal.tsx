@@ -24,6 +24,8 @@ import {
   Bed,
   RefreshCw,
   Printer,
+  Send,
+  ArrowDown,
 } from 'lucide-react';
 import { Modal } from '../../components/common/Modal';
 import { PanelBadge } from '../../components/common/PanelBadge';
@@ -46,6 +48,7 @@ import {
   changeAdmissionMedicationMode,
   createAdmissionPharmacyRequest,
   grantAdmissionClearance,
+  requestAdmissionPayment,
   dischargeAdmission,
   AdmissionDetail,
   AdmissionPharmacyRequestRecord,
@@ -440,14 +443,45 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
   };
 
   // ── Clearances ───────────────────────────────────────────────────────
+  const handleRequestBillingClearance = async () => {
+    const outstanding = ledgerSummary?.outstandingBalance ?? detail?.totalOutstanding ?? 0;
+    if (outstanding <= 0) {
+      toast.info('No outstanding balance. Patient has settled all hospital dues.');
+      return;
+    }
+    setIsSaving(true);
+    setActionError(null);
+    try {
+      await requestAdmissionPayment(admissionId, {
+        requestType: 'FINAL',
+        requestedAmount: outstanding,
+        notes: `Discharge billing clearance requested. Outstanding balance: ${formatPKR(outstanding)}.`,
+      });
+      toast.success(`Discharge billing clearance request sent to Front Desk for ${formatPKR(outstanding)}!`);
+      await refresh(`Discharge clearance request sent to Front Desk (${formatPKR(outstanding)}).`);
+    } catch (err: any) {
+      setActionError(err?.message || 'Failed to send billing clearance request to Front Desk.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const handleGrantClearance = async (clearanceType: ClearanceType) => {
     setIsSaving(true);
     setActionError(null);
     try {
-      await grantAdmissionClearance(admissionId, { clearanceType });
-      await refresh(`${CLEARANCE_LABEL[clearanceType]} clearance granted.`);
+      const res = await grantAdmissionClearance(admissionId, { clearanceType });
+      if (res?.pendingPayment) {
+        toast.info(res.message || 'Discharge clearance request sent to Front Desk! Outstanding payment required.');
+        await refresh(res.message || 'Discharge clearance request sent to Front Desk.');
+      } else {
+        toast.success(`${CLEARANCE_LABEL[clearanceType]} clearance granted.`);
+        await refresh(`${CLEARANCE_LABEL[clearanceType]} clearance granted.`);
+      }
     } catch (err: any) {
       setActionError(err?.message || 'Failed to grant clearance.');
+      toast.info(err?.message || 'Clearance blocked: outstanding balance. Front Desk has been notified.');
+      await load();
     } finally {
       setIsSaving(false);
     }
@@ -460,8 +494,13 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
 
   const isAllClearancesReady = useMemo(() => {
     if (!detail?.clearances || detail.clearances.length === 0) return false;
-    return detail.clearances.every((c) => c.status === 'CLEARED' || c.status === 'NOT_APPLICABLE');
-  }, [detail?.clearances]);
+    const outstanding = ledgerSummary?.outstandingBalance ?? detail?.totalOutstanding ?? 0;
+    if (outstanding > 0) return false;
+    return detail.clearances.every((c) => {
+      if (c.clearanceType === 'HOSPITAL_BILLING' && outstanding > 0) return false;
+      return c.status === 'CLEARED' || c.status === 'NOT_APPLICABLE';
+    });
+  }, [detail?.clearances, ledgerSummary?.outstandingBalance, detail?.totalOutstanding]);
 
   const handleFinalDischarge = async () => {
     setIsDischarging(true);
@@ -673,18 +712,32 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
 
               {/* Financial Snapshot Telemetry on Overview */}
               <div className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-[0_2px_8px_rgba(0,0,0,0.03)] space-y-3">
-                <div className="flex items-center justify-between pb-2.5 border-b border-slate-100">
+                <div className="flex items-center justify-between pb-2.5 border-b border-slate-100 flex-wrap gap-2">
                   <div className="flex items-center gap-2">
                     <CreditCard className="h-4 w-4 text-[#08775A]" />
                     <span className="text-xs font-bold text-slate-900">Inpatient Financial Snapshot</span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setTab('services')}
-                    className="text-[11px] font-bold text-[#08775A] hover:underline flex items-center gap-1 cursor-pointer"
-                  >
-                    Manage Services &amp; Invoices <ArrowRight className="h-3 w-3" />
-                  </button>
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    {(ledgerSummary?.outstandingBalance ?? detail.totalOutstanding) > 0 && (
+                      <button
+                        type="button"
+                        disabled={isSaving}
+                        onClick={() => handleGrantClearance('HOSPITAL_BILLING')}
+                        className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-bold bg-amber-700 hover:bg-amber-800 text-white rounded-lg shadow-xs transition-colors cursor-pointer disabled:opacity-60"
+                        title="Send discharge billing clearance request to Front Desk for outstanding balance"
+                      >
+                        <Send className="h-3.5 w-3.5" />
+                        <span>Request Clearance from Front Desk ({formatPKR(ledgerSummary?.outstandingBalance ?? detail.totalOutstanding)})</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setTab('services')}
+                      className="text-[11px] font-bold text-[#08775A] hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      Manage Services &amp; Invoices <ArrowRight className="h-3 w-3" />
+                    </button>
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
                   <div className="bg-slate-50/70 p-3 rounded-xl border border-slate-200/80">
@@ -939,6 +992,29 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                     </span>
                   </div>
                 </div>
+
+                {/* Outstanding Alert Strip with Front Desk Clearance Action */}
+                {(ledgerSummary?.outstandingBalance ?? detail.totalOutstanding) > 0 && (
+                  <div className="mt-3 p-3.5 rounded-xl bg-amber-50/90 border border-amber-200/90 flex items-center justify-between flex-wrap gap-2.5 text-xs text-amber-900">
+                    <div className="flex items-center gap-2">
+                      <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
+                      <div>
+                        <span className="font-bold block text-amber-950">Patient has unpaid dues ({formatPKR(ledgerSummary?.outstandingBalance ?? detail.totalOutstanding)})</span>
+                        <span className="text-[11px] text-amber-800">Discharge clearance requires settlement of this balance at Front Desk.</span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={isSaving}
+                      onClick={handleRequestBillingClearance}
+                      className="px-3.5 py-1.5 text-xs font-bold text-white bg-amber-700 hover:bg-amber-800 rounded-lg shadow-xs disabled:opacity-60 transition-colors cursor-pointer flex items-center gap-1.5"
+                      title="Send clearance and payment notification to Front Desk"
+                    >
+                      <Send className="h-3 w-3" />
+                      <span>Request Front Desk Clearance</span>
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Department Invoices & Line Items */}
@@ -1081,12 +1157,44 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                     services={availableServices}
                     selectedServiceIds={selectedServiceIds}
                     onChange={setSelectedServiceIds}
+                    maxHeightClass="max-h-48"
                     emptyMessage={
                       availableServices.length === 0
                         ? NO_ACTIVE_DEPARTMENT_SERVICES
                         : 'No services available in this department'
                     }
                   />
+
+                  {selectedServiceIds.length > 0 && (
+                    <div className="flex items-center justify-between gap-3 p-2.5 bg-[#effaf5] border border-[#c2e7db] rounded-xl text-xs flex-wrap">
+                      <div className="flex items-center gap-1.5 font-bold text-[#08775A]">
+                        <CheckCircle2 className="h-4 w-4 shrink-0" />
+                        <span>{selectedServiceIds.length} {selectedServiceIds.length === 1 ? 'service' : 'services'} selected ({formatPKR(selectedServicesTotal)})</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const btn = document.getElementById('btn-add-service-submit');
+                            btn?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                            btn?.focus();
+                          }}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-[#08775A] bg-white hover:bg-slate-50 border border-[#c2e7db] rounded-lg shadow-2xs cursor-pointer transition-colors"
+                          title="Scroll down to customize quantity or arrangement"
+                        >
+                          <ArrowDown className="h-3.5 w-3.5" />
+                          <span>Scroll Down to Actions</span>
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={isSaving}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg shadow-xs cursor-pointer transition-colors disabled:opacity-60"
+                        >
+                          {isSaving ? 'Adding…' : 'Add Now'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Compact Service Arrangement Toggle */}
                   <div className="flex items-center justify-between gap-3 p-2.5 bg-white rounded-lg border border-slate-200/80 flex-wrap">
@@ -1170,6 +1278,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                       <NumberInput label="Quantity (per service)" min={1} value={lineQty} onChange={(e) => setLineQty(Number(e.target.value) || 1)} />
                     </div>
                     <button
+                      id="btn-add-service-submit"
                       type="submit"
                       disabled={isSaving || selectedServiceIds.length === 0}
                       className="px-5 py-2.5 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded-xl shadow-xs disabled:opacity-60 cursor-pointer transition-colors"
@@ -1875,7 +1984,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
 
                 <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
                   {detail.clearances.map((c) => {
-                    const isCleared = c.status === 'CLEARED';
+                    const isCleared = c.status === 'CLEARED' && (c.clearanceType !== 'HOSPITAL_BILLING' || ((ledgerSummary?.outstandingBalance ?? detail.totalOutstanding) === 0));
                     const isNA = c.status === 'NOT_APPLICABLE';
                     return (
                       <div
@@ -1936,6 +2045,23 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                             >
                               Doctor Discharge Authorization
                             </button>
+                          ) : c.clearanceType === 'HOSPITAL_BILLING' && ((ledgerSummary?.outstandingBalance ?? detail.totalOutstanding) > 0) ? (
+                            <div className="space-y-2">
+                              <div className="p-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900 flex items-center justify-between">
+                                <span className="font-semibold">Outstanding Due:</span>
+                                <span className="font-bold font-mono text-amber-800">{formatPKR(ledgerSummary?.outstandingBalance ?? detail.totalOutstanding)}</span>
+                              </div>
+                              <button
+                                type="button"
+                                disabled={isSaving}
+                                onClick={handleRequestBillingClearance}
+                                className="w-full px-3 py-2 text-xs font-bold text-white bg-amber-700 hover:bg-amber-800 rounded-xl shadow-xs disabled:opacity-60 transition-colors cursor-pointer text-center flex items-center justify-center gap-1.5"
+                                title="Send clearance and payment notification to Front Desk"
+                              >
+                                <Send className="h-3.5 w-3.5" />
+                                <span>Request Billing Clearance from Front Desk</span>
+                              </button>
+                            </div>
                           ) : (
                             <button
                               type="button"
@@ -2027,6 +2153,7 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
       {isClinicalDischargeOpen && (
         <ClinicalDischargeModal
           admission={detail}
+          outstanding={ledgerSummary?.outstandingBalance ?? detail?.totalOutstanding ?? 0}
           onClose={() => setIsClinicalDischargeOpen(false)}
           onDischarged={async () => {
             setIsClinicalDischargeOpen(false);

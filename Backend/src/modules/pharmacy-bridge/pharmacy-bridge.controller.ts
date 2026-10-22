@@ -31,6 +31,11 @@ export const pharmacyBridgeController = {
     res.json({ data: request });
   },
 
+  listPendingRequestsForBridge: async (_req: Request, res: Response) => {
+    const requests = await pharmacyBridgeService.getPendingRequestsForBridge();
+    res.json({ data: requests });
+  },
+
   // ── Webhook / Callback from Pharmacy Backend ─────────────────────────────
   handleDispensedCallback: async (req: Request, res: Response) => {
     const result = await pharmacyBridgeService.handleDispensedCallback(

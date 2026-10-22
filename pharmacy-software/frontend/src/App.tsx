@@ -48,7 +48,7 @@ const REPORT_PAGES: { page: string; type: import('./components/ReportView').Repo
 const VALID_PAGES = [
   'dashboard', 'medicines', 'pos', 'invoices', 'hms-requests', 'stock-movements',
   'vendors', 'purchases', 'stock-in', 'balance-sheet', 'settlements', 'hms-receivables', 'expenses',
-  'users', 'settings', ...REPORT_PAGES.map((r) => r.page),
+  'users', 'settings', 'reports', ...REPORT_PAGES.map((r) => r.page),
 ];
 
 function pageFromPath(): string {
@@ -57,6 +57,7 @@ function pageFromPath(): string {
 }
 
 function findLabel(groups: NavGroup[], id: string): string {
+  if (id === 'reports') return 'Reports & Analytics';
   const reportPage = REPORT_PAGES.find((r) => r.page === id);
   if (reportPage) return reportPage.title;
   for (const g of groups) {
@@ -101,7 +102,7 @@ const App: React.FC = () => {
   const renderPage = () => {
     switch (page) {
       case 'dashboard':
-        return isSales ? <SalesDashboardPage /> : <ManagementDashboardPage onNavigate={navigate} />;
+        return isSales ? <SalesDashboardPage onNavigate={navigate} /> : <ManagementDashboardPage onNavigate={navigate} />;
       case 'medicines':
         return <MedicinesPage canEdit={!isSales} onNavigate={navigate} />;
       case 'pos':
@@ -138,9 +139,29 @@ const App: React.FC = () => {
         return <UsersPage />;
       case 'settings':
         return <SettingsPage />;
+      case 'reports':
+        return (
+          <ReportView
+            type="SALES_COLLECTION"
+            title="Sales & Collection"
+            subtitle="Every retail and HMS-linked invoice, payment status and collector."
+            onNavigate={navigate}
+            currentPage="reports-sales"
+          />
+        );
       default: {
         const reportPage = REPORT_PAGES.find((r) => r.page === page);
-        if (reportPage) return <ReportView type={reportPage.type} title={reportPage.title} subtitle={reportPage.subtitle} />;
+        if (reportPage) {
+          return (
+            <ReportView
+              type={reportPage.type}
+              title={reportPage.title}
+              subtitle={reportPage.subtitle}
+              onNavigate={navigate}
+              currentPage={page}
+            />
+          );
+        }
         return <ComingSoonPage title="Not found" step="—" />;
       }
     }

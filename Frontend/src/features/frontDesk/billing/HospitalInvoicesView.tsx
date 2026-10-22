@@ -128,9 +128,14 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
     setOpenInvoiceAction(undefined);
   };
 
-  const load = useCallback(async (showRefreshing = false) => {
-    if (showRefreshing) setIsRefreshing(true);
-    else setIsLoading(true);
+  const load = useCallback(async (mode: boolean | 'background' = false) => {
+    if (mode === true) {
+      setIsRefreshing(true);
+    } else if (mode === 'background') {
+      // Silent background fetch: keep current rows visible with zero flicker
+    } else {
+      setIsLoading(true);
+    }
     setLoadError(null);
 
     try {
@@ -142,18 +147,55 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
       });
       setInvoices(data);
     } catch (err: any) {
-      setLoadError(
-        err?.response?.data?.error?.message || err?.message || 'Failed to load invoices from server.'
-      );
+      if (mode !== 'background') {
+        setLoadError(
+          err?.response?.data?.error?.message || err?.message || 'Failed to load invoices from server.'
+        );
+      }
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
     }
   }, [recordFilter, outstandingOnly]);
 
+  // 1. Initial load
   useEffect(() => {
     load();
   }, [load]);
+
+  // 2. Auto-sync on window focus (e.g. when returning to Front Desk from Admission/Pharmacy)
+  useEffect(() => {
+    const handleFocus = () => {
+      load('background');
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [load]);
+
+  // 3. Auto-sync on application events (invoice updated, admission updated, pharmacy synced)
+  useEffect(() => {
+    const handleAppEvent = () => {
+      load('background');
+    };
+    window.addEventListener('hms-invoice-updated', handleAppEvent);
+    window.addEventListener('hms-admission-updated', handleAppEvent);
+    window.addEventListener('hms-pharmacy-synced', handleAppEvent);
+    return () => {
+      window.removeEventListener('hms-invoice-updated', handleAppEvent);
+      window.removeEventListener('hms-admission-updated', handleAppEvent);
+      window.removeEventListener('hms-pharmacy-synced', handleAppEvent);
+    };
+  }, [load]);
+
+  // 4. Background auto-polling every 6 seconds when document is visible
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible' && !openInvoiceId) {
+        load('background');
+      }
+    }, 6000);
+    return () => clearInterval(timer);
+  }, [load, openInvoiceId]);
 
   // This component is reused for every Hospital Invoices / Payments /
   // Discounts / Refunds / Outstanding Balances nav item from the SAME
@@ -220,14 +262,25 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
       if (startDate && invDateStr && invDateStr < startDate) return false;
       if (endDate && invDateStr && invDateStr > endDate) return false;
 
-      // 6. Search query
+      // 6. Search query (Patient Name, MR#, Phone, CNIC, Invoice #, Token)
       if (searchTerm.trim()) {
         const q = searchTerm.toLowerCase().trim();
+        const qDigits = q.replace(/\D/g, '');
         const numMatch = inv.invoiceNumber.toLowerCase().includes(q);
         const tokenMatch = (inv.queueNumber || '').toLowerCase().includes(q);
         const nameMatch = inv.patientName.toLowerCase().includes(q);
         const mrMatch = (inv.patientMr || '').toLowerCase().includes(q);
-        if (!numMatch && !tokenMatch && !nameMatch && !mrMatch) return false;
+        const phoneMatch = !!(
+          inv.patientPhone &&
+          (inv.patientPhone.toLowerCase().includes(q) ||
+            (qDigits.length >= 4 && inv.patientPhone.replace(/\D/g, '').includes(qDigits)))
+        );
+        const cnicMatch = !!(
+          inv.patientCnic &&
+          (inv.patientCnic.toLowerCase().includes(q) ||
+            (qDigits.length >= 4 && inv.patientCnic.replace(/\D/g, '').includes(qDigits)))
+        );
+        if (!numMatch && !tokenMatch && !nameMatch && !mrMatch && !phoneMatch && !cnicMatch) return false;
       }
 
       return true;
@@ -501,7 +554,7 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
             <Search className="absolute left-3 top-2.5 h-4 w-4 text-[#8b9e95]" />
             <input
               type="text"
-              placeholder="Search Invoice #, Patient Name, or MR #…"
+              placeholder="Search by Patient Name, MR#, Phone, CNIC, or Invoice #…"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full text-xs pl-9 pr-7 py-2 border border-[#c2e7db] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#08775A] focus:border-[#08775A] bg-white placeholder:text-[#8b9e95]"
@@ -600,6 +653,18 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
             <span>Due &gt; 0</span>
           </button>
 
+          {/* Quick Refresh Button in Filter Bar */}
+          <button
+            type="button"
+            onClick={() => load(true)}
+            disabled={isRefreshing}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-[#08775A] bg-[#effaf5] hover:bg-[#d6f2e8] border border-[#c2e7db] rounded-lg transition-colors cursor-pointer shrink-0 disabled:opacity-60"
+            title="Refresh Invoices Now"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <span>Refresh</span>
+          </button>
+
           {/* Reset Filters */}
           {hasActiveFilters && (
             <button
@@ -629,8 +694,18 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
             </span>
           </div>
 
-          {/* Export Action Buttons */}
+          {/* Action & Export Buttons */}
           <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              type="button"
+              onClick={() => load(true)}
+              disabled={isRefreshing}
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer whitespace-nowrap border border-emerald-500/40 disabled:opacity-60"
+              title="Refresh invoice table rows"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+              <span>Refresh</span>
+            </button>
             <button
               type="button"
               onClick={handleExportExcel}
@@ -756,9 +831,11 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
                     {/* Patient */}
                     <td className="py-2.5 px-3.5 border-r border-slate-200 whitespace-nowrap">
                       <span className="font-semibold text-slate-900 block">{inv.patientName}</span>
-                      {inv.patientMr && (
-                        <span className="text-[10px] text-slate-500 font-mono block">MR: {inv.patientMr}</span>
-                      )}
+                      <div className="flex items-center gap-1.5 flex-wrap text-[10px] text-slate-500 font-mono">
+                        {inv.patientMr && <span>MR: {inv.patientMr}</span>}
+                        {inv.patientPhone && <span className="text-slate-600">• {inv.patientPhone}</span>}
+                        {inv.patientCnic && <span className="text-slate-600">• CNIC: {inv.patientCnic}</span>}
+                      </div>
                     </td>
 
                     {/* Source */}

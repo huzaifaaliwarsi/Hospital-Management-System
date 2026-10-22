@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Loader2, Plus, X, Check, Ban, ShieldAlert, Eye, Settings2 } from 'lucide-react';
+import { Loader2, Plus, X, Check, Ban, ShieldAlert, Eye, Settings2, RefreshCw } from 'lucide-react';
 import { pharmacyApi, MedicineRow } from '../services/pharmacyApi';
 import { formatPKR, formatNumber } from '../utils/format';
 import { useToast } from '../context/ToastContext';
@@ -43,6 +43,7 @@ function estimatedValue(req: RequestRow): number {
 export const HmsRequestQueuePage: React.FC<{ canApprove: boolean }> = ({ canApprove }) => {
   const [rows, setRows] = useState<RequestRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
   const [settings, setSettings] = useState<any | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -50,11 +51,21 @@ export const HmsRequestQueuePage: React.FC<{ canApprove: boolean }> = ({ canAppr
   const [detail, setDetail] = useState<RequestRow | null>(null);
   const toast = useToast();
 
-  const load = () => {
+  const load = async () => {
     setLoading(true);
-    pharmacyApi.listHmsRequests(statusFilter || undefined).then(setRows).catch(() => toast.error('Failed to load requests.')).finally(() => setLoading(false));
+    try {
+      const data = await pharmacyApi.listHmsRequests(statusFilter || undefined);
+      setRows(data);
+    } catch {
+      toast.error('Failed to load requests.');
+    } finally {
+      setLoading(false);
+    }
   };
-  useEffect(load, [statusFilter]);
+  useEffect(() => {
+    load();
+  }, [statusFilter]);
+
   useEffect(() => {
     pharmacyApi.getHmsSettings().then(setSettings);
   }, []);
@@ -67,6 +78,27 @@ export const HmsRequestQueuePage: React.FC<{ canApprove: boolean }> = ({ canAppr
     window.addEventListener('hms-request-received', handleNewRequest);
     return () => window.removeEventListener('hms-request-received', handleNewRequest);
   }, []);
+
+  // Periodic background poll every 15s to keep queue synchronized if system was offline
+  useEffect(() => {
+    const interval = setInterval(() => {
+      pharmacyApi.listHmsRequests(statusFilter || undefined).then(setRows).catch(() => null);
+    }, 15_000);
+    return () => clearInterval(interval);
+  }, [statusFilter]);
+
+  const handleManualSync = async () => {
+    setSyncing(true);
+    try {
+      const data = await pharmacyApi.listHmsRequests(statusFilter || undefined);
+      setRows(data);
+      toast.success('Queue synchronized with HMS.');
+    } catch {
+      toast.error('Sync failed. Please check HMS connectivity.');
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const summary = useMemo(() => {
     const s = { pending: 0, partial: 0, dispensed: 0, rejected: 0, needsApproval: 0 };
@@ -237,6 +269,16 @@ export const HmsRequestQueuePage: React.FC<{ canApprove: boolean }> = ({ canAppr
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleManualSync}
+            disabled={syncing || loading}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200/80 hover:bg-emerald-100/70 rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+            title="Pull latest pending medicine requests from HMS queue"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 text-emerald-700 ${syncing || loading ? 'animate-spin' : ''}`} />
+            {syncing ? 'Syncing...' : 'Sync with HMS'}
+          </button>
           {canApprove && (
             <button
               onClick={() => setShowSettings(true)}

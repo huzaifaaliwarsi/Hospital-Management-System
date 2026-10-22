@@ -42,6 +42,7 @@ export const AdmissionStatementModal: React.FC<AdmissionStatementModalProps> = (
   const [pharmacyViewTab, setPharmacyViewTab] = useState<'aggregated' | 'granular'>('aggregated');
   const [isResyncingPharmacy, setIsResyncingPharmacy] = useState(false);
 
+  const [activeTab, setActiveTab] = useState<'payment' | 'discount'>('payment');
   const [amount, setAmount] = useState<number | ''>('');
   const [method, setMethod] = useState<PaymentMethod>('CASH');
   const [reference, setReference] = useState('');
@@ -61,7 +62,19 @@ export const AdmissionStatementModal: React.FC<AdmissionStatementModalProps> = (
     setIsLoading(true);
     setLoadError(null);
     try {
-      setStatement(await fetchAdmissionStatement(admissionId));
+      const data = await fetchAdmissionStatement(admissionId);
+      setStatement(data);
+      if (data?.consolidated) {
+        const out = data.consolidated.outstanding ?? 0;
+        setAmount(out > 0 ? out : '');
+        const initialManual: Record<string, number | ''> = {};
+        for (const inv of (data.departmentInvoices || [])) {
+          if (inv.outstanding > 0) {
+            initialManual[inv.id] = inv.outstanding;
+          }
+        }
+        setManualAmounts(initialManual);
+      }
     } catch (err: any) {
       setLoadError(err?.message || 'Failed to load statement.');
     } finally {
@@ -148,7 +161,6 @@ export const AdmissionStatementModal: React.FC<AdmissionStatementModalProps> = (
         reference: reference.trim() || undefined,
       });
       toast.success(`Collected ${formatPKR(Number(amount))}, auto-allocated proportionally across outstanding department invoices.`);
-      setAmount('');
       setReference('');
       load();
       onChanged?.();
@@ -189,6 +201,7 @@ export const AdmissionStatementModal: React.FC<AdmissionStatementModalProps> = (
       setDiscPercent('');
       setDiscAmount('');
       setDiscReason('');
+      setActiveTab('payment'); // Auto switch back to payment tab to view updated balance
       load();
       onChanged?.();
     } catch (err: any) {
@@ -211,7 +224,7 @@ export const AdmissionStatementModal: React.FC<AdmissionStatementModalProps> = (
   };
 
   return (
-    <Modal isOpen onClose={onClose} title="Running Bill / Interim Statement" subtitle="Not the final discharge invoice — department invoices shown separately." maxWidth="4xl">
+    <Modal isOpen onClose={onClose} title="Running Bill / Interim Statement" subtitle="Admission Invoices & Payment Clearance" maxWidth="4xl">
       {isLoading ? (
         <div className="p-8 flex items-center justify-center gap-2 text-slate-400">
           <Loader2 className="h-4 w-4 animate-spin" />
@@ -223,45 +236,47 @@ export const AdmissionStatementModal: React.FC<AdmissionStatementModalProps> = (
           <p className="text-xs text-rose-700 font-medium">{loadError}</p>
         </div>
       ) : statement ? (
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
-            <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
-              <span className="text-[10px] text-slate-500 uppercase block">Consolidated Total</span>
-              <span className="font-bold text-slate-800">{formatPKR(statement.consolidated.total)}</span>
+        <div className="space-y-3">
+          {/* Top 4 Financial Metric Tiles */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+            <div className="p-2 bg-slate-50/80 rounded-lg border border-slate-200">
+              <span className="text-[10px] text-slate-500 uppercase block font-semibold">Consolidated Total</span>
+              <span className="font-bold text-slate-800 text-sm">{formatPKR(statement.consolidated.total)}</span>
             </div>
-            <div className="p-2.5 bg-emerald-50 rounded-lg border border-emerald-200">
-              <span className="text-[10px] text-emerald-700 uppercase block">Paid (incl. advance)</span>
-              <span className="font-bold text-emerald-800">{formatPKR(statement.consolidated.paidTotal)}</span>
+            <div className="p-2 bg-emerald-50/60 rounded-lg border border-emerald-200">
+              <span className="text-[10px] text-emerald-700 uppercase block font-semibold">Paid Total</span>
+              <span className="font-bold text-emerald-800 text-sm">{formatPKR(statement.consolidated.paidTotal)}</span>
             </div>
-            <div className="p-2.5 bg-purple-50 rounded-lg border border-purple-200">
-              <span className="text-[10px] text-purple-700 uppercase block">Panel Receivable</span>
-              <span className="font-bold text-purple-800">{formatPKR(statement.consolidated.panelReceivable)}</span>
+            <div className="p-2 bg-purple-50/60 rounded-lg border border-purple-200">
+              <span className="text-[10px] text-purple-700 uppercase block font-semibold">Panel Receivable</span>
+              <span className="font-bold text-purple-800 text-sm">{formatPKR(statement.consolidated.panelReceivable)}</span>
             </div>
-            <div className="p-2.5 bg-amber-50 rounded-lg border border-amber-200">
-              <span className="text-[10px] text-amber-700 uppercase block">Outstanding</span>
-              <span className="font-bold text-amber-800">{formatPKR(statement.consolidated.outstanding)}</span>
+            <div className={`p-2 rounded-lg border ${statement.consolidated.outstanding > 0 ? 'bg-amber-50/80 border-amber-300' : 'bg-emerald-50/80 border-emerald-300'}`}>
+              <span className={`text-[10px] uppercase block font-semibold ${statement.consolidated.outstanding > 0 ? 'text-amber-800' : 'text-emerald-800'}`}>Outstanding</span>
+              <span className={`font-bold text-sm ${statement.consolidated.outstanding > 0 ? 'text-amber-900' : 'text-emerald-900'}`}>{formatPKR(statement.consolidated.outstanding)}</span>
             </div>
           </div>
 
           {(statement.unallocatedCreditTotal > 0 || statement.availableCredit > 0) && (
-            <div className="flex flex-wrap items-center gap-4 p-2.5 bg-[#effaf5] rounded-lg border border-[#c2e7db] text-xs">
-              <span className="text-[#08775A] font-semibold">
-                Advance / deposit collected: <strong>{formatPKR(statement.unallocatedCreditTotal)}</strong> (already applied to Outstanding above)
+            <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 bg-[#effaf5] rounded-lg border border-[#c2e7db] text-[11px]">
+              <span className="text-[#08775A] font-medium">
+                Advance / deposit collected: <strong>{formatPKR(statement.unallocatedCreditTotal)}</strong> (applied to Outstanding)
               </span>
               {statement.availableCredit > 0 && (
-                <span className="text-[#08775A] font-semibold">
+                <span className="text-[#08775A] font-medium">
                   Unused available credit: <strong>{formatPKR(statement.availableCredit)}</strong>
                 </span>
               )}
             </div>
           )}
 
+          {/* Department Invoices Table */}
           <div className="border border-slate-200 rounded-lg overflow-hidden">
             <table className="w-full text-xs">
               <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
-                  {['Department', 'Gross', 'Discount', 'Net', 'Patient Share', 'Panel Receivable', 'Paid', 'Outstanding'].map((h) => (
-                    <th key={h} className="text-left px-3 py-2 font-semibold text-slate-600 whitespace-nowrap">
+                  {['Department', 'Gross', 'Discount', 'Net', 'Patient Share', 'Panel Recv.', 'Paid', 'Outstanding'].map((h) => (
+                    <th key={h} className="text-left px-3 py-1.5 font-semibold text-slate-600 whitespace-nowrap">
                       {h}
                     </th>
                   ))}
@@ -273,40 +288,30 @@ export const AdmissionStatementModal: React.FC<AdmissionStatementModalProps> = (
                   const pharmInvoiceNum = inv.pharmacyDetails?.pharmacyInvoiceNumber || statement.pharmacyCharge?.pharmacyInvoiceNumber || inv.invoiceNumber;
 
                   return (
-                    <tr key={inv.id} className={isPharm ? 'bg-emerald-50/20' : ''}>
-                      <td className="px-3 py-2 whitespace-nowrap font-semibold text-slate-800">
-                        <div className="flex items-center gap-2">
+                    <tr key={inv.id} className={isPharm ? 'bg-emerald-50/20' : 'hover:bg-slate-50/40'}>
+                      <td className="px-3 py-1.5 whitespace-nowrap font-medium text-slate-800">
+                        <div className="flex items-center gap-1.5">
                           <span>{inv.departmentName}</span>
                           {isPharm && (
-                            <div className="inline-flex items-center gap-1.5">
-                              <span className="font-mono text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-bold">
-                                {pharmInvoiceNum}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => setShowPharmacyModal(true)}
-                                className="px-2 py-0.5 text-[10px] font-semibold text-[#08775A] bg-[#effaf5] hover:bg-[#d8f3e9] border border-[#a3e2cf] rounded cursor-pointer transition-colors inline-flex items-center gap-1"
-                              >
-                                <Eye className="h-3 w-3" />
-                                View Pharmacy Details
-                              </button>
-                            </div>
+                            <span className="font-mono text-[9px] bg-emerald-100 text-emerald-800 px-1 py-0.2 rounded font-bold">
+                              {pharmInvoiceNum}
+                            </span>
                           )}
                         </div>
                       </td>
-                      <td className="px-3 py-2 whitespace-nowrap">{formatPKR(inv.subtotal)}</td>
-                      <td className="px-3 py-2 whitespace-nowrap text-rose-600">{formatPKR(inv.discountTotal)}</td>
-                      <td className="px-3 py-2 whitespace-nowrap font-semibold">{formatPKR(inv.total)}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">{formatPKR(inv.patientShare)}</td>
-                      <td className="px-3 py-2 whitespace-nowrap text-purple-700">{formatPKR(inv.panelReceivable)}</td>
-                      <td className="px-3 py-2 whitespace-nowrap text-emerald-700">{formatPKR(inv.paidTotal)}</td>
-                      <td className="px-3 py-2 whitespace-nowrap font-semibold text-amber-700">{formatPKR(inv.outstanding)}</td>
+                      <td className="px-3 py-1.5 whitespace-nowrap text-slate-600">{formatPKR(inv.subtotal)}</td>
+                      <td className="px-3 py-1.5 whitespace-nowrap text-rose-600">{formatPKR(inv.discountTotal)}</td>
+                      <td className="px-3 py-1.5 whitespace-nowrap font-semibold text-slate-800">{formatPKR(inv.total)}</td>
+                      <td className="px-3 py-1.5 whitespace-nowrap text-slate-600">{formatPKR(inv.patientShare)}</td>
+                      <td className="px-3 py-1.5 whitespace-nowrap text-purple-700">{formatPKR(inv.panelReceivable)}</td>
+                      <td className="px-3 py-1.5 whitespace-nowrap text-emerald-700">{formatPKR(inv.paidTotal)}</td>
+                      <td className="px-3 py-1.5 whitespace-nowrap font-bold text-amber-700">{formatPKR(inv.outstanding)}</td>
                     </tr>
                   );
                 })}
                 {statement.departmentInvoices.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-3 py-6 text-center text-slate-400">
+                    <td colSpan={8} className="px-3 py-4 text-center text-slate-400">
                       No department invoices posted yet for this admission.
                     </td>
                   </tr>
@@ -315,176 +320,255 @@ export const AdmissionStatementModal: React.FC<AdmissionStatementModalProps> = (
             </table>
           </div>
 
-          {/* ── §8 Dedicated Pharmacy Component Card ─────────────────── */}
+          {/* Pharmacy Component Compact Bar */}
           {statement.pharmacyCharge && (
-            <div className="p-3.5 bg-gradient-to-r from-emerald-50/50 to-teal-50/30 rounded-xl border border-emerald-200/80 shadow-2xs space-y-2.5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="h-6 w-6 rounded-md bg-[#08775A] text-white flex items-center justify-center font-bold text-xs">
-                    <Pill className="h-3.5 w-3.5" />
-                  </div>
-                  <div>
-                    <span className="text-xs font-bold text-slate-800">Pharmacy Medication Component</span>
-                    <span className="ml-2 font-mono text-[11px] font-extrabold text-[#08775A] bg-emerald-100 px-2 py-0.5 rounded">
-                      Linked Invoice: {statement.pharmacyCharge.pharmacyInvoiceNumber}
-                    </span>
-                  </div>
+            <div className="px-3 py-2 bg-gradient-to-r from-emerald-50/60 to-teal-50/30 rounded-lg border border-emerald-200/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2">
+                <div className="h-5 w-5 rounded bg-[#08775A] text-white flex items-center justify-center font-bold">
+                  <Pill className="h-3 w-3" />
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase ${
+                <div className="flex items-center gap-1.5">
+                  <span className="font-bold text-slate-800">Pharmacy:</span>
+                  <span className="font-mono text-[10px] font-bold text-[#08775A] bg-emerald-100 px-1.5 py-0.2 rounded">
+                    {statement.pharmacyCharge.pharmacyInvoiceNumber}
+                  </span>
+                  <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded-full border uppercase ${
                     statement.pharmacyCharge.patientOutstanding === 0
                       ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
                       : 'bg-amber-100 text-amber-800 border-amber-300'
                   }`}>
                     {statement.pharmacyCharge.patientOutstanding === 0 ? 'CLEARED' : 'PENDING'}
                   </span>
-                  {statement.pharmacyCharge.patientPaid > 0 && (
-                    <button
-                      type="button"
-                      onClick={handleResyncPharmacy}
-                      disabled={isResyncingPharmacy}
-                      title="Re-send the collected amount to Pharmacy's system — use if their Receivable still shows 0/wrong after you've already collected payment here."
-                      className="px-2.5 py-1 text-xs font-semibold text-[#08775A] bg-white border border-[#08775A]/40 hover:bg-emerald-50 rounded-lg shadow-2xs inline-flex items-center gap-1 cursor-pointer transition-colors disabled:opacity-60"
-                    >
-                      {isResyncingPharmacy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                      Resync to Pharmacy
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setShowPharmacyModal(true)}
-                    className="px-2.5 py-1 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg shadow-2xs inline-flex items-center gap-1 cursor-pointer transition-colors"
-                  >
-                    <Eye className="h-3.5 w-3.5" />
-                    View Pharmacy Details
-                  </button>
+                </div>
+                <span className="text-slate-300 hidden sm:inline">|</span>
+                <div className="hidden sm:flex items-center gap-2 text-[11px] text-slate-600">
+                  <span>Total: <strong className="text-slate-800">{formatPKR(statement.pharmacyCharge.totalAmount)}</strong></span>
+                  <span>Paid: <strong className="text-emerald-700">{formatPKR(statement.pharmacyCharge.patientPaid)}</strong></span>
+                  <span>Due: <strong className="text-amber-700">{formatPKR(statement.pharmacyCharge.patientOutstanding)}</strong></span>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
-                <div className="p-2 bg-white/80 rounded border border-slate-200">
-                  <span className="text-[9px] text-slate-500 uppercase block">Pharmacy Total</span>
-                  <span className="font-bold text-slate-900">{formatPKR(statement.pharmacyCharge.totalAmount)}</span>
-                </div>
-                <div className="p-2 bg-white/80 rounded border border-slate-200">
-                  <span className="text-[9px] text-emerald-700 uppercase block">Patient Paid</span>
-                  <span className="font-bold text-emerald-800">{formatPKR(statement.pharmacyCharge.patientPaid)}</span>
-                </div>
-                <div className="p-2 bg-white/80 rounded border border-slate-200">
-                  <span className="text-[9px] text-amber-700 uppercase block">Outstanding</span>
-                  <span className="font-bold text-amber-800">{formatPKR(statement.pharmacyCharge.patientOutstanding)}</span>
-                </div>
-                <div className="p-2 bg-white/80 rounded border border-slate-200">
-                  <span className="text-[9px] text-slate-500 uppercase block">Total Dispenses</span>
-                  <span className="font-bold text-slate-800">{statement.pharmacyCharge.items?.length || 0} line(s)</span>
-                </div>
+              <div className="flex items-center gap-1.5">
+                {statement.pharmacyCharge.patientPaid > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleResyncPharmacy}
+                    disabled={isResyncingPharmacy}
+                    title="Resync payment with Central Pharmacy"
+                    className="px-2 py-0.5 text-[11px] font-medium text-[#08775A] bg-white border border-[#08775A]/40 hover:bg-emerald-50 rounded shadow-2xs inline-flex items-center gap-1 cursor-pointer transition-colors disabled:opacity-60"
+                  >
+                    {isResyncingPharmacy ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                    Resync
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowPharmacyModal(true)}
+                  className="px-2.5 py-0.5 text-[11px] font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded shadow-2xs inline-flex items-center gap-1 cursor-pointer transition-colors"
+                >
+                  <Eye className="h-3 w-3" />
+                  Details
+                </button>
               </div>
             </div>
           )}
 
-          {discountEligibleInvoice ? (
-            <form onSubmit={handleApplyDiscount} className="border-t border-slate-200 pt-4 space-y-3">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-[#08775A] flex items-center gap-1.5">
-                <Percent className="h-3.5 w-3.5" /> Apply Discount
-              </h4>
-              <p className="text-[11px] text-slate-500">
-                Discounts apply to Hospital Services only (Max {formatPKR(eligibleDiscountGross)}). Outsourced Lab, Radiology, and Pharmacy charges cannot be discounted.
-              </p>
-
-              {discError && (
-                <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg flex items-center gap-2 text-xs text-rose-700 font-medium">
-                  <AlertCircle className="h-4 w-4 shrink-0" />
-                  <span>{discError}</span>
-                </div>
-              )}
-
-              <Select
-                label="Apply To"
-                options={[
-                  { label: `Whole eligible total (${formatPKR(eligibleDiscountGross)})`, value: '' },
-                  ...eligibleDiscountLines.map((l) => ({ label: `${l.serviceName} (${formatPKR(l.lineGross)})`, value: l.id })),
-                ]}
-                value={discLineId}
-                onChange={(e) => setDiscLineId(e.target.value)}
-              />
-
-              <div className="grid grid-cols-2 gap-3">
-                <NumberInput label="Discount %" min={0} max={100} value={discPercent} onChange={(e) => setDiscPercent(e.target.value === '' ? '' : Number(e.target.value))} />
-                <NumberInput label="OR Discount Amount (PKR)" min={0} value={discAmount} onChange={(e) => setDiscAmount(e.target.value === '' ? '' : Number(e.target.value))} />
-              </div>
-              <TextInput label="Reason" required placeholder="e.g. Administrative / Patient Relief Discount" value={discReason} onChange={(e) => setDiscReason(e.target.value)} />
-
-              <div className="flex justify-end pt-1">
+          {/* Action Tabs & Forms (Payment vs Discount) */}
+          <div className="border border-slate-200 rounded-xl p-3 bg-white space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2">
+              <div className="flex items-center gap-1.5">
                 <button
-                  type="submit"
-                  disabled={isSavingDiscount}
-                  className="px-5 py-2 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 rounded-lg shadow-xs disabled:opacity-60 inline-flex items-center gap-1.5 cursor-pointer"
+                  type="button"
+                  onClick={() => setActiveTab('payment')}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer ${
+                    activeTab === 'payment'
+                      ? 'bg-[#08775A] text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                  }`}
                 >
-                  {isSavingDiscount && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  Apply Discount
+                  <Wallet className="h-3.5 w-3.5" />
+                  Collect Payment
+                  {statement.consolidated.outstanding > 0 && (
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                      activeTab === 'payment' ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-800'
+                    }`}>
+                      {formatPKR(statement.consolidated.outstanding)}
+                    </span>
+                  )}
                 </button>
-              </div>
-            </form>
-          ) : statement.departmentInvoices.length > 0 ? (
-            <p className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-2.5">
-              No discount available — this admission has only Panel, Outsourced Lab/Radiology, or Pharmacy charges, which cannot be discounted at Front Desk.
-            </p>
-          ) : null}
 
-          {outstandingInvoices.length > 0 && (
-            <form onSubmit={handleSubmit} className="border-t border-slate-200 pt-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-[#08775A] flex items-center gap-1.5">
-                  <Wallet className="h-3.5 w-3.5" /> Collect Payment
-                </h4>
-                <Toggle label="Manual per-department allocation" checked={manualMode} onChange={setManualMode} />
+                {discountEligibleInvoice && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('discount')}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer ${
+                      activeTab === 'discount'
+                        ? 'bg-amber-600 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                    }`}
+                  >
+                    <Percent className="h-3.5 w-3.5" />
+                    Apply Discount
+                    {eligibleDiscountGross > 0 && (
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-medium ${
+                        activeTab === 'discount' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
+                      }`}>
+                        Max {formatPKR(eligibleDiscountGross)}
+                      </span>
+                    )}
+                  </button>
+                )}
               </div>
 
-              {formError && (
-                <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg flex items-center gap-2 text-xs text-rose-700 font-medium">
-                  <AlertCircle className="h-4 w-4 shrink-0" />
-                  <span>{formError}</span>
-                </div>
+              {activeTab === 'payment' && outstandingInvoices.length > 0 && (
+                <Toggle label="Manual allocation" checked={manualMode} onChange={setManualMode} />
               )}
+            </div>
 
-              {manualMode ? (
-                <div className="space-y-2">
-                  {outstandingInvoices.map((inv) => (
-                    <div key={inv.id} className="flex items-center gap-3">
-                      <span className="text-xs text-slate-600 w-40 shrink-0">{inv.departmentName}</span>
-                      <span className="text-[10px] text-slate-400 w-28 shrink-0">Outstanding: {formatPKR(inv.outstanding)}</span>
-                      <NumberInput
-                        min={0}
-                        max={inv.outstanding}
-                        value={manualAmounts[inv.id] ?? ''}
-                        onChange={(e) => setManualAmounts({ ...manualAmounts, [inv.id]: e.target.value === '' ? '' : Number(e.target.value) })}
-                        className="max-w-[140px]"
-                      />
+            {/* TAB: PAYMENT */}
+            {activeTab === 'payment' && (
+              <>
+                {statement.consolidated.outstanding === 0 ? (
+                  <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center justify-between text-xs text-emerald-800">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                      <span className="font-semibold">All department invoices are cleared. No outstanding balance remaining.</span>
                     </div>
-                  ))}
-                  <p className="text-[11px] text-slate-500">Total to collect: <strong>{formatPKR(manualSum)}</strong></p>
+                    <span className="text-[10px] font-bold bg-emerald-200 text-emerald-900 px-2 py-0.5 rounded-full uppercase">Ready for Discharge</span>
+                  </div>
+                ) : (
+                  <form onSubmit={handleSubmit} className="space-y-3">
+                    {formError && (
+                      <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg flex items-center gap-2 text-xs text-rose-700 font-medium">
+                        <AlertCircle className="h-4 w-4 shrink-0" />
+                        <span>{formError}</span>
+                      </div>
+                    )}
+
+                    {manualMode ? (
+                      <div className="space-y-2">
+                        {outstandingInvoices.map((inv) => (
+                          <div key={inv.id} className="flex items-center justify-between gap-3 p-2 bg-slate-50 rounded-lg border border-slate-200 text-xs">
+                            <span className="font-medium text-slate-700 flex-1">{inv.departmentName}</span>
+                            <span className="text-slate-500 text-[11px]">Due: <strong className="text-slate-800">{formatPKR(inv.outstanding)}</strong></span>
+                            <NumberInput
+                              min={0}
+                              max={inv.outstanding}
+                              value={manualAmounts[inv.id] ?? ''}
+                              onChange={(e) => setManualAmounts({ ...manualAmounts, [inv.id]: e.target.value === '' ? '' : Number(e.target.value) })}
+                              className="w-32"
+                            />
+                          </div>
+                        ))}
+                        <div className="flex items-center justify-between text-xs pt-1 px-1">
+                          <span className="text-slate-500">Total to collect: <strong className="text-slate-900 font-bold">{formatPKR(manualSum)}</strong></span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const full: Record<string, number | ''> = {};
+                              for (const inv of outstandingInvoices) full[inv.id] = inv.outstanding;
+                              setManualAmounts(full);
+                            }}
+                            className="text-[11px] font-semibold text-[#08775A] hover:underline cursor-pointer"
+                          >
+                            Fill All Outstandings
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-semibold text-slate-700">Amount *</label>
+                          {amount !== statement.consolidated.outstanding && (
+                            <button
+                              type="button"
+                              onClick={() => setAmount(statement.consolidated.outstanding)}
+                              className="text-[11px] font-semibold text-[#08775A] hover:underline cursor-pointer inline-flex items-center gap-1"
+                            >
+                              Auto-fill Full Balance: <strong>{formatPKR(statement.consolidated.outstanding)}</strong>
+                            </button>
+                          )}
+                        </div>
+                        <NumberInput
+                          required
+                          min={1}
+                          value={amount}
+                          onChange={(e) => setAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                          hint="Auto-allocated proportionally to each department's outstanding balance."
+                        />
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <Select label="Payment Method" required options={PAYMENT_METHODS} value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)} />
+                      <TextInput label="Reference (optional)" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="e.g. Card receipt / Cheque / Bank ref" />
+                    </div>
+
+                    <div className="flex justify-end pt-1">
+                      <button
+                        type="submit"
+                        disabled={isSaving}
+                        className="px-5 py-2 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg shadow-sm disabled:opacity-60 inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                      >
+                        {isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                        Collect & Allocate {amount ? `(${formatPKR(Number(amount))})` : ''}
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </>
+            )}
+
+            {/* TAB: DISCOUNT */}
+            {activeTab === 'discount' && discountEligibleInvoice && (
+              <form onSubmit={handleApplyDiscount} className="space-y-3">
+                <p className="text-[11px] text-slate-500 bg-amber-50/50 border border-amber-200/70 rounded-lg p-2">
+                  Discounts apply to <strong>Hospital Services only</strong> (Max {formatPKR(eligibleDiscountGross)}). Outsourced Lab, Radiology, and Pharmacy charges cannot be discounted.
+                </p>
+
+                {discError && (
+                  <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg flex items-center gap-2 text-xs text-rose-700 font-medium">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <span>{discError}</span>
+                  </div>
+                )}
+
+                <Select
+                  label="Apply To"
+                  options={[
+                    { label: `Whole eligible total (${formatPKR(eligibleDiscountGross)})`, value: '' },
+                    ...eligibleDiscountLines.map((l) => ({ label: `${l.serviceName} (${formatPKR(l.lineGross)})`, value: l.id })),
+                  ]}
+                  value={discLineId}
+                  onChange={(e) => setDiscLineId(e.target.value)}
+                />
+
+                <div className="grid grid-cols-2 gap-3">
+                  <NumberInput label="Discount %" min={0} max={100} value={discPercent} onChange={(e) => setDiscPercent(e.target.value === '' ? '' : Number(e.target.value))} />
+                  <NumberInput label="OR Discount Amount (PKR)" min={0} value={discAmount} onChange={(e) => setDiscAmount(e.target.value === '' ? '' : Number(e.target.value))} />
                 </div>
-              ) : (
-                <NumberInput label="Amount" required min={1} value={amount} onChange={(e) => setAmount(e.target.value === '' ? '' : Number(e.target.value))} hint="Auto-allocated proportionally to each department's outstanding balance." />
-              )}
+                <TextInput label="Reason *" required placeholder="e.g. Administrative / Patient Relief Discount" value={discReason} onChange={(e) => setDiscReason(e.target.value)} />
 
-              <div className="grid grid-cols-2 gap-3">
-                <Select label="Payment Method" required options={PAYMENT_METHODS} value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)} />
-                <TextInput label="Reference (optional)" value={reference} onChange={(e) => setReference(e.target.value)} />
-              </div>
-
-              <div className="flex justify-end pt-2">
-                <button
-                  type="submit"
-                  disabled={isSaving}
-                  className="px-5 py-2 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg shadow-xs disabled:opacity-60 inline-flex items-center gap-1.5 cursor-pointer"
-                >
-                  {isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  Collect & Allocate
-                </button>
-              </div>
-            </form>
-          )}
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('payment')}
+                    className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingDiscount}
+                    className="px-4 py-1.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg shadow-sm disabled:opacity-60 inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                  >
+                    {isSavingDiscount && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    Apply Discount
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
         </div>
       ) : null}
 

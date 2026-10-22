@@ -216,10 +216,15 @@ export const NewAdmissionView: React.FC = () => {
     const sorted = [...departments].sort((a, b) => a.name.localeCompare(b.name));
     return [
       { label: '-- Select Department --', value: '' },
-      ...sorted.map((d) => ({
-        label: d.status === 'Inactive' ? `${d.name} (Inactive)` : d.name,
-        value: d.id,
-      })),
+      ...sorted.map((d) => {
+        const feeStr = d.fixedPrice != null && Number(d.fixedPrice) > 0
+          ? ` (Fee: PKR ${Number(d.fixedPrice).toLocaleString('en-PK')})`
+          : '';
+        return {
+          label: `${d.status === 'Inactive' ? `${d.name} (Inactive)` : d.name}${feeStr}`,
+          value: d.id,
+        };
+      }),
     ];
   }, [departments]);
 
@@ -229,6 +234,10 @@ export const NewAdmissionView: React.FC = () => {
   const selectedWard = useMemo(
     () => (selectedWardId === STANDALONE_ROOMS_SENTINEL ? undefined : allWards.find((w) => w.id === selectedWardId)),
     [allWards, selectedWardId]
+  );
+  const selectedDepartment = useMemo(
+    () => departments.find((d) => d.id === formValues.departmentId),
+    [departments, formValues.departmentId]
   );
 
   useEffect(() => {
@@ -1068,6 +1077,8 @@ export const NewAdmissionView: React.FC = () => {
                   } else {
                     const doctorObj = allStaff.find((d) => d.id === createdAdmission?.doctorId);
                     const docDisplayName = createdAdmission?.doctorName || doctorObj?.fullName;
+                    const rmoObj = allStaff.find((d) => d.id === (createdAdmission as any)?.rmoStaffId);
+                    const rmoDisplayName = (createdAdmission as any)?.rmoName || rmoObj?.fullName;
                     const mockInv: any = {
                       invoiceNumber: createdAdmission?.admissionNumber ? `INV-${createdAdmission.admissionNumber}` : 'INV-ADM',
                       sourceType: 'ADMISSION',
@@ -1079,6 +1090,7 @@ export const NewAdmissionView: React.FC = () => {
                       patientWeight: weightVal,
                       patientPhone: primaryPhone || '',
                       doctorName: docDisplayName,
+                      rmoName: rmoDisplayName,
                       admissionNumber: createdAdmission?.admissionNumber,
                       admissionRecord: createdAdmission,
                       total: createdAdmission?.estimatedAmount || effectiveAdvance,
@@ -1095,6 +1107,7 @@ export const NewAdmissionView: React.FC = () => {
                       receivedNow: effectiveAdvance,
                       isReprint: false,
                       patientWeight: weightVal,
+                      rmoName: rmoDisplayName,
                     });
                     setActiveThermalReceipt(thermal);
                     setIsThermalModalOpen(true);
@@ -1555,9 +1568,11 @@ export const NewAdmissionView: React.FC = () => {
               <Select
                 label="Department"
                 hint={
-                  departments.length === 0
-                    ? 'Loading departments...'
-                    : 'Optional — auto-resolved from the selected Ward if left blank.'
+                  selectedDepartment?.fixedPrice != null && Number(selectedDepartment.fixedPrice) > 0
+                    ? `Department Fee: PKR ${Number(selectedDepartment.fixedPrice).toLocaleString('en-PK')} will be automatically charged on admission.`
+                    : (departments.length === 0
+                        ? 'Loading departments...'
+                        : 'Optional — auto-resolved from the selected Ward if left blank.')
                 }
                 options={departmentOptions}
                 value={formValues.departmentId}
@@ -1569,13 +1584,20 @@ export const NewAdmissionView: React.FC = () => {
               <Select
                 label="Ward"
                 hint={
-                  activeWards.length === 0
-                    ? 'No active wards configured.'
-                    : 'Optional — pick "Standalone Rooms" below to admit into a room with no parent ward.'
+                  selectedWard?.fixedPrice != null && Number(selectedWard.fixedPrice) > 0
+                    ? `Ward Fixed Price: PKR ${Number(selectedWard.fixedPrice).toLocaleString('en-PK')} will be automatically charged on admission.`
+                    : (activeWards.length === 0
+                        ? 'No active wards configured.'
+                        : 'Optional — pick "Standalone Rooms" below to admit into a room with no parent ward.')
                 }
                 options={[
                   { label: '-- Select Ward --', value: '' },
-                  ...activeWards.map((w) => ({ label: w.name, value: w.id })),
+                  ...activeWards.map((w) => {
+                    const feeStr = w.fixedPrice != null && Number(w.fixedPrice) > 0
+                      ? ` (Fixed: PKR ${Number(w.fixedPrice).toLocaleString('en-PK')})`
+                      : '';
+                    return { label: `${w.name}${feeStr}`, value: w.id };
+                  }),
                   { label: '— Standalone Rooms (No Ward) —', value: STANDALONE_ROOMS_SENTINEL },
                 ]}
                 value={selectedWardId}

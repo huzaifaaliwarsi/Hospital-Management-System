@@ -34,6 +34,13 @@ router.get(
   asyncHandler(c.getRequestById),
 );
 
+// Pull queued requests from HMS (accessible by Standalone Pharmacy bridge)
+router.get(
+  '/pending-requests',
+  bridgeAuth,
+  asyncHandler(c.listPendingRequestsForBridge),
+);
+
 // ── Webhook Callback from Standalone Pharmacy ──────────────────────────────
 router.post(
   '/callback/dispensed',

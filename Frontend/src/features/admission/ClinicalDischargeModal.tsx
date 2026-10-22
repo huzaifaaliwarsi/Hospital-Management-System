@@ -24,9 +24,11 @@ import {
   AdmissionDischargeSummary,
 } from '../../services/admissionService';
 import { DischargeSlipPrintModal } from './DischargeSlipPrintModal';
+import { formatPKR } from '../../utils/formatters';
 
 interface ClinicalDischargeModalProps {
   admission: AdmissionRecord;
+  outstanding?: number;
   onClose: () => void;
   onDischarged: () => void;
 }
@@ -35,10 +37,12 @@ type FinalOutcome = 'Discharge' | 'Lama' | 'DOR' | 'Died';
 
 export const ClinicalDischargeModal: React.FC<ClinicalDischargeModalProps> = ({
   admission,
+  outstanding,
   onClose,
   onDischarged,
 }) => {
   const toast = useToast();
+  const effectiveOutstanding = outstanding ?? (admission as any).totalOutstanding ?? 0;
 
   // Verification state (Doctor or RMO)
   const [doctorUsername, setDoctorUsername] = useState('');
@@ -56,7 +60,12 @@ export const ClinicalDischargeModal: React.FC<ClinicalDischargeModalProps> = ({
   const [weightOnDischarge, setWeightOnDischarge] = useState('');
 
   // Editable Demographics fallback
-  const [patientFatherName, setPatientFatherName] = useState(admission.patientFatherName || '');
+  const [patientFatherName, setPatientFatherName] = useState(
+    (admission.patientFatherName || '')
+      .replace(/\[?\s*CNIC[:\s]*[0-9-]+\s*\]?/i, '')
+      .replace(/\[\s*\]/g, '')
+      .trim()
+  );
   const [patientAge, setPatientAge] = useState(admission.patientAge || '');
   const [patientGender, setPatientGender] = useState(admission.patientGender || '');
   const [patientAddress, setPatientAddress] = useState(admission.patientAddress || '');
@@ -109,6 +118,10 @@ export const ClinicalDischargeModal: React.FC<ClinicalDischargeModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (effectiveOutstanding > 0) {
+      setError(`Cannot discharge patient: Patient has an outstanding balance of ${formatPKR(effectiveOutstanding)}. All inpatient dues must be cleared at Front Desk before authorizing discharge.`);
+      return;
+    }
     if (!doctor) {
       await handleVerify();
       return;
@@ -222,6 +235,19 @@ export const ClinicalDischargeModal: React.FC<ClinicalDischargeModalProps> = ({
       maxWidth="4xl"
     >
       <form onSubmit={handleSubmit} className="space-y-4">
+        {effectiveOutstanding > 0 && (
+          <div className="p-3.5 bg-rose-50 border border-rose-300 rounded-2xl flex items-start gap-3 text-xs text-rose-900 font-medium shadow-xs">
+            <AlertCircle className="h-5 w-5 text-rose-600 shrink-0 mt-0.5" />
+            <div className="space-y-0.5">
+              <p className="font-bold text-rose-950 text-sm">Discharge Blocked: Outstanding Balance Remaining</p>
+              <p className="text-rose-800 leading-relaxed">
+                This patient has an unpaid balance of <strong className="font-mono font-bold text-rose-950">{formatPKR(effectiveOutstanding)}</strong> across hospital invoices.
+                Inpatient discharge cannot be authorized until payment clearance is completed at Front Desk.
+              </p>
+            </div>
+          </div>
+        )}
+
         {error && (
           <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-center gap-2.5 text-xs text-rose-700 font-medium">
             <AlertCircle className="h-4 w-4 shrink-0" />
@@ -608,13 +634,18 @@ export const ClinicalDischargeModal: React.FC<ClinicalDischargeModalProps> = ({
             </button>
             <button
               type="submit"
-              disabled={isSaving || !doctor}
-              className="px-5 py-2 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] rounded-xl shadow-xs disabled:opacity-50 inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+              disabled={isSaving || !doctor || effectiveOutstanding > 0}
+              className="px-5 py-2 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] rounded-xl shadow-xs disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5 transition-colors cursor-pointer"
             >
               {isSaving ? (
                 <>
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   <span>Authorizing &amp; Saving…</span>
+                </>
+              ) : effectiveOutstanding > 0 ? (
+                <>
+                  <Lock className="h-4 w-4" />
+                  <span>Clearance Required ({formatPKR(effectiveOutstanding)})</span>
                 </>
               ) : (
                 <>

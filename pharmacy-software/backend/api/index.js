@@ -35067,6 +35067,9 @@ var POLICY = {
 };
 function authorize(module2, action) {
   return (req, _res, next) => {
+    if (req.isInternalBridge) {
+      throw new AuthorizationError("Bridge credentials are restricted to integration endpoints");
+    }
     const role = req.user?.role;
     if (!role || !POLICY[role]?.[module2]?.has(action)) {
       throw new AuthorizationError(`Role ${role ?? "UNKNOWN"} cannot ${action} ${module2}`);
@@ -35221,9 +35224,6 @@ function bridgeAuth(req, _res, next) {
     req.isInternalBridge = true;
     return next();
   }
-  if (req.user) {
-    return next();
-  }
   throw new AuthenticationError("Unauthorized bridge request: invalid or missing internal bridge token");
 }
 
@@ -35354,7 +35354,8 @@ async function writePackagingLevels(tx, medicineId, baseUnitId, baseIsPurchaseUn
   }
   return baseUnit.name;
 }
-async function allocateFefoBatches(medicineId, requestedQuantity, tx) {
+async function allocateFefoBatches(medicineId, requestedQuantity, tx, reserved = []) {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('pharmacy-stock'))`;
   const medicine = await tx.medicineMaster.findUnique({
     where: { id: medicineId },
     include: { batches: { orderBy: { expiryDate: "asc" }, include: { stockEntries: { select: { quantityDelta: true } } } } }
@@ -35362,14 +35363,14 @@ async function allocateFefoBatches(medicineId, requestedQuantity, tx) {
   if (!medicine || !medicine.isActive) throw new NotFoundError(`Medicine ${medicineId} not found or inactive`);
   if (!medicine.batchManaged) {
     const entries = await tx.stockLedgerEntry.findMany({ where: { medicineId }, select: { quantityDelta: true } });
-    const total = entries.reduce((sum, e) => sum.plus(e.quantityDelta), new import_library.Decimal(0));
+    const total = entries.reduce((sum, e) => sum.plus(e.quantityDelta), new import_library.Decimal(0)).minus(reserved.filter((r) => r.medicineId === medicineId).reduce((sum, r) => sum.plus(r.quantity), new import_library.Decimal(0)));
     if (total.lessThan(requestedQuantity)) {
       throw new ValidationError2(`Insufficient stock for "${medicine.name}". Available: ${total}, Requested: ${requestedQuantity}`);
     }
     return [{ batchId: null, quantity: requestedQuantity }];
   }
   const now = /* @__PURE__ */ new Date();
-  const withStock = medicine.batches.filter((b) => b.expiryDate > now).map((b) => ({ id: b.id, available: b.stockEntries.reduce((s, e) => s.plus(e.quantityDelta), new import_library.Decimal(0)) })).filter((b) => b.available.greaterThan(0));
+  const withStock = medicine.batches.filter((b) => b.expiryDate > now).map((b) => ({ id: b.id, available: b.stockEntries.reduce((s, e) => s.plus(e.quantityDelta), new import_library.Decimal(0)).minus(reserved.filter((r) => r.medicineId === medicineId && r.batchId === b.id).reduce((sum, r) => sum.plus(r.quantity), new import_library.Decimal(0))) })).filter((b) => b.available.greaterThan(0));
   let remaining = requestedQuantity;
   const allocations = [];
   for (const batch of withStock) {
@@ -35633,6 +35634,13 @@ var pharmacyService = {
     const isNegative = body.type !== "SURPLUS";
     const delta = isNegative ? new import_library.Decimal(body.quantity).negated() : new import_library.Decimal(body.quantity);
     return prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('pharmacy-stock'))`;
+      if (medicine.batchManaged && !body.batchId) throw new ValidationError2("Select a batch for this stock adjustment");
+      if (body.batchId && !await tx.medicineBatch.findFirst({ where: { id: body.batchId, medicineId: body.medicineId } })) {
+        throw new ValidationError2("Batch does not belong to this medicine");
+      }
+      const balance = await tx.stockLedgerEntry.aggregate({ where: { medicineId: body.medicineId, batchId: body.batchId ?? null }, _sum: { quantityDelta: true } });
+      if (new import_library.Decimal(balance._sum.quantityDelta ?? 0).plus(delta).lessThan(0)) throw new ValidationError2("Adjustment would create negative stock");
       const adjustmentNumber = await nextCode(tx, SEQUENCE.STOCK_ADJUSTMENT);
       const adjustment = await tx.stockAdjustment.create({
         data: { adjustmentNumber, medicineId: body.medicineId, batchId: body.batchId, type: body.type, quantity: new import_library.Decimal(body.quantity), reason: body.reason, createdById: actorId }
@@ -35670,11 +35678,12 @@ var pharmacyService = {
         const reqQty = new import_library.Decimal(reqLine.saleUnitQuantity).mul(conversionToBase);
         const saleRate = packagingLevel.overrideSaleRate ? packagingLevel.overrideSaleRate.div(conversionToBase) : medicine.saleRate;
         const lineDiscount = new import_library.Decimal(reqLine.discountAmount || 0);
-        const allocations = await allocateFefoBatches(medicine.id, reqQty, tx);
+        const allocations = await allocateFefoBatches(medicine.id, reqQty, tx, stockDeductions);
+        if (lineDiscount.greaterThan(reqQty.mul(saleRate))) throw new ValidationError2("Line discount exceeds medicine value");
         for (let i = 0; i < allocations.length; i++) {
           const alloc = allocations[i];
           const allocGross = alloc.quantity.mul(saleRate);
-          const allocDiscount = i === 0 ? lineDiscount : new import_library.Decimal(0);
+          const allocDiscount = lineDiscount.mul(alloc.quantity).div(reqQty);
           const taxable = allocGross.minus(allocDiscount);
           const allocTax = taxable.mul(medicine.taxPercent).div(100);
           const allocNet = taxable.plus(allocTax);
@@ -35753,6 +35762,7 @@ var pharmacyService = {
   },
   async addPayment(invoiceId, body, actorId) {
     return prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${invoiceId}))`;
       const invoice = await tx.pharmacyInvoice.findUnique({ where: { id: invoiceId } });
       if (!invoice) throw new NotFoundError("Invoice not found");
       if (invoice.status === "PAID") throw new ConflictError("Invoice is already fully paid");
@@ -36154,6 +36164,31 @@ var hmsBridgeClient = {
       }
     }
     throw lastError;
+  },
+  async getPendingRequests() {
+    const urlsToTry = getHmsBaseUrls();
+    for (const baseUrl of urlsToTry) {
+      try {
+        const url = `${baseUrl}/pharmacy-bridge/pending-requests`;
+        const res = await fetch(url, {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            "x-bridge-token": env.INTERNAL_BRIDGE_SECRET
+          }
+        });
+        if (!res.ok) {
+          continue;
+        }
+        const data = await res.json();
+        if (data && Array.isArray(data.data)) {
+          return data.data;
+        }
+      } catch (err) {
+        console.warn(`[hmsBridgeClient] getPendingRequests failed on ${baseUrl}: ${err.message}`);
+      }
+    }
+    return [];
   }
 };
 
@@ -36230,7 +36265,58 @@ var hmsRequestsService = {
     });
     return created;
   },
+  // ── Sync queued requests from HMS Outbox (when Pharmacy was offline) ──────
+  async syncFromHmsOutbox() {
+    try {
+      const pending = await hmsBridgeClient.getPendingRequests();
+      if (!Array.isArray(pending) || pending.length === 0) {
+        return { synced: 0 };
+      }
+      let syncedCount = 0;
+      for (const req of pending) {
+        if (!req.externalRequestRef) continue;
+        const existing = await prisma.medicineRequest.findFirst({
+          where: { externalRequestRef: req.externalRequestRef }
+        });
+        if (existing) continue;
+        const validLines = [];
+        for (const l of req.lines || []) {
+          let med = await prisma.medicineMaster.findUnique({ where: { id: l.medicineId } });
+          if (!med && l.medicineName) {
+            med = await prisma.medicineMaster.findFirst({
+              where: { name: { equals: l.medicineName, mode: "insensitive" } }
+            });
+          }
+          if (med) {
+            validLines.push({
+              medicineId: med.id,
+              requestedQuantity: Number(l.requestedQuantity),
+              notes: l.notes
+            });
+          }
+        }
+        if (validLines.length === 0) continue;
+        await this.createRequest(
+          {
+            externalAdmissionRef: req.externalAdmissionRef,
+            externalRequestRef: req.externalRequestRef,
+            patientNameSnapshot: req.patientNameSnapshot,
+            urgency: req.urgency || "ROUTINE",
+            requestedByExternal: req.requestedByExternal,
+            lines: validLines
+          },
+          "bridge-system"
+        );
+        syncedCount++;
+      }
+      return { synced: syncedCount };
+    } catch (err) {
+      console.warn("[hmsRequestsService.syncFromHmsOutbox] sync warning:", err?.message || err);
+      return { synced: 0, error: err?.message };
+    }
+  },
   async list(query) {
+    await this.syncFromHmsOutbox().catch(() => null);
     return prisma.medicineRequest.findMany({ where: { status: query.status }, include: requestInclude, orderBy: { requestedAt: "desc" } });
   },
   async getById(id) {
@@ -36412,6 +36498,10 @@ var hmsRequestsService = {
         where: { id: updatedRequest.invoiceId }
       });
       if (invoice) {
+        const linkedRequests = await prisma.medicineRequest.findMany({
+          where: { invoiceId: invoice.id },
+          select: { externalRequestRef: true, status: true }
+        });
         const dispenserName = dispenser?.fullName || dispenser?.username || "Pharmacy Dispenser";
         const eventLines = fullLines.filter((l) => l.dispenseEventId === dispenseEventId);
         const deltaAmount = eventLines.reduce((s, l) => s + Number(l.lineNet), 0);
@@ -36428,6 +36518,7 @@ var hmsRequestsService = {
           deltaAmount,
           dispensedBy: dispenserName,
           dispensedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          requestStatuses: linkedRequests.filter((r) => r.externalRequestRef && ["DISPENSED", "PARTIALLY_ACCEPTED"].includes(r.status)).map((r) => ({ externalRequestRef: r.externalRequestRef, status: r.status === "DISPENSED" ? "DISPENSED" : "PARTIALLY_FULFILLED" })),
           lines: fullLines.map((l) => ({
             dispenseEventId: l.dispenseEventId || dispenseEventId,
             externalRequestRef: l.externalRequestRef || updatedRequest.externalRequestRef,
@@ -36754,7 +36845,7 @@ var router5 = (0, import_express5.Router)();
 var view3 = authorize("pharmacy", "view");
 var create3 = authorize("pharmacy", "create");
 var edit3 = authorize("pharmacy", "edit");
-router5.get("/stream/events", hmsRequestsController.streamEvents);
+router5.get("/stream/events", view3, hmsRequestsController.streamEvents);
 router5.get("/settings", view3, asyncHandler(hmsRequestsController.getSettings));
 router5.put("/settings", edit3, validate({ body: updateSettingsBodySchema }), asyncHandler(hmsRequestsController.updateSettings));
 router5.post("/", bridgeAuth, validate({ body: createRequestBodySchema }), asyncHandler(hmsRequestsController.create));
@@ -38509,7 +38600,13 @@ var listUnitsQuerySchema = external_exports.object({
 var router13 = (0, import_express13.Router)();
 var view10 = authorize("units", "view");
 var edit9 = authorize("units", "edit");
-router13.get("/", view10, validate({ query: listUnitsQuerySchema }), asyncHandler(unitsController.list));
+var viewOrBridge2 = (req, res, next) => {
+  if (req.headers["x-bridge-token"] || req.headers["x-internal-secret"]) {
+    return bridgeAuth(req, res, next);
+  }
+  return view10(req, res, next);
+};
+router13.get("/", viewOrBridge2, validate({ query: listUnitsQuerySchema }), asyncHandler(unitsController.list));
 router13.post("/", edit9, validate({ body: createUnitBodySchema }), asyncHandler(unitsController.create));
 router13.patch("/:id", edit9, validate({ params: idParamsSchema7, body: updateUnitBodySchema }), asyncHandler(unitsController.update));
 var units_routes_default = router13;

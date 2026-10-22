@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { PanelBadge } from '../../components/common/PanelBadge';
 import { useRouter } from '../../context/RouterContext';
+import { useAuth } from '../../context/AuthContext';
 import { fetchAdmissions, AdmissionRecord } from '../../services/admissionService';
 import { WardsRoomsBedsService, fetchWardHierarchy } from '../../services/wardsRoomsBedsService';
 import { Ward, Room, Bed as WardBed } from '../../types/wardsRoomsBeds';
@@ -33,6 +34,16 @@ function formatDisplayDateTime(iso?: string | null): string {
   return formatDateTimeDDMMYYYY(iso) || '—';
 }
 
+// Dynamic greeting matching FrontDesk & Admin portals
+function getGreeting(name: string): string {
+  const hour = new Date().getHours();
+  let timeStr = 'Morning';
+  if (hour >= 12 && hour < 17) timeStr = 'Afternoon';
+  else if (hour >= 17) timeStr = 'Evening';
+  const firstName = name.split(' ')[0] || 'Admission Officer';
+  return `Good ${timeStr}, ${firstName}`;
+}
+
 /**
  * Admission Dashboard — canonical design.md implementation for Inpatient Operations.
  * Adheres strictly to design system typography, HospitalKpiHeader (§4.2),
@@ -40,6 +51,7 @@ function formatDisplayDateTime(iso?: string | null): string {
  */
 export const AdmissionDashboard: React.FC = () => {
   const { navigate } = useRouter();
+  const { currentUser } = useAuth();
 
   const [admissions, setAdmissions] = useState<AdmissionRecord[]>([]);
   const [hierarchy, setHierarchy] = useState<{ wards: Ward[]; rooms: Room[]; beds: WardBed[] }>({
@@ -218,65 +230,100 @@ export const AdmissionDashboard: React.FC = () => {
   return (
     <div className="space-y-4 pb-8 text-slate-800">
       {/* =========================================================================
-          1. CARD PAGE HEADER BLOCK (design.md §4.1)
+          1. HERO / GREETING BANNER (Matches FrontDesk & Admin Design)
       ========================================================================= */}
-      <div className="bg-white rounded-xl border border-[#e2eae5] p-4 sm:p-5 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 sm:h-11 sm:w-11 rounded-xl bg-[#effaf5] text-[#08775A] border border-[#c2e7db] flex items-center justify-center shadow-2xs shrink-0">
-            <Building2 className="h-5 w-5" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-bold text-[#111827]">Admission &amp; Inpatient Dashboard</h1>
-              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#effaf5] text-[#08775A] border border-[#c2e7db] inline-flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-[#129b70] animate-pulse" />
-                Live Census Active
-              </span>
-            </div>
-            <p className="text-xs text-[#52665e] mt-0.5">
-              Real-time inpatient census, ward &amp; room bed occupancy, incoming arrivals, and active stay management.
-            </p>
-          </div>
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#0c5944] via-[#0e7d5a] to-[#0a664c] text-white p-6 sm:p-8 shadow-lg shadow-emerald-950/10">
+        {/* Large watermark hospital cross & pulse emblem */}
+        <div className="absolute -right-4 sm:right-2 lg:right-6 top-1/2 -translate-y-1/2 w-64 h-64 sm:w-80 sm:h-80 lg:w-96 lg:h-96 opacity-20 sm:opacity-25 pointer-events-none select-none flex items-center justify-center">
+          <svg viewBox="0 0 240 240" fill="none" stroke="currentColor" className="w-full h-full">
+            <circle cx="120" cy="120" r="110" strokeWidth="1.5" strokeDasharray="6 6" opacity="0.35" />
+            <circle cx="120" cy="120" r="90" strokeWidth="1" strokeDasharray="3 3" opacity="0.2" />
+            <path
+              d="M100 65 H140 V100 H175 V140 H140 V175 H100 V140 H65 V100 H100 Z"
+              strokeWidth="3"
+              strokeLinejoin="round"
+              opacity="0.8"
+            />
+            <path
+              d="M50 120 H90 L102 98 L114 142 L126 108 L138 132 L148 120 H190"
+              strokeWidth="3.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
-          <button
-            type="button"
-            onClick={load}
-            disabled={isLoading}
-            className="inline-flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-[#f6faf8] text-[#52665e] hover:text-[#111827] border border-[#e2eae5] text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer disabled:opacity-50"
-            title="Refresh live admission data"
-          >
-            <RotateCw className={`h-3.5 w-3.5 text-[#08775A] ${isLoading ? 'animate-spin' : ''}`} />
-            <span>{isLoading ? 'Syncing...' : 'Refresh'}</span>
-          </button>
+        <div className="relative z-10 max-w-4xl space-y-3.5">
+          {/* Status pill badge & Sync/Refresh */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-900/40 border border-emerald-400/25 text-emerald-200 text-xs font-medium backdrop-blur-xs">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-300 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
+              </span>
+              <span>All systems operational • Live Inpatient Command</span>
+            </div>
 
-          <button
-            type="button"
-            onClick={() => navigate('/admission/new_admission')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#08775A] hover:bg-[#065f46] text-white text-xs font-bold rounded-lg shadow-xs transition-colors cursor-pointer"
-          >
-            <Plus className="h-4 w-4" />
-            <span>New Admission</span>
-          </button>
+            <button
+              type="button"
+              onClick={load}
+              disabled={isLoading}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-900/50 hover:bg-emerald-900/70 border border-emerald-400/30 text-emerald-100 text-xs font-semibold backdrop-blur-xs transition-colors cursor-pointer disabled:opacity-50"
+              title="Refresh live admission data"
+            >
+              <RotateCw className={`h-3.5 w-3.5 text-emerald-300 ${isLoading ? 'animate-spin' : ''}`} />
+              <span>{isLoading ? 'Syncing...' : 'Refresh Telemetry'}</span>
+            </button>
+          </div>
 
-          <button
-            type="button"
-            onClick={() => navigate('/admission/admission_check_in')}
-            className="inline-flex items-center gap-1.5 px-3 py-2 bg-[#effaf5] hover:bg-[#dff5ea] text-[#08775A] border border-[#c2e7db] text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer"
-          >
-            <LogIn className="h-3.5 w-3.5" />
-            <span>Check-In Queue ({plannedAdmissions.length})</span>
-          </button>
+          {/* Dynamic Greeting */}
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white">
+            {getGreeting(currentUser?.name || currentUser?.username || 'Admission Officer')}
+          </h1>
 
-          <button
-            type="button"
-            onClick={() => navigate('/admission/bed_board_transfers')}
-            className="inline-flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-[#f6faf8] text-slate-700 hover:text-slate-900 border border-[#e2eae5] text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer"
-          >
-            <ArrowLeftRight className="h-3.5 w-3.5 text-[#08775A]" />
-            <span>Bed Board</span>
-          </button>
+          {/* Subtitle */}
+          <p className="text-xs sm:text-sm text-emerald-100/90 leading-relaxed font-normal max-w-3xl">
+            Inpatient admissions command center. Monitor real-time ward &amp; room bed occupancy, manage patient check-in queues, incoming arrivals, and active stay management.
+          </p>
+
+          {/* Action Row & Live Telemetry Badges */}
+          <div className="pt-2 flex flex-wrap items-center gap-3 sm:gap-5 text-xs font-medium text-emerald-100">
+            <button
+              type="button"
+              onClick={() => navigate('/admission/new_admission')}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white text-[#0e7d5a] font-semibold hover:bg-emerald-50 transition-all shadow-sm cursor-pointer"
+            >
+              <Plus className="h-4 w-4" /> New Admission
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigate('/admission/admission_check_in')}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-800/60 hover:bg-emerald-800/80 border border-emerald-400/30 text-white font-semibold transition-all backdrop-blur-xs cursor-pointer"
+            >
+              <LogIn className="h-4 w-4" /> Check-In Queue ({plannedAdmissions.length})
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigate('/admission/bed_board_transfers')}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-800/60 hover:bg-emerald-800/80 border border-emerald-400/30 text-white font-semibold transition-all backdrop-blur-xs cursor-pointer"
+            >
+              <ArrowLeftRight className="h-4 w-4" /> Bed Board
+            </button>
+
+            {/* Live Metrics Separator */}
+            <div className="flex items-center gap-4 border-l border-emerald-400/25 pl-4 sm:pl-5 text-emerald-200">
+              <div className="flex items-center gap-1.5">
+                <Users className="h-4 w-4 text-emerald-300" />
+                <span>{activeAdmissions.length} active inpatients</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Bed className="h-4 w-4 text-emerald-300" />
+                <span>{overallOccupancyRate}% occupancy ({availableBedsCount} free)</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 

@@ -6,6 +6,8 @@ import { generateInvoiceNumber, generateExpenseNumber } from '@/shared/idGenerat
 import { pharmacyBridgeClient } from '@/shared/pharmacyBridgeClient';
 import { resolvePanelCoverage } from '@/shared/panelCoverage';
 import { computePharmacyPortion } from '@/shared/pharmacyFifoCredit';
+import { pharmacyDischargeBlocked } from '@/shared/pharmacyDischargeGate';
+import { notificationsService } from '../notifications/notifications.service';
 import type {
   ListRequestsQuery,
   DispensedCallbackBody,
@@ -340,12 +342,10 @@ export const pharmacyBridgeService = {
         });
       }
 
-      // Other requested/partially dispensed medicines still block pharmacy clearance.
-      const pendingRequests = await tx.pharmacyClearance.count({ where: {
-        admissionRecordId: admission.id,
-        status: { in: ['REQUESTED', 'ACCEPTED', 'PARTIALLY_FULFILLED', 'DISPENSING', 'INTEGRATION_ERROR', 'AUTHORIZATION_REQUIRED'] },
-      } });
-      const pharmacyGateStatus = pendingRequests > 0 ? 'PENDING' as const : 'CLEARED' as const;
+      // Only dispensed, unpaid medicines block pharmacy clearance (§4.7, user requirement).
+      const hasUnpaidMedicines = existingCharge ? existingCharge.patientPaid.lessThan(totalDecimal) : totalDecimal.greaterThan(0);
+      const isBlocked = hasUnpaidMedicines || await pharmacyDischargeBlocked(tx, admission.id);
+      const pharmacyGateStatus = isBlocked ? 'PENDING' as const : 'CLEARED' as const;
       await tx.dualDischargeClearance.upsert({
         where: {
           admissionRecordId_clearanceType: {
@@ -355,13 +355,13 @@ export const pharmacyBridgeService = {
         },
         update: {
           status: pharmacyGateStatus,
-          clearedAt: pendingRequests > 0 ? null : new Date(),
+          clearedAt: isBlocked ? null : new Date(),
         },
         create: {
           admissionRecordId: admission.id,
           clearanceType: 'PHARMACY',
           status: pharmacyGateStatus,
-          clearedAt: pendingRequests > 0 ? null : new Date(),
+          clearedAt: isBlocked ? null : new Date(),
         },
       });
 
@@ -465,6 +465,38 @@ export const pharmacyBridgeService = {
         // eslint-disable-next-line no-console
         console.error('[pharmacyBridgeService] Failed to notify pharmacy of advance-credited collection:', err);
       });
+    }
+
+    // Notify Front Desk if medicines were dispensed and payment is outstanding
+    if (result.charge && result.charge.patientOutstanding && result.charge.patientOutstanding.greaterThan(0)) {
+      if (typeof prisma.admissionRecord?.findUnique === 'function') {
+        try {
+          const admission = await prisma.admissionRecord.findUnique({
+            where: { id: result.charge.admissionRecordId },
+            include: { panelPatient: true, selfPayEncounter: true },
+          });
+          if (admission) {
+            const patientName = admission.panelPatient?.fullName || admission.selfPayEncounter?.fullName || 'Patient';
+            const mrNum = admission.panelPatient?.mrNumber ? ` [MR: ${admission.panelPatient.mrNumber}]` : '';
+            const dueStr = Number(result.charge.patientOutstanding).toLocaleString('en-PK', { maximumFractionDigits: 0 });
+
+            if (typeof notificationsService?.createNotification === 'function') {
+              await notificationsService.createNotification({
+                title: `Pharmacy Medication Payment Needed: ${patientName}`,
+                message: `Medications dispensed by Pharmacy for ${patientName}${mrNum} (${admission.admissionNumber}). Amount due: Rs. ${dueStr}. Please collect clearance payment at Front Desk.`,
+                type: 'urgent',
+                module: 'BILLING',
+                targetPortal: 'front-desk',
+                actionUrl: '/front-desk/billing_pending_discharges',
+                referenceId: admission.id,
+              });
+            }
+          }
+        } catch (notifErr) {
+          // eslint-disable-next-line no-console
+          console.error('[recordDispensed] Failed to notify Front Desk of pharmacy payment:', notifErr);
+        }
+      }
     }
 
     return result;
@@ -639,6 +671,51 @@ export const pharmacyBridgeService = {
     });
 
     return charge;
+  },
+
+  /**
+   * Pending admission medicine requests outbox — enables Standalone Pharmacy
+   * to pull queued requests even if Pharmacy was powered off when HMS submitted them.
+   */
+  async getPendingRequestsForBridge() {
+    const pending = await prisma.pharmacyClearance.findMany({
+      where: {
+        status: { in: ['REQUESTED', 'INTEGRATION_ERROR'] },
+        admissionRecord: {
+          status: { in: ['ACTIVE', 'DISCHARGE_PENDING', 'PLANNED'] },
+        },
+      },
+      include: {
+        admissionRecord: {
+          include: {
+            panelPatient: { select: { fullName: true } },
+            selfPayEncounter: { select: { fullName: true } },
+          },
+        },
+        lines: { include: { medicine: true } },
+        requestedBy: { select: { username: true, displayName: true } },
+      },
+      orderBy: { requestedAt: 'asc' },
+    });
+
+    return pending.map((c: any) => ({
+      clearanceId: c.id,
+      externalAdmissionRef: c.admissionRecord?.admissionNumber,
+      externalRequestRef: c.medicineRequestNumber,
+      patientNameSnapshot:
+        c.admissionRecord?.panelPatient?.fullName ||
+        c.admissionRecord?.selfPayEncounter?.fullName ||
+        'Patient',
+      urgency: 'ROUTINE',
+      requestedByExternal: c.requestedBy?.displayName || c.requestedBy?.username || 'Doctor',
+      requestedAt: c.requestedAt,
+      lines: (c.lines || []).map((l: any) => ({
+        medicineId: l.medicineId,
+        medicineName: l.medicine?.name,
+        requestedQuantity: Number(l.requestedQuantity),
+        notes: l.notes || undefined,
+      })),
+    }));
   },
 
   async listCharges(admissionRecordId?: string) {

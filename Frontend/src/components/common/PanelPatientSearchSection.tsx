@@ -11,7 +11,7 @@ import {
   AlertCircle,
   FileText,
 } from 'lucide-react';
-import { PanelPatientSearchResult, searchPanelPatients } from '../../services/patientRegistryService';
+import { PanelPatientSearchResult, searchPatientsUnified } from '../../services/patientRegistryService';
 
 export interface PanelPatientSearchSectionProps {
   selectedPatient: PanelPatientSearchResult | null;
@@ -19,6 +19,8 @@ export interface PanelPatientSearchSectionProps {
   onClearPatient: () => void;
   panelIdFilter?: string;
   autoLoadRecent?: boolean;
+  mode?: 'PANEL' | 'SELF_PAY' | 'ALL';
+  placeholder?: string;
 }
 
 export const PanelPatientSearchSection: React.FC<PanelPatientSearchSectionProps> = ({
@@ -27,6 +29,8 @@ export const PanelPatientSearchSection: React.FC<PanelPatientSearchSectionProps>
   onClearPatient,
   panelIdFilter,
   autoLoadRecent = false,
+  mode = 'PANEL',
+  placeholder,
 }) => {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<PanelPatientSearchResult[]>([]);
@@ -42,7 +46,7 @@ export const PanelPatientSearchSection: React.FC<PanelPatientSearchSectionProps>
     if (!trimmed) {
       if (autoLoadRecent && !selectedPatient) {
         setIsSearching(true);
-        searchPanelPatients('', panelIdFilter)
+        searchPatientsUnified('', mode, panelIdFilter)
           .then((res) => {
             setResults(res);
             setIsOpen(true);
@@ -61,11 +65,11 @@ export const PanelPatientSearchSection: React.FC<PanelPatientSearchSectionProps>
 
     const debounceTimer = setTimeout(async () => {
       try {
-        const res = await searchPanelPatients(trimmed, panelIdFilter);
+        const res = await searchPatientsUnified(trimmed, mode, panelIdFilter);
         setResults(res);
         setIsOpen(true);
       } catch (err: any) {
-        setError(err?.message || 'Unable to fetch panel patients.');
+        setError(err?.message || 'Unable to fetch patients.');
         setResults([]);
       } finally {
         setIsSearching(false);
@@ -155,7 +159,12 @@ export const PanelPatientSearchSection: React.FC<PanelPatientSearchSectionProps>
         <Search className="h-4 w-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
         <input
           type="text"
-          placeholder="Search panel patient by name, Employee/Card ID, MR#, CNIC, or phone..."
+          placeholder={
+            placeholder ||
+            (mode === 'PANEL'
+              ? 'Search panel patient by name, Employee/Card ID, MR#, CNIC, or phone...'
+              : 'Search patient by name, MR#, phone number, or CNIC...')
+          }
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => {
@@ -197,9 +206,9 @@ export const PanelPatientSearchSection: React.FC<PanelPatientSearchSectionProps>
           {results.length === 0 ? (
             <div className="p-4 text-center text-xs text-slate-500">
               {isSearching ? (
-                <span>Searching panel registry...</span>
+                <span>Searching patient registry...</span>
               ) : (
-                <span>No matching panel patient found for &quot;<strong>{query}</strong>&quot;.</span>
+                <span>No matching patient found for &quot;<strong>{query}</strong>&quot;.</span>
               )}
             </div>
           ) : (

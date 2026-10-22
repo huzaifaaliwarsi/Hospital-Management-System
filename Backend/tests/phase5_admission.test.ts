@@ -31,6 +31,14 @@ vi.mock('@/db/client', () => {
     },
     admissionPaymentRequest: {
       create: vi.fn(),
+      findFirst: vi.fn().mockResolvedValue(null),
+      update: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    hospitalNotification: {
+      create: vi.fn(),
+      findFirst: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
     },
     medicationModeHistory: {
       create: vi.fn(),

@@ -68,9 +68,9 @@ async function recalcInvoiceTotals(
   const newStatus = newTotal.equals(0)
     ? 'PAID'
     : patientPaymentStatus(
-        { panelPatientId: invoice.panelPatientId, total: newTotal, patientShare: newPatientShare, panelReceivable: newPanelReceivable },
-        invoice.paidTotal,
-      );
+      { panelPatientId: invoice.panelPatientId, total: newTotal, patientShare: newPatientShare, panelReceivable: newPanelReceivable },
+      invoice.paidTotal,
+    );
 
   await tx.hospitalInvoice.update({
     where: { id: invoice.id },
@@ -204,6 +204,125 @@ async function postWardFixedChargeIfApplicable(
   return createdLine;
 }
 
+/**
+ * One-time fixed Department charge integration.
+ * Posts a one-time fixed fee line item if the admission's department has a configured `fixedPrice > 0`.
+ * If `fixedPrice` is 0 or null, strictly nothing is billed.
+ */
+async function postDepartmentFixedChargeIfApplicable(
+  tx: Prisma.TransactionClient,
+  admissionId: string,
+  departmentId: string | null | undefined,
+  actorId: string,
+  existingInvoice?: any,
+) {
+  let deptId = departmentId;
+  if (!deptId) {
+    const admission = await tx.admissionRecord.findUnique({
+      where: { id: admissionId },
+      select: { departmentId: true },
+    });
+    deptId = admission?.departmentId ?? undefined;
+  }
+
+  if (!deptId || !tx.department?.findUnique) {
+    return null;
+  }
+
+  const department = await tx.department.findUnique({
+    where: { id: deptId },
+  });
+
+  if (!department?.fixedPrice || Number(department.fixedPrice) <= 0) {
+    return null;
+  }
+
+  const deptFixedRate = new Decimal(department.fixedPrice);
+
+  let invoice = existingInvoice ?? (await tx.hospitalInvoice.findFirst({
+    where: { admissionRecordId: admissionId, sourceType: 'ADMISSION' },
+    include: { lines: true },
+  }));
+
+  if (!invoice) {
+    const admission = await tx.admissionRecord.findUnique({ where: { id: admissionId } });
+    if (!admission) return null;
+    invoice = await tx.hospitalInvoice.create({
+      data: {
+        invoiceNumber: await generateInvoiceNumber(tx),
+        sourceType: 'ADMISSION',
+        admissionRecordId: admission.id,
+        departmentId: admission.departmentId,
+        panelPatientId: admission.panelPatientId,
+        selfPayEncounterId: admission.selfPayEncounterId,
+        subtotal: new Decimal(0),
+        discountTotal: new Decimal(0),
+        total: new Decimal(0),
+        paidTotal: new Decimal(0),
+        patientShare: new Decimal(0),
+        panelReceivable: new Decimal(0),
+        status: 'UNPAID',
+        createdById: actorId,
+      },
+      include: { lines: true },
+    });
+  }
+
+  const serviceRate = await tx.serviceRate.findFirst({ where: { code: { in: ['DEPT-PRICE', 'DEPT-FIXED', 'DEPARTMENT-FEE'] } } }).catch(() => null);
+  const linesList = await tx.invoiceLineItem.findMany({ where: { hospitalInvoiceId: invoice.id } });
+  const descSnapshot = `Department Fee - ${department.name}`;
+  const alreadyBilled = linesList.some((l: any) =>
+    l.descriptionSnapshot === descSnapshot ||
+    l.descriptionSnapshot === 'Department Fee' ||
+    (l.descriptionSnapshot && l.descriptionSnapshot.startsWith('Department Fee - '))
+  );
+  if (alreadyBilled) {
+    return null;
+  }
+
+  const panelPatient = invoice.panelPatientId ? await tx.panelPatient.findUnique({
+    where: { id: invoice.panelPatientId }, include: { corporatePanel: { include: { discountRules: true } } },
+  }) : null;
+  const coverage = resolvePanelCoverage(
+    deptFixedRate,
+    panelPatient?.corporatePanel?.discountRules,
+    serviceRate?.id ?? 'HOSPITAL_SERVICE',
+    new Date(),
+    department.id,
+    new Decimal(1),
+    panelPatient,
+  );
+  if (panelPatient) {
+    const authFields = await tx.admissionRecord.findUnique({
+      where: { id: admissionId },
+      select: { authorizationNumber: true, authorizationValidUntil: true },
+    });
+    assertCaseAuthorization(panelPatient.corporatePanel.authorizationRequired, coverage.matchedRule?.preauthorizationRequired, authFields ?? {});
+  }
+  const createdLine = await tx.invoiceLineItem.create({
+    data: {
+      hospitalInvoiceId: invoice.id,
+      billingSource: 'HOSPITAL_SERVICE',
+      descriptionSnapshot: descSnapshot,
+      rateSnapshot: deptFixedRate,
+      quantity: new Decimal(1),
+      lineGross: deptFixedRate,
+      discountAmount: coverage.discountAmount,
+      discountReason: coverage.discountReason,
+      lineNet: coverage.eligibleNet,
+      patientShare: coverage.patientShare,
+      panelReceivable: coverage.panelReceivable,
+      coverageSnapshot: coverage.coverageSnapshot,
+      isCompleted: true,
+    },
+  });
+
+  await recalcInvoiceTotals(tx, invoice, [...linesList, createdLine]);
+
+  return createdLine;
+}
+
+
 async function postInitialRoomChargeIfApplicable(tx: Prisma.TransactionClient, admissionId: string, bedId: string, actorId: string, now = new Date(), allowAssignedIntake = false) {
   const businessDate = new Date(hospitalClock(now).date + 'T00:00:00.000Z');
   await tx.$queryRaw`SELECT id FROM admission_records WHERE id = ${admissionId} FOR UPDATE`;
@@ -231,20 +350,24 @@ async function postInitialRoomChargeIfApplicable(tx: Prisma.TransactionClient, a
   if (admission.panelPatient) {
     assertCaseAuthorization(admission.panelPatient.corporatePanel?.authorizationRequired, coverage.matchedRule?.preauthorizationRequired, admission);
   }
-  const line = await tx.invoiceLineItem.create({ data: {
-    hospitalInvoiceId: invoice.id, billingSource: 'ROOM_BED', descriptionSnapshot: `Room/Bed - ${bed?.room?.name ?? 'Room'} / Bed ${bed?.bedNumber ?? bedId} (${hospitalClock(now).date})`, rateSnapshot: rate,
-    quantity: new Decimal(1), lineGross: rate, discountAmount: coverage.discountAmount,
-    discountReason: coverage.discountReason, lineNet: rate.minus(coverage.discountAmount),
-    patientShare: coverage.patientShare, panelReceivable: coverage.panelReceivable, coverageSnapshot: coverage.coverageSnapshot, isCompleted: true,
-  } });
-  await tx.admissionRoomChargeLog.create({ data: {
-    admissionRecordId: admissionId,
-    businessDate,
-    bedAssignmentId: assignment?.id ?? `${admissionId}:initial:${bedId}`,
-    roomId: bed?.room?.id, bedId, postedBy: actorId,
-    roomNameSnapshot: bed?.room?.name, bedNumberSnapshot: bed?.bedNumber,
-    invoiceLineItemId: line.id, ratePosted: rate,
-  } });
+  const line = await tx.invoiceLineItem.create({
+    data: {
+      hospitalInvoiceId: invoice.id, billingSource: 'ROOM_BED', descriptionSnapshot: `Room/Bed - ${bed?.room?.name ?? 'Room'} / Bed ${bed?.bedNumber ?? bedId} (${hospitalClock(now).date})`, rateSnapshot: rate,
+      quantity: new Decimal(1), lineGross: rate, discountAmount: coverage.discountAmount,
+      discountReason: coverage.discountReason, lineNet: rate.minus(coverage.discountAmount),
+      patientShare: coverage.patientShare, panelReceivable: coverage.panelReceivable, coverageSnapshot: coverage.coverageSnapshot, isCompleted: true,
+    }
+  });
+  await tx.admissionRoomChargeLog.create({
+    data: {
+      admissionRecordId: admissionId,
+      businessDate,
+      bedAssignmentId: assignment?.id ?? `${admissionId}:initial:${bedId}`,
+      roomId: bed?.room?.id, bedId, postedBy: actorId,
+      roomNameSnapshot: bed?.room?.name, bedNumberSnapshot: bed?.bedNumber,
+      invoiceLineItemId: line.id, ratePosted: rate,
+    }
+  });
   await recalcInvoiceTotals(tx, freshInvoice, [...freshInvoice.lines, line]);
   return line;
 }
@@ -339,9 +462,9 @@ export const admissionService = {
           include: { room: { include: { ward: true } }, ward: true },
         });
         if (!bed) throw new NotFoundError('Selected bed not found');
-      if (bed.operationalStatus !== 'ACTIVE' || bed.room?.isActive === false || bed.ward?.isActive === false || bed.room?.ward?.isActive === false) {
-        throw new ValidationError('Selected bed, room and ward must be active and in service.');
-      }
+        if (bed.operationalStatus !== 'ACTIVE' || bed.room?.isActive === false || bed.ward?.isActive === false || bed.room?.ward?.isActive === false) {
+          throw new ValidationError('Selected bed, room and ward must be active and in service.');
+        }
         if (bed.status !== 'AVAILABLE') {
           throw new ValidationError(`Selected bed is currently ${bed.status}. Only AVAILABLE beds can be assigned.`);
         }
@@ -492,6 +615,15 @@ export const admissionService = {
         );
       }
 
+      // Check if department has fixed pricing configured
+      await postDepartmentFixedChargeIfApplicable(
+        tx,
+        admission.id,
+        admission.departmentId,
+        actorId,
+        invoice,
+      );
+
       // Front-desk intake already occupies the selected bed and issues the invoice.
       // Post its first day now; check-in and cron share the same date guard.
       if (body.preferredBedId) {
@@ -523,7 +655,11 @@ export const admissionService = {
 
   async listAdmissions(query: ListAdmissionsQuery) {
     const where: Prisma.AdmissionRecordWhereInput = {};
-    if (query.status) where.status = query.status;
+    if (query.status === 'ACTIVE') {
+      where.status = { in: ['ACTIVE', 'DISCHARGE_PENDING'] };
+    } else if (query.status) {
+      where.status = query.status;
+    }
     if (query.departmentId) where.departmentId = query.departmentId;
     if (query.doctorStaffId) where.doctorStaffId = query.doctorStaffId;
     if (query.rmoStaffId) where.rmoStaffId = query.rmoStaffId;
@@ -681,6 +817,14 @@ export const admissionService = {
       },
     });
 
+    // If requestType is FINAL (discharge clearance), ensure admission status routes to DISCHARGE_PENDING
+    if (body.requestType === 'FINAL' && admission.status === 'ACTIVE') {
+      await prisma.admissionRecord.update({
+        where: { id: admission.id },
+        data: { status: 'DISCHARGE_PENDING' },
+      });
+    }
+
     try {
       const [actor, fullAdmission] = await Promise.all([
         prisma.portalUser.findUnique({
@@ -697,13 +841,20 @@ export const admissionService = {
       const mrNumber = fullAdmission?.panelPatient?.mrNumber ? ` [MR: ${fullAdmission.panelPatient.mrNumber}]` : '';
       const amountStr = Number(body.requestedAmount).toLocaleString('en-PK', { maximumFractionDigits: 0 });
 
+      const isDischargeReq = body.requestType === 'FINAL';
+      const title = isDischargeReq ? `Discharge Clearance Needed: ${patientName}` : `Payment Requested: ${patientName}`;
+      const message = isDischargeReq
+        ? `Discharge billing clearance requested for ${patientName}${mrNumber} (${admission.admissionNumber}). Outstanding balance: Rs. ${amountStr}. Please collect clearance payment at Front Desk.`
+        : `Payment request of Rs. ${amountStr} raised for ${patientName}${mrNumber} (${admission.admissionNumber}) by ${actorDisplayName} (User ID: ${actor?.username || actorId}).`;
+      const actionUrl = isDischargeReq ? '/front-desk/billing_pending_discharges' : '/front-desk/admission_payment_requests';
+
       await notificationsService.createNotification({
-        title: `Payment Requested: ${patientName}`,
-        message: `Payment request of Rs. ${amountStr} raised for ${patientName}${mrNumber} (${admission.admissionNumber}) by ${actorDisplayName} (User ID: ${actor?.username || actorId}).`,
+        title,
+        message,
         type: 'urgent',
         module: 'BILLING',
         targetPortal: 'front-desk',
-        actionUrl: '/front-desk/admission_payment_requests',
+        actionUrl,
         referenceId: admission.id,
         createdById: actorId,
       });
@@ -747,10 +898,12 @@ export const admissionService = {
       // If switching to a different bed from previously assigned bed, free the old bed
       if (admission.bedId && admission.bedId !== bed.id) {
         if (!body.transferReason?.trim()) throw new ValidationError('Transfer reason is required when changing the assigned bed.');
-        await tx.bedTransferHistory.create({ data: {
-          admissionRecordId: admission.id, fromBedId: admission.bedId, toBedId: bed.id,
-          reason: body.transferReason.trim(), transferredById: actorId,
-        } });
+        await tx.bedTransferHistory.create({
+          data: {
+            admissionRecordId: admission.id, fromBedId: admission.bedId, toBedId: bed.id,
+            reason: body.transferReason.trim(), transferredById: actorId,
+          }
+        });
         await tx.bed.update({
           where: { id: admission.bedId },
           data: { status: 'AVAILABLE' },
@@ -820,6 +973,7 @@ export const admissionService = {
 
       // If assigned bed's ward has fixed pricing, post one-time fixed charge line
       await postWardFixedChargeIfApplicable(tx, admission.id, bed.id, actorId);
+      await postDepartmentFixedChargeIfApplicable(tx, admission.id, admission.departmentId, actorId);
       await postInitialRoomChargeIfApplicable(tx, admission.id, bed.id, actorId);
 
       // Initialize 3-Key Discharge Clearances (D16 p.13)
@@ -907,7 +1061,7 @@ export const admissionService = {
       // A transfer triggers an immediate charge only for the first billable assignment.
       // Otherwise the next daily charge remains gated by the configured posting time.
       if (targetBed.room?.dailyRoomRate?.greaterThan(0) &&
-          !await tx.admissionRoomChargeLog.findFirst({ where: { admissionRecordId: admission.id } })) {
+        !await tx.admissionRoomChargeLog.findFirst({ where: { admissionRecordId: admission.id } })) {
         await postInitialRoomChargeIfApplicable(tx, admission.id, targetBed.id, actorId);
       }
       return {
@@ -932,8 +1086,8 @@ export const admissionService = {
       });
 
       if (!admission) throw new NotFoundError('Admission record not found');
-      if (admission.status !== 'ACTIVE') {
-        throw new ValidationError('Cannot add hospital charges to a non-active admission');
+      if (admission.status !== 'ACTIVE' && admission.status !== 'DISCHARGE_PENDING') {
+        throw new ValidationError('Cannot add hospital charges to an inactive or discharged admission');
       }
 
       const serviceRate = await tx.serviceRate.findUnique({ include: { department: { include: { outsourcedProvider: true } } }, where: { id: body.serviceRateId } });
@@ -1028,6 +1182,21 @@ export const admissionService = {
 
       if (!isSelf && createdLine.performedByStaffId) {
         await commissionService.calculateAndAccrueCommission(tx, createdLine, createdLine.performedByStaffId, actorId);
+      }
+
+      // If a billable service charge was added, revert any existing HOSPITAL_BILLING clearance to PENDING
+      if (!isSelf && lineNet.greaterThan(0) && tx.dualDischargeClearance?.findFirst) {
+        try {
+          const billingClearance = await tx.dualDischargeClearance.findFirst({
+            where: { admissionRecordId: admission.id, clearanceType: 'HOSPITAL_BILLING' },
+          });
+          if (billingClearance && billingClearance.status === 'CLEARED') {
+            await tx.dualDischargeClearance.update({
+              where: { id: billingClearance.id },
+              data: { status: 'PENDING', clearedById: null, clearedAt: null },
+            });
+          }
+        } catch {}
       }
 
       // Notify Front Desk that bill has increased
@@ -1146,12 +1315,17 @@ export const admissionService = {
       });
     } catch (err: any) {
       // eslint-disable-next-line no-console
-      console.error('[dispatchToPharmacyBridge] Outbound dispatch error:', err.message);
-      // Surface the failure instead of leaving the request stuck at REQUESTED
-      // with no indication Pharmacy never received it — INTEGRATION_ERROR
-      // exists in PharmacyClearanceStatus exactly for this case.
+      console.warn('[dispatchToPharmacyBridge] Outbound dispatch warning (queued in HMS for sync):', err?.message || err);
+      // Keep request in REQUESTED status so it remains in the queue!
+      // When Pharmacy starts up or runs periodic sync, it will pull this request.
       await prisma.pharmacyClearance
-        .update({ where: { id: clearanceId }, data: { status: 'INTEGRATION_ERROR' } })
+        .update({
+          where: { id: clearanceId },
+          data: {
+            status: 'REQUESTED',
+            notes: 'QUEUED_FOR_PHARMACY_SYNC',
+          },
+        })
         .catch(() => null);
     }
   },
@@ -1240,8 +1414,8 @@ export const admissionService = {
                 l.unit && l.conversionToBase && l.conversionToBase > 1
                   ? `${l.saleUnitQuantity || Math.round(l.requestedQuantity / l.conversionToBase)} ${l.unit} (${l.requestedQuantity} base units)`
                   : l.unit
-                  ? `${l.requestedQuantity} ${l.unit}`
-                  : null;
+                    ? `${l.requestedQuantity} ${l.unit}`
+                    : null;
               const finalNotes = packagingNote
                 ? l.notes && l.notes !== packagingNote
                   ? `${packagingNote} — ${l.notes}`
@@ -1274,11 +1448,14 @@ export const admissionService = {
         });
       }
 
-      // Ensure PHARMACY discharge clearance is set to PENDING
-      await tx.dualDischargeClearance.updateMany({
-        where: { admissionRecordId: admission.id, clearanceType: 'PHARMACY' },
-        data: { status: 'PENDING' },
-      });
+      // Only set PHARMACY discharge clearance to PENDING if unpaid dispensed medications exist
+      const isBlocked = await pharmacyDischargeBlocked(tx, admission.id);
+      if (isBlocked) {
+        await tx.dualDischargeClearance.updateMany({
+          where: { admissionRecordId: admission.id, clearanceType: 'PHARMACY' },
+          data: { status: 'PENDING' },
+        });
+      }
 
       return { ...clearance, highCostAuthorization };
     }, { maxWait: 15000, timeout: 30000 });
@@ -1431,19 +1608,19 @@ export const admissionService = {
     return prisma.$transaction(async (tx) => {
       const admission = await tx.admissionRecord.findUnique({
         where: { id: admissionId },
-        include: { hospitalInvoices: true, dischargeClearances: true },
+        include: {
+          hospitalInvoices: true,
+          dischargeClearances: true,
+          panelPatient: true,
+          selfPayEncounter: true,
+        },
       });
 
       if (!admission) throw new NotFoundError('Admission record not found');
 
       // If granting HOSPITAL_BILLING clearance, check that the admission has
       // zero outstanding balance ACROSS ALL its department invoices,
-      // combined — never per invoice in isolation. A per-invoice check
-      // (`inv.total - inv.paidTotal`) ignores unallocated advance/deposit
-      // receipts (`hospitalInvoiceId: null` — the admission-creation
-      // deposit, or any "additional deposit" collected under §2.11's
-      // overpayment case), which would otherwise wrongly block discharge
-      // for a patient whose advance already fully covers their balance.
+      // combined — never per invoice in isolation.
       if (body.clearanceType === 'HOSPITAL_BILLING') {
         const totalCharges = admission.hospitalInvoices.reduce((sum, inv) => sum.plus(inv.total), new Decimal(0));
         const receipts = await tx.paymentReceipt.aggregate({
@@ -1457,15 +1634,94 @@ export const admissionService = {
           _sum: { amount: true },
         });
         const totalPaid = receipts._sum.amount ?? new Decimal(0);
-        if (totalCharges.minus(totalPaid).greaterThan(0)) {
+        const outstanding = totalCharges.minus(totalPaid);
+
+        if (outstanding.greaterThan(0)) {
+          // Patient has outstanding balance.
+          // Route clearance request to Front Desk with high-priority notification & PENDING payment request.
+          const formattedAmount = Number(outstanding).toLocaleString('en-PK', { maximumFractionDigits: 0 });
+
+          if (prisma.admissionPaymentRequest) {
+            try {
+              const existingPendingReq = await prisma.admissionPaymentRequest.findFirst({
+                where: {
+                  admissionRecordId: admission.id,
+                  status: { in: ['PENDING', 'PARTIALLY_FULFILLED'] },
+                },
+              });
+
+              if (existingPendingReq) {
+                await prisma.admissionPaymentRequest.update({
+                  where: { id: existingPendingReq.id },
+                  data: {
+                    requestedAmount: outstanding,
+                    requestType: 'FINAL',
+                    notes: `Discharge billing clearance requested. Outstanding balance: Rs. ${formattedAmount}.`,
+                  },
+                });
+              } else {
+                await prisma.admissionPaymentRequest.create({
+                  data: {
+                    admissionRecordId: admission.id,
+                    requestType: 'FINAL',
+                    requestedAmount: outstanding,
+                    notes: `Discharge billing clearance requested. Outstanding balance: Rs. ${formattedAmount}.`,
+                    status: 'PENDING',
+                    requestedById: actorId,
+                  },
+                });
+              }
+            } catch (pReqErr) {
+              console.error('Failed to create/update admissionPaymentRequest:', pReqErr);
+            }
+          }
+
+
+
+          const existingBillingClearance = admission.dischargeClearances.find(
+            (c) => c.clearanceType === 'HOSPITAL_BILLING',
+          );
+          if (existingBillingClearance) {
+            await tx.dualDischargeClearance.update({
+              where: { id: existingBillingClearance.id },
+              data: { status: 'PENDING', clearedById: null, clearedAt: null },
+            });
+          } else {
+            await tx.dualDischargeClearance.create({
+              data: {
+                admissionRecordId: admission.id,
+                clearanceType: 'HOSPITAL_BILLING',
+                status: 'PENDING',
+              },
+            });
+          }
+
+          const patientName = admission.panelPatient?.fullName || admission.selfPayEncounter?.fullName || 'Patient';
+          const mrNum = admission.panelPatient?.mrNumber ? ` [MR: ${admission.panelPatient.mrNumber}]` : '';
+
+          try {
+            await notificationsService.createNotification({
+              title: `Discharge Clearance Needed: ${patientName}`,
+              message: `Discharge billing clearance requested for ${patientName}${mrNum} (${admission.admissionNumber}). Outstanding balance: Rs. ${formattedAmount}. Please clear payment at Front Desk.`,
+              type: 'urgent',
+              module: 'BILLING',
+              targetPortal: 'front-desk',
+              actionUrl: '/front-desk/billing_pending_discharges',
+              referenceId: admission.id,
+              createdById: actorId,
+            });
+          } catch (notifErr) {
+            console.error('Failed to notify Front Desk of discharge clearance request:', notifErr);
+          }
+
           throw new ValidationError(
-            'Cannot grant Hospital Billing clearance: patient has an outstanding balance across their hospital invoices.',
+            `Cannot grant Hospital Billing clearance: patient has an outstanding balance across their hospital invoices (Rs. ${formattedAmount}). Clearance request and notification have been sent to Front Desk.`,
           );
         }
       }
 
       if (body.clearanceType === 'PHARMACY' && await pharmacyDischargeBlocked(tx, admissionId)) {
-        throw new ValidationError('Cannot grant Pharmacy clearance: unpaid or pending medicines remain');
+        throw new ValidationError('Cannot grant Pharmacy clearance: patient has unpaid dispensed medications that must be cleared at Front Desk');
       }
 
       // Upsert clearance status to CLEARED
@@ -1525,6 +1781,7 @@ export const admissionService = {
     const invoiceIds = admission.hospitalInvoices.map((inv: any) => inv.id);
     const receipts = await tx.paymentReceipt.aggregate({
       where: {
+        isReversed: false,
         OR: [
           { admissionRecordId: admission.id },
           ...(invoiceIds.length > 0 ? [{ hospitalInvoiceId: { in: invoiceIds } }] : []),
@@ -1557,6 +1814,17 @@ export const admissionService = {
           },
         });
       }
+    } else {
+      if (billingClearance && billingClearance.status === 'CLEARED') {
+        billingClearance = await tx.dualDischargeClearance.update({
+          where: { id: billingClearance.id },
+          data: {
+            status: 'PENDING',
+            clearedById: null,
+            clearedAt: null,
+          },
+        });
+      }
     }
 
     // Re-fetch clearances to check complete status
@@ -1566,10 +1834,24 @@ export const admissionService = {
 
     const clinicalGate = allClearances.find((c: any) => c.clearanceType === 'CLINICAL');
     const pharmacyGate = allClearances.find((c: any) => c.clearanceType === 'PHARMACY');
+    const billingGate = allClearances.find((c: any) => c.clearanceType === 'HOSPITAL_BILLING');
+
+    // Reconcile pharmacy clearance:
+    // Only dispensed, unpaid medications block discharge. If un-dispensed (or paid), clearance is granted.
+    const isPharmacyBlocked = await pharmacyDischargeBlocked(tx, admission.id);
+    if (!isPharmacyBlocked) {
+      if (pharmacyGate && pharmacyGate.status === 'PENDING') {
+        await tx.dualDischargeClearance.update({
+          where: { id: pharmacyGate.id },
+          data: { status: 'CLEARED', clearedAt: new Date() },
+        });
+        pharmacyGate.status = 'CLEARED';
+      }
+    }
 
     const clinicalOk = clinicalGate?.status === 'CLEARED';
-    const billingOk = isBillingSettled;
-    const pharmacyOk = !(await pharmacyDischargeBlocked(tx, admission.id)) &&
+    const billingOk = isBillingSettled && billingGate?.status === 'CLEARED';
+    const pharmacyOk = !isPharmacyBlocked &&
       (pharmacyGate?.status === 'CLEARED' || (admission.medicationMode === 'SELF' && pharmacyGate?.status === 'NOT_APPLICABLE'));
 
     // If clinical is cleared but billing is not settled, ensure status is DISCHARGE_PENDING
@@ -1590,6 +1872,20 @@ export const admissionService = {
           dischargedAt: admission.dischargedAt ?? new Date(),
         },
       });
+
+      // Auto-cancel any lingering unfulfilled/undispensed pharmacy requests for this admission
+      if (typeof tx.pharmacyClearance?.updateMany === 'function') {
+        await tx.pharmacyClearance.updateMany({
+          where: {
+            admissionRecordId: admission.id,
+            status: { in: ['REQUESTED', 'ACCEPTED', 'DISPENSING', 'INTEGRATION_ERROR', 'AUTHORIZATION_REQUIRED'] },
+          },
+          data: {
+            status: 'REJECTED',
+            notes: 'Auto-cancelled upon patient discharge — unfulfilled',
+          },
+        });
+      }
 
       if (admission.bedId) {
         await tx.bed.update({
@@ -1620,12 +1916,19 @@ export const admissionService = {
     const result = await prisma.$transaction(async (tx) => {
       const admission = await tx.admissionRecord.findUnique({
         where: { id: admissionId },
-        include: { dischargeClearances: true, panelPatient: true, selfPayEncounter: true },
+        include: {
+          dischargeClearances: true,
+          panelPatient: true,
+          selfPayEncounter: true,
+          hospitalInvoices: { where: { sourceType: 'ADMISSION', status: { not: 'VOID' } } },
+        },
       });
       if (!admission) throw new NotFoundError('Admission record not found');
-      if (admission.status !== 'ACTIVE') {
-        throw new ValidationError('Clinical discharge is only permitted for an ACTIVE admission');
+      if (admission.status !== 'ACTIVE' && admission.status !== 'DISCHARGE_PENDING') {
+        throw new ValidationError('Clinical discharge is only permitted for an active admission');
       }
+
+
 
       const doctor = await findDoctorByDischargeCredential(tx, body.doctorUsername, body.doctorPassword);
 
@@ -1675,10 +1978,10 @@ export const admissionService = {
       const finalAdmission = reconcile.isDischarged
         ? reconcile.admission
         : await tx.admissionRecord.update({
-            where: { id: admission.id },
-            data: { status: 'DISCHARGE_PENDING' },
-            include: { panelPatient: true, selfPayEncounter: true },
-          });
+          where: { id: admission.id },
+          data: { status: 'DISCHARGE_PENDING' },
+          include: { panelPatient: true, selfPayEncounter: true },
+        });
 
       return { admission: finalAdmission, dischargeSummary: summary };
     }, { maxWait: 15000, timeout: 30000 });
@@ -1774,6 +2077,48 @@ export const admissionService = {
       }
 
       if (!reconcile.admission) throw new NotFoundError('Admission record not found');
+
+      const admission = reconcile.admission;
+      const totalCharges = (admission.hospitalInvoices || []).reduce((sum: Decimal, inv: any) => sum.plus(patientResponsibility(inv)), new Decimal(0));
+      const invoiceIds = (admission.hospitalInvoices || []).map((inv: any) => inv.id);
+      const receipts = await tx.paymentReceipt.aggregate({
+        where: {
+          isReversed: false,
+          OR: [
+            { admissionRecordId: admission.id },
+            ...(invoiceIds.length > 0 ? [{ hospitalInvoiceId: { in: invoiceIds } }] : []),
+          ],
+        },
+        _sum: { amount: true },
+      });
+      const totalPaid = receipts._sum.amount ?? new Decimal(0);
+      const outstanding = totalCharges.minus(totalPaid);
+
+      if (outstanding.greaterThan(0)) {
+        const formattedAmount = Number(outstanding).toLocaleString('en-PK', { maximumFractionDigits: 0 });
+        const patientName = admission.panelPatient?.fullName || admission.selfPayEncounter?.fullName || 'Patient';
+        const mrNum = admission.panelPatient?.mrNumber ? ` [MR: ${admission.panelPatient.mrNumber}]` : '';
+
+        setTimeout(async () => {
+          try {
+            await notificationsService.createNotification({
+              title: `Discharge Clearance Needed: ${patientName}`,
+              message: `Discharge attempted for ${patientName}${mrNum} (${admission.admissionNumber}) but patient has outstanding balance of Rs. ${formattedAmount}. Please collect payment at Front Desk so discharge can proceed.`,
+              type: 'urgent',
+              module: 'BILLING',
+              targetPortal: 'front-desk',
+              actionUrl: '/front-desk/billing_pending_discharges',
+              referenceId: admission.id,
+              createdById: _actorId,
+            });
+          } catch (e) {
+            console.error('Failed to notify Front Desk on blocked discharge:', e);
+          }
+        }, 0);
+
+        throw new ValidationError(`Final discharge blocked: patient has an outstanding balance across hospital invoices (Rs. ${formattedAmount}). Clearance request and notification have been sent to Front Desk.`);
+      }
+
       throw new ValidationError('Final discharge blocked: clinical, billing and pharmacy clearance are required; unpaid or pending medicines must be resolved.');
     }, { maxWait: 15000, timeout: 30000 });
 
@@ -1854,25 +2199,28 @@ export const admissionService = {
       dischargedAt: admission.dischargedAt,
       patient: admission.panelPatient
         ? {
-            type: 'PANEL',
-            name: admission.panelPatient.fullName,
-            fatherGuardianName: admission.panelPatient.guardianName ?? null,
-            age: admission.panelPatient.age ?? null,
-            gender: admission.panelPatient.gender ?? null,
-            address: admission.panelPatient.address ?? null,
-            phone: admission.panelPatient.phone ?? null,
-            mrNumber: admission.panelPatient.mrNumber,
-            panel: admission.panelPatient.corporatePanel.organizationName,
-          }
+          type: 'PANEL',
+          name: admission.panelPatient.fullName,
+          fatherGuardianName: admission.panelPatient.guardianName ?? null,
+          age: admission.panelPatient.dob ? Math.max(0, new Date().getFullYear() - new Date(admission.panelPatient.dob).getFullYear()) : null,
+          gender: admission.panelPatient.gender ?? null,
+          address: admission.panelPatient.address ?? null,
+          phone: admission.panelPatient.phone ?? null,
+          mrNumber: admission.panelPatient.mrNumber,
+          panel: admission.panelPatient.corporatePanel.organizationName,
+          cnic: admission.panelPatient.cnic ?? null,
+        }
+
         : {
-            type: 'SELF_PAY',
-            name: admission.selfPayEncounter?.fullName ?? 'Inpatient',
-            fatherGuardianName: admission.selfPayEncounter?.guardianName ?? null,
-            age: admission.selfPayEncounter?.age ?? null,
-            gender: admission.selfPayEncounter?.gender ?? null,
-            address: admission.selfPayEncounter?.address ?? null,
-            phone: admission.selfPayEncounter?.phone ?? null,
-          },
+          type: 'SELF_PAY',
+          name: admission.selfPayEncounter?.fullName ?? 'Inpatient',
+          fatherGuardianName: admission.selfPayEncounter?.guardianName ?? null,
+          age: admission.selfPayEncounter?.dob ? Math.max(0, new Date().getFullYear() - new Date(admission.selfPayEncounter.dob).getFullYear()) : null,
+          gender: admission.selfPayEncounter?.gender ?? null,
+          address: admission.selfPayEncounter?.address ?? null,
+          phone: admission.selfPayEncounter?.phone ?? null,
+          cnic: admission.selfPayEncounter?.cnicOrPassport ?? null,
+        },
       doctor: admission.doctor?.fullName ?? null,
       rmo: admission.rmo?.fullName ?? null,
       department: admission.department.name,
@@ -1957,3 +2305,4 @@ export const admissionService = {
   },
 };
 import { pharmacyDischargeBlocked } from '@/shared/pharmacyDischargeGate';
+

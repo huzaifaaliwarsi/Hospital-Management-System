@@ -134,12 +134,20 @@ export const patientsService = {
   async listPanelPatients(query: ListPanelPatientsQuery) {
     const where: Prisma.PanelPatientWhereInput = {};
     if (query.search) {
+      const s = query.search.trim();
+      const sDigits = s.replace(/\D/g, '');
       where.OR = [
-        { fullName: { contains: query.search, mode: 'insensitive' } },
-        { mrNumber: { contains: query.search, mode: 'insensitive' } },
-        { panelMemberId: { contains: query.search, mode: 'insensitive' } },
-        { cnicOrPassport: { contains: query.search, mode: 'insensitive' } },
-        { phone: { contains: query.search, mode: 'insensitive' } },
+        { fullName: { contains: s, mode: 'insensitive' } },
+        { mrNumber: { contains: s, mode: 'insensitive' } },
+        { panelMemberId: { contains: s, mode: 'insensitive' } },
+        { cnicOrPassport: { contains: s, mode: 'insensitive' } },
+        { phone: { contains: s, mode: 'insensitive' } },
+        ...(sDigits.length >= 4
+          ? [
+              { phone: { contains: sDigits, mode: 'insensitive' as const } },
+              { cnicOrPassport: { contains: sDigits, mode: 'insensitive' as const } },
+            ]
+          : []),
       ];
     }
     if (query.status) where.status = query.status;
@@ -246,8 +254,29 @@ export const patientsService = {
   },
 
   listSelfPayEncounters(search?: string) {
+    if (!search || !search.trim()) {
+      return prisma.selfPayEncounter.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      });
+    }
+    const s = search.trim();
+    const sDigits = s.replace(/\D/g, '');
     return prisma.selfPayEncounter.findMany({
-      where: search ? { fullName: { contains: search, mode: 'insensitive' } } : undefined,
+      where: {
+        OR: [
+          { fullName: { contains: s, mode: 'insensitive' } },
+          { mrNumber: { contains: s, mode: 'insensitive' } },
+          { phone: { contains: s, mode: 'insensitive' } },
+          { cnicOrPassport: { contains: s, mode: 'insensitive' } },
+          ...(sDigits.length >= 4
+            ? [
+                { phone: { contains: sDigits, mode: 'insensitive' as const } },
+                { cnicOrPassport: { contains: sDigits, mode: 'insensitive' as const } },
+              ]
+            : []),
+        ],
+      },
       orderBy: { createdAt: 'desc' },
       take: 50,
     });

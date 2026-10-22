@@ -25,7 +25,7 @@ import { ServiceRatesService, fetchServices } from '../../../services/serviceRat
 import { StaffUserService } from '../../../services/staffUserService';
 import { DepartmentService, fetchDepartments } from '../../../services/departmentService';
 import { Department } from '../../../types/department';
-import { getHospitalProfile } from '../../../services/hospitalProfileService';
+import { getHospitalProfile, formatHospitalAddress } from '../../../services/hospitalProfileService';
 import { Modal } from '../../../components/common/Modal';
 import { Select, NumberInput, TextInput, ServiceChecklist } from '../../../components/forms/FormControls';
 
@@ -453,71 +453,240 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
       window.print();
       return;
     }
+    const hospProfile = getHospitalProfile();
+    const hospAddress = formatHospitalAddress(hospProfile);
+    const hospPhone = hospProfile.primaryPhone || hospProfile.alternatePhone || hospProfile.emergencyPhone || '';
+
+    const rawGuardian = invoice?.patientGuardian || '';
+    const cnicMatch = rawGuardian.match(/\[?\s*CNIC[:\s]*([0-9]{5}-[0-9]{7}-[0-9]|[0-9]{13})\s*\]?/i);
+    let cleanGuardian = rawGuardian;
+    let parsedCnic = invoice?.patientCnic || '';
+    if (cnicMatch) {
+      if (!parsedCnic) parsedCnic = cnicMatch[1];
+      cleanGuardian = rawGuardian.replace(cnicMatch[0], '').replace(/\[\s*\]/g, '').trim();
+    }
+
     const htmlContent = `
       <!DOCTYPE html>
       <html>
         <head>
           <title>Invoice - ${invoice?.invoiceNumber}</title>
           <style>
-            @page { size: auto; margin: 12mm; }
-            body { 
-              font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; 
-              margin: 0; 
-              color: #0f172a; 
-              font-size: 12.5px; 
+            @page {
+              size: A4 portrait;
+              margin: 8mm 10mm 10mm 10mm;
+            }
+            * {
+              box-sizing: border-box;
+            }
+            html, body {
+              margin: 0;
+              padding: 0;
+              width: 100%;
+              color: #0f172a;
+              background: #ffffff;
+              font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+              font-size: 10px;
               font-weight: 500;
+              line-height: 1.35;
               -webkit-font-smoothing: antialiased;
             }
-            .header { text-align: center; border-bottom: 2px solid #08775A; padding-bottom: 12px; margin-bottom: 16px; }
-            .header h1 { margin: 0; font-size: 22px; color: #08775A; font-weight: 700; letter-spacing: -0.3px; }
-            .header p { margin: 2px 0; color: #475569; font-size: 11.5px; font-weight: 500; }
-            .badge { display: inline-block; padding: 3px 8px; border-radius: 4px; font-weight: 700; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+            .header {
+              text-align: center;
+              border-bottom: 2px solid #08775A;
+              padding-bottom: 6px;
+              margin-bottom: 8px;
+            }
+            .header img {
+              height: 38px;
+              max-width: 110px;
+              object-fit: contain;
+              margin-bottom: 3px;
+              display: block;
+              margin-left: auto;
+              margin-right: auto;
+            }
+            .header h1 {
+              margin: 0;
+              font-size: 17px;
+              color: #08775A;
+              font-weight: 700;
+              letter-spacing: -0.2px;
+              line-height: 1.2;
+            }
+            .header p {
+              margin: 1.5px 0;
+              color: #475569;
+              font-size: 9.5px;
+              font-weight: 500;
+              line-height: 1.25;
+            }
+            .header p.doc-title {
+              font-weight: 700;
+              color: #0f172a;
+              text-transform: uppercase;
+              letter-spacing: 0.5px;
+              font-size: 9px;
+              margin-top: 2px;
+            }
+            .badge {
+              display: inline-block;
+              padding: 2px 6px;
+              border-radius: 4px;
+              font-weight: 700;
+              font-size: 8.5px;
+              text-transform: uppercase;
+              letter-spacing: 0.4px;
+            }
             .badge-paid { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
             .badge-unpaid { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
-            .meta-grid { display: flex; justify-content: space-between; margin-bottom: 16px; background: #f8fafc; padding: 12px 16px; border-radius: 8px; border: 1px solid #e2e8f0; font-weight: 500; }
-            .meta-col { flex: 1; }
-            .meta-row { margin-bottom: 6px; font-size: 12.5px; }
-            .meta-label { font-weight: 600; color: #475569; width: 120px; display: inline-block; }
-            .meta-val { font-weight: 600; color: #0f172a; }
-            table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-family: inherit; }
-            th { background: #f1f5f9; text-align: left; padding: 8px 10px; border-bottom: 2px solid #cbd5e1; font-size: 11px; text-transform: uppercase; color: #334155; font-weight: 700; }
-            td { padding: 9px 10px; border-bottom: 1px solid #e2e8f0; font-size: 12.5px; font-weight: 600; }
+            .meta-grid {
+              display: grid;
+              grid-template-columns: 1.15fr 0.85fr;
+              gap: 12px;
+              margin-bottom: 8px;
+              background: #f8fafc;
+              padding: 7px 12px;
+              border-radius: 6px;
+              border: 1px solid #e2e8f0;
+              font-weight: 500;
+            }
+            .meta-col {
+              min-width: 0;
+            }
+            .meta-row {
+              display: flex;
+              align-items: baseline;
+              margin-bottom: 3px;
+              font-size: 10px;
+              line-height: 1.3;
+            }
+            .meta-label {
+              font-weight: 600;
+              color: #475569;
+              width: 110px;
+              flex-shrink: 0;
+              font-size: 9.5px;
+            }
+            .meta-val {
+              font-weight: 600;
+              color: #0f172a;
+              word-break: break-word;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-bottom: 8px;
+              font-family: inherit;
+              table-layout: fixed;
+            }
+            th {
+              background: #f1f5f9;
+              text-align: left;
+              padding: 5px 8px;
+              border-bottom: 2px solid #cbd5e1;
+              font-size: 9px;
+              text-transform: uppercase;
+              color: #334155;
+              font-weight: 700;
+              letter-spacing: 0.3px;
+            }
+            td {
+              padding: 5px 8px;
+              border-bottom: 1px solid #e2e8f0;
+              font-size: 10px;
+              font-weight: 600;
+              line-height: 1.25;
+            }
+            tr {
+              page-break-inside: avoid;
+              break-inside: avoid;
+            }
             .text-right { text-align: right; }
             .text-center { text-align: center; }
-            .summary-box { width: 340px; margin-left: auto; margin-bottom: 20px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px 14px; background: #f8fafc; font-family: inherit; }
-            .summary-row { display: flex; justify-content: space-between; margin-bottom: 7px; font-size: 12.5px; font-weight: 600; color: #475569; }
-            .summary-row span.val { font-weight: 700; color: #0f172a; }
-            .summary-row.total { font-weight: 700; border-top: 1px solid #cbd5e1; padding-top: 7px; font-size: 13.5px; color: #0f172a; }
-            .summary-row.total span.val { font-weight: 800; }
-            .summary-row.balance { font-weight: 800; border-top: 2px solid #08775A; padding-top: 9px; font-size: 14.5px; color: #08775A; }
-            .footer { text-align: center; font-size: 10.5px; color: #64748b; font-weight: 500; border-top: 1px dashed #cbd5e1; padding-top: 12px; margin-top: 24px; }
+            .summary-box {
+              width: 290px;
+              margin-left: auto;
+              margin-bottom: 8px;
+              border: 1px solid #cbd5e1;
+              border-radius: 6px;
+              padding: 8px 10px;
+              background: #f8fafc;
+              font-family: inherit;
+              page-break-inside: avoid;
+              break-inside: avoid;
+            }
+            .summary-row {
+              display: flex;
+              justify-content: space-between;
+              margin-bottom: 3.5px;
+              font-size: 10px;
+              font-weight: 600;
+              color: #475569;
+            }
+            .summary-row span.val {
+              font-weight: 700;
+              color: #0f172a;
+            }
+            .summary-row.total {
+              font-weight: 700;
+              border-top: 1px solid #cbd5e1;
+              padding-top: 4px;
+              margin-top: 4px;
+              font-size: 10.5px;
+              color: #0f172a;
+            }
+            .summary-row.total span.val {
+              font-weight: 800;
+            }
+            .summary-row.balance {
+              font-weight: 800;
+              border-top: 2px solid #08775A;
+              padding-top: 5px;
+              margin-top: 4px;
+              font-size: 11.5px;
+              color: #08775A;
+            }
+            .footer {
+              text-align: center;
+              font-size: 8.5px;
+              color: #64748b;
+              font-weight: 500;
+              border-top: 1px dashed #cbd5e1;
+              padding-top: 6px;
+              margin-top: 10px;
+              page-break-inside: avoid;
+              break-inside: avoid;
+            }
           </style>
         </head>
         <body>
           <div class="header">
-            ${getHospitalProfile().logo ? `<img src="${getHospitalProfile().logo}" style="height: 52px; max-width: 140px; object-fit: contain; margin-bottom: 6px; display: block; margin-left: auto; margin-right: auto;" />` : ''}
-            <h1>${getHospitalProfile().name || 'CH Sharif and Saeed Hospital'}</h1>
-            <p>Excellence in Clinical Care, Diagnostics &amp; Patient Services</p>
-            <p>Official Patient Encounter Invoice / Bill</p>
+            ${hospProfile.logo ? `<img src="${hospProfile.logo}" />` : ''}
+            <h1>${hospProfile.name || 'CH Sharif and Saeed Hospital'}</h1>
+            <p>${hospProfile.hospitalType || hospProfile.shortName || 'Excellence in Clinical Care, Diagnostics &amp; Patient Services'}</p>
+            ${hospAddress !== 'Not configured' ? `<p>${hospAddress}${hospPhone ? ` · Tel: ${hospPhone}` : ''}</p>` : (hospPhone ? `<p>Tel: ${hospPhone}</p>` : '')}
+            <p class="doc-title">Official Patient Encounter Invoice / Bill</p>
           </div>
           <div class="meta-grid">
             <div class="meta-col">
               <div class="meta-row"><span class="meta-label">Invoice #:</span> <strong class="meta-val">${invoice?.invoiceNumber}</strong></div>
-              ${invoice?.queueNumber ? `<div class="meta-row"><span class="meta-label">Queue / Token No:</span> <strong class="meta-val" style="color: #08775A; font-size: 13.5px; background: #e6f4ea; padding: 2px 6px; border-radius: 4px; display: inline-block;">${invoice.queueNumber}</strong></div>` : ''}
+              ${invoice?.queueNumber ? `<div class="meta-row"><span class="meta-label">Queue / Token No:</span> <strong class="meta-val" style="color: #08775A; font-size: 11px; background: #e6f4ea; padding: 1.5px 5px; border-radius: 4px; display: inline-block;">${invoice.queueNumber}</strong></div>` : ''}
               <div class="meta-row"><span class="meta-label">Date &amp; Time:</span> <span class="meta-val">${invoice?.createdAt}</span></div>
               <div class="meta-row"><span class="meta-label">Encounter:</span> <span class="meta-val">${getInvoiceEncounterLabel(invoice)}</span></div>
               ${invoice?.admissionNumber ? `<div class="meta-row"><span class="meta-label">Admission #:</span> <strong class="meta-val">${invoice.admissionNumber}</strong></div>` : ''}
-              ${invoice?.sourceType === 'ADMISSION' && invoice.admissionEstimatedAmount != null ? `<div class="meta-row"><span class="meta-label">Estimated Amount — Subject to Final Billing:</span> <span class="meta-val">${formatPKR(invoice.admissionEstimatedAmount)}</span></div>` : ''}
+              ${invoice?.sourceType === 'ADMISSION' && invoice.admissionEstimatedAmount != null ? `<div class="meta-row"><span class="meta-label">Estimated Amount:</span> <span class="meta-val">${formatPKR(invoice.admissionEstimatedAmount)}</span></div>` : ''}
               ${invoice?.wardName || invoice?.bedNumber ? `<div class="meta-row"><span class="meta-label">Ward / Bed:</span> <span class="meta-val">${[invoice.wardName, invoice.bedNumber ? (/^bed\b/i.test(invoice.bedNumber.trim()) ? invoice.bedNumber.trim() : `Bed ${invoice.bedNumber.trim()}`) : ''].filter(Boolean).join(' - ')}</span></div>` : ''}
               <div class="meta-row"><span class="meta-label">Doctor:</span> <span class="meta-val">${invoice?.doctorName || 'Consultant'}</span></div>
               ${invoice?.rmoName ? `<div class="meta-row"><span class="meta-label">Assigned RMO:</span> <span class="meta-val">${invoice.rmoName}</span></div>` : ''}
-${invoice?.admissionMedicationMode ? `<div class="meta-row"><span class="meta-label">Medication Fulfillment:</span> ${invoice.admissionMedicationMode === 'HOSPITAL_MANAGED' ? 'Hospital Managed' : 'Self Arranged'}</div>` : ''}
-${invoice?.sourceType === 'ADMISSION' ? `<div class="meta-row"><span class="meta-label">Admission Department:</span> ${invoice.admissionDepartmentName || invoice.departmentName || 'Not assigned'}</div>` : ''}
+              ${invoice?.admissionMedicationMode ? `<div class="meta-row"><span class="meta-label">Medication Mode:</span> <span class="meta-val">${invoice.admissionMedicationMode === 'HOSPITAL_MANAGED' ? 'Hospital Managed' : 'Self Arranged'}</span></div>` : ''}
+              ${invoice?.sourceType === 'ADMISSION' ? `<div class="meta-row"><span class="meta-label">Admission Dept:</span> <span class="meta-val">${invoice.admissionDepartmentName || invoice.departmentName || 'Not assigned'}</span></div>` : ''}
               <div class="meta-row"><span class="meta-label">Status:</span> <span class="badge ${invoice?.status === 'PAID' ? 'badge-paid' : 'badge-unpaid'}">${invoice?.status}</span></div>
             </div>
             <div class="meta-col">
               <div class="meta-row"><span class="meta-label">Patient Name:</span> <strong class="meta-val">${invoice?.patientName}</strong></div>
-              <div class="meta-row"><span class="meta-label">Father / Guardian:</span> <span class="meta-val">${invoice?.patientGuardian || '—'}</span></div>
+              <div class="meta-row"><span class="meta-label">Father / Guardian:</span> <span class="meta-val">${cleanGuardian || '—'}</span></div>
+              ${parsedCnic ? `<div class="meta-row"><span class="meta-label">CNIC:</span> <span class="meta-val" style="font-family: monospace;">${parsedCnic}</span></div>` : ''}
               <div class="meta-row"><span class="meta-label">MR Number:</span> <strong class="meta-val">${invoice?.patientMr || '—'}</strong></div>
               <div class="meta-row"><span class="meta-label">Phone:</span> <span class="meta-val">${invoice?.patientPhone || '—'}</span></div>
               <div class="meta-row"><span class="meta-label">Payer:</span> <span class="meta-val">${invoice?.payerType} ${invoice?.panelName ? `(${invoice.panelName})` : ''}</span></div>
@@ -527,12 +696,12 @@ ${invoice?.sourceType === 'ADMISSION' ? `<div class="meta-row"><span class="meta
           <table>
             <thead>
               <tr>
-                <th class="text-center" style="width: 30px;">#</th>
-                <th style="width: 85px;">Service ID</th>
+                <th class="text-center" style="width: 25px;">#</th>
+                <th style="width: 80px;">Service ID</th>
                 <th>Service / Description</th>
-                <th class="text-right" style="width: 60px;">Qty</th>
-                <th class="text-right" style="width: 90px;">Rate</th>
-                <th class="text-right" style="width: 100px;">Total</th>
+                <th class="text-right" style="width: 50px;">Qty</th>
+                <th class="text-right" style="width: 85px;">Rate</th>
+                <th class="text-right" style="width: 90px;">Total</th>
               </tr>
             </thead>
             <tbody>
@@ -543,8 +712,8 @@ ${invoice?.sourceType === 'ADMISSION' ? `<div class="meta-row"><span class="meta
                     ${formatServiceCode(l.serviceCode) ? `<span style="font-family: monospace; font-weight: 700; color: #334155;">${formatServiceCode(l.serviceCode)}</span>` : '—'}
                   </td>
                   <td>
-                    <strong>${formatServiceName(l.serviceName)}</strong>
-                    ${l.discountReason ? `<div style="font-size: 11px; color: #475569; font-weight: 500; margin-top: 2px;">${l.discountReason}</div>` : ''}
+                    <strong style="color: #0f172a;">${formatServiceName(l.serviceName)}</strong>
+                    ${l.discountReason ? `<div style="font-size: 8.5px; color: #475569; font-weight: 500; margin-top: 1px;">${l.discountReason}</div>` : ''}
                   </td>
                   <td class="text-right">${l.quantity}</td>
                   <td class="text-right">${formatPKR(l.rate)}</td>
@@ -558,9 +727,9 @@ ${invoice?.sourceType === 'ADMISSION' ? `<div class="meta-row"><span class="meta
             <div class="summary-row"><span>Discount</span><span class="val" style="color: #b45309;">${invoice?.discountTotal ? `- ${formatPKR(invoice.discountTotal)}` : formatPKR(0)}</span></div>
             <div class="summary-row total"><span>Patient Share</span><span class="val">${formatPKR(invoice?.patientShare || 0)}</span></div>
             ${invoice?.payerType === 'Corporate / Panel' ? '<div class="summary-row"><span>Panel Receivable (separate)</span><span class="val">' + formatPKR(invoice.panelReceivable) + '</span></div>' : ''}
-            ${invoice?.advancePaid ? `<div class="summary-row"><span>Advance Paid / Deposit Received</span><span>${formatPKR(invoice.advancePaid)}</span></div>` : ''}
+            ${invoice?.advancePaid ? `<div class="summary-row"><span>Advance Paid / Deposit Received</span><span class="val">${formatPKR(invoice.advancePaid)}</span></div>` : ''}
             <div class="summary-row"><span>${invoice?.advancePaid ? 'Amount Paid (including advance)' : 'Amount Paid'}</span><span class="val" style="color: #08775A;">${formatPKR(invoice?.paidTotal || 0)}</span></div>
-            <div class="summary-row" style="font-weight: 600; border-top: 1px solid #cbd5e1; padding-top: 6px;">
+            <div class="summary-row" style="font-weight: 600; border-top: 1px solid #cbd5e1; padding-top: 4px; margin-top: 4px;">
               <span>Current Remaining</span>
               <span class="val" style="color: ${(invoice?.paidTotal || 0) > (invoice?.patientShare || 0) ? '#08775A' : '#991b1b'};">
                 ${(invoice?.paidTotal || 0) > (invoice?.patientShare || 0)
@@ -573,8 +742,8 @@ ${invoice?.sourceType === 'ADMISSION' ? `<div class="meta-row"><span class="meta
             <div class="summary-row balance"><span>Balance Due</span><span>${formatPKR(invoice?.balanceDue || 0)}</span></div>
           </div>
           <div class="footer">
-            <p>System-generated official computer invoice issued by CH Sharif &amp; Saeed Hospital HMS.</p>
-            <p>Thank you for choosing CH Sharif &amp; Saeed Hospital.</p>
+            <p>System-generated official computer invoice issued by ${hospProfile.name || 'CH Sharif & Saeed Hospital HMS'}.</p>
+            <p>Thank you for choosing ${hospProfile.shortName || hospProfile.name || 'CH Sharif & Saeed Hospital'}.</p>
           </div>
         </body>
       </html>
@@ -944,46 +1113,51 @@ ${invoice?.sourceType === 'ADMISSION' ? `<div class="meta-row"><span class="meta
                 </div>
 
                 {/* Summary Rows: Total Charges, Discount, Net Payable, Advance, Amount Paid, Current Remaining, Balance Due */}
-                <div className="w-full sm:w-80 bg-slate-50 rounded-xl border border-slate-200 p-3.5 space-y-2 shadow-2xs font-sans">
-                  <div className="flex items-center justify-between text-xs text-slate-700 font-semibold">
-                    <span>Total Charges</span>
-                    <span className="font-bold text-slate-900">{formatPKR(invoice.subtotal)}</span>
+                <div className="w-full sm:w-96 sm:min-w-[360px] bg-slate-50 rounded-xl border border-slate-200 p-3.5 space-y-2 shadow-2xs font-sans">
+                  <div className="flex items-center justify-between gap-3 text-xs text-slate-700 font-semibold">
+                    <span className="truncate">Total Charges</span>
+                    <span className="font-bold text-slate-900 shrink-0 text-right whitespace-nowrap">{formatPKR(invoice.subtotal)}</span>
                   </div>
-                  <div className="flex items-center justify-between text-xs text-slate-700 font-semibold">
-                    <span>Discount</span>
-                    <span className="font-bold text-amber-700">
+                  <div className="flex items-center justify-between gap-3 text-xs text-slate-700 font-semibold">
+                    <span className="truncate">Discount</span>
+                    <span className="font-bold text-amber-700 shrink-0 text-right whitespace-nowrap">
                       {liveDiscountTotal > 0 ? `- ${formatPKR(liveDiscountTotal)}` : formatPKR(0)}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between text-xs text-slate-900 font-extrabold pt-1 border-t border-slate-200">
-                    <span className="font-bold">{invoice.payerType === 'Corporate / Panel' ? 'Patient Share' : 'Net Payable'}</span>
-                    <span className="font-extrabold text-slate-900 text-sm">{formatPKR(liveNetPayable)}</span>
+                  <div className="flex items-center justify-between gap-3 text-xs text-slate-900 font-extrabold pt-1 border-t border-slate-200">
+                    <span className="font-bold truncate">{invoice.payerType === 'Corporate / Panel' ? 'Patient Share' : 'Net Payable'}</span>
+                    <span className="font-extrabold text-slate-900 text-sm shrink-0 text-right whitespace-nowrap">{formatPKR(liveNetPayable)}</span>
                   </div>
-                  {invoice.payerType === 'Corporate / Panel' && <div className="flex justify-between text-xs text-purple-800"><span>Panel Receivable (separate)</span><strong>{formatPKR(invoice.panelReceivable)}</strong></div>}
-                  {invoice.advancePaid > 0 && (
-                    <div className="flex items-center justify-between text-xs text-slate-700 font-semibold">
-                      <span>Advance Paid / Deposit Received</span>
-                      <span className="font-bold text-slate-800">{formatPKR(invoice.advancePaid)}</span>
+                  {invoice.payerType === 'Corporate / Panel' && (
+                    <div className="flex items-center justify-between gap-3 text-xs text-purple-800">
+                      <span className="truncate">Panel Receivable (separate)</span>
+                      <strong className="shrink-0 text-right whitespace-nowrap">{formatPKR(invoice.panelReceivable)}</strong>
                     </div>
                   )}
-                  <div className="flex items-center justify-between text-xs text-slate-700 font-semibold">
-                    <span>{invoice.advancePaid > 0 ? 'Amount Paid (including advance)' : 'Amount Paid'}</span>
-                    <span className="font-bold text-[#08775A]">{formatPKR(livePaidTotal)}</span>
+                  {invoice.advancePaid > 0 && (
+                    <div className="flex items-center justify-between gap-3 text-xs text-slate-700 font-semibold">
+                      <span className="truncate">Advance Paid / Deposit</span>
+                      <span className="font-bold text-slate-800 shrink-0 text-right whitespace-nowrap">{formatPKR(invoice.advancePaid)}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between gap-3 text-xs text-slate-700 font-semibold">
+                    <span className="truncate">{invoice.advancePaid > 0 ? 'Amount Paid (incl. advance)' : 'Amount Paid'}</span>
+                    <span className="font-bold text-[#08775A] shrink-0 text-right whitespace-nowrap">{formatPKR(livePaidTotal)}</span>
                   </div>
 
                   {/* Current Remaining Row */}
-                  <div className="flex items-center justify-between text-xs text-slate-700 font-semibold pt-1.5 border-t border-slate-200/80">
-                    <span>Current Remaining</span>
+                  <div className="flex items-center justify-between gap-3 text-xs text-slate-700 font-semibold pt-1.5 border-t border-slate-200/80">
+                    <span className="truncate">Current Remaining</span>
                     {liveRemainingRefundable > 0 ? (
-                      <span className="font-bold text-emerald-700" title="Remaining advance / patient credit">
-                        {formatPKR(liveRemainingRefundable)} <span className="text-[10px] font-medium text-emerald-600">(Patient Credit)</span>
+                      <span className="font-bold text-emerald-700 shrink-0 text-right whitespace-nowrap" title="Remaining advance / patient credit">
+                        {formatPKR(liveRemainingRefundable)} <span className="text-[10px] font-medium text-emerald-600">(Credit)</span>
                       </span>
                     ) : liveBalanceDue > 0 ? (
-                      <span className="font-bold text-rose-700" title="Remaining balance due from patient">
+                      <span className="font-bold text-rose-700 shrink-0 text-right whitespace-nowrap" title="Remaining balance due from patient">
                         {formatPKR(liveBalanceDue)} <span className="text-[10px] font-medium text-rose-600">(Due)</span>
                       </span>
                     ) : (
-                      <span className="font-bold text-slate-600">
+                      <span className="font-bold text-slate-600 shrink-0 text-right whitespace-nowrap">
                         {formatPKR(0)} <span className="text-[10px] font-medium text-slate-500">(Settled)</span>
                       </span>
                     )}
@@ -991,14 +1165,14 @@ ${invoice?.sourceType === 'ADMISSION' ? `<div class="meta-row"><span class="meta
 
                   {/* Standard Balance Due Box */}
                   <div
-                    className={`flex items-center justify-between text-xs p-2.5 rounded-lg border font-semibold ${
+                    className={`flex items-center justify-between gap-3 text-xs p-2.5 rounded-lg border font-semibold ${
                       liveBalanceDue <= 0
                         ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
                         : 'bg-rose-50 border-rose-200 text-rose-900'
                     }`}
                   >
-                    <span className="font-extrabold uppercase tracking-wide">Balance Due</span>
-                    <span className="font-extrabold text-base font-mono">
+                    <span className="font-extrabold uppercase tracking-wide truncate">Balance Due</span>
+                    <span className="font-extrabold text-base font-mono shrink-0 text-right whitespace-nowrap">
                       {formatPKR(liveBalanceDue)}
                     </span>
                   </div>

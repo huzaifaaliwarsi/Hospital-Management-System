@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
-import { Search, X, CheckSquare, Square, ChevronDown, ChevronUp } from 'lucide-react';
+import { Search, X, CheckSquare, Square, ChevronDown, ChevronUp, ArrowDown } from 'lucide-react';
 import { HospitalService } from '../../types/serviceRates';
 import { formatPKR } from '../../utils/formatters';
 import { focusNextField } from '../../utils/formNavigation';
@@ -95,6 +95,20 @@ export const ServiceChecklist: React.FC<ServiceChecklistProps> = ({
     const map = new Map(services.map((s) => [s.id, s.standardRate]));
     return selectedServiceIds.reduce((sum, id) => sum + (map.get(id) || 0), 0);
   }, [services, selectedServiceIds]);
+
+  const scrollToContainerBottom = (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
+    const scrollableParent = dropdownRef.current?.closest('.overflow-y-auto') as HTMLElement | null;
+    if (scrollableParent) {
+      scrollableParent.scrollTo({
+        top: scrollableParent.scrollHeight,
+        behavior: 'smooth',
+      });
+    } else {
+      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    }
+  };
 
   return (
     <div ref={dropdownRef} className="relative w-full space-y-1 font-sans">
@@ -211,10 +225,21 @@ export const ServiceChecklist: React.FC<ServiceChecklistProps> = ({
               )}
             </div>
 
-            <div className="flex items-center justify-between text-[11px] text-slate-500 px-0.5">
-              <span>
-                Showing {filteredServices.length} of {services.length} services
-              </span>
+            <div className="flex items-center justify-between text-[11px] text-slate-500 px-0.5 gap-2 flex-wrap">
+              <div className="flex items-center gap-2">
+                <span>
+                  Showing {filteredServices.length} of {services.length} services
+                </span>
+                <button
+                  type="button"
+                  onClick={scrollToContainerBottom}
+                  className="inline-flex items-center gap-1 font-semibold text-[#08775A] hover:text-[#065f46] hover:underline cursor-pointer"
+                  title="Scroll modal to bottom actions"
+                >
+                  <ArrowDown className="h-3 w-3" />
+                  <span>Scroll to Actions</span>
+                </button>
+              </div>
               {filteredServices.length > 0 && (
                 <button
                   type="button"
@@ -227,8 +252,8 @@ export const ServiceChecklist: React.FC<ServiceChecklistProps> = ({
             </div>
           </div>
 
-          {/* Scrollable Checklist Items */}
-          <div className={`overflow-y-auto divide-y divide-slate-100 ${maxHeightClass}`}>
+          {/* Scrollable Checklist Items with dedicated visible scrollbar and overscroll-contain */}
+          <div className={`overflow-y-auto overscroll-contain divide-y divide-slate-100 ${maxHeightClass} [scrollbar-width:thin] [scrollbar-color:#08775A_#f1f5f9] [&::-webkit-scrollbar]:w-2.5 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-[#08775A]/60 hover:[&::-webkit-scrollbar-thumb]:bg-[#08775A] [&::-webkit-scrollbar-thumb]:rounded-full`}>
             {filteredServices.length === 0 ? (
               <div className="p-4 text-center text-xs text-slate-400">
                 {searchTerm ? `No services match "${searchTerm}".` : emptyMessage}
@@ -287,23 +312,35 @@ export const ServiceChecklist: React.FC<ServiceChecklistProps> = ({
             )}
           </div>
 
-          {/* Bottom Action Footer */}
-          <div className="p-2.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs">
+          {/* Bottom Action Footer with Scroller helper */}
+          <div className="p-2.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs gap-2 flex-wrap">
             <span className="text-[11px] font-semibold text-slate-600">
               {selectedServiceIds.length} selected ({formatPKR(selectedTotalAmount)})
             </span>
-            <button
-              type="button"
-              onClick={() => {
-                setIsOpen(false);
-                if (dropdownRef.current) {
-                  focusNextField(dropdownRef.current);
-                }
-              }}
-              className="px-3 py-1 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg shadow-2xs cursor-pointer transition-colors"
-            >
-              Done
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={scrollToContainerBottom}
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-[#08775A] bg-[#effaf5] hover:bg-[#c2e7db] border border-[#c2e7db] rounded-lg cursor-pointer transition-colors shadow-2xs"
+                title="Scroll modal down to view arrangement options and add button"
+              >
+                <ArrowDown className="h-3.5 w-3.5" />
+                <span>Scroll Down</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsOpen(false);
+                  scrollToContainerBottom();
+                  if (dropdownRef.current) {
+                    focusNextField(dropdownRef.current);
+                  }
+                }}
+                className="px-3.5 py-1 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg shadow-2xs cursor-pointer transition-colors"
+              >
+                Done
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -1,6 +1,13 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Printer, X } from 'lucide-react';
 import { AdmissionRecord, AdmissionDischargeSummary } from '../../services/admissionService';
+import {
+  useHospitalProfile,
+  formatHospitalAddress,
+  fetchHospitalProfile,
+  fetchPublicHospitalProfile,
+} from '../../services/hospitalProfileService';
 
 interface DischargeSlipPrintModalProps {
   admission: AdmissionRecord;
@@ -8,21 +15,189 @@ interface DischargeSlipPrintModalProps {
   onClose: () => void;
 }
 
+function parseFatherNameAndCnic(rawFatherName?: string, rawCnic?: string) {
+  if (!rawFatherName && !rawCnic) return { fatherName: '—', cnic: '—' };
+
+  let cleanName = (rawFatherName || '').trim();
+  let cnic = (rawCnic || '').trim();
+
+  // If father's name contains a CNIC like "[CNIC: 48297-3399883-9]" or "CNIC: 48297-3399883-9"
+  const match = cleanName.match(/\[?\s*CNIC[:\s]*([0-9]{5}-[0-9]{7}-[0-9]|[0-9]{13})\s*\]?/i);
+  if (match) {
+    if (!cnic || cnic === '—') {
+      cnic = match[1];
+    }
+    cleanName = cleanName.replace(match[0], '').trim();
+  }
+
+  // Also clean up any loose square brackets or trailing hyphens leftover
+  cleanName = cleanName.replace(/\[\s*\]/g, '').replace(/[-–—]\s*$/, '').trim();
+
+  return {
+    fatherName: cleanName || '—',
+    cnic: cnic || '—',
+  };
+}
+
 export const DischargeSlipPrintModal: React.FC<DischargeSlipPrintModalProps> = ({
   admission,
   summary,
   onClose,
 }) => {
+  const profile = useHospitalProfile();
+  const { fatherName, cnic } = parseFatherNameAndCnic(admission.patientFatherName, admission.patientCnic);
+
+  useEffect(() => {
+    // If profile has not been primed or is missing the name/logo, prime it now
+    if (!profile.name || profile.name === 'Not configured' || !profile.logo) {
+      fetchHospitalProfile().catch(() => {
+        fetchPublicHospitalProfile().catch(() => {});
+      });
+    }
+  }, [profile.name, profile.logo]);
+
   const handlePrint = () => {
     window.print();
   };
 
   const outcome = (summary.finalOutcome || 'Discharge').toLowerCase();
 
-  return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 print:p-0 print:bg-white print:static print:inset-auto">
+  const formattedAddr = formatHospitalAddress(profile);
+  const hospitalAddress =
+    formattedAddr !== 'Not configured'
+      ? formattedAddr
+      : profile.addressLine1
+        ? [profile.addressLine1, profile.addressLine2, profile.city, profile.province]
+            .filter((p) => p && typeof p === 'string' && p.trim().length > 0)
+            .join(', ')
+        : 'Karachi, Pakistan';
+
+  const phones = [profile.primaryPhone, profile.alternatePhone, profile.emergencyPhone].filter(
+    (p) => p && typeof p === 'string' && p.trim().length > 0
+  );
+  const phoneText = phones.length > 0 ? `Phone: ${phones.join(' / ')}` : '';
+  const emailText = profile.primaryEmail ? `Email: ${profile.primaryEmail}` : '';
+  const webText = profile.website ? `Web: ${profile.website}` : '';
+  const contactDetails = [phoneText, emailText, webText].filter(Boolean).join(' | ');
+
+  const modalContent = (
+    <div
+      id="discharge-print-portal-root"
+      className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 print:p-0 print:bg-white print:static print:inset-auto print:block"
+    >
+      {/* Strict Print Isolation: Hide all parent app and modal elements, print ONLY the discharge form */}
+      <style>{`
+        @page {
+          size: A4 portrait;
+          margin: 8mm 10mm 10mm 10mm;
+        }
+        @media print {
+          /* 1. Completely hide everything in the document outside this portal */
+          body > *:not(#discharge-print-portal-root) {
+            display: none !important;
+            visibility: hidden !important;
+          }
+          #root {
+            display: none !important;
+            visibility: hidden !important;
+          }
+          /* 2. Hide everything inside this portal by default */
+          body * {
+            visibility: hidden;
+          }
+          /* 3. Make ONLY the discharge form visible */
+          #printable-discharge-form,
+          #printable-discharge-form * {
+            visibility: visible !important;
+          }
+          /* 4. Format root and page layout cleanly */
+          html, body {
+            background: #ffffff !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 100% !important;
+            height: auto !important;
+            overflow: visible !important;
+          }
+          #discharge-print-portal-root {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            background: #ffffff !important;
+            overflow: visible !important;
+            display: block !important;
+            z-index: 9999999 !important;
+          }
+          #discharge-modal-box {
+            position: static !important;
+            display: block !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            max-height: none !important;
+            border: none !important;
+            box-shadow: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            background: #ffffff !important;
+            overflow: visible !important;
+          }
+          #discharge-preview-wrapper {
+            display: block !important;
+            width: 100% !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            background: #ffffff !important;
+            overflow: visible !important;
+          }
+          #printable-discharge-form {
+            position: relative !important;
+            display: block !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            border: none !important;
+            box-shadow: none !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            background: #ffffff !important;
+            overflow: visible !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          .discharge-ruled-lines {
+            line-height: 24px !important;
+            background-image: repeating-linear-gradient(
+              to bottom,
+              transparent 0px,
+              transparent 23px,
+              #94a3b8 23px,
+              #94a3b8 24px
+            ) !important;
+            background-size: 100% 24px !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+        }
+        .discharge-ruled-lines {
+          line-height: 24px;
+          background-image: repeating-linear-gradient(
+            to bottom,
+            transparent 0px,
+            transparent 23px,
+            #cbd5e1 23px,
+            #cbd5e1 24px
+          );
+          background-size: 100% 24px;
+        }
+      `}</style>
+
       {/* Container */}
-      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-4xl w-full max-h-[96vh] flex flex-col overflow-hidden print:border-none print:shadow-none print:max-w-none print:w-full print:max-h-none print:rounded-none">
+      <div
+        id="discharge-modal-box"
+        className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-4xl w-full max-h-[96vh] flex flex-col overflow-hidden print:border-none print:shadow-none print:max-w-none print:w-full print:max-h-none print:rounded-none"
+      >
         {/* Top Control Bar (Hidden in Print) */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 bg-slate-50 print:hidden shrink-0">
           <div className="flex items-center gap-2">
@@ -46,6 +221,7 @@ export const DischargeSlipPrintModal: React.FC<DischargeSlipPrintModalProps> = (
               type="button"
               onClick={onClose}
               className="h-8 w-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+              aria-label="Close"
             >
               <X className="h-5 w-5" />
             </button>
@@ -53,38 +229,55 @@ export const DischargeSlipPrintModal: React.FC<DischargeSlipPrintModalProps> = (
         </div>
 
         {/* Paper Sheet Preview */}
-        <div className="p-4 sm:p-8 overflow-y-auto flex-1 bg-slate-100/70 print:p-0 print:bg-white print:overflow-visible">
+        <div
+          id="discharge-preview-wrapper"
+          className="p-4 sm:p-8 overflow-y-auto flex-1 bg-slate-100/70 print:p-0 print:bg-white print:overflow-visible"
+        >
           <div
             id="printable-discharge-form"
-            className="bg-white mx-auto max-w-[800px] border border-slate-300 p-8 sm:p-10 text-slate-900 shadow-md print:shadow-none print:border-none print:p-6 print:m-0 print:max-w-none font-serif text-[13px] leading-relaxed"
+            style={{ WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}
+            className="bg-white mx-auto max-w-[800px] border border-slate-300 p-8 sm:p-10 text-slate-900 shadow-md print:shadow-none print:border-none print:p-0 print:m-0 print:max-w-none font-serif text-[13px] leading-relaxed"
           >
-            {/* Header with Circular Logo and Clinic Details */}
-            <div className="relative border-b-2 border-slate-800 pb-3 mb-4">
-              {/* Circular Logo */}
-              <div className="absolute left-0 top-0 w-16 h-16 sm:w-20 sm:h-20 rounded-full border-2 border-slate-800 flex items-center justify-center p-1.5 bg-slate-50 text-slate-800 shrink-0">
-                <svg viewBox="0 0 100 100" className="w-full h-full fill-current">
-                  <circle cx="50" cy="50" r="46" fill="none" stroke="currentColor" strokeWidth="3" />
-                  <circle cx="48" cy="34" r="12" />
-                  <path d="M28,68 C28,52 42,48 54,48 C64,48 74,54 74,68 C74,78 64,84 48,84 C36,84 28,78 28,68 Z" />
-                  <circle cx="64" cy="58" r="7" />
-                  <path d="M56,76 C56,66 64,64 70,64 C76,64 80,68 80,76 Z" />
-                </svg>
+            {/* Header with Circular / Crest Logo and Dynamic Hospital Details */}
+            <div className="relative border-b-2 border-slate-800 pb-3 mb-4 min-h-[96px] flex items-center">
+              {/* Circular / Emblem Logo from Hospital Overview */}
+              <div className="absolute left-0 top-0 w-20 h-20 sm:w-24 sm:h-24 rounded-full border-2 border-slate-800 flex items-center justify-center p-1.5 bg-white text-slate-800 shrink-0 overflow-hidden shadow-xs print:border-slate-900">
+                {profile.logo ? (
+                  <img
+                    src={profile.logo}
+                    alt={profile.name || 'Hospital Logo'}
+                    className="w-full h-full object-contain"
+                  />
+                ) : (
+                  <div className="w-full h-full rounded-full bg-slate-100 flex flex-col items-center justify-center font-bold text-slate-800 font-sans">
+                    <span className="text-lg sm:text-xl tracking-wider leading-none">
+                      {profile.shortName ? profile.shortName.slice(0, 3).toUpperCase() : 'HMS'}
+                    </span>
+                    <span className="text-[9px] uppercase tracking-tighter text-slate-500 mt-0.5">Care</span>
+                  </div>
+                )}
               </div>
 
-              {/* Clinic Names and Address Centered */}
-              <div className="text-center pl-16 sm:pl-20 pr-4">
-                <h1 className="text-2xl sm:text-3xl font-extrabold tracking-wide font-sans text-slate-900">
-                  CH. SHARIF &amp; SAEED
+              {/* Dynamic Hospital Names and Address Centered */}
+              <div className="w-full text-center pl-22 sm:pl-28 pr-4">
+                <h1 className="text-2xl sm:text-3xl font-extrabold tracking-wide font-sans text-slate-900 uppercase">
+                  {profile.name || profile.shortName || 'CH. SHARIF & SAEED HOSPITAL'}
                 </h1>
-                <h2 className="text-xs sm:text-sm font-bold tracking-wider font-sans text-slate-800 uppercase mt-0.5">
-                  Maternal and Child Care Clinic
-                </h2>
-                <p className="text-[11px] font-sans text-slate-600 mt-1">
-                  B-144, Main Sharah-e-Quaideen, Near Underpass, Karachi.
-                </p>
-                <p className="text-[11px] font-sans font-semibold text-slate-700">
-                  Phone: 0301-6569996
-                </p>
+                {(profile.hospitalType || profile.shortName) && (
+                  <h2 className="text-xs sm:text-sm font-bold tracking-wider font-sans text-slate-800 uppercase mt-0.5">
+                    {profile.hospitalType || profile.shortName}
+                  </h2>
+                )}
+                {hospitalAddress && (
+                  <p className="text-[11px] font-sans text-slate-600 mt-1 leading-snug">
+                    {hospitalAddress}
+                  </p>
+                )}
+                {contactDetails && (
+                  <p className="text-[11px] font-sans font-semibold text-slate-700 mt-0.5">
+                    {contactDetails}
+                  </p>
+                )}
                 <h3 className="text-sm sm:text-base font-extrabold font-sans tracking-widest text-slate-900 uppercase mt-2">
                   (DISCHARGE FORM)
                 </h3>
@@ -135,14 +328,20 @@ export const DischargeSlipPrintModal: React.FC<DischargeSlipPrintModalProps> = (
                 </span>
               </div>
 
-              {/* Row 4 */}
-              <div className="col-span-7 flex items-baseline">
+              {/* Row 4: Father's Name, CNIC, Age, Gender */}
+              <div className="col-span-4 flex items-baseline">
                 <span className="font-bold shrink-0">Father's Name:</span>
                 <span className="ml-2 flex-1 border-b border-dotted border-slate-700 pb-0.5">
-                  {admission.patientFatherName || '—'}
+                  {fatherName}
                 </span>
               </div>
-              <div className="col-span-3 flex items-baseline pl-4">
+              <div className="col-span-4 flex items-baseline pl-3">
+                <span className="font-bold shrink-0">CNIC:</span>
+                <span className="ml-2 font-mono flex-1 border-b border-dotted border-slate-700 pb-0.5">
+                  {cnic}
+                </span>
+              </div>
+              <div className="col-span-2 flex items-baseline pl-3">
                 <span className="font-bold shrink-0">Age:</span>
                 <span className="ml-2 flex-1 border-b border-dotted border-slate-700 pb-0.5">
                   {admission.patientAge || '—'}
@@ -193,7 +392,7 @@ export const DischargeSlipPrintModal: React.FC<DischargeSlipPrintModalProps> = (
               {/* 2. History */}
               <div>
                 <span className="font-bold text-slate-900 block mb-0.5">2. History:</span>
-                <div className="pl-4 min-h-[48px] border-b border-slate-300 pb-1 whitespace-pre-wrap">
+                <div className="pl-4 min-h-[48px] discharge-ruled-lines whitespace-pre-wrap text-slate-800">
                   {summary.history || 'No significant prior medical history noted.'}
                 </div>
               </div>
@@ -201,7 +400,7 @@ export const DischargeSlipPrintModal: React.FC<DischargeSlipPrintModalProps> = (
               {/* 3. Examination */}
               <div>
                 <span className="font-bold text-slate-900 block mb-0.5">3. Examination:</span>
-                <div className="pl-4 min-h-[48px] border-b border-slate-300 pb-1 whitespace-pre-wrap">
+                <div className="pl-4 min-h-[48px] discharge-ruled-lines whitespace-pre-wrap text-slate-800">
                   {summary.examination || `Condition: ${summary.conditionAtDischarge || 'Stable'}`}
                 </div>
               </div>
@@ -209,7 +408,7 @@ export const DischargeSlipPrintModal: React.FC<DischargeSlipPrintModalProps> = (
               {/* 4. Investigations */}
               <div>
                 <span className="font-bold text-slate-900 block mb-0.5">4. Investigations:</span>
-                <div className="pl-4 min-h-[48px] border-b border-slate-300 pb-1 whitespace-pre-wrap">
+                <div className="pl-4 min-h-[48px] discharge-ruled-lines whitespace-pre-wrap text-slate-800">
                   {summary.investigations || 'Routine baseline labs & diagnostics performed.'}
                 </div>
               </div>
@@ -217,7 +416,7 @@ export const DischargeSlipPrintModal: React.FC<DischargeSlipPrintModalProps> = (
               {/* 5. Summary */}
               <div>
                 <span className="font-bold text-slate-900 block mb-0.5">5. Summary:</span>
-                <div className="pl-4 min-h-[60px] border-b border-slate-300 pb-1 whitespace-pre-wrap">
+                <div className="pl-4 min-h-[48px] discharge-ruled-lines whitespace-pre-wrap text-slate-800">
                   {summary.treatmentSummary || 'Patient managed conservatively in ward and responded satisfactorily to treatment.'}
                 </div>
               </div>
@@ -225,17 +424,17 @@ export const DischargeSlipPrintModal: React.FC<DischargeSlipPrintModalProps> = (
               {/* 6. Prescription on Discharge */}
               <div>
                 <span className="font-bold text-slate-900 block mb-0.5">6. Prescription on Discharge:</span>
-                <div className="pl-4 min-h-[60px] border-b border-slate-300 pb-1 whitespace-pre-wrap font-sans text-xs">
+                <div className="pl-4 min-h-[72px] discharge-ruled-lines whitespace-pre-wrap font-sans text-xs text-slate-800">
                   {summary.prescriptionOnDischarge || summary.medicinesInstructions || 'As per prescription slip.'}
                 </div>
               </div>
 
               {/* 7. Follow-up Visit */}
-              <div className="flex items-baseline gap-2">
-                <span className="font-bold text-slate-900 shrink-0">7. Follow-up Visit:</span>
-                <span className="flex-1 border-b border-slate-700 pb-0.5">
+              <div className="flex items-start gap-2">
+                <span className="font-bold text-slate-900 shrink-0 leading-[24px]">7. Follow-up Visit:</span>
+                <div className="flex-1 discharge-ruled-lines min-h-[24px] whitespace-pre-wrap text-slate-800">
                   {summary.followUpAdvice || (summary.followUpDate ? `Review on ${summary.followUpDate}` : 'In OPD as advised.')}
-                </span>
+                </div>
               </div>
 
               {/* 8. Final Outcome & Doctor's Signature */}
@@ -294,4 +493,8 @@ export const DischargeSlipPrintModal: React.FC<DischargeSlipPrintModalProps> = (
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined'
+    ? createPortal(modalContent, document.body)
+    : modalContent;
 };

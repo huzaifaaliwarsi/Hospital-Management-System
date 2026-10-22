@@ -19,9 +19,9 @@ describe('integration and discharge safety gates', () => {
   it('prevents admission staff from collecting cash', () => {
     expect(() => authorize('frontdesk', 'create')({ user: { role: 'ADMISSION' } } as any, {} as any, vi.fn())).toThrow('not permitted');
   });
-  it.each([[1, 0, true], [0, 1, true], [1, 1, true], [0, 0, false]])('pending=%s unpaid=%s blocks discharge=%s', async (pending, unpaid, expected) => {
+  it.each([[1, 0, false], [0, 1, true], [1, 1, true], [0, 0, false]])('pending=%s unpaid=%s blocks discharge=%s', async (pending, unpaid, expected) => {
     const tx = { pharmacyClearance: { count: vi.fn(async () => pending) }, hmsPharmacyCharge: { count: vi.fn(async () => unpaid) } };
     expect(await pharmacyDischargeBlocked(tx as any, 'adm')).toBe(expected);
-    expect(tx.pharmacyClearance.count).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ admissionRecordId: 'adm' }) }));
+    expect(tx.hmsPharmacyCharge.count).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ admissionRecordId: 'adm', patientOutstanding: { gt: 0 } }) }));
   });
 });

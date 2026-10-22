@@ -32,6 +32,7 @@ export interface ThermalReceiptData {
   admissionNumber?: string | null;
   bedInfo?: string | null;
   doctorName?: string | null;
+  rmoName?: string | null;
   serviceName?: string;
   lines: ThermalReceiptLineItem[];
   subtotal: number;
@@ -63,6 +64,7 @@ export function buildThermalReceiptData(
     patientWeight?: number | string | null;
     patientAge?: number | string | null;
     patientGender?: string | null;
+    rmoName?: string | null;
   }
 ): ThermalReceiptData {
   const isIpd = invoice.sourceType === 'ADMISSION' || (invoice.encounterType as any) === 'ADMISSION' || (invoice.encounterType as any) === 'IPD';
@@ -184,6 +186,25 @@ export function buildThermalReceiptData(
     docName = `Dr. ${docName}`;
   }
 
+  // RMO Name (Eligible ONLY for EMERGENCY and ADMISSION encounters)
+  const isRmoEligible = encType === 'EMERGENCY' || encType === 'ADMISSION' || encType === 'IPD' || isIpd;
+  let resolvedRmo: string | null = null;
+  if (isRmoEligible) {
+    const rawRmo =
+      options?.rmoName ??
+      invoice.rmoName ??
+      invoice.rmo?.fullName ??
+      invoice.admissionRecord?.rmo?.fullName ??
+      invoice.admissionRecord?.rmoStaff?.fullName ??
+      null;
+    if (rawRmo && typeof rawRmo === 'string' && rawRmo.trim()) {
+      resolvedRmo = rawRmo.trim();
+      if (!/^dr\.?/i.test(resolvedRmo)) {
+        resolvedRmo = `Dr. ${resolvedRmo}`;
+      }
+    }
+  }
+
   const primaryServiceName = lines[0]?.serviceName || (isIpd ? 'Inpatient Admission' : encType === 'OBSERVATION' ? 'Observation' : encType === 'EMERGENCY' ? 'Emergency' : 'OPD');
 
   return {
@@ -201,6 +222,7 @@ export function buildThermalReceiptData(
     admissionNumber: invoice.admissionNumber || null,
     bedInfo: invoice.bedInfo || null,
     doctorName: docName,
+    rmoName: resolvedRmo,
     serviceName: primaryServiceName,
     lines,
     fees,
@@ -233,6 +255,7 @@ describe('80mm Thermal Billing & Receipt System (Canonical Dynamic Service Lines
       patientMr: 'MR-00045',
       patientName: 'Bilal Khan',
       doctorName: 'Dr. Zeeshan (ER Incharge)',
+      rmoName: 'Dr. Hamza Tariq (RMO)',
       total: 2700,
       paidTotal: 2700,
       lines: [
@@ -256,6 +279,7 @@ describe('80mm Thermal Billing & Receipt System (Canonical Dynamic Service Lines
     expect(receipt.encounterType).toBe('EMERGENCY');
     expect(receipt.tokenNumber).toBe('ER-001');
     expect(receipt.doctorName).toBe('Dr. Zeeshan (ER Incharge)');
+    expect(receipt.rmoName).toBe('Dr. Hamza Tariq (RMO)');
     expect(receipt.lines).toHaveLength(3);
     expect(receipt.lines[0].serviceName).toBe('Emergency Consultation');
     expect(receipt.lines[0].unitRate).toBe(1500);

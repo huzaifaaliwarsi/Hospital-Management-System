@@ -60,24 +60,26 @@ function openPrintWindow(title: string, bodyHtml: string) {
       <head>
         <title>${title}</title>
         <style>
-          @page { size: auto; margin: 12mm; }
-          body { font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; margin: 0; color: #0f172a; font-size: 12px; font-weight: 500; }
-          .header { text-align: center; border-bottom: 2px solid #08775A; padding-bottom: 12px; margin-bottom: 16px; }
-          .header h1 { margin: 0; font-size: 20px; color: #08775A; font-weight: 700; }
-          .header p { margin: 2px 0; color: #475569; font-size: 11px; font-weight: 600; }
-          .banner { text-align: center; background: #fffbeb; border: 1px solid #fcd34d; color: #92400e; font-weight: 800; font-size: 12px; padding: 6px; border-radius: 6px; margin-bottom: 14px; letter-spacing: 0.4px; }
-          .meta-grid { display: flex; justify-content: space-between; margin-bottom: 14px; background: #f8fafc; padding: 10px 14px; border-radius: 8px; border: 1px solid #e2e8f0; }
-          .meta-col { flex: 1; font-size: 11.5px; }
-          .meta-row { margin-bottom: 4px; }
-          .meta-label { font-weight: 700; color: #475569; width: 110px; display: inline-block; }
-          table { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
-          th { background: #f1f5f9; text-align: left; padding: 6px 8px; border-bottom: 2px solid #cbd5e1; font-size: 10px; text-transform: uppercase; color: #334155; font-weight: 700; }
-          td { padding: 6px 8px; border-bottom: 1px solid #e2e8f0; font-size: 11px; font-weight: 600; }
+          @page { size: A4 portrait; margin: 8mm 10mm 10mm 10mm; }
+          * { box-sizing: border-box; }
+          body { font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; margin: 0; color: #0f172a; font-size: 10px; font-weight: 500; line-height: 1.35; -webkit-font-smoothing: antialiased; }
+          .header { text-align: center; border-bottom: 2px solid #08775A; padding-bottom: 6px; margin-bottom: 8px; }
+          .header h1 { margin: 0; font-size: 17px; color: #08775A; font-weight: 700; line-height: 1.2; }
+          .header p { margin: 1.5px 0; color: #475569; font-size: 9.5px; font-weight: 600; }
+          .banner { text-align: center; background: #fffbeb; border: 1px solid #fcd34d; color: #92400e; font-weight: 800; font-size: 10px; padding: 4px; border-radius: 4px; margin-bottom: 8px; letter-spacing: 0.3px; }
+          .meta-grid { display: flex; justify-content: space-between; margin-bottom: 8px; background: #f8fafc; padding: 7px 10px; border-radius: 6px; border: 1px solid #e2e8f0; }
+          .meta-col { flex: 1; font-size: 9.5px; min-width: 0; }
+          .meta-row { margin-bottom: 3px; }
+          .meta-label { font-weight: 700; color: #475569; width: 100px; display: inline-block; font-size: 9px; }
+          table { width: 100%; border-collapse: collapse; margin-bottom: 8px; table-layout: fixed; }
+          th { background: #f1f5f9; text-align: left; padding: 4px 6px; border-bottom: 2px solid #cbd5e1; font-size: 8.5px; text-transform: uppercase; color: #334155; font-weight: 700; }
+          td { padding: 4px 6px; border-bottom: 1px solid #e2e8f0; font-size: 9.5px; font-weight: 600; line-height: 1.25; }
+          tr { page-break-inside: avoid; break-inside: avoid; }
           .text-right { text-align: right; }
-          .summary-box { width: 360px; margin-left: auto; border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 14px; background: #f8fafc; }
-          .summary-row { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 12px; font-weight: 600; color: #475569; }
+          .summary-box { width: 300px; margin-left: auto; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px 10px; background: #f8fafc; page-break-inside: avoid; break-inside: avoid; }
+          .summary-row { display: flex; justify-content: space-between; margin-bottom: 3px; font-size: 9.5px; font-weight: 600; color: #475569; }
           .summary-row span.val { font-weight: 700; color: #0f172a; }
-          .footer { text-align: center; font-size: 10px; color: #64748b; border-top: 1px dashed #cbd5e1; padding-top: 10px; margin-top: 20px; }
+          .footer { text-align: center; font-size: 8.5px; color: #64748b; border-top: 1px dashed #cbd5e1; padding-top: 6px; margin-top: 10px; page-break-inside: avoid; break-inside: avoid; }
         </style>
       </head>
       <body>${bodyHtml}

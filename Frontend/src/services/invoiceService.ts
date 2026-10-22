@@ -48,6 +48,8 @@ export interface InvoiceSummary {
   status: InvoiceStatus;
   patientName: string;
   patientMr: string;
+  patientPhone?: string;
+  patientCnic?: string;
   payerType: 'Corporate / Panel' | 'Self Pay';
   subtotal: number;
   discountTotal: number;
@@ -142,6 +144,8 @@ function resolveMrNumber(raw: Record<string, any>): string {
 function toInvoiceSummary(raw: Record<string, any>): InvoiceSummary {
   const isPanel = !!raw.panelPatientId;
   const patient = raw.panelPatient || raw.selfPayEncounter || raw.admissionRecord?.panelPatient || raw.admissionRecord?.selfPayEncounter;
+  const patientPhone = patient?.phone || raw.patientPhone || raw.phone || '';
+  const patientCnic = patient?.cnicOrPassport || raw.patientCnic || raw.cnicOrPassport || '';
   const receipts: any[] = Array.isArray(raw.paymentReceipts) ? raw.paymentReceipts : [];
   const reversedReceipts = receipts.filter((r) => r.isReversed);
   const paidTotal = Number(raw.paidTotal ?? 0);
@@ -159,6 +163,8 @@ function toInvoiceSummary(raw: Record<string, any>): InvoiceSummary {
     status: raw.status === 'VOID' ? 'VOID' : balanceDue === 0 ? 'PAID' : paidTotal > 0 ? 'PARTIALLY_PAID' : 'UNPAID',
     patientName: patient?.fullName || 'Walk-in Patient',
     patientMr: resolveMrNumber(raw),
+    patientPhone,
+    patientCnic,
     payerType: isPanel ? 'Corporate / Panel' : 'Self Pay',
     subtotal: Number(raw.subtotal ?? 0),
     discountTotal: Number(raw.discountTotal ?? 0),
@@ -178,7 +184,7 @@ function toInvoiceSummary(raw: Record<string, any>): InvoiceSummary {
 function toInvoiceDetail(raw: Record<string, any>): InvoiceDetail {
   const admissionDoc = raw.admissionRecord?.doctor?.fullName;
   const firstLineDoctor = raw.lines?.[0]?.performedBy?.fullName;
-  const doctor = raw.appointment?.doctor?.fullName || admissionDoc || firstLineDoctor || '';
+  const doctor = raw.doctor?.fullName || raw.appointment?.doctor?.fullName || admissionDoc || firstLineDoctor || '';
   const admissionDept = raw.admissionRecord?.department?.name;
   const firstLineDept = raw.lines?.[0]?.serviceRate?.departmentName || raw.lines?.[0]?.serviceRate?.category;
   const department = raw.department?.name || raw.appointment?.department?.name || admissionDept || firstLineDept || '';
@@ -187,7 +193,7 @@ function toInvoiceDetail(raw: Record<string, any>): InvoiceDetail {
     ...toInvoiceSummary(raw),
     admissionDepartmentName: admissionDept,
     doctorName: doctor,
-    rmoName: raw.rmo?.fullName || raw.admissionRecord?.rmo?.fullName || undefined,
+    rmoName: raw.rmoName || raw.rmo?.fullName || raw.admissionRecord?.rmo?.fullName || undefined,
     departmentName: department,
     panelName: raw.panelPatient?.corporatePanel?.name || raw.panelPatient?.corporatePanel?.organizationName || '',
     patientPhone: raw.panelPatient?.primaryPhone || raw.selfPayEncounter?.phone || '',

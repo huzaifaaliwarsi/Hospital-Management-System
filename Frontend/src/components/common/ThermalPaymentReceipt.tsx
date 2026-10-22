@@ -37,6 +37,7 @@ export interface ThermalReceiptData {
   admissionNumber?: string | null;
   bedInfo?: string | null;
   doctorName?: string | null;
+  rmoName?: string | null;
   serviceName?: string;
   lines: ThermalReceiptLineItem[];
   subtotal: number;
@@ -109,6 +110,7 @@ export function buildThermalReceiptData(
     patientWeight?: number | string | null;
     patientAge?: number | string | null;
     patientGender?: string | null;
+    rmoName?: string | null;
   }
 ): ThermalReceiptData {
   const isIpd = invoice.sourceType === 'ADMISSION' || (invoice.encounterType as any) === 'ADMISSION' || (invoice.encounterType as any) === 'IPD';
@@ -238,6 +240,25 @@ export function buildThermalReceiptData(
     docName = `Dr. ${docName}`;
   }
 
+  // RMO Name (Eligible ONLY for EMERGENCY and ADMISSION encounters)
+  const isRmoEligible = encType === 'EMERGENCY' || encType === 'ADMISSION' || isIpd;
+  let resolvedRmo: string | null = null;
+  if (isRmoEligible) {
+    const rawRmo =
+      options?.rmoName ??
+      (invoice as any).rmoName ??
+      (invoice as any).rmo?.fullName ??
+      (invoice as any).admissionRecord?.rmo?.fullName ??
+      (invoice as any).admissionRecord?.rmoStaff?.fullName ??
+      null;
+    if (rawRmo && typeof rawRmo === 'string' && rawRmo.trim()) {
+      resolvedRmo = rawRmo.trim();
+      if (!/^dr\.?/i.test(resolvedRmo)) {
+        resolvedRmo = `Dr. ${resolvedRmo}`;
+      }
+    }
+  }
+
   const primaryServiceName = lines[0]?.serviceName || (isIpd ? 'Inpatient Admission' : encType === 'OBSERVATION' ? 'Observation' : encType === 'EMERGENCY' ? 'Emergency' : 'OPD');
 
   const resolvedWeight = options?.patientWeight ?? (invoice as any).patientWeight ?? (invoice as any).weightKg ?? (invoice as any).admissionRecord?.weightKg ?? (invoice as any).selfPayEncounter?.weightKg ?? (() => {
@@ -280,6 +301,7 @@ export function buildThermalReceiptData(
     admissionNumber: admissionNum,
     bedInfo,
     doctorName: docName,
+    rmoName: resolvedRmo,
     serviceName: primaryServiceName,
     lines,
     fees,
@@ -606,6 +628,11 @@ export function generateThermalReceiptHtml(
       <td class="label">Doctor:</td>
       <td class="val">${escapeHtml(data.doctorName || 'Consultant')}</td>
     </tr>
+    ${(data.rmoName && (data.encounterType === 'EMERGENCY' || data.encounterType === 'ADMISSION' || data.encounterType === 'IPD')) ? `
+    <tr>
+      <td class="label">RMO:</td>
+      <td class="val">${escapeHtml(data.rmoName)}</td>
+    </tr>` : ''}
     ${data.admissionNumber ? `
     <tr>
       <td class="label">Admission:</td>
@@ -941,6 +968,14 @@ export const ThermalPaymentReceipt: React.FC<ThermalPaymentReceiptProps> = ({
                 {receipt.doctorName || 'Consultant'}
               </span>
             </div>
+            {(receipt.rmoName && (receipt.encounterType === 'EMERGENCY' || receipt.encounterType === 'ADMISSION' || (receipt.encounterType as string) === 'IPD')) && (
+              <div className="flex justify-between items-center">
+                <span className="font-semibold text-black">RMO:</span>
+                <span className="font-bold text-black text-right max-w-[170px] truncate" title={receipt.rmoName}>
+                  {receipt.rmoName}
+                </span>
+              </div>
+            )}
             {receipt.admissionNumber && (
               <div className="flex justify-between items-center">
                 <span className="font-semibold text-black">Admission:</span>

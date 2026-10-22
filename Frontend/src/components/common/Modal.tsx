@@ -98,8 +98,8 @@ export const Modal: React.FC<ModalProps> = ({
           )}
         </div>
 
-        {/* Modal Body */}
-        <div className="px-6 py-4 overflow-y-auto flex-1 text-sm text-slate-700">
+        {/* Modal Body with prominent, visible custom scrollbar */}
+        <div className="px-6 py-4 overflow-y-auto flex-1 text-sm text-slate-700 [scrollbar-width:thin] [scrollbar-color:#94a3b8_#f1f5f9] [&::-webkit-scrollbar]:w-2.5 [&::-webkit-scrollbar-track]:bg-slate-100/90 [&::-webkit-scrollbar-thumb]:bg-slate-300 hover:[&::-webkit-scrollbar-thumb]:bg-slate-500 [&::-webkit-scrollbar-thumb]:rounded-full">
           {children}
         </div>
 

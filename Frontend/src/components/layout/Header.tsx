@@ -98,20 +98,49 @@ export const Header: React.FC<HeaderProps> = ({
         data.forEach((n) => seenNotificationIdsRef.current.add(n.id));
         initialLoadRef.current = false;
       } else {
-        // Trigger real-time toaster for newly arrived unread notifications
+        // Collect newly arrived unread notifications
+        const newlyArrived: NotificationItem[] = [];
         for (const notif of data) {
           if (!seenNotificationIdsRef.current.has(notif.id)) {
             seenNotificationIdsRef.current.add(notif.id);
             if (!notif.read) {
-              if (notif.type === 'error' || notif.type === 'urgent') {
-                toast.error(notif.message, notif.title);
-              } else if (notif.type === 'warning') {
-                toast.warning(notif.message, notif.title);
-              } else if (notif.type === 'success') {
-                toast.success(notif.message, notif.title);
-              } else {
-                toast.info(notif.message, notif.title);
-              }
+              newlyArrived.push(notif);
+            }
+          }
+        }
+
+        if (newlyArrived.length > 0) {
+          // Deduplicate notifications by title and reference
+          const seenKeys = new Set<string>();
+          const deduped: NotificationItem[] = [];
+          for (const notif of newlyArrived) {
+            const key = `${notif.title || ''}_${notif.referenceId || ''}`;
+            if (!seenKeys.has(key)) {
+              seenKeys.add(key);
+              deduped.push(notif);
+            }
+          }
+
+          // Prioritize: Show only the single most important / urgent alert on screen (never flood the screen)
+          const priority = (type?: string) => {
+            if (type === 'error' || type === 'urgent') return 4;
+            if (type === 'warning') return 3;
+            if (type === 'success') return 2;
+            return 1;
+          };
+
+          deduped.sort((a, b) => priority(b.type) - priority(a.type));
+          const primaryNotif = deduped[0];
+
+          if (primaryNotif) {
+            if (primaryNotif.type === 'error' || primaryNotif.type === 'urgent') {
+              toast.error(primaryNotif.message, primaryNotif.title);
+            } else if (primaryNotif.type === 'warning') {
+              toast.warning(primaryNotif.message, primaryNotif.title);
+            } else if (primaryNotif.type === 'success') {
+              toast.success(primaryNotif.message, primaryNotif.title);
+            } else {
+              toast.info(primaryNotif.message, primaryNotif.title);
             }
           }
         }

@@ -137,7 +137,20 @@ interface Props {
   type: ReportType;
   title: string;
   subtitle: string;
+  onNavigate?: (pageId: string) => void;
+  currentPage?: string;
 }
+
+export const ALL_REPORTS_LIST = [
+  { page: 'reports-sales', type: 'SALES_COLLECTION' as ReportType, label: 'Sales & Collection' },
+  { page: 'reports-hms', type: 'HMS_DISPENSE' as ReportType, label: 'HMS Dispense' },
+  { page: 'reports-purchase', type: 'PURCHASE' as ReportType, label: 'Purchase Inward' },
+  { page: 'reports-stock-movement', type: 'STOCK_MOVEMENT' as ReportType, label: 'Stock Movement Audit' },
+  { page: 'reports-vendor-ledger', type: 'VENDOR_LEDGER' as ReportType, label: 'Vendor Payables' },
+  { page: 'reports-expense', type: 'EXPENSE' as ReportType, label: 'Operating Expenses' },
+  { page: 'reports-returns', type: 'RETURN_REFUND' as ReportType, label: 'Returns & Refunds' },
+  { page: 'reports-settlement', type: 'BALANCE_SETTLEMENT' as ReportType, label: 'Drawer Settlement' },
+];
 
 /**
  * Report table + date filter + export (Excel/CSV/Print) for ONE report type —
@@ -146,7 +159,7 @@ interface Props {
  * from the original single-page ReportsPage, just parameterized by `type`
  * instead of switched via local state.
  */
-export const ReportView: React.FC<Props> = ({ type, title, subtitle }) => {
+export const ReportView: React.FC<Props> = ({ type, title, subtitle, onNavigate, currentPage }) => {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [rows, setRows] = useState<any[]>([]);
@@ -251,6 +264,29 @@ export const ReportView: React.FC<Props> = ({ type, title, subtitle }) => {
 
   return (
     <div className="p-6 sm:p-8 space-y-6 max-w-[1700px] mx-auto">
+      {/* Report Switcher Tabs */}
+      {onNavigate && (
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-2 border-b border-slate-200/80 -mt-1">
+          {ALL_REPORTS_LIST.map((tab) => {
+            const isActive = (currentPage === tab.page) || (type === tab.type);
+            return (
+              <button
+                key={tab.page}
+                type="button"
+                onClick={() => onNavigate(tab.page)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                  isActive
+                    ? 'bg-[#0e7d5a] text-white shadow-xs'
+                    : 'bg-white text-slate-600 hover:text-slate-900 hover:bg-slate-100 border border-slate-200'
+                }`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       <div>
         <div className="flex items-center gap-2.5">
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">{title}</h1>

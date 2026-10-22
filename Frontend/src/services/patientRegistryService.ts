@@ -277,6 +277,66 @@ export async function searchPanelPatients(query: string = '', panelId?: string):
 }
 
 /**
+ * Live search of Self-Pay encounters by name/MR#/CNIC/phone — backed by `GET /patients/encounters`.
+ */
+export async function searchSelfPayPatients(query: string = ''): Promise<PanelPatientSearchResult[]> {
+  const trimmed = query.trim();
+  const params: Record<string, any> = {};
+  if (trimmed) params.search = trimmed;
+  const res = await apiClient.get<{ data: Record<string, any>[] }>('/patients/encounters', { params });
+  return (res.data?.data || []).map((raw) => ({
+    id: raw.id,
+    fullName: raw.fullName,
+    mrNumber: raw.mrNumber,
+    cnicOrPassport: raw.cnicOrPassport || undefined,
+    phone: raw.phone || undefined,
+    guardianName: raw.guardianName || undefined,
+    guardianRelation: raw.guardianRelation || undefined,
+    dob: raw.dob ? formatIsoDate(raw.dob) : undefined,
+    gender: raw.gender || undefined,
+    addressLine1: raw.address || undefined,
+    panelId: '',
+    panelName: 'Self Pay',
+    panelMemberId: undefined,
+    status: 'ACTIVE',
+  }));
+}
+
+/**
+ * Unified live search across all patients (Panel + Self-Pay) by Name, MR#, Phone, or CNIC.
+ */
+export async function searchPatientsUnified(
+  query: string = '',
+  mode: 'PANEL' | 'SELF_PAY' | 'ALL' = 'ALL',
+  panelId?: string,
+): Promise<PanelPatientSearchResult[]> {
+  const trimmed = query.trim();
+  if (!trimmed) {
+    if (mode === 'PANEL') return searchPanelPatients('', panelId);
+    return [];
+  }
+
+  if (mode === 'PANEL') return searchPanelPatients(trimmed, panelId);
+  if (mode === 'SELF_PAY') return searchSelfPayPatients(trimmed);
+
+  const [panelResults, selfPayResults] = await Promise.all([
+    searchPanelPatients(trimmed, panelId).catch(() => []),
+    searchSelfPayPatients(trimmed).catch(() => []),
+  ]);
+
+  const seen = new Set<string>();
+  const combined: PanelPatientSearchResult[] = [];
+  for (const p of [...panelResults, ...selfPayResults]) {
+    const key = p.mrNumber || p.id;
+    if (!seen.has(key)) {
+      seen.add(key);
+      combined.push(p);
+    }
+  }
+  return combined;
+}
+
+/**
  * Server-side, tiered duplicate check (panel.md §17 backlog item 3) —
  * backed by `GET /patients/check-duplicate`. Previously ran entirely
  * client-side over a page-200 cache (`getAllPatients()`), which silently
