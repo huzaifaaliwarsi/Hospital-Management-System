@@ -43,12 +43,98 @@ export const hmsRequestsService = {
 
   // ── Requests (Idempotent creation) ────────────────────────────────────────
   async createRequest(body: CreateRequestBody, actorId?: string) {
+    let existing: any = null;
     if (body.externalRequestRef) {
-      const existing = await prisma.medicineRequest.findFirst({
+      existing = await prisma.medicineRequest.findFirst({
         where: { externalRequestRef: body.externalRequestRef },
         include: requestInclude,
       });
-      if (existing) return existing;
+    }
+    if (!existing && body.externalAdmissionRef) {
+      existing = await prisma.medicineRequest.findFirst({
+        where: { externalAdmissionRef: body.externalAdmissionRef },
+        orderBy: { requestedAt: 'asc' },
+        include: requestInclude,
+      });
+    }
+
+    if (existing) {
+      // Find lines that are NOT already in existing.lines
+      const existingLineTags = new Set(
+        existing.lines
+          .map((l: any) => {
+            const match = l.notes?.match(/\[HMS_LINE:([^\]]+)\]/);
+            return match ? match[1] : null;
+          })
+          .filter(Boolean),
+      );
+
+      // Determine lines to add:
+      const linesToAdd = body.lines.filter((l) => {
+        const match = l.notes?.match(/\[HMS_LINE:([^\]]+)\]/);
+        if (match && existingLineTags.has(match[1])) {
+          return false; // already ingested!
+        }
+        return true;
+      });
+
+      if (linesToAdd.length > 0) {
+        for (const line of linesToAdd) {
+          const medicine = await prisma.medicineMaster.findUnique({ where: { id: line.medicineId } });
+          if (!medicine || !medicine.isActive) throw new NotFoundError(`Medicine ${line.medicineId} not found or inactive`);
+        }
+
+        await prisma.$transaction(async (tx) => {
+          for (const l of linesToAdd) {
+            await tx.medicineRequestLine.create({
+              data: {
+                medicineRequestId: existing.id,
+                medicineId: l.medicineId,
+                requestedQuantity: new Decimal(l.requestedQuantity),
+                notes: l.notes,
+              },
+            });
+          }
+
+          // Update status to REQUESTED or PARTIALLY_ACCEPTED
+          const allLines = await tx.medicineRequestLine.findMany({ where: { medicineRequestId: existing.id } });
+          const anyDispensed = allLines.some((l) => l.dispensedQuantity.greaterThan(0));
+          const updatedStatus = anyDispensed ? 'PARTIALLY_ACCEPTED' : 'REQUESTED';
+
+          await tx.medicineRequest.update({
+            where: { id: existing.id },
+            data: {
+              status: updatedStatus,
+              patientNameSnapshot: body.patientNameSnapshot || existing.patientNameSnapshot,
+              urgency: body.urgency || existing.urgency,
+              requestedAt: new Date(),
+              approvedById: null,
+              approvedAt: null,
+            },
+          });
+        });
+
+        const updated = await prisma.medicineRequest.findUnique({
+          where: { id: existing.id },
+          include: requestInclude,
+        });
+
+        // Broadcast SSE notification for newly added lines
+        const medSummary = linesToAdd.map((l) => `${l.requestedQuantity}x`).join(', ');
+        broadcastHmsNotification({
+          type: 'NEW_HMS_REQUEST',
+          requestNumber: updated?.requestNumber || existing.requestNumber,
+          patientName: updated?.patientNameSnapshot || 'Patient',
+          admissionRef: existing.externalAdmissionRef,
+          urgency: updated?.urgency || 'ROUTINE',
+          medicinesSummary: `Added: ${medSummary}`,
+          timestamp: new Date().toISOString(),
+        });
+
+        return updated!;
+      }
+
+      return existing;
     }
 
     for (const line of body.lines) {

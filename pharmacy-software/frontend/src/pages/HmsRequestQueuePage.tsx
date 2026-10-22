@@ -19,6 +19,7 @@ interface RequestLineRow {
   medicine: MedicineRow;
   requestedQuantity: string | number;
   dispensedQuantity: string | number;
+  notes?: string | null;
 }
 interface RequestRow {
   id: string;
@@ -160,11 +161,28 @@ export const HmsRequestQueuePage: React.FC<{ canApprove: boolean }> = ({ canAppr
     {
       key: 'patientNameSnapshot',
       header: 'Patient Name',
-      render: (r) => (
-        <span className="font-bold text-slate-900 text-xs whitespace-nowrap">
-          {r.patientNameSnapshot || '—'}
-        </span>
-      ),
+      render: (r) => {
+        const totalItems = r.lines.length;
+        const pendingItems = r.lines.filter(
+          (l) => Number(l.requestedQuantity) > Number(l.dispensedQuantity),
+        ).length;
+        return (
+          <div className="flex items-center gap-2 whitespace-nowrap">
+            <span className="font-bold text-slate-900 text-xs">
+              {r.patientNameSnapshot || '—'}
+            </span>
+            {pendingItems > 0 ? (
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                {pendingItems} to dispense
+              </span>
+            ) : totalItems > 0 ? (
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                {totalItems} fulfilled
+              </span>
+            ) : null}
+          </div>
+        );
+      },
     },
     {
       key: 'urgency',
@@ -576,22 +594,38 @@ const DetailModal: React.FC<{
             <tbody>
               {request.lines.map((l) => {
                 const remaining = Number(l.requestedQuantity) - Number(l.dispensedQuantity);
+                const isFullyDispensed = remaining <= 0;
                 return (
-                  <tr key={l.id} className="border-t border-[#f0f4f2]">
-                    <td className="py-1.5 px-2 font-semibold text-[#111827]">{l.medicine.name}</td>
-                    <td className="py-1.5 px-2 text-right tabular-nums">{formatNumber(l.requestedQuantity)}</td>
-                    <td className="py-1.5 px-2 text-right tabular-nums">{formatNumber(l.dispensedQuantity)}</td>
-                    <td className="py-1.5 px-2 text-right tabular-nums">{formatNumber(remaining)}</td>
+                  <tr key={l.id} className={`border-t border-[#f0f4f2] ${isFullyDispensed ? 'bg-slate-50/40' : 'bg-amber-50/30'}`}>
+                    <td className="py-2 px-2 font-semibold text-[#111827]">
+                      <div>{l.medicine.name}</div>
+                      {l.notes && <div className="text-[10px] text-slate-500 font-normal">{l.notes.replace(/\[HMS_LINE:[^\]]+\]\s*/, '')}</div>}
+                    </td>
+                    <td className="py-2 px-2 text-right tabular-nums">{formatNumber(l.requestedQuantity)}</td>
+                    <td className="py-2 px-2 text-right tabular-nums text-emerald-700 font-semibold">{formatNumber(l.dispensedQuantity)}</td>
+                    <td className="py-2 px-2 text-right tabular-nums">
+                      {isFullyDispensed ? (
+                        <span className="text-slate-400 font-normal">0</span>
+                      ) : (
+                        <span className="font-bold text-amber-700">{formatNumber(remaining)}</span>
+                      )}
+                    </td>
                     {canFulfill && (
-                      <td className="py-1.5 px-2 text-right">
-                        <input
-                          type="number"
-                          min={0}
-                          max={remaining}
-                          value={dispenseQty[l.id] ?? ''}
-                          onChange={(e) => setDispenseQty((prev) => ({ ...prev, [l.id]: e.target.value }))}
-                          className="w-20 h-7 text-right text-xs border border-[#e2eae5] rounded px-1.5"
-                        />
+                      <td className="py-2 px-2 text-right">
+                        {isFullyDispensed ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                            <Check className="h-3 w-3" /> Dispensed
+                          </span>
+                        ) : (
+                          <input
+                            type="number"
+                            min={0}
+                            max={remaining}
+                            value={dispenseQty[l.id] ?? ''}
+                            onChange={(e) => setDispenseQty((prev) => ({ ...prev, [l.id]: e.target.value }))}
+                            className="w-20 h-7 text-right text-xs border border-amber-300 bg-white font-semibold text-slate-900 rounded px-1.5 focus:ring-1 focus:ring-emerald-500"
+                          />
+                        )}
                       </td>
                     )}
                   </tr>

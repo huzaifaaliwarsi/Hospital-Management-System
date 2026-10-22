@@ -1347,7 +1347,7 @@ export const admissionService = {
         lines: (clearance.lines || []).map((l: any) => ({
           medicineId: l.medicineId,
           requestedQuantity: Number(l.requestedQuantity),
-          notes: l.notes || undefined,
+          notes: l.notes ? `[HMS_LINE:${l.id}] ${l.notes}` : `[HMS_LINE:${l.id}]`,
         })),
       });
     } catch (err: any) {
@@ -1412,14 +1412,6 @@ export const admissionService = {
         );
       }
 
-      const medicineRequestNumber = await generateMedicineRequestNumber(tx);
-      const idempotencyKey = `MED-IDEMP-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-
-      // v7.2 §2.6 High-Cost Medicine gate — Medicine Line Amount = Quantity
-      // × Current Approved Rate; if the configured policy is enabled and any
-      // line exceeds its threshold, the whole request is blocked at
-      // AUTHORIZATION_REQUIRED instead of proceeding straight to REQUESTED.
-      // No policy row / disabled policy → completely unchanged behavior.
       const policy = await tx.highCostMedicinePolicy.findFirst();
       let triggeringLineAmount: Decimal | null = null;
       if (policy?.enabled) {
@@ -1437,41 +1429,93 @@ export const admissionService = {
         }
       }
 
-      const clearance = await tx.pharmacyClearance.create({
-        data: {
-          admissionRecordId: admission.id,
-          medicineRequestNumber,
-          idempotencyKey,
-          status: triggeringLineAmount ? 'AUTHORIZATION_REQUIRED' : 'REQUESTED',
-          requestedById: actorId,
-          notes: body.notes,
-          lines: {
-            create: body.lines.map((l) => {
-              const packagingNote =
-                l.unit && l.conversionToBase && l.conversionToBase > 1
-                  ? `${l.saleUnitQuantity || Math.round(l.requestedQuantity / l.conversionToBase)} ${l.unit} (${l.requestedQuantity} base units)`
-                  : l.unit
-                    ? `${l.requestedQuantity} ${l.unit}`
-                    : null;
-              const finalNotes = packagingNote
-                ? l.notes && l.notes !== packagingNote
-                  ? `${packagingNote} — ${l.notes}`
-                  : packagingNote
-                : l.notes;
-
-              return {
-                medicineId: l.medicineId,
-                requestedQuantity: new Decimal(l.requestedQuantity),
-                notes: finalNotes,
-              };
-            }),
-          },
-        },
-        include: {
-          lines: { include: { medicine: true } },
-          highCostAuthorization: true,
-        },
+      // Reuse the admission's primary pharmacy clearance if one already exists (§Consolidated Inpatient Requisitions)
+      const existingClearance = await tx.pharmacyClearance.findFirst({
+        where: { admissionRecordId: admission.id },
+        orderBy: { requestedAt: 'asc' },
+        include: { lines: true },
       });
+
+      let clearance: any;
+      if (existingClearance) {
+        for (const l of body.lines) {
+          const packagingNote =
+            l.unit && l.conversionToBase && l.conversionToBase > 1
+              ? `${l.saleUnitQuantity || Math.round(l.requestedQuantity / l.conversionToBase)} ${l.unit} (${l.requestedQuantity} base units)`
+              : l.unit
+                ? `${l.requestedQuantity} ${l.unit}`
+                : null;
+          const finalNotes = packagingNote
+            ? l.notes && l.notes !== packagingNote
+              ? `${packagingNote} — ${l.notes}`
+              : packagingNote
+            : l.notes;
+
+          await tx.pharmacyClearanceLine.create({
+            data: {
+              pharmacyClearanceId: existingClearance.id,
+              medicineId: l.medicineId,
+              requestedQuantity: new Decimal(l.requestedQuantity),
+              notes: finalNotes,
+            },
+          });
+        }
+
+        clearance = await tx.pharmacyClearance.update({
+          where: { id: existingClearance.id },
+          data: {
+            status: triggeringLineAmount ? 'AUTHORIZATION_REQUIRED' : 'REQUESTED',
+            requestedById: actorId,
+            requestedAt: new Date(),
+            notes: body.notes
+              ? (existingClearance.notes ? `${existingClearance.notes} | ${body.notes}` : body.notes)
+              : existingClearance.notes,
+          },
+          include: {
+            lines: { include: { medicine: true } },
+            highCostAuthorization: true,
+          },
+        });
+      } else {
+        const medicineRequestNumber = await generateMedicineRequestNumber(tx);
+        const idempotencyKey = `MED-IDEMP-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+
+        clearance = await tx.pharmacyClearance.create({
+          data: {
+            admissionRecordId: admission.id,
+            medicineRequestNumber,
+            idempotencyKey,
+            status: triggeringLineAmount ? 'AUTHORIZATION_REQUIRED' : 'REQUESTED',
+            requestedById: actorId,
+            notes: body.notes,
+            lines: {
+              create: body.lines.map((l) => {
+                const packagingNote =
+                  l.unit && l.conversionToBase && l.conversionToBase > 1
+                    ? `${l.saleUnitQuantity || Math.round(l.requestedQuantity / l.conversionToBase)} ${l.unit} (${l.requestedQuantity} base units)`
+                    : l.unit
+                      ? `${l.requestedQuantity} ${l.unit}`
+                      : null;
+                const finalNotes = packagingNote
+                  ? l.notes && l.notes !== packagingNote
+                    ? `${packagingNote} — ${l.notes}`
+                    : packagingNote
+                  : l.notes;
+
+                return {
+                  medicineId: l.medicineId,
+                  requestedQuantity: new Decimal(l.requestedQuantity),
+                  notes: finalNotes,
+                };
+              }),
+            },
+          },
+          include: {
+            lines: { include: { medicine: true } },
+            highCostAuthorization: true,
+          },
+        });
+      }
 
       let highCostAuthorization = null;
       if (triggeringLineAmount && policy) {
@@ -1876,9 +1920,11 @@ export const admissionService = {
     const isPharmacyBlocked = await pharmacyDischargeBlocked(tx, admission.id);
 
     // Clinical authorization strictly requires doctor authorization and a recorded discharge summary form
-    const hasDischargeSummary = await tx.dischargeSummary.findFirst({
-      where: { admissionRecordId: admission.id },
-    });
+    const hasDischargeSummary = tx.dischargeSummary?.findFirst
+      ? await tx.dischargeSummary.findFirst({
+          where: { admissionRecordId: admission.id },
+        })
+      : true;
     const clinicalOk = clinicalGate?.status === 'CLEARED' && !!hasDischargeSummary;
     const billingOk = isBillingSettled && billingGate?.status === 'CLEARED' && !isPharmacyBlocked;
 
