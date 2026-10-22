@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Loader2, Wallet, Printer, FileCheck2, Receipt, CheckCircle2, Calendar, Filter } from 'lucide-react';
+import { AlertCircle, Loader2, Wallet, Printer, FileCheck2, Receipt, CheckCircle2, Calendar, Filter, Clock } from 'lucide-react';
 import { Modal } from '../../../components/common/Modal';
 import { NumberInput, Select, TextInput } from '../../../components/forms/FormControls';
 import { PanelBadge } from '../../../components/common/PanelBadge';
@@ -573,6 +573,18 @@ export const AdmissionLedgerModal: React.FC<AdmissionLedgerModalProps> = ({ admi
                 </div>
               </div>
             )
+          )}
+
+          {!readOnly && ledger.status === 'ACTIVE' && ledger.summary.outstandingBalance <= 0 && (
+            <div className="p-3 bg-blue-50/80 border border-blue-200 rounded-xl flex items-center gap-2.5 text-xs">
+              <Clock className="h-5 w-5 text-blue-600 shrink-0" />
+              <div>
+                <p className="font-bold text-blue-950">Bills Fully Settled (PKR 0 Balance) • Awaiting Doctor Clinical Discharge</p>
+                <p className="text-[11px] text-blue-800 font-normal">
+                  All inpatient charges are settled. The patient cannot be discharged until the attending doctor / RMO completes the clinical authorization &amp; discharge summary in the admission portal.
+                </p>
+              </div>
+            </div>
           )}
 
           {ledger.status === 'DISCHARGED' && (

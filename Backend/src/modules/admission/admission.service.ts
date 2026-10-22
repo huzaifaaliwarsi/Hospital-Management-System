@@ -1875,7 +1875,11 @@ export const admissionService = {
     // Only dispensed, unpaid medications block discharge.
     const isPharmacyBlocked = await pharmacyDischargeBlocked(tx, admission.id);
 
-    const clinicalOk = clinicalGate?.status === 'CLEARED';
+    // Clinical authorization strictly requires doctor authorization and a recorded discharge summary form
+    const hasDischargeSummary = await tx.dischargeSummary.findFirst({
+      where: { admissionRecordId: admission.id },
+    });
+    const clinicalOk = clinicalGate?.status === 'CLEARED' && !!hasDischargeSummary;
     const billingOk = isBillingSettled && billingGate?.status === 'CLEARED' && !isPharmacyBlocked;
 
     // If clinical is cleared but billing is not settled (including unpaid pharmacy dues), ensure status is DISCHARGE_PENDING
@@ -2150,9 +2154,26 @@ export const admissionService = {
         throw new ValidationError(reason);
       }
 
-      // Outstanding balance is settled (<= 0), finalize discharge easily and free bed
+      // 2. Strict Doctor / RMO Clinical Authorization & Summary check:
+      // Front Desk payment settlement alone must NEVER discharge a patient without doctor authorization.
+      const allClearances = await tx.dualDischargeClearance.findMany({
+        where: { admissionRecordId: admission.id },
+      });
+      const clinicalGate = allClearances.find((c: any) => c.clearanceType === 'CLINICAL');
+      const dischargeSummary = await tx.dischargeSummary.findFirst({
+        where: { admissionRecordId: admission.id },
+      });
+      const clinicalOk = clinicalGate?.status === 'CLEARED' && !!dischargeSummary;
+
+      if (!clinicalOk) {
+        throw new ValidationError(
+          'Cannot discharge patient: Doctor / RMO Clinical Discharge Authorization is required. The attending doctor must complete the discharge authorization and summary form in the admission portal first.',
+        );
+      }
+
+      // Both Doctor Authorization & Billing Settlement are satisfied: clear billing gate, discharge patient, and free bed
       await tx.dualDischargeClearance.updateMany({
-        where: { admissionRecordId: admission.id, status: 'PENDING' },
+        where: { admissionRecordId: admission.id, clearanceType: 'HOSPITAL_BILLING', status: 'PENDING' },
         data: { status: 'CLEARED', clearedById: _actorId, clearedAt: new Date() },
       });
 

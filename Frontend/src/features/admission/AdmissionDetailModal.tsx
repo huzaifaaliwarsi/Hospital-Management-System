@@ -492,10 +492,17 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
   const [highCostTarget, setHighCostTarget] = useState<AdmissionPharmacyRequestRecord | null>(null);
   const [isDischarging, setIsDischarging] = useState(false);
 
+  const isClinicalAuthorized = useMemo(() => {
+    return Boolean(
+      detail?.dischargeSummary ||
+      detail?.clearances?.some((c) => c.clearanceType === 'CLINICAL' && c.status === 'CLEARED')
+    );
+  }, [detail?.dischargeSummary, detail?.clearances]);
+
   const isAllClearancesReady = useMemo(() => {
     const outstanding = ledgerSummary?.outstandingBalance ?? detail?.totalOutstanding ?? 0;
-    return outstanding <= 0;
-  }, [ledgerSummary?.outstandingBalance, detail?.totalOutstanding]);
+    return outstanding <= 0 && isClinicalAuthorized;
+  }, [ledgerSummary?.outstandingBalance, detail?.totalOutstanding, isClinicalAuthorized]);
 
   const [isResuming, setIsResuming] = useState(false);
   const handleResumeActive = async () => {
@@ -2073,6 +2080,28 @@ export const AdmissionDetailModal: React.FC<AdmissionDetailModalProps> = ({ admi
                   >
                     {isDischarging && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                     <span>Complete Final Discharge &amp; Release Bed</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Financial Settlement Complete but Awaiting Doctor Clinical Authorization */}
+              {!isClinicalAuthorized && (ledgerSummary?.outstandingBalance ?? detail.totalOutstanding) <= 0 && detail.status !== 'DISCHARGED' && (
+                <div className="p-4 bg-blue-50/80 border border-blue-200 rounded-2xl flex items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2.5 text-blue-900 font-semibold">
+                    <Clock className="h-5 w-5 text-blue-600 shrink-0" />
+                    <div>
+                      <p className="font-bold text-blue-950 text-sm">Bills Fully Settled (PKR 0 Balance) • Awaiting Doctor Clinical Authorization</p>
+                      <p className="text-[11px] text-blue-800 font-normal">
+                        Financial dues are cleared. Patient discharge and bed release will be enabled as soon as the attending doctor completes the clinical authorization &amp; discharge summary above.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsClinicalDischargeOpen(true)}
+                    className="px-4 py-2 bg-[#08775A] hover:bg-[#065f46] text-white font-bold rounded-xl shadow-xs shrink-0 cursor-pointer text-xs transition-colors whitespace-nowrap"
+                  >
+                    Doctor Authorization Form
                   </button>
                 </div>
               )}
