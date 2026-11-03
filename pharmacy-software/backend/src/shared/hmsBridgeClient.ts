@@ -4,16 +4,11 @@ function getHmsBaseUrls(): string[] {
   const url = (env.HMS_BACKEND_URL || '').trim().replace(/\/+$/, '');
   const urls: string[] = [];
   if (url) urls.push(url);
-  if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
-    if (!urls.includes('https://hms-project-backend.vercel.app/api/v1')) {
-      urls.unshift('https://hms-project-backend.vercel.app/api/v1');
-    }
-  } else {
+
+  // In development only, allow localhost fallback if not already added
+  if (process.env.NODE_ENV !== 'production') {
     if (!urls.includes('http://localhost:4000/api/v1')) {
       urls.push('http://localhost:4000/api/v1');
-    }
-    if (!urls.includes('https://hms-project-backend.vercel.app/api/v1')) {
-      urls.push('https://hms-project-backend.vercel.app/api/v1');
     }
   }
   return urls;
