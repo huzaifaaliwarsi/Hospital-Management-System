@@ -546,7 +546,7 @@ const GenerateTab: React.FC<{
                       {basisLabel(r.salaryBasis)}
                       {r.salaryBasis.startsWith('MONTHLY') && r.monthlyBaseAmount != null && (
                         <div className="text-[10px] text-[#52665e] font-mono">
-                          {formatPKR(Number(r.monthlyBaseAmount))}/mo (÷ 30 days)
+                          {formatPKR(Number(r.monthlyBaseAmount))}/mo (÷ {r.monthlyScheduledDays || 30} days)
                         </div>
                       )}
                     </td>

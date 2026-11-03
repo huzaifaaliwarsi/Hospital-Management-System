@@ -50670,18 +50670,38 @@ function computeTimingDeduction(rule, totalMinutes, occurrences, dailyRate) {
   }
   return new import_library17.Decimal(0);
 }
-function isFullCalendarMonth(start, end) {
+function splitIntoMonthSlices(start, end) {
+  const slices = [];
   const s = new Date(start);
   const e = new Date(end);
-  const sYear = s.getUTCFullYear();
-  const sMonth = s.getUTCMonth();
-  const sDate = s.getUTCDate();
-  const eYear = e.getUTCFullYear();
-  const eMonth = e.getUTCMonth();
-  const eDate = e.getUTCDate();
-  if (sYear !== eYear || sMonth !== eMonth || sDate !== 1) return false;
-  const lastDayOfMonth = new Date(Date.UTC(sYear, sMonth + 1, 0)).getUTCDate();
-  return eDate === lastDayOfMonth || lastDayOfMonth === 31 && eDate === 30;
+  let curYear = s.getUTCFullYear();
+  let curMonth = s.getUTCMonth();
+  const endYear = e.getUTCFullYear();
+  const endMonth = e.getUTCMonth();
+  while (curYear < endYear || curYear === endYear && curMonth <= endMonth) {
+    const daysInCurMonth = new Date(Date.UTC(curYear, curMonth + 1, 0)).getUTCDate();
+    const sliceStartDate = curYear === s.getUTCFullYear() && curMonth === s.getUTCMonth() ? s.getUTCDate() : 1;
+    const sliceEndDate = curYear === endYear && curMonth === endMonth ? e.getUTCDate() : daysInCurMonth;
+    const sliceStart = new Date(Date.UTC(curYear, curMonth, sliceStartDate));
+    const sliceEnd = new Date(Date.UTC(curYear, curMonth, sliceEndDate));
+    const calendarDays = sliceEndDate - sliceStartDate + 1;
+    const isFull = sliceStartDate === 1 && sliceEndDate === daysInCurMonth;
+    slices.push({
+      year: curYear,
+      month: curMonth,
+      sliceStart,
+      sliceEnd,
+      daysInMonth: daysInCurMonth,
+      calendarDays,
+      isFullMonth: isFull
+    });
+    curMonth++;
+    if (curMonth > 11) {
+      curMonth = 0;
+      curYear++;
+    }
+  }
+  return slices;
 }
 function computeSalaryAmounts(profile, working, periodStart, periodEnd, records) {
   const zero2 = new import_library17.Decimal(0);
@@ -50712,24 +50732,60 @@ function computeSalaryAmounts(profile, working, periodStart, periodEnd, records)
   let earnedBase = zero2;
   let attendanceDeductions = zero2;
   if (isMonthly) {
-    const FIXED_MONTHLY_DIVISOR = 30;
-    monthlyScheduledDays = FIXED_MONTHLY_DIVISOR;
-    dailyRate = base.div(FIXED_MONTHLY_DIVISOR);
-    const isFullMonth = isFullCalendarMonth(periodStart, periodEnd);
-    const unpaidEquivalent = import_library17.Decimal.max(new import_library17.Decimal(scheduledPayableDays).minus(attendanceEquivalentDays), zero2);
-    if (isFullMonth) {
-      periodBaseAmount = base;
-      if (attendanceEquivalentDays === 0) {
-        attendanceDeductions = periodBaseAmount;
-        earnedBase = zero2;
-      } else {
-        attendanceDeductions = import_library17.Decimal.min(dailyRate.mul(unpaidEquivalent), periodBaseAmount);
-        earnedBase = import_library17.Decimal.max(periodBaseAmount.minus(attendanceDeductions), zero2);
+    const slices = splitIntoMonthSlices(periodStart, periodEnd);
+    let totalPeriodBase = zero2;
+    let totalEarnedBase = zero2;
+    let totalAttendanceDeductions = zero2;
+    let totalCalendarDays = 0;
+    for (const slice of slices) {
+      const sliceDailyRate = base.div(slice.daysInMonth);
+      totalCalendarDays += slice.calendarDays;
+      const scheduledInSlice = countWorkingDays(utcDay(slice.sliceStart), utcDay(slice.sliceEnd), working);
+      const sliceRecords = records.filter((r) => {
+        const t = utcDay(r.attendanceDate);
+        return t >= utcDay(slice.sliceStart) && t <= utcDay(slice.sliceEnd);
+      });
+      let attendanceEquivalentInSlice = 0;
+      for (const r of sliceRecords) {
+        const eq = PAYABLE_EQUIVALENT[r.status] ?? 0;
+        attendanceEquivalentInSlice += eq;
       }
+      const unpaidInSlice = import_library17.Decimal.max(new import_library17.Decimal(scheduledInSlice).minus(attendanceEquivalentInSlice), zero2);
+      let sliceBase = zero2;
+      let sliceDeductions = zero2;
+      let sliceEarned = zero2;
+      if (slice.isFullMonth) {
+        sliceBase = base;
+        if (attendanceEquivalentInSlice === 0 && scheduledInSlice > 0) {
+          sliceDeductions = sliceBase;
+          sliceEarned = zero2;
+        } else {
+          sliceDeductions = import_library17.Decimal.min(sliceDailyRate.mul(unpaidInSlice), sliceBase);
+          sliceEarned = import_library17.Decimal.max(sliceBase.minus(sliceDeductions), zero2);
+        }
+      } else {
+        sliceBase = sliceDailyRate.mul(slice.calendarDays);
+        if (attendanceEquivalentInSlice === 0 && scheduledInSlice > 0) {
+          sliceDeductions = sliceBase;
+          sliceEarned = zero2;
+        } else {
+          sliceDeductions = import_library17.Decimal.min(sliceDailyRate.mul(unpaidInSlice), sliceBase);
+          sliceEarned = import_library17.Decimal.max(sliceBase.minus(sliceDeductions), zero2);
+        }
+      }
+      totalPeriodBase = totalPeriodBase.plus(sliceBase);
+      totalAttendanceDeductions = totalAttendanceDeductions.plus(sliceDeductions);
+      totalEarnedBase = totalEarnedBase.plus(sliceEarned);
+    }
+    periodBaseAmount = totalPeriodBase;
+    attendanceDeductions = totalAttendanceDeductions;
+    earnedBase = totalEarnedBase;
+    if (slices.length === 1) {
+      monthlyScheduledDays = slices[0].daysInMonth;
+      dailyRate = base.div(slices[0].daysInMonth);
     } else {
-      periodBaseAmount = dailyRate.mul(scheduledPayableDays);
-      attendanceDeductions = dailyRate.mul(unpaidEquivalent);
-      earnedBase = import_library17.Decimal.max(periodBaseAmount.minus(attendanceDeductions), zero2);
+      monthlyScheduledDays = totalCalendarDays;
+      dailyRate = totalCalendarDays > 0 ? totalPeriodBase.div(totalCalendarDays) : zero2;
     }
   } else {
     dailyRate = base;
@@ -50749,7 +50805,7 @@ function computeSalaryAmounts(profile, working, periodStart, periodEnd, records)
   const lateDeduction = computeTimingDeduction(readDeductionRule(profile.deductionRules, "late"), lateMinutes, lateOccurrences, dailyRate);
   const earlyExitDeduction = computeTimingDeduction(readDeductionRule(profile.deductionRules, "early_exit"), earlyExitMinutes, earlyExitOccurrences, dailyRate);
   const netAmount = import_library17.Decimal.max(grossAmount.minus(tax).minus(otherDeductions).minus(lateDeduction).minus(earlyExitDeduction), zero2);
-  const money = (amount) => isMonthly ? amount.toDecimalPlaces(2) : amount;
+  const money = (amount) => amount.toDecimalPlaces(2);
   return {
     monthlyScheduledDays,
     dailyRate: money(dailyRate),
@@ -50791,6 +50847,7 @@ async function computeEligibility(filters) {
       id: true,
       fullName: true,
       employeeId: true,
+      joiningDate: true,
       assignedShift: { select: { defaultWeeklyOffDays: true } },
       weeklySchedule: { select: { dayOfWeek: true, isWorking: true } }
     }
@@ -50847,7 +50904,19 @@ async function computeEligibility(filters) {
       continue;
     }
     const working = workingDaySet(s.weeklySchedule, s.assignedShift?.defaultWeeklyOffDays ?? []);
-    const amounts = computeSalaryAmounts(profile, working, filters.periodStart, filters.periodEnd, records);
+    const joinDate = s.joiningDate ? new Date(s.joiningDate) : null;
+    if (joinDate && joinDate > filters.periodEnd) {
+      skipped.push({ staffId: s.id, fullName: s.fullName, employeeId: s.employeeId, reason: "Staff joined after this payroll period" });
+      continue;
+    }
+    const effectivePeriodStart = joinDate && joinDate > filters.periodStart ? joinDate : filters.periodStart;
+    const effStart = profile.effectiveFrom > effectivePeriodStart ? profile.effectiveFrom : effectivePeriodStart;
+    const effEnd = profile.effectiveTo && profile.effectiveTo < filters.periodEnd ? profile.effectiveTo : filters.periodEnd;
+    if (effStart > filters.periodEnd || effEnd < filters.periodStart || effStart > effEnd) {
+      skipped.push({ staffId: s.id, fullName: s.fullName, employeeId: s.employeeId, reason: "Salary profile not active in this period" });
+      continue;
+    }
+    const amounts = computeSalaryAmounts(profile, working, effStart, effEnd, records);
     if (!amounts) {
       skipped.push({ staffId: s.id, fullName: s.fullName, employeeId: s.employeeId, reason: "No scheduled working days in this period (all weekly OFF)" });
       continue;
@@ -50870,7 +50939,7 @@ var payrollService = {
   /** Read-only preview — exactly what a Generate would produce, without writing anything. */
   async preview(filters) {
     const { eligible, skipped } = await computeEligibility(filters);
-    const totalAmount = eligible.reduce((sum, r) => sum.plus(r.netAmount), new import_library19.Decimal(0));
+    const totalAmount = eligible.reduce((sum, r) => sum.plus(r.netAmount), new import_library19.Decimal(0)).toDecimalPlaces(2);
     return { eligible, skipped, totalAmount, staffCount: eligible.length };
   },
   async generate(filters, actorId17) {
@@ -50878,7 +50947,7 @@ var payrollService = {
     if (eligible.length === 0) {
       throw new ConflictError("No staff have both a Salary Profile and approved attendance for this period \u2014 nothing to generate.");
     }
-    const totalAmount = eligible.reduce((sum, r) => sum.plus(r.netAmount), new import_library19.Decimal(0));
+    const totalAmount = eligible.reduce((sum, r) => sum.plus(r.netAmount), new import_library19.Decimal(0)).toDecimalPlaces(2);
     return prisma.$transaction(async (tx) => {
       for (const row of [...eligible].sort((a, b) => a.staffId.localeCompare(b.staffId))) {
         await tx.$queryRaw`SELECT id FROM staff WHERE id = ${row.staffId} FOR UPDATE`;

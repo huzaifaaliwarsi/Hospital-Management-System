@@ -14,7 +14,7 @@ const profile = (patch: Partial<SalaryProfileLike> = {}): SalaryProfileLike => (
   ...patch,
 });
 
-// Sunday weekly OFF → September 2026 has 26 scheduled days (Sundays 6, 13, 20, 27).
+// Sunday weekly OFF — September 2026 has 26 scheduled days (Sundays 6, 13, 20, 27).
 const sundayOff = workingDaySet([], ['Sunday']);
 
 /** One record per scheduled day in [from, to]; the first `absent` scheduled days are ABSENT, the next `half` HALF_DAY. */
@@ -33,8 +33,79 @@ function records(from: string, to: string, working: Set<string>, absent = 0, hal
 const run = (p: SalaryProfileLike, from: string, to: string, recs = records(from, to, sundayOff)) =>
   computeSalaryAmounts(p, sundayOff, date(from), date(to), recs)!;
 
-describe('payroll salary — MONTHLY uses fixed 30-day divisor (Daily Rate = Monthly Salary / 30)', () => {
-  it('pays the full monthly base for full attendance, whatever the scheduled day count', () => {
+describe('HMS — P0 Monthly Salary Calendar-Day Divisor Acceptance Scenarios', () => {
+  const p30k = profile({ baseAmount: d(30000) });
+
+  it('Scenario 1: February 2026 (28 days), full paid month -> Expected: 30,000.00', () => {
+    const r = computeSalaryAmounts(p30k, sundayOff, date('2026-02-01'), date('2026-02-28'), records('2026-02-01', '2026-02-28', sundayOff, 0))!;
+    expect(r.monthlyScheduledDays).toBe(28);
+    expect(r.dailyRate.toNumber()).toBe(1071.43);
+    expect(r.attendanceDeductions.toNumber()).toBe(0);
+    expect(r.earnedBase.toNumber()).toBe(30000);
+    expect(r.netAmount.toNumber()).toBe(30000);
+  });
+
+  it('Scenario 2: February 2026 (28 days), 1 unpaid absence -> Expected: 28,928.57', () => {
+    const r = computeSalaryAmounts(p30k, sundayOff, date('2026-02-01'), date('2026-02-28'), records('2026-02-01', '2026-02-28', sundayOff, 1))!;
+    expect(r.monthlyScheduledDays).toBe(28);
+    expect(r.dailyRate.toNumber()).toBe(1071.43);
+    expect(r.attendanceDeductions.toNumber()).toBe(1071.43);
+    expect(r.earnedBase.toNumber()).toBe(28928.57);
+    expect(r.netAmount.toNumber()).toBe(28928.57);
+  });
+
+  it('Scenario 3: February 2028 (29 days, leap year), 1 unpaid absence -> Expected: 28,965.52', () => {
+    const r = computeSalaryAmounts(p30k, sundayOff, date('2028-02-01'), date('2028-02-29'), records('2028-02-01', '2028-02-29', sundayOff, 1))!;
+    expect(r.monthlyScheduledDays).toBe(29);
+    expect(r.dailyRate.toNumber()).toBe(1034.48);
+    expect(r.attendanceDeductions.toNumber()).toBe(1034.48);
+    expect(r.earnedBase.toNumber()).toBe(28965.52);
+    expect(r.netAmount.toNumber()).toBe(28965.52);
+  });
+
+  it('Scenario 4: April (30 days), 1 unpaid absence -> Expected: 29,000.00', () => {
+    const r = computeSalaryAmounts(p30k, sundayOff, date('2026-04-01'), date('2026-04-30'), records('2026-04-01', '2026-04-30', sundayOff, 1))!;
+    expect(r.monthlyScheduledDays).toBe(30);
+    expect(r.dailyRate.toNumber()).toBe(1000);
+    expect(r.attendanceDeductions.toNumber()).toBe(1000);
+    expect(r.earnedBase.toNumber()).toBe(29000);
+    expect(r.netAmount.toNumber()).toBe(29000);
+  });
+
+  it('Scenario 5: October (31 days), 1 unpaid absence -> Expected: 29,032.26', () => {
+    const r = computeSalaryAmounts(p30k, sundayOff, date('2026-10-01'), date('2026-10-31'), records('2026-10-01', '2026-10-31', sundayOff, 1))!;
+    expect(r.monthlyScheduledDays).toBe(31);
+    expect(r.dailyRate.toNumber()).toBe(967.74);
+    expect(r.attendanceDeductions.toNumber()).toBe(967.74);
+    expect(r.earnedBase.toNumber()).toBe(29032.26);
+    expect(r.netAmount.toNumber()).toBe(29032.26);
+  });
+
+  it('Scenario 6: March (31 days), joined on 16th, all eligible days paid -> Expected: 15,483.87', () => {
+    // March 16 to March 31 has 16 calendar days
+    const r = computeSalaryAmounts(p30k, sundayOff, date('2026-03-16'), date('2026-03-31'), records('2026-03-16', '2026-03-31', sundayOff, 0))!;
+    expect(r.monthlyScheduledDays).toBe(31);
+    expect(r.dailyRate.toNumber()).toBe(967.74);
+    expect(r.periodBaseAmount.toNumber()).toBe(15483.87);
+    expect(r.attendanceDeductions.toNumber()).toBe(0);
+    expect(r.earnedBase.toNumber()).toBe(15483.87);
+    expect(r.netAmount.toNumber()).toBe(15483.87);
+  });
+
+  it('Paid holidays and weekly offs do not reduce monthly salary', () => {
+    // October 2026 with 4 Sundays OFF + 2 PAID_LEAVE days
+    const recs = records('2026-10-01', '2026-10-31', sundayOff, 0);
+    recs[0]!.status = 'PAID_LEAVE';
+    recs[1]!.status = 'PAID_LEAVE';
+    const r = computeSalaryAmounts(p30k, sundayOff, date('2026-10-01'), date('2026-10-31'), recs)!;
+    expect(r.attendanceDeductions.toNumber()).toBe(0);
+    expect(r.earnedBase.toNumber()).toBe(30000);
+    expect(r.netAmount.toNumber()).toBe(30000);
+  });
+});
+
+describe('payroll salary — MONTHLY uses actual calendar days in selected month', () => {
+  it('pays the full monthly base for full attendance in September (30 days)', () => {
     const r = run(profile(), '2026-09-01', '2026-09-30');
     expect(r.monthlyScheduledDays).toBe(30);
     expect(r.dailyRate.toNumber()).toBe(1000);
@@ -46,7 +117,7 @@ describe('payroll salary — MONTHLY uses fixed 30-day divisor (Daily Rate = Mon
     expect(r.netAmount.toNumber()).toBe(30000);
   });
 
-  it('deducts PKR 1,000 per unpaid scheduled day using fixed 30-day divisor (30000 / 30 = 1000)', () => {
+  it('deducts PKR 1,000 per unpaid scheduled day in September (30-day divisor)', () => {
     const r = run(profile(), '2026-09-01', '2026-09-30', records('2026-09-01', '2026-09-30', sundayOff, 2));
     expect(r.monthlyScheduledDays).toBe(30);
     expect(r.dailyRate.toNumber()).toBe(1000);
@@ -56,7 +127,7 @@ describe('payroll salary — MONTHLY uses fixed 30-day divisor (Daily Rate = Mon
     expect(r.earnedBase.toNumber()).toBe(28000); // 30,000 - 2,000
   });
 
-  it('counts a half day as half an unpaid day (PKR 500)', () => {
+  it('counts a half day as half an unpaid day (PKR 500 in 30-day month)', () => {
     const r = run(profile(), '2026-09-01', '2026-09-30', records('2026-09-01', '2026-09-30', sundayOff, 0, 1));
     expect(r.dailyRate.toNumber()).toBe(1000);
     expect(r.attendanceDeductions.toNumber()).toBe(500);
@@ -79,25 +150,25 @@ describe('payroll salary — MONTHLY uses fixed 30-day divisor (Daily Rate = Mon
     expect(run(profile(), '2026-02-01', '2026-02-28').earnedBase.toNumber()).toBe(30000);
   });
 
-  it('prorates Period Base to the period\'s own scheduled days using Daily Rate 1,000 for a partial period', () => {
-    // Sep 1-10 2026 (Sunday OFF) has 9 scheduled days — Period Base = 9 × 1,000 = 9,000.
+  it('prorates Period Base using actual month divisor and calendar days for a partial period', () => {
+    // Sep 1-10 2026 has 10 calendar days in a 30-day month -> Period Base = 10 × (30,000/30) = 10,000.
     const r = run(profile({ fixedAllowance: d(3000) }), '2026-09-01', '2026-09-10');
     expect(r.monthlyScheduledDays).toBe(30);
     expect(r.dailyRate.toNumber()).toBe(1000);
     expect(r.scheduledPayableDays).toBe(9);
-    expect(r.periodBaseAmount.toNumber()).toBe(9000);
-    expect(r.earnedBase.toNumber()).toBe(9000); // full attendance for the 9 scheduled days
-    expect(r.allowances.toNumber()).toBe(3000); // fixed allowance stays unprorated
+    expect(r.periodBaseAmount.toNumber()).toBe(10000);
+    expect(r.earnedBase.toNumber()).toBe(10000);
+    expect(r.allowances.toNumber()).toBe(3000);
   });
 
   it('keeps weekly OFF days paid when every scheduled day is absent, floored by the period\'s own Period Base', () => {
     const r = run(profile(), '2026-09-01', '2026-09-30', records('2026-09-01', '2026-09-30', sundayOff, 26));
     expect(r.periodBaseAmount.toNumber()).toBe(30000);
-    expect(r.attendanceDeductions.toNumber()).toBe(30000); // full Period Base deducted
+    expect(r.attendanceDeductions.toNumber()).toBe(30000);
     expect(r.earnedBase.toNumber()).toBe(0);
   });
 
-  it('cannot go negative for a full-month period — the deduction can never exceed that period\'s own Period Base', () => {
+  it('cannot go negative for a full-month period', () => {
     const everyDay = workingDaySet([], []);
     const r = computeSalaryAmounts(profile(), everyDay, date('2026-10-01'), date('2026-10-31'),
       records('2026-10-01', '2026-10-31', everyDay, 31))!;
@@ -112,65 +183,70 @@ describe('payroll salary — MONTHLY uses fixed 30-day divisor (Daily Rate = Mon
   });
 });
 
-describe('payroll salary — exact acceptance scenario (Dr Ali / PKR 30,000 Monthly Salary)', () => {
+describe('payroll salary — exact acceptance scenario (Dr Ali / PKR 30,000 Monthly Salary in October 31-day month)', () => {
   const saturdayOff = workingDaySet([], ['Saturday']);
   const ali = profile({ salaryBasis: 'MONTHLY_COMMISSION', baseAmount: d(30000) });
 
-  it('TEST A1 — 1-day selected period (1 scheduled, 1 present): Daily Rate 1,000, Period Base 1,000, Deduction 0, Net Basic 1,000', () => {
+  it('TEST A1 — 1-day selected period in October (1 calendar day): Daily Rate 967.74, Period Base 967.74, Deduction 0, Net Basic 967.74', () => {
     const r = computeSalaryAmounts(ali, saturdayOff, date('2026-10-05'), date('2026-10-05'), [
       { status: 'PRESENT', attendanceDate: date('2026-10-05') },
     ])!;
-    expect(r.dailyRate.toNumber()).toBe(1000);
-    expect(r.periodBaseAmount.toNumber()).toBe(1000);
+    expect(r.dailyRate.toNumber()).toBe(967.74);
+    expect(r.periodBaseAmount.toNumber()).toBe(967.74);
     expect(r.attendanceDeductions.toNumber()).toBe(0);
-    expect(r.earnedBase.toNumber()).toBe(1000);
-    expect(r.netAmount.toNumber()).toBe(1000);
+    expect(r.earnedBase.toNumber()).toBe(967.74);
+    expect(r.netAmount.toNumber()).toBe(967.74);
   });
 
-  it('TEST A2 — 1-day selected period (1 scheduled, absent): Daily Rate 1,000, Period Base 1,000, Deduction 1,000, Net Basic 0', () => {
+  it('TEST A2 — 1-day selected period in October (1 calendar day, absent): Deduction 967.74, Net Basic 0', () => {
     const r = computeSalaryAmounts(ali, saturdayOff, date('2026-10-05'), date('2026-10-05'), [
       { status: 'ABSENT', attendanceDate: date('2026-10-05') },
     ])!;
-    expect(r.dailyRate.toNumber()).toBe(1000);
-    expect(r.periodBaseAmount.toNumber()).toBe(1000);
-    expect(r.attendanceDeductions.toNumber()).toBe(1000);
+    expect(r.dailyRate.toNumber()).toBe(967.74);
+    expect(r.periodBaseAmount.toNumber()).toBe(967.74);
+    expect(r.attendanceDeductions.toNumber()).toBe(967.74);
     expect(r.earnedBase.toNumber()).toBe(0);
     expect(r.netAmount.toNumber()).toBe(0);
-  });
-
-  it('TEST A3 — 05/10/2026 → 06/10/2026, 2 scheduled, 1 present/1 absent: Daily Rate 1,000, Period Base 2,000, Deduction 1,000, Net Basic 1,000', () => {
-    const r = computeSalaryAmounts(ali, saturdayOff, date('2026-10-05'), date('2026-10-06'), [
-      { status: 'PRESENT', attendanceDate: date('2026-10-05') },
-      { status: 'ABSENT', attendanceDate: date('2026-10-06') },
-    ])!;
-    expect(r.monthlyScheduledDays).toBe(30);
-    expect(r.dailyRate.toNumber()).toBe(1000);
-    expect(r.scheduledPayableDays).toBe(2);
-    expect(r.attendanceEquivalentDays).toBe(1);
-    expect(r.periodBaseAmount.toNumber()).toBe(2000);
-    expect(r.attendanceDeductions.toNumber()).toBe(1000);
-    expect(r.earnedBase.toNumber()).toBe(1000);
-    expect(r.grossAmount.toNumber()).toBe(1000);
-    expect(r.netAmount.toNumber()).toBe(1000);
   });
 
   it('TEST B — full October, 26 scheduled, 26 present: Period Base 30,000, Deduction 0, Earned 30,000', () => {
     const r = computeSalaryAmounts(ali, saturdayOff, date('2026-10-01'), date('2026-10-31'),
       records('2026-10-01', '2026-10-31', saturdayOff))!;
-    expect(r.monthlyScheduledDays).toBe(30);
-    expect(r.dailyRate.toNumber()).toBe(1000);
+    expect(r.monthlyScheduledDays).toBe(31);
+    expect(r.dailyRate.toNumber()).toBe(967.74);
     expect(r.scheduledPayableDays).toBe(26);
     expect(r.periodBaseAmount.toNumber()).toBe(30000);
     expect(r.attendanceDeductions.toNumber()).toBe(0);
     expect(r.earnedBase.toNumber()).toBe(30000);
   });
 
-  it('TEST C — full October, 26 scheduled, 25 present/1 absent: Deduction 1,000, Earned 29,000', () => {
+  it('TEST C — full October, 26 scheduled, 25 present/1 absent: Deduction 967.74, Earned 29,032.26', () => {
     const r = computeSalaryAmounts(ali, saturdayOff, date('2026-10-01'), date('2026-10-31'),
       records('2026-10-01', '2026-10-31', saturdayOff, 1))!;
-    expect(r.dailyRate.toNumber()).toBe(1000);
-    expect(r.attendanceDeductions.toNumber()).toBe(1000);
-    expect(r.earnedBase.toNumber()).toBe(29000);
+    expect(r.dailyRate.toNumber()).toBe(967.74);
+    expect(r.attendanceDeductions.toNumber()).toBe(967.74);
+    expect(r.earnedBase.toNumber()).toBe(29032.26);
+  });
+
+  it('Verification Requirement: October 2026, 31 scheduled days, 5 present, 26 unpaid -> Attendance Ded 25,161.29, Net Payable 4,838.71', () => {
+    // 31 scheduled days (no weekly off days configured)
+    const everyDayWorking = workingDaySet([], []);
+    const staffMember = profile({ salaryBasis: 'MONTHLY', baseAmount: d(30000) });
+    // 5 PRESENT, 26 unpaid / absent days
+    const attendance = [
+      ...records('2026-10-01', '2026-10-05', everyDayWorking, 0),
+      ...records('2026-10-06', '2026-10-31', everyDayWorking, 26),
+    ];
+    const r = computeSalaryAmounts(staffMember, everyDayWorking, date('2026-10-01'), date('2026-10-31'), attendance)!;
+
+    expect(r.monthlyScheduledDays).toBe(31);
+    expect(r.scheduledPayableDays).toBe(31);
+    expect(r.attendanceEquivalentDays).toBe(5);
+    expect(r.dailyRate.toNumber()).toBe(967.74);
+    expect(r.periodBaseAmount.toNumber()).toBe(30000.00);
+    expect(r.attendanceDeductions.toNumber()).toBe(25161.29);
+    expect(r.earnedBase.toNumber()).toBe(4838.71);
+    expect(r.netAmount.toNumber()).toBe(4838.71);
   });
 
   it('TEST D — a weekly OFF day (Saturday) never creates an absence deduction', () => {
@@ -185,22 +261,22 @@ describe('payroll salary — exact acceptance scenario (Dr Ali / PKR 30,000 Mont
 
 describe('payroll salary — MONTHLY across 24 / 28 / 30 / 31 scheduled days', () => {
   const everyDay = workingDaySet([], []);
-  // [label, schedule, whole-month period, expected scheduled days]
-  const scenarios: [string, Set<string>, string, string, number][] = [
-    ['24 scheduled (Feb, Sunday OFF)', sundayOff, '2026-02-01', '2026-02-28', 24],
-    ['28 scheduled (Feb, no OFF)', everyDay, '2026-02-01', '2026-02-28', 28],
-    ['29 scheduled (leap February, no OFF)', everyDay, '2028-02-01', '2028-02-29', 29],
-    ['30 scheduled (Sep, no OFF)', everyDay, '2026-09-01', '2026-09-30', 30],
-    ['31 scheduled (Oct, no OFF)', everyDay, '2026-10-01', '2026-10-31', 31],
+  const scenarios: [string, Set<string>, string, string, number, number, number][] = [
+    ['Feb 2026 (28 days, Sunday OFF)', sundayOff, '2026-02-01', '2026-02-28', 24, 28, 1071.43],
+    ['Feb 2026 (28 days, no OFF)', everyDay, '2026-02-01', '2026-02-28', 28, 28, 1071.43],
+    ['Feb 2028 (29 days leap, no OFF)', everyDay, '2028-02-01', '2028-02-29', 29, 29, 1034.48],
+    ['Sep 2026 (30 days, no OFF)', everyDay, '2026-09-01', '2026-09-30', 30, 30, 1000.00],
+    ['Oct 2026 (31 days, no OFF)', everyDay, '2026-10-01', '2026-10-31', 31, 31, 967.74],
   ];
   const full = profile({ fixedAllowance: d(3000), fixedDeduction: d(600), salaryTaxMethod: 'PERCENTAGE', salaryTaxValue: d(10) });
 
-  for (const [label, working, from, to, scheduled] of scenarios) {
+  for (const [label, working, from, to, scheduled, daysInMonth, expectedDailyRate] of scenarios) {
     it(`${label}: full attendance earns the full base 30,000`, () => {
       const r = computeSalaryAmounts(full, working, date(from), date(to), records(from, to, working))!;
+      expect(r.monthlyScheduledDays).toBe(daysInMonth);
       expect(r.scheduledPayableDays).toBe(scheduled);
       expect(r.attendanceEquivalentDays).toBe(scheduled);
-      expect(r.dailyRate.toNumber()).toBe(1000);
+      expect(r.dailyRate.toNumber()).toBe(expectedDailyRate);
       expect(r.periodBaseAmount.toNumber()).toBe(30000);
       expect(r.attendanceDeductions.toNumber()).toBe(0);
       expect(r.earnedBase.toNumber()).toBe(30000);
@@ -211,25 +287,22 @@ describe('payroll salary — MONTHLY across 24 / 28 / 30 / 31 scheduled days', (
       expect(r.netAmount.toNumber()).toBe(29100);
     });
 
-    it(`${label}: 2 absent days deduct 2 × 1,000 = 2,000 using fixed 30-day divisor`, () => {
+    it(`${label}: 2 absent days deduct 2 × DailyRate using actual calendar days`, () => {
       const r = computeSalaryAmounts(full, working, date(from), date(to), records(from, to, working, 2))!;
-      const dailyRate = 1000;
-      const earned = 30000 - 2 * dailyRate; // 28,000
-      expect(r.monthlyScheduledDays).toBe(30);
-      expect(r.dailyRate.toNumber()).toBe(1000);
+      const expectedDed = new Decimal(30000).div(daysInMonth).mul(2).toDecimalPlaces(2).toNumber();
+      const expectedEarned = new Decimal(30000).minus(new Decimal(30000).div(daysInMonth).mul(2)).toDecimalPlaces(2).toNumber();
+      expect(r.monthlyScheduledDays).toBe(daysInMonth);
+      expect(r.dailyRate.toNumber()).toBe(expectedDailyRate);
       expect(r.scheduledPayableDays).toBe(scheduled);
       expect(r.attendanceEquivalentDays).toBe(scheduled - 2);
-      expect(r.attendanceDeductions.toNumber()).toBe(2000);
-      expect(r.earnedBase.toNumber()).toBe(earned);
-      expect(r.grossAmount.toNumber()).toBe(earned + 3000);
-      expect(r.tax.toNumber()).toBe((earned + 3000) * 0.1);
-      expect(r.netAmount.toNumber()).toBe(earned + 3000 - (earned + 3000) * 0.1 - 600);
+      expect(r.attendanceDeductions.toNumber()).toBe(expectedDed);
+      expect(r.earnedBase.toNumber()).toBe(expectedEarned);
     });
   }
 });
 
-describe('payroll salary — MONTHLY_COMMISSION uses the exact same fixed-30 basis as MONTHLY', () => {
-  it('divides by fixed 30 divisor (30,000 / 30 = 1,000 per day)', () => {
+describe('payroll salary — MONTHLY_COMMISSION uses the exact same actual calendar days as MONTHLY', () => {
+  it('divides by actual month days (30,000 / 30 = 1,000 per day in September)', () => {
     const r = run(
       profile({ salaryBasis: 'MONTHLY_COMMISSION', baseAmount: d(30000) }),
       '2026-09-01', '2026-09-30',

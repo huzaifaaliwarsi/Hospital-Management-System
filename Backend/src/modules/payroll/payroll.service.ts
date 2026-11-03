@@ -58,6 +58,7 @@ async function computeEligibility(filters: PayrollRunFilters): Promise<{ eligibl
       id: true,
       fullName: true,
       employeeId: true,
+      joiningDate: true,
       assignedShift: { select: { defaultWeeklyOffDays: true } },
       weeklySchedule: { select: { dayOfWeek: true, isWorking: true } },
     },
@@ -119,7 +120,21 @@ async function computeEligibility(filters: PayrollRunFilters): Promise<{ eligibl
     }
 
     const working = workingDaySet(s.weeklySchedule, s.assignedShift?.defaultWeeklyOffDays ?? []);
-    const amounts = computeSalaryAmounts(profile, working, filters.periodStart, filters.periodEnd, records);
+    const joinDate = s.joiningDate ? new Date(s.joiningDate) : null;
+    if (joinDate && joinDate > filters.periodEnd) {
+      skipped.push({ staffId: s.id, fullName: s.fullName, employeeId: s.employeeId, reason: 'Staff joined after this payroll period' });
+      continue;
+    }
+    const effectivePeriodStart = joinDate && joinDate > filters.periodStart ? joinDate : filters.periodStart;
+    const effStart = profile.effectiveFrom > effectivePeriodStart ? profile.effectiveFrom : effectivePeriodStart;
+    const effEnd = profile.effectiveTo && profile.effectiveTo < filters.periodEnd ? profile.effectiveTo : filters.periodEnd;
+
+    if (effStart > filters.periodEnd || effEnd < filters.periodStart || effStart > effEnd) {
+      skipped.push({ staffId: s.id, fullName: s.fullName, employeeId: s.employeeId, reason: 'Salary profile not active in this period' });
+      continue;
+    }
+
+    const amounts = computeSalaryAmounts(profile, working, effStart, effEnd, records);
     if (!amounts) {
       skipped.push({ staffId: s.id, fullName: s.fullName, employeeId: s.employeeId, reason: 'No scheduled working days in this period (all weekly OFF)' });
       continue;
@@ -145,7 +160,7 @@ export const payrollService = {
   /** Read-only preview — exactly what a Generate would produce, without writing anything. */
   async preview(filters: PayrollRunFilters) {
     const { eligible, skipped } = await computeEligibility(filters);
-    const totalAmount = eligible.reduce((sum, r) => sum.plus(r.netAmount), new Decimal(0));
+    const totalAmount = eligible.reduce((sum, r) => sum.plus(r.netAmount), new Decimal(0)).toDecimalPlaces(2);
     return { eligible, skipped, totalAmount, staffCount: eligible.length };
   },
 
@@ -154,7 +169,7 @@ export const payrollService = {
     if (eligible.length === 0) {
       throw new ConflictError('No staff have both a Salary Profile and approved attendance for this period — nothing to generate.');
     }
-    const totalAmount = eligible.reduce((sum, r) => sum.plus(r.netAmount), new Decimal(0));
+    const totalAmount = eligible.reduce((sum, r) => sum.plus(r.netAmount), new Decimal(0)).toDecimalPlaces(2);
 
     return prisma.$transaction(async (tx) => {
       // Serialize generation per employee; concurrent or overlapping runs must

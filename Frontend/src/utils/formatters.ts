@@ -9,23 +9,56 @@ export function cn(...inputs: ClassValue[]): string {
  * Formats a number into PKR (Pakistani Rupee) currency format
  * e.g., 1420500 -> "PKR 1,420,500"
  */
-export function formatPKR(amount: number | string | null | undefined): string {
-  if (amount === null || amount === undefined || isNaN(Number(amount))) {
-    return 'PKR 0';
-  }
-  const numeric = typeof amount === 'string' ? parseFloat(amount) : amount;
-  return `PKR ${new Intl.NumberFormat('en-PK', {
-    maximumFractionDigits: 0,
-    minimumFractionDigits: 0,
-  }).format(numeric)}`;
+export interface FormatPKROptions {
+  decimals?: number;
+  showPrefix?: boolean;
 }
 
 /**
- * Formats a standard integer or decimal with commas
+ * Formats a number into PKR (Pakistani Rupee) currency format with 2 decimal places
+ * e.g., 30000 -> "PKR 30,000.00", 967.74 -> "PKR 967.74"
  */
-/** Whole-rupee amount without the "PKR" prefix — for tables whose header already says PKR. */
-export function formatAmount(amount: number | string | null | undefined): string {
-  return formatPKR(amount).replace(/^PKR /, '');
+export function formatPKR(
+  amount: number | string | null | undefined,
+  optionsOrDecimals?: number | FormatPKROptions
+): string {
+  const options: FormatPKROptions =
+    typeof optionsOrDecimals === 'number'
+      ? { decimals: optionsOrDecimals }
+      : { decimals: 2, ...optionsOrDecimals };
+  const decimals = options.decimals ?? 2;
+  const showPrefix = options.showPrefix ?? true;
+
+  if (amount === null || amount === undefined || isNaN(Number(amount))) {
+    const zero = Number(0).toLocaleString('en-PK', {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    });
+    return showPrefix ? `PKR ${zero}` : zero;
+  }
+  const numeric = typeof amount === 'string' ? parseFloat(amount) : amount;
+  const formatted = new Intl.NumberFormat('en-PK', {
+    maximumFractionDigits: decimals,
+    minimumFractionDigits: decimals,
+  }).format(numeric);
+
+  return showPrefix ? `PKR ${formatted}` : formatted;
+}
+
+/**
+ * Monetary amount without the "PKR" prefix — for tables whose header already says PKR.
+ * Formats with 2 decimal places by default.
+ * e.g., 30000 -> "30,000.00", 967.74 -> "967.74"
+ */
+export function formatAmount(
+  amount: number | string | null | undefined,
+  optionsOrDecimals?: number | FormatPKROptions
+): string {
+  const options: FormatPKROptions =
+    typeof optionsOrDecimals === 'number'
+      ? { decimals: optionsOrDecimals, showPrefix: false }
+      : { decimals: 2, ...optionsOrDecimals, showPrefix: false };
+  return formatPKR(amount, options);
 }
 
 export function formatNumber(num: number | string | null | undefined): string {
