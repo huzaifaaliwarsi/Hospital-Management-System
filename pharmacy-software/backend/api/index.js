@@ -33774,7 +33774,7 @@ var NEVER = INVALID;
 // src/config/env.ts
 var envSchema = external_exports.object({
   NODE_ENV: external_exports.enum(["development", "test", "production"]).default("development"),
-  PORT: external_exports.coerce.number().int().positive().default(4100),
+  PORT: external_exports.union([external_exports.coerce.number().int().positive(), external_exports.string()]).default(4100),
   DATABASE_URL: external_exports.string().default("postgresql://postgres:admin123@localhost:5432/pharmacy_db?schema=public"),
   DATABASE_POOL_MAX: external_exports.coerce.number().int().positive().default(10),
   JWT_ACCESS_SECRET: external_exports.string().min(16).default("db77ef97d6b6ab1d61fad6d37cd6ef45ad4fb5c23e7c6858aa49d6e4a34d6453"),
@@ -36099,16 +36099,9 @@ function getHmsBaseUrls() {
   const url = (env.HMS_BACKEND_URL || "").trim().replace(/\/+$/, "");
   const urls = [];
   if (url) urls.push(url);
-  if (process.env.VERCEL || process.env.NODE_ENV === "production") {
-    if (!urls.includes("https://hms-project-backend.vercel.app/api/v1")) {
-      urls.unshift("https://hms-project-backend.vercel.app/api/v1");
-    }
-  } else {
+  if (process.env.NODE_ENV !== "production") {
     if (!urls.includes("http://localhost:4000/api/v1")) {
       urls.push("http://localhost:4000/api/v1");
-    }
-    if (!urls.includes("https://hms-project-backend.vercel.app/api/v1")) {
-      urls.push("https://hms-project-backend.vercel.app/api/v1");
     }
   }
   return urls;
@@ -36215,12 +36208,82 @@ var hmsRequestsService = {
   },
   // ── Requests (Idempotent creation) ────────────────────────────────────────
   async createRequest(body, actorId) {
+    let existing = null;
     if (body.externalRequestRef) {
-      const existing = await prisma.medicineRequest.findFirst({
+      existing = await prisma.medicineRequest.findFirst({
         where: { externalRequestRef: body.externalRequestRef },
         include: requestInclude
       });
-      if (existing) return existing;
+    }
+    if (!existing && body.externalAdmissionRef) {
+      existing = await prisma.medicineRequest.findFirst({
+        where: { externalAdmissionRef: body.externalAdmissionRef },
+        orderBy: { requestedAt: "asc" },
+        include: requestInclude
+      });
+    }
+    if (existing) {
+      const existingLineTags = new Set(
+        existing.lines.map((l) => {
+          const match = l.notes?.match(/\[HMS_LINE:([^\]]+)\]/);
+          return match ? match[1] : null;
+        }).filter(Boolean)
+      );
+      const linesToAdd = body.lines.filter((l) => {
+        const match = l.notes?.match(/\[HMS_LINE:([^\]]+)\]/);
+        if (match && existingLineTags.has(match[1])) {
+          return false;
+        }
+        return true;
+      });
+      if (linesToAdd.length > 0) {
+        for (const line of linesToAdd) {
+          const medicine = await prisma.medicineMaster.findUnique({ where: { id: line.medicineId } });
+          if (!medicine || !medicine.isActive) throw new NotFoundError(`Medicine ${line.medicineId} not found or inactive`);
+        }
+        await prisma.$transaction(async (tx) => {
+          for (const l of linesToAdd) {
+            await tx.medicineRequestLine.create({
+              data: {
+                medicineRequestId: existing.id,
+                medicineId: l.medicineId,
+                requestedQuantity: new import_library2.Decimal(l.requestedQuantity),
+                notes: l.notes
+              }
+            });
+          }
+          const allLines = await tx.medicineRequestLine.findMany({ where: { medicineRequestId: existing.id } });
+          const anyDispensed = allLines.some((l) => l.dispensedQuantity.greaterThan(0));
+          const updatedStatus = anyDispensed ? "PARTIALLY_ACCEPTED" : "REQUESTED";
+          await tx.medicineRequest.update({
+            where: { id: existing.id },
+            data: {
+              status: updatedStatus,
+              patientNameSnapshot: body.patientNameSnapshot || existing.patientNameSnapshot,
+              urgency: body.urgency || existing.urgency,
+              requestedAt: /* @__PURE__ */ new Date(),
+              approvedById: null,
+              approvedAt: null
+            }
+          });
+        });
+        const updated = await prisma.medicineRequest.findUnique({
+          where: { id: existing.id },
+          include: requestInclude
+        });
+        const medSummary2 = linesToAdd.map((l) => `${l.requestedQuantity}x`).join(", ");
+        broadcastHmsNotification({
+          type: "NEW_HMS_REQUEST",
+          requestNumber: updated?.requestNumber || existing.requestNumber,
+          patientName: updated?.patientNameSnapshot || "Patient",
+          admissionRef: existing.externalAdmissionRef,
+          urgency: updated?.urgency || "ROUTINE",
+          medicinesSummary: `Added: ${medSummary2}`,
+          timestamp: (/* @__PURE__ */ new Date()).toISOString()
+        });
+        return updated;
+      }
+      return existing;
     }
     for (const line of body.lines) {
       const medicine = await prisma.medicineMaster.findUnique({ where: { id: line.medicineId } });

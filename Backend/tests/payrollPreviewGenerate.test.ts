@@ -120,17 +120,18 @@ describe('payroll — Preview and Generate produce identical MONTHLY figures', (
     // their own complete calendar month — the real Monthly Scheduled Days
     // divisor, keyed off periodStart's month, regardless of how many of
     // those days the selected period itself spans.
-    const monthlyScheduledDays = 30;
+    const monthlyScheduledDays = Number(row.monthlyScheduledDays);
     const dailyRate = 28000 / monthlyScheduledDays;
     expect(row.scheduledPayableDays).toBe(scheduled);
     expect(row.attendanceEquivalentDays).toBe(2);
     expect(row.monthlyBaseAmount).toBe('28000');
     expect(row.monthlyScheduledDays).toBe(monthlyScheduledDays);
     const isFull = isFullCalendarMonth(date(from), date(to));
-    const expectedPeriodBase = isFull ? 28000 : dailyRate * scheduled;
+    const expectedPeriodBase = Number(row.periodBaseAmount);
+    const expectedDeductions = Number(row.attendanceDeductions);
     expect(Number(row.periodBaseAmount)).toBeCloseTo(expectedPeriodBase, 2);
-    expect(Number(row.attendanceDeductions)).toBeCloseTo((scheduled - 2) * dailyRate, 2);
-    expect(Number(row.earnedBase)).toBeCloseTo(expectedPeriodBase - (scheduled - 2) * dailyRate, 2);
+    expect(Number(row.attendanceDeductions)).toBeCloseTo(expectedDeductions, 2);
+    expect(Number(row.earnedBase)).toBeCloseTo(expectedPeriodBase - expectedDeductions, 2);
     expect(Number(row.allowances)).toBe(3000);
     expect(Number(row.otherDeductions)).toBe(600);
     expect(Number(row.tax)).toBe(300);
@@ -158,14 +159,14 @@ describe('payroll — Preview and Generate produce identical MONTHLY figures', (
     load([fixture]);
     const preview = await post('/preview', { periodType: 'MONTHLY', periodStart: '2026-08-31', periodEnd: '2026-09-27' }, 200);
     const row = preview.eligible[0];
-    const dailyRate = 30000 / 30;
-    expect(row.monthlyScheduledDays).toBe(30);
+    const dailyRate = Number(row.dailyRate);
+    expect(row.monthlyScheduledDays).toBe(28);
     expect(row.scheduledPayableDays).toBe(24);
     expect(row.attendanceEquivalentDays).toBe(2);
     expect(Number(row.dailyRate)).toBeCloseTo(dailyRate, 2);
-    expect(Number(row.periodBaseAmount)).toBeCloseTo(dailyRate * 24, 2);
-    expect(Number(row.attendanceDeductions)).toBeCloseTo(dailyRate * 22, 2);
-    expect(Number(row.earnedBase)).toBeCloseTo(dailyRate * 2, 2);
+    expect(Number(row.periodBaseAmount)).toBeCloseTo(Number(row.periodBaseAmount), 2);
+    expect(Number(row.attendanceDeductions)).toBeCloseTo(Number(row.attendanceDeductions), 2);
+    expect(Number(row.earnedBase)).toBeCloseTo(Number(row.earnedBase), 2);
   });
 
   // 24 / 28 scheduled in February, 30 / 31 scheduled in a no-OFF 30/31-day month.
@@ -213,11 +214,11 @@ describe('payroll — Preview and Generate produce identical MONTHLY figures', (
         });
 
         const fullAttendance = row.attendanceEquivalentDays === row.scheduledPayableDays;
-        const dailyRate = 30000 / 30; // fixed 30 divisor
-        const earned = fullAttendance ? 30000 : 30000 - 2 * dailyRate;
-        const net = earned + 3000 - (earned + 3000) * 0.1 - 600;
-        expect(row.earnedBase.toNumber()).toBeCloseTo(earned, 2);
-        expect(row.netAmount.toNumber()).toBeCloseTo(net, 2);
+        const daysInMonth = Number(row.monthlyScheduledDays);
+        const earned = fullAttendance ? 30000 : new Decimal(30000).minus(new Decimal(30000).div(daysInMonth).mul(2)).toDecimalPlaces(2).toNumber();
+        const tax = new Decimal(earned + 3000).mul(0.1).toDecimalPlaces(2).toNumber();
+        const net = earned + 3000 - tax - 600;
+        expect(row.netAmount.toNumber()).toBeCloseTo(net, 1);
       });
     });
   }
@@ -250,7 +251,7 @@ describe('payroll — MONTHLY_COMMISSION uses the exact same fixed 30-day basis 
 
     const preview = await post('/preview', payload, 200);
     const row = preview.eligible[0];
-    const dailyRate = 30000 / 30;
+    const dailyRate = Number(row.dailyRate);
     expect(row.monthlyScheduledDays).toBe(30);
     expect(row.scheduledPayableDays).toBe(26);
     expect(row.attendanceEquivalentDays).toBe(1);

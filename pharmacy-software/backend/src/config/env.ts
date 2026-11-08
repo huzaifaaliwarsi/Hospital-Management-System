@@ -8,7 +8,7 @@ import { z } from 'zod';
  */
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  PORT: z.coerce.number().int().positive().default(4100),
+  PORT: z.union([z.coerce.number().int().positive(), z.string()]).default(4100),
 
   DATABASE_URL: z.string().default('postgresql://postgres:admin123@localhost:5432/pharmacy_db?schema=public'),
   DATABASE_POOL_MAX: z.coerce.number().int().positive().default(10),

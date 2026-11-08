@@ -2,7 +2,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { PAYABLE_EQUIVALENT } from '../attendance/attendance.service';
 
 /**
- * Pure salary maths for payroll (PDF §11). Shared by Preview and Generate via
+ * Pure salary maths for payroll (PDF § 11). Shared by Preview and Generate via
  * payroll.service `computeEligibility`, so both always produce identical figures.
  */
 
@@ -11,9 +11,8 @@ const DAY_MS = 86_400_000;
 
 const utcDay = (d: Date) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 
-
 /**
- * A staff member's working weekdays (PDF §8): their own Weekly Timing when set
+ * A staff member's working weekdays (PDF § 8): their own Weekly Timing when set
  * (OFF days excluded), otherwise their Shift's weekly-off days, otherwise every day.
  */
 export function workingDaySet(schedule: { dayOfWeek: string; isWorking: boolean }[], shiftOffDays: string[]): Set<string> {
@@ -90,8 +89,7 @@ function computeTimingDeduction(rule: DeductionRule, totalMinutes: number, occur
 }
 
 /**
- * Detects if [start, end] covers a complete calendar month (e.g. 1st to last day of month,
- * or 1st to 30th for 30/31-day months).
+ * Detects if [start, end] covers a complete calendar month (1st to last day of month).
  */
 export function isFullCalendarMonth(start: Date, end: Date): boolean {
   const s = new Date(start);
@@ -104,30 +102,90 @@ export function isFullCalendarMonth(start: Date, end: Date): boolean {
   const eDate = e.getUTCDate();
   if (sYear !== eYear || sMonth !== eMonth || sDate !== 1) return false;
   const lastDayOfMonth = new Date(Date.UTC(sYear, sMonth + 1, 0)).getUTCDate();
-  return eDate === lastDayOfMonth || (lastDayOfMonth === 31 && eDate === 30);
+  return eDate === lastDayOfMonth;
+}
+
+export interface MonthSlice {
+  year: number;
+  month: number;
+  sliceStart: Date;
+  sliceEnd: Date;
+  daysInMonth: number;
+  calendarDays: number;
+  isFullMonth: boolean;
+}
+
+/**
+ * Splits any custom period [start, end] into distinct calendar month slices so that
+ * multi-month periods each use their respective month's actual calendar-day divisor.
+ */
+export function splitIntoMonthSlices(start: Date, end: Date): MonthSlice[] {
+  const slices: MonthSlice[] = [];
+  const s = new Date(start);
+  const e = new Date(end);
+  let curYear = s.getUTCFullYear();
+  let curMonth = s.getUTCMonth();
+
+  const endYear = e.getUTCFullYear();
+  const endMonth = e.getUTCMonth();
+
+  while (curYear < endYear || (curYear === endYear && curMonth <= endMonth)) {
+    const daysInCurMonth = new Date(Date.UTC(curYear, curMonth + 1, 0)).getUTCDate();
+
+    const sliceStartDate = (curYear === s.getUTCFullYear() && curMonth === s.getUTCMonth())
+      ? s.getUTCDate()
+      : 1;
+
+    const sliceEndDate = (curYear === endYear && curMonth === endMonth)
+      ? e.getUTCDate()
+      : daysInCurMonth;
+
+    const sliceStart = new Date(Date.UTC(curYear, curMonth, sliceStartDate));
+    const sliceEnd = new Date(Date.UTC(curYear, curMonth, sliceEndDate));
+    const calendarDays = sliceEndDate - sliceStartDate + 1;
+    const isFull = (sliceStartDate === 1 && sliceEndDate === daysInCurMonth);
+
+    slices.push({
+      year: curYear,
+      month: curMonth,
+      sliceStart,
+      sliceEnd,
+      daysInMonth: daysInCurMonth,
+      calendarDays,
+      isFullMonth: isFull,
+    });
+
+    curMonth++;
+    if (curMonth > 11) {
+      curMonth = 0;
+      curYear++;
+    }
+  }
+
+  return slices;
 }
 
 /**
  * Attendance-based salary for one staff member over the period.
  *
- *   Attendance Equivalent = Present + Half×0.5 + Paid Leave
+ *   Attendance Equivalent = Present + Half*0.5 + Paid Leave
  *
  *   MONTHLY and MONTHLY_COMMISSION (Doctor commission is always a fully separate ledger):
- *     Daily Rate          = Monthly Base / 30 (always fixed 30-day divisor)
- *     Schedule decides whether employee was supposed to work (scheduled working days)
- *     Weekly Off / unscheduled days do NOT become absence deductions
- *     Full monthly payroll:
- *       If attendance rules satisfied, reconciles to full Monthly Base (PKR 30,000)
- *       Period Base = Monthly Base
- *       Attendance Deduction = Daily Rate × Unpaid Scheduled Days
- *       Earned Base = Period Base − Attendance Deduction
- *     Partial period (e.g. 1 day):
- *       Period Base = Daily Rate × Scheduled Payable Days
- *       Attendance Deduction = Daily Rate × Unpaid Scheduled Days
- *       Earned Base = Period Base − Attendance Deduction
- *   PER_DAY(_COMMISSION): Earned = Daily Rate × equivalent
+ *     DaysInMonth         = Actual calendar days in selected month (28, 29, 30, or 31)
+ *     Daily Rate          = Monthly Base / DaysInMonth
+ *     Unpaid Deduction    = Daily Rate * Eligible Unpaid Days
+ *     Net Earned Base     = Period Base - Unpaid Deduction
  *
- *   Gross = Earned Base + Allowance;  Tax% = Gross × %;  Net = Gross − Tax − Deduction
+ *     Weekly Off and Paid Holidays are PAID and do not reduce monthly salary.
+ *     For partial employment periods, prorates using eligible calendar days within employment period.
+ *
+ *   DAILY:
+ *     Daily Rate          = Base Amount (per working day)
+ *     Period Base         = Base Amount * Scheduled Working Days
+ *     Earned Base         = Base Amount * Attendance Equivalent
+ *     Attendance Deductions = Base Amount * Unpaid Working Days
+ *
+ *   Gross = Earned Base + Allowance;  Tax% = Gross * %;  Net = Gross - Tax - Deduction
  *
  * Returns null when the period has no scheduled working days.
  */
@@ -169,31 +227,73 @@ export function computeSalaryAmounts(
   let periodBaseAmount = zero;
   let earnedBase = zero;
   let attendanceDeductions = zero;
+
   if (isMonthly) {
-    // For MONTHLY salary staff:
-    // Daily Rate = Monthly Salary / 30 (always fixed 30-day divisor).
-    // Schedule only decides whether employee was supposed to work that day (Present / Absent / Leave / Off).
-    // Weekly Off / unscheduled days must NOT become absence deductions.
-    const FIXED_MONTHLY_DIVISOR = 30;
-    monthlyScheduledDays = FIXED_MONTHLY_DIVISOR;
-    dailyRate = base.div(FIXED_MONTHLY_DIVISOR);
+    const slices = splitIntoMonthSlices(periodStart, periodEnd);
+    let totalPeriodBase = zero;
+    let totalEarnedBase = zero;
+    let totalAttendanceDeductions = zero;
+    let totalCalendarDays = 0;
 
-    const isFullMonth = isFullCalendarMonth(periodStart, periodEnd);
-    const unpaidEquivalent = Decimal.max(new Decimal(scheduledPayableDays).minus(attendanceEquivalentDays), zero);
+    for (const slice of slices) {
+      const sliceDailyRate = base.div(slice.daysInMonth);
+      totalCalendarDays += slice.calendarDays;
 
-    if (isFullMonth) {
-      periodBaseAmount = base;
-      if (attendanceEquivalentDays === 0) {
-        attendanceDeductions = periodBaseAmount;
-        earnedBase = zero;
-      } else {
-        attendanceDeductions = Decimal.min(dailyRate.mul(unpaidEquivalent), periodBaseAmount);
-        earnedBase = Decimal.max(periodBaseAmount.minus(attendanceDeductions), zero);
+      const scheduledInSlice = countWorkingDays(utcDay(slice.sliceStart), utcDay(slice.sliceEnd), working);
+      const sliceRecords = records.filter((r) => {
+        const t = utcDay(r.attendanceDate);
+        return t >= utcDay(slice.sliceStart) && t <= utcDay(slice.sliceEnd);
+      });
+
+      let attendanceEquivalentInSlice = 0;
+      for (const r of sliceRecords) {
+        const eq = PAYABLE_EQUIVALENT[r.status] ?? 0;
+        attendanceEquivalentInSlice += eq;
       }
+
+      const unpaidInSlice = Decimal.max(new Decimal(scheduledInSlice).minus(attendanceEquivalentInSlice), zero);
+
+      let sliceBase = zero;
+      let sliceDeductions = zero;
+      let sliceEarned = zero;
+
+      if (slice.isFullMonth) {
+        sliceBase = base;
+        if (attendanceEquivalentInSlice === 0 && scheduledInSlice > 0) {
+          sliceDeductions = sliceBase;
+          sliceEarned = zero;
+        } else {
+          sliceDeductions = Decimal.min(sliceDailyRate.mul(unpaidInSlice), sliceBase);
+          sliceEarned = Decimal.max(sliceBase.minus(sliceDeductions), zero);
+        }
+      } else {
+        // Partial employment period in this month:
+        // Prorate using eligible calendar days within the employment period:
+        sliceBase = sliceDailyRate.mul(slice.calendarDays);
+        if (attendanceEquivalentInSlice === 0 && scheduledInSlice > 0) {
+          sliceDeductions = sliceBase;
+          sliceEarned = zero;
+        } else {
+          sliceDeductions = Decimal.min(sliceDailyRate.mul(unpaidInSlice), sliceBase);
+          sliceEarned = Decimal.max(sliceBase.minus(sliceDeductions), zero);
+        }
+      }
+
+      totalPeriodBase = totalPeriodBase.plus(sliceBase);
+      totalAttendanceDeductions = totalAttendanceDeductions.plus(sliceDeductions);
+      totalEarnedBase = totalEarnedBase.plus(sliceEarned);
+    }
+
+    periodBaseAmount = totalPeriodBase;
+    attendanceDeductions = totalAttendanceDeductions;
+    earnedBase = totalEarnedBase;
+
+    if (slices.length === 1) {
+      monthlyScheduledDays = slices[0]!.daysInMonth;
+      dailyRate = base.div(slices[0]!.daysInMonth);
     } else {
-      periodBaseAmount = dailyRate.mul(scheduledPayableDays);
-      attendanceDeductions = dailyRate.mul(unpaidEquivalent);
-      earnedBase = Decimal.max(periodBaseAmount.minus(attendanceDeductions), zero);
+      monthlyScheduledDays = totalCalendarDays;
+      dailyRate = totalCalendarDays > 0 ? totalPeriodBase.div(totalCalendarDays) : zero;
     }
   } else {
     dailyRate = base;
@@ -222,9 +322,9 @@ export function computeSalaryAmounts(
 
   const netAmount = Decimal.max(grossAmount.minus(tax).minus(otherDeductions).minus(lateDeduction).minus(earlyExitDeduction), zero);
 
-  // SalarySlip currency columns have two decimal places. Round Monthly
+  // SalarySlip currency columns have two decimal places. Round all monetary
   // results at this shared boundary so Preview and persisted Generate agree.
-  const money = (amount: Decimal) => isMonthly ? amount.toDecimalPlaces(2) : amount;
+  const money = (amount: Decimal) => amount.toDecimalPlaces(2);
   return {
     monthlyScheduledDays,
     dailyRate: money(dailyRate),

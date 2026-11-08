@@ -6,7 +6,7 @@ const isLocalhost =
 
 const DEFAULT_API_URL = isLocalhost
   ? 'http://localhost:4000/api/v1'
-  : 'https://hms-project-backend.vercel.app/api/v1';
+  : 'https://api.hms.isywarecloud.com/api/v1';
 
 const BASE_URL =
   ((import.meta as any).env && (import.meta as any).env.VITE_API_BASE_URL) ||
