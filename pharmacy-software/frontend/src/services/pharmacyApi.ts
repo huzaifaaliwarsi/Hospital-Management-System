@@ -53,6 +53,37 @@ export interface MedicineRow {
   hasNearExpiryBatch: boolean;
 }
 
+export interface BulkImportItem {
+  name: string;
+  strength?: string | null;
+  genericName?: string | null;
+  dosageForm?: string | null;
+  category?: string | null;
+  baseUnit: string;
+  innerPackUnit?: string | null;
+  baseUnitsPerInnerPack?: number | null;
+  defaultPurchaseUnit?: string | null;
+  baseUnitsPerPurchaseUnit?: number | null;
+  defaultSalePrice?: number;
+  taxPercent?: number;
+  reorderAlertQty?: number;
+  barcode?: string | null;
+  trackBatchExpiry?: boolean;
+  openingStockQty?: number;
+  batchNumber?: string | null;
+  expiryDate?: string | null;
+  purchaseCostRate?: number | null;
+}
+
+export interface BulkImportResponse {
+  total: number;
+  createdCount: number;
+  updatedCount: number;
+  failedCount: number;
+  errors: Array<{ row: number; medicine: string; error: string }>;
+  successfulItems: Array<{ id: string; code: string; name: string; isNew: boolean }>;
+}
+
 export interface ManagementDashboard {
   salesToday: string | number;
   salesCountToday: number;
@@ -186,6 +217,8 @@ export const pharmacyApi = {
   getSalesDashboard: () => apiClient.get<{ data: SalesDashboard }>('/dashboard/sales').then((r) => r.data.data),
 
   listMedicines: (search?: string) => apiClient.get<{ data: MedicineRow[] }>('/pharmacy/medicines', { params: { search } }).then((r) => r.data.data),
+  bulkImportMedicines: (items: BulkImportItem[]) =>
+    apiClient.post<{ data: BulkImportResponse }>('/pharmacy/medicines/bulk-import', { items }).then((r) => r.data.data),
   /** Preview only (not reserved) — the actual code is decided server-side at create time. */
   getNextMedicineCode: () => apiClient.get<{ data: { code: string } }>('/pharmacy/medicines/next-code').then((r) => r.data.data.code),
   createMedicine: (body: Record<string, unknown>) => apiClient.post('/pharmacy/medicines', body).then((r) => r.data.data),
