@@ -25,6 +25,11 @@ export const pharmacyController = {
     const data = await pharmacyService.createMedicine(req.body as CreateMedicineBody, req.user.sub);
     res.status(201).json({ data });
   },
+  async bulkImportMedicines(req: Request, res: Response) {
+    if (!req.user) throw new AuthenticationError();
+    const result = await pharmacyService.bulkImportMedicines(req.body, req.user.sub);
+    res.json({ data: result });
+  },
   async updateMedicine(req: Request, res: Response) {
     const data = await pharmacyService.updateMedicine(req.params.id as string, req.body as UpdateMedicineBody);
     res.json({ data });

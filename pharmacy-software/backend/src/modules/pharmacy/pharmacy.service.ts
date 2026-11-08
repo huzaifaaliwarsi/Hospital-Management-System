@@ -16,6 +16,7 @@ import type {
   StockMovementsQuery,
   SalesReturnBody,
   PackagingLevelInput,
+  BulkImportBody,
 } from './pharmacy.schemas';
 
 /** pharmacy.md §3 Settings screen — configured, not hardcoded; one singleton row, auto-created on first read. */
@@ -676,6 +677,299 @@ export const pharmacyService = {
     });
     if (!invoice) throw new NotFoundError('Invoice not found');
     return invoice;
+  },
+
+  async bulkImportMedicines(body: BulkImportBody, actorId: string) {
+    let createdCount = 0;
+    let updatedCount = 0;
+    const errors: Array<{ row: number; medicine: string; error: string }> = [];
+    const successfulItems: Array<{ id: string; code: string; name: string; isNew: boolean }> = [];
+
+    // Helper: case-insensitive get or create unit
+    const resolveUnit = async (tx: Prisma.TransactionClient, rawName: string) => {
+      const name = rawName.trim();
+      const existing = await tx.unit.findFirst({
+        where: { name: { equals: name, mode: 'insensitive' } },
+      });
+      if (existing) return existing;
+      return tx.unit.create({
+        data: {
+          name,
+          isSystem: false,
+          createdById: actorId,
+        },
+      });
+    };
+
+    // Helper: case-insensitive get or create category
+    const resolveCategory = async (tx: Prisma.TransactionClient, rawCategory?: string | null) => {
+      if (!rawCategory || !rawCategory.trim()) return { id: null, name: null };
+      const name = rawCategory.trim();
+      const existing = await tx.medicineCategory.findFirst({
+        where: { name: { equals: name, mode: 'insensitive' } },
+      });
+      if (existing) return { id: existing.id, name: existing.name };
+      const created = await tx.medicineCategory.create({
+        data: {
+          name,
+          createdById: actorId,
+        },
+      });
+      return { id: created.id, name: created.name };
+    };
+
+    for (let index = 0; index < body.items.length; index++) {
+      const row = body.items[index]!;
+      const rowNum = index + 1;
+
+      try {
+        await prisma.$transaction(async (tx) => {
+          const medName = row.name.trim();
+          const rawBarcode = row.barcode?.trim() || null;
+          const rawStrength = row.strength?.trim() || null;
+          const rawGeneric = row.genericName?.trim() || null;
+          const rawDosage = row.dosageForm?.trim() || null;
+
+          // Check if barcode already belongs to a DIFFERENT medicine
+          if (rawBarcode) {
+            const conflict = await tx.medicineMaster.findFirst({
+              where: {
+                barcode: rawBarcode,
+                NOT: {
+                  AND: [
+                    { name: { equals: medName, mode: 'insensitive' } },
+                    rawStrength ? { strength: { equals: rawStrength, mode: 'insensitive' } } : {},
+                  ],
+                },
+              },
+            });
+            if (conflict) {
+              throw new ValidationError(`Barcode "${rawBarcode}" already belongs to medicine "${conflict.name}" (${conflict.code})`);
+            }
+          }
+
+          // Check for existing medicine by barcode OR (name + strength)
+          let existingMed = null;
+          if (rawBarcode) {
+            existingMed = await tx.medicineMaster.findFirst({
+              where: { barcode: rawBarcode },
+            });
+          }
+          if (!existingMed) {
+            existingMed = await tx.medicineMaster.findFirst({
+              where: {
+                name: { equals: medName, mode: 'insensitive' },
+                ...(rawStrength ? { strength: { equals: rawStrength, mode: 'insensitive' } } : { strength: null }),
+              },
+            });
+          }
+
+          const categoryData = await resolveCategory(tx, row.category);
+          const baseUnit = await resolveUnit(tx, row.baseUnit);
+
+          // Option 1 Packaging & Pack-Rate Derivation:
+          // Users enter rates (TP / MRP) and opening quantity in terms of the Default Purchase Unit (e.g. Box).
+          const purchaseUnitRaw = row.defaultPurchaseUnit?.trim() || row.baseUnit.trim();
+          const isBasePurchaseUnit = purchaseUnitRaw.toLowerCase() === row.baseUnit.trim().toLowerCase();
+
+          let purchaseConversionToBase = 1;
+          if (!isBasePurchaseUnit) {
+            if (row.innerPackUnit && purchaseUnitRaw.toLowerCase() === row.innerPackUnit.trim().toLowerCase()) {
+              purchaseConversionToBase = Number(row.baseUnitsPerInnerPack) || 1;
+            } else {
+              purchaseConversionToBase = Number(row.baseUnitsPerPurchaseUnit) || (Number(row.baseUnitsPerInnerPack) ? Number(row.baseUnitsPerInnerPack) * 10 : 1);
+            }
+          }
+          if (purchaseConversionToBase <= 0) purchaseConversionToBase = 1;
+
+          // Convert pack prices to per-base-unit rates (e.g. Rs 450 per Box / 100 = Rs 4.50 per Tablet)
+          const rawSalePrice = Number(row.defaultSalePrice || 0);
+          const saleRatePerBase = purchaseConversionToBase > 1 && rawSalePrice > 0
+            ? rawSalePrice / purchaseConversionToBase
+            : rawSalePrice;
+
+          const rawPurchaseCost = row.purchaseCostRate !== undefined && row.purchaseCostRate !== null
+            ? Number(row.purchaseCostRate)
+            : null;
+          const purchaseRatePerBase = rawPurchaseCost !== null && rawPurchaseCost > 0
+            ? (purchaseConversionToBase > 1 ? rawPurchaseCost / purchaseConversionToBase : rawPurchaseCost)
+            : null;
+
+          // Convert opening stock from Packs/Boxes to Base Units (e.g. 5 boxes x 100 = 500 tablets)
+          const rawOpeningPacks = Number(row.openingStockQty) || 0;
+          const openingStockBaseUnits = rawOpeningPacks * purchaseConversionToBase;
+
+          let medicineId: string;
+          let medicineCode: string;
+          let isNew = false;
+
+          if (existingMed) {
+            // Update existing medicine master
+            const updated = await tx.medicineMaster.update({
+              where: { id: existingMed.id },
+              data: {
+                genericName: rawGeneric ?? existingMed.genericName,
+                dosageForm: rawDosage ?? existingMed.dosageForm,
+                categoryId: categoryData.id ?? existingMed.categoryId,
+                categoryLabel: categoryData.name ?? existingMed.categoryLabel,
+                saleRate: row.defaultSalePrice !== undefined ? new Decimal(saleRatePerBase) : existingMed.saleRate,
+                taxPercent: row.taxPercent !== undefined ? new Decimal(row.taxPercent) : existingMed.taxPercent,
+                reorderLevel: row.reorderAlertQty !== undefined ? new Decimal(row.reorderAlertQty) : existingMed.reorderLevel,
+                purchaseRate: purchaseRatePerBase !== null ? new Decimal(purchaseRatePerBase) : existingMed.purchaseRate,
+                barcode: rawBarcode ?? existingMed.barcode,
+              },
+            });
+            medicineId = updated.id;
+            medicineCode = updated.code;
+            updatedCount++;
+          } else {
+            // Create new medicine master
+            isNew = true;
+            medicineCode = await nextCode(tx, SEQUENCE.MEDICINE);
+
+            const created = await tx.medicineMaster.create({
+              data: {
+                code: medicineCode,
+                name: medName,
+                strength: rawStrength,
+                genericName: rawGeneric,
+                dosageForm: rawDosage,
+                categoryId: categoryData.id,
+                categoryLabel: categoryData.name,
+                unit: baseUnit.name,
+                baseUnitId: baseUnit.id,
+                batchManaged: Boolean(row.trackBatchExpiry),
+                reorderLevel: new Decimal(row.reorderAlertQty || 0),
+                saleRate: new Decimal(saleRatePerBase || 0),
+                purchaseRate: purchaseRatePerBase !== null ? new Decimal(purchaseRatePerBase) : null,
+                taxPercent: new Decimal(row.taxPercent || 0),
+                barcode: rawBarcode,
+                createdById: actorId,
+              },
+            });
+            medicineId = created.id;
+
+            // Build packaging levels
+            const packagingLevels: PackagingLevelInput[] = [];
+
+            // Level 1: Inner Pack Unit (if provided and conversion > 1)
+            let innerUnit: any = null;
+            if (row.innerPackUnit && row.innerPackUnit.trim()) {
+              const innerConv = Number(row.baseUnitsPerInnerPack) || 0;
+              if (innerConv > 1 && row.innerPackUnit.trim().toLowerCase() !== row.baseUnit.trim().toLowerCase()) {
+                innerUnit = await resolveUnit(tx, row.innerPackUnit);
+                const isInnerPurchase = !isBasePurchaseUnit && purchaseUnitRaw.toLowerCase() === row.innerPackUnit.trim().toLowerCase();
+                packagingLevels.push({
+                  unitId: innerUnit.id,
+                  conversionToBase: innerConv,
+                  isPurchaseUnit: isInnerPurchase,
+                  isSaleUnit: true,
+                });
+              }
+            }
+
+            // Outer Pack Unit (if different from base and inner pack)
+            if (!isBasePurchaseUnit && (!innerUnit || purchaseUnitRaw.toLowerCase() !== innerUnit.name.toLowerCase())) {
+              const outerUnit = await resolveUnit(tx, purchaseUnitRaw);
+              const outerConv = Number(row.baseUnitsPerPurchaseUnit) || (packagingLevels[0] ? packagingLevels[0].conversionToBase * 10 : 10);
+              packagingLevels.push({
+                unitId: outerUnit.id,
+                conversionToBase: outerConv,
+                isPurchaseUnit: true,
+                isSaleUnit: true,
+              });
+            }
+
+            // Ensure exactly one purchase unit is designated
+            const purchaseCount = (isBasePurchaseUnit ? 1 : 0) + packagingLevels.filter((l) => l.isPurchaseUnit).length;
+            const finalBasePurchase = purchaseCount === 1 ? isBasePurchaseUnit : true;
+            if (purchaseCount !== 1) {
+              packagingLevels.forEach((l) => {
+                l.isPurchaseUnit = false;
+              });
+            }
+
+            await writePackagingLevels(tx, medicineId, baseUnit.id, finalBasePurchase, true, packagingLevels);
+            createdCount++;
+          }
+
+          // Handle Opening Stock (in base units derived from packs)
+          if (openingStockBaseUnits > 0) {
+            if (row.trackBatchExpiry) {
+              const batchNumber = row.batchNumber?.trim() || `INIT-${medicineCode}`;
+              let expiryDate = row.expiryDate ? new Date(row.expiryDate) : null;
+              if (!expiryDate || isNaN(expiryDate.getTime())) {
+                expiryDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+              }
+              const costRate = purchaseRatePerBase !== null
+                ? purchaseRatePerBase
+                : saleRatePerBase * 0.8;
+
+              let batch = await tx.medicineBatch.findUnique({
+                where: {
+                  medicineId_batchNumber: { medicineId, batchNumber },
+                },
+              });
+              if (!batch) {
+                batch = await tx.medicineBatch.create({
+                  data: {
+                    medicineId,
+                    batchNumber,
+                    expiryDate,
+                    costRate: new Decimal(costRate),
+                    saleRate: saleRatePerBase ? new Decimal(saleRatePerBase) : null,
+                    createdById: actorId,
+                  },
+                });
+              }
+
+              await tx.stockLedgerEntry.create({
+                data: {
+                  medicineId,
+                  batchId: batch.id,
+                  movementType: 'OPENING_STOCK',
+                  quantityDelta: new Decimal(openingStockBaseUnits),
+                  referenceTable: 'opening_stock',
+                  referenceId: batch.id,
+                  note: `Excel bulk import opening stock (${rawOpeningPacks} ${purchaseUnitRaw})`,
+                  actorId,
+                },
+              });
+            } else {
+              await tx.stockLedgerEntry.create({
+                data: {
+                  medicineId,
+                  batchId: null,
+                  movementType: 'OPENING_STOCK',
+                  quantityDelta: new Decimal(openingStockBaseUnits),
+                  referenceTable: 'opening_stock',
+                  referenceId: medicineId,
+                  note: `Excel bulk import opening stock (${rawOpeningPacks} ${purchaseUnitRaw})`,
+                  actorId,
+                },
+              });
+            }
+          }
+
+          successfulItems.push({ id: medicineId, code: medicineCode, name: medName, isNew });
+        });
+      } catch (err: any) {
+        errors.push({
+          row: rowNum,
+          medicine: row.name,
+          error: err.message || 'Unknown import error',
+        });
+      }
+    }
+
+    return {
+      total: body.items.length,
+      createdCount,
+      updatedCount,
+      failedCount: errors.length,
+      errors,
+      successfulItems,
+    };
   },
 
   currentStock,

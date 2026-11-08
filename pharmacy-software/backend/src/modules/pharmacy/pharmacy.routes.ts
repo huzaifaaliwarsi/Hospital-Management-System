@@ -19,6 +19,7 @@ const viewOrBridge = (req: any, res: any, next: any) => {
 };
 
 // Medicine Master (pharmacy.md §9) — Sales cannot create/edit (§4 restriction, `edit` not granted to SALES_DISPENSING).
+router.post('/medicines/bulk-import', edit, validate({ body: s.bulkImportBodySchema }), asyncHandler(c.bulkImportMedicines));
 router.post('/medicines', edit, validate({ body: s.createMedicineBodySchema }), asyncHandler(c.createMedicine));
 router.get('/medicines', viewOrBridge, validate({ query: s.listMedicinesQuerySchema }), asyncHandler(c.listMedicines));
 router.get('/medicines/next-code', edit, asyncHandler(c.nextMedicineCode));

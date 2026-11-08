@@ -28,6 +28,7 @@ import {
   Building2,
   BadgeCheck,
   PackagePlus,
+  Upload,
 } from 'lucide-react';
 import { pharmacyApi, MedicineRow, Unit, MedicineCategory } from '../services/pharmacyApi';
 import { formatPKR, formatNumber } from '../utils/format';
@@ -42,6 +43,8 @@ import {
   createPackagingPayload,
 } from '../components/MedicinePackagingFields';
 import { AddMedicineModal } from '../components/AddMedicineModal';
+import { BulkImportMedicineModal } from '../components/BulkImportMedicineModal';
+import { exportMedicinesFullExcel } from '../utils/excelImportExport';
 
 const DOSAGE_FORM_OPTIONS = ['Tablet', 'Capsule', 'Syrup', 'Injection', 'Cream', 'Ointment', 'Drops', 'Suspension', 'Inhaler', 'Sachet'];
 
@@ -102,6 +105,7 @@ export const MedicinesPage: React.FC<{ canEdit: boolean; onNavigate?: (page: str
 
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showBulkImportModal, setShowBulkImportModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showBatchesModal, setShowBatchesModal] = useState(false);
   const [selectedMedicine, setSelectedMedicine] = useState<MedicineRow | null>(null);
@@ -458,57 +462,14 @@ export const MedicinesPage: React.FC<{ canEdit: boolean; onNavigate?: (page: str
     toast.success('Inventory exported to CSV successfully.');
   };
 
-  // Export to Excel (.xls HTML table)
+  // Export to Excel (Full 19-Column .xlsx format)
   const handleExportExcel = () => {
     if (finalFilteredRows.length === 0) {
       toast.warning('No records to export.');
       return;
     }
-    const html = `
-      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-      <head><meta charset="utf-8"/></head>
-      <body>
-        <h2>Medicine Stock & Formulary Register</h2>
-        <table border="1">
-          <tr style="background:#0e5944;color:#ffffff;font-weight:bold;">
-            <th>#</th><th>Item Code</th><th>Medicine Name</th><th>Category</th><th>Unit</th><th>Sale Rate (PKR)</th><th>Current Stock</th><th>Reorder Level</th><th>Stock Value (PKR)</th><th>Status</th>
-          </tr>
-          ${finalFilteredRows.map((m, idx) => `
-            <tr>
-              <td>${idx + 1}</td>
-              <td>${m.code}</td>
-              <td>${m.name}</td>
-              <td>${m.category || ''}</td>
-              <td>${m.unit}</td>
-              <td>${m.saleRate}</td>
-              <td>${m.currentStock}</td>
-              <td>${m.reorderLevel}</td>
-              <td>${Number(m.currentStock) * Number(m.saleRate)}</td>
-              <td>${m.isOutOfStock ? 'OUT OF STOCK' : m.isLowStock ? 'LOW STOCK' : 'IN STOCK'}</td>
-            </tr>
-          `).join('')}
-          <tr style="background:#f1f5f9;font-weight:bold;">
-            <td>TOTAL</td>
-            <td>${finalFilteredRows.length} Items</td>
-            <td colspan="4"></td>
-            <td>${totalStockUnits}</td>
-            <td></td>
-            <td>${totalStockValuation}</td>
-            <td></td>
-          </tr>
-        </table>
-      </body>
-      </html>
-    `;
-    const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `medicine_inventory_${new Date().toISOString().slice(0, 10)}.xls`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    toast.success('Inventory exported to Excel successfully.');
+    exportMedicinesFullExcel(finalFilteredRows);
+    toast.success('Inventory exported to 19-column Excel format successfully.');
   };
 
   // Export to PDF / Print
@@ -538,6 +499,14 @@ export const MedicinesPage: React.FC<{ canEdit: boolean; onNavigate?: (page: str
 
         {canEdit && (
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowBulkImportModal(true)}
+              className="inline-flex items-center gap-2 px-3.5 py-2.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 rounded-xl shadow-xs transition-all cursor-pointer"
+              title="Bulk import medicines and opening stock via Excel"
+            >
+              <Upload className="h-4 w-4 text-emerald-700" /> Bulk Import
+            </button>
             <button
               type="button"
               onClick={() => onNavigate?.('stock-in')}
@@ -1421,6 +1390,16 @@ export const MedicinesPage: React.FC<{ canEdit: boolean; onNavigate?: (page: str
             </form>
           </div>
         </div>
+      )}
+
+      {showBulkImportModal && (
+        <BulkImportMedicineModal
+          open={showBulkImportModal}
+          onClose={() => setShowBulkImportModal(false)}
+          onSuccess={() => {
+            load();
+          }}
+        />
       )}
     </div>
   );

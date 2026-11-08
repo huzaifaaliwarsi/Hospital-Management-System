@@ -125,3 +125,35 @@ export const stockMovementsQuerySchema = z.object({
   movementType: z.enum(['PURCHASE_IN', 'POS_SALE_OUT', 'HMS_DISPENSE_OUT', 'SALES_RETURN_IN', 'PURCHASE_RETURN_OUT', 'POSITIVE_ADJUSTMENT', 'NEGATIVE_ADJUSTMENT', 'OPENING_STOCK']).optional(),
 });
 export type StockMovementsQuery = z.infer<typeof stockMovementsQuerySchema>;
+
+export const bulkImportRowSchema = z.object({
+  name: z.string().min(1, 'Medicine Name is required').max(150),
+  strength: z.string().max(40).nullish(),
+  genericName: z.string().max(150).nullish(),
+  dosageForm: z.string().max(40).nullish(),
+  category: z.string().max(150).nullish(),
+  baseUnit: z.string().min(1, 'Base Stock Unit is required').max(50),
+  innerPackUnit: z.string().max(50).nullish(),
+  baseUnitsPerInnerPack: z.coerce.number().positive().nullish(),
+  defaultPurchaseUnit: z.string().max(50).nullish(),
+  baseUnitsPerPurchaseUnit: z.coerce.number().positive().nullish(),
+  defaultSalePrice: z.coerce.number().nonnegative().default(0),
+  taxPercent: z.coerce.number().min(0).max(100).default(0),
+  reorderAlertQty: z.coerce.number().nonnegative().default(0),
+  barcode: z.string().max(64).nullish(),
+  trackBatchExpiry: z.union([
+    z.boolean(),
+    z.string().transform((v) => !['no', 'n', '0', 'false'].includes(v.trim().toLowerCase())),
+  ]).default(true),
+  openingStockQty: z.coerce.number().nonnegative().default(0),
+  batchNumber: z.string().max(60).nullish(),
+  expiryDate: z.string().nullish(),
+  purchaseCostRate: z.coerce.number().nonnegative().nullish(),
+});
+export type BulkImportRow = z.infer<typeof bulkImportRowSchema>;
+
+export const bulkImportBodySchema = z.object({
+  items: z.array(bulkImportRowSchema).min(1, 'At least one medicine item is required').max(2500),
+});
+export type BulkImportBody = z.infer<typeof bulkImportBodySchema>;
+
