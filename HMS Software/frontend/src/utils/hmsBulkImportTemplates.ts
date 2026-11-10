@@ -300,11 +300,6 @@ export const DEPARTMENTS_HEADERS = [
   'Head Doctor / Incharge',
   'Contact Extension',
   'Location / Floor',
-  'OPD Enabled (Yes/No)',
-  'Observation Enabled (Yes/No)',
-  'Emergency Enabled (Yes/No)',
-  'Admission Enabled (Yes/No)',
-  'Pharmacy Related (Yes/No)',
   'Status (Active/Inactive)',
 ];
 
@@ -317,11 +312,6 @@ export const DEPARTMENTS_SAMPLE_ROWS = [
     'Head Doctor / Incharge': 'Prof. Dr. Tariq Saeed',
     'Contact Extension': 'Ext. 201',
     'Location / Floor': 'Ground Floor, East Wing',
-    'OPD Enabled (Yes/No)': 'Yes',
-    'Observation Enabled (Yes/No)': 'Yes',
-    'Emergency Enabled (Yes/No)': 'Yes',
-    'Admission Enabled (Yes/No)': 'Yes',
-    'Pharmacy Related (Yes/No)': 'No',
     'Status (Active/Inactive)': 'Active',
   },
   {
@@ -332,11 +322,6 @@ export const DEPARTMENTS_SAMPLE_ROWS = [
     'Head Doctor / Incharge': '',
     'Contact Extension': 'Ext. 305',
     'Location / Floor': '2nd Floor, Surgical Block',
-    'OPD Enabled (Yes/No)': 'Yes',
-    'Observation Enabled (Yes/No)': 'Yes',
-    'Emergency Enabled (Yes/No)': 'Yes',
-    'Admission Enabled (Yes/No)': 'Yes',
-    'Pharmacy Related (Yes/No)': 'No',
     'Status (Active/Inactive)': 'Active',
   },
   {
@@ -347,11 +332,6 @@ export const DEPARTMENTS_SAMPLE_ROWS = [
     'Head Doctor / Incharge': '',
     'Contact Extension': 'Ext. 104',
     'Location / Floor': 'Basement Level 1',
-    'OPD Enabled (Yes/No)': 'Yes',
-    'Observation Enabled (Yes/No)': 'No',
-    'Emergency Enabled (Yes/No)': 'Yes',
-    'Admission Enabled (Yes/No)': 'No',
-    'Pharmacy Related (Yes/No)': 'No',
     'Status (Active/Inactive)': 'Active',
   },
   {
@@ -362,11 +342,6 @@ export const DEPARTMENTS_SAMPLE_ROWS = [
     'Head Doctor / Incharge': '',
     'Contact Extension': 'Ext. 112',
     'Location / Floor': 'Ground Floor, ER Ramp',
-    'OPD Enabled (Yes/No)': 'No',
-    'Observation Enabled (Yes/No)': 'Yes',
-    'Emergency Enabled (Yes/No)': 'Yes',
-    'Admission Enabled (Yes/No)': 'Yes',
-    'Pharmacy Related (Yes/No)': 'No',
     'Status (Active/Inactive)': 'Active',
   },
   {
@@ -377,11 +352,6 @@ export const DEPARTMENTS_SAMPLE_ROWS = [
     'Head Doctor / Incharge': '',
     'Contact Extension': 'Ext. 102',
     'Location / Floor': 'Ground Floor, Main Atrium',
-    'OPD Enabled (Yes/No)': 'Yes',
-    'Observation Enabled (Yes/No)': 'No',
-    'Emergency Enabled (Yes/No)': 'Yes',
-    'Admission Enabled (Yes/No)': 'Yes',
-    'Pharmacy Related (Yes/No)': 'Yes',
     'Status (Active/Inactive)': 'Active',
   },
 ];
@@ -430,36 +400,6 @@ export const DEPARTMENTS_INSTRUCTIONS = [
     'Description': 'Physical location within the hospital complex.',
   },
   {
-    'Column Name': 'OPD Enabled (Yes/No)',
-    'Requirement': 'OPTIONAL',
-    'Allowed Values / Examples': 'Yes / No (Default: Yes)',
-    'Description': 'Allows outpatient appointments and consultations under this department.',
-  },
-  {
-    'Column Name': 'Observation Enabled (Yes/No)',
-    'Requirement': 'OPTIONAL',
-    'Allowed Values / Examples': 'Yes / No (Default: No)',
-    'Description': 'Allows patient day-stay observation visits.',
-  },
-  {
-    'Column Name': 'Emergency Enabled (Yes/No)',
-    'Requirement': 'OPTIONAL',
-    'Allowed Values / Examples': 'Yes / No (Default: No)',
-    'Description': 'Enables emergency triage and rapid admissions.',
-  },
-  {
-    'Column Name': 'Admission Enabled (Yes/No)',
-    'Requirement': 'OPTIONAL',
-    'Allowed Values / Examples': 'Yes / No (Default: Yes)',
-    'Description': 'Allows inpatient bed admissions and surgeries under this department.',
-  },
-  {
-    'Column Name': 'Pharmacy Related (Yes/No)',
-    'Requirement': 'OPTIONAL',
-    'Allowed Values / Examples': 'Yes / No (Default: No)',
-    'Description': 'Mark Yes for pharmaceutical stores or dispensing units.',
-  },
-  {
     'Column Name': 'Status (Active/Inactive)',
     'Requirement': 'OPTIONAL',
     'Allowed Values / Examples': 'Active / Inactive (Default: Active)',
@@ -479,11 +419,6 @@ export function downloadDepartmentsBulkTemplate(): void {
     { wch: 26 }, // Head Doctor
     { wch: 18 }, // Extension
     { wch: 26 }, // Location
-    { wch: 22 }, // OPD
-    { wch: 26 }, // Observation
-    { wch: 24 }, // Emergency
-    { wch: 24 }, // Admission
-    { wch: 24 }, // Pharmacy
     { wch: 22 }, // Status
   ]);
   XLSX.utils.book_append_sheet(wb, wsDepts, 'Departments Upload');

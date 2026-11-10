@@ -414,9 +414,9 @@ export const INITIAL_DEPARTMENTS: Department[] = [
   },
 ];
 
-export const SAMPLE_IMPORT_BATCH_DATA: string = `department_code,department_name,department_type,description,head_identifier,contact_extension,location,opd_enabled,observation_enabled,emergency_enabled,admission_enabled,pharmacy_related,status
-DEP-ENT,Otolaryngology (ENT),Surgical,Ear nose and throat clinic and audiology,DOC-008,Ext. 314,Third Floor Block B,TRUE,FALSE,FALSE,TRUE,FALSE,Active
-DEP-DERM,Dermatology & Skin Care,Clinical,Outpatient skin disease consultations and cryotherapy,DOC-004,Ext. 318,Third Floor Block A,TRUE,FALSE,FALSE,FALSE,FALSE,Active
-DEP-NEURO,Neurology & Stroke Care,Clinical,Neurological diagnostics and inpatient stroke monitoring,DOC-001,Ext. 322,Second Floor Block B,TRUE,TRUE,FALSE,TRUE,FALSE,Active
-DEP-CARD,Cardiology & Vascular,Clinical,Duplicate code test row,DOC-001,Ext. 301,Second Floor,TRUE,FALSE,FALSE,TRUE,FALSE,Active
-DEP-INVALID,,InvalidType,,UNKNOWN-999,Ext. 999,Nowhere,NOT_BOOL,FALSE,FALSE,FALSE,FALSE,InvalidStatus`;
+export const SAMPLE_IMPORT_BATCH_DATA: string = `Department Name *,Department Type *,Department Code,Description,Head Doctor / Incharge,Contact Extension,Location / Floor,Status (Active/Inactive)
+Otolaryngology (ENT),Surgical,DEP-ENT,Ear nose and throat clinic and audiology,DOC-008,Ext. 314,Third Floor Block B,Active
+Dermatology & Skin Care,Clinical,DEP-DERM,Outpatient skin disease consultations and cryotherapy,DOC-004,Ext. 318,Third Floor Block A,Active
+Neurology & Stroke Care,Clinical,DEP-NEURO,Neurological diagnostics and inpatient stroke monitoring,DOC-001,Ext. 322,Second Floor Block B,Active
+Cardiology & Vascular,Clinical,DEP-CARD,Duplicate code test row,DOC-001,Ext. 301,Second Floor,Active
+,InvalidType,DEP-INVALID,,UNKNOWN-999,Ext. 999,Nowhere,InvalidStatus`;

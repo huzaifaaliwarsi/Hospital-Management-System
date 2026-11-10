@@ -477,11 +477,21 @@ export class DepartmentService {
         contactExtension: rawExt,
         location: rawLoc,
         floor: rawLoc,
-        opdEnabled: parseBool(row['OPD Enabled (Yes/No)'] ?? row.opd_enabled ?? row.opdenabled, true),
-        observationEnabled: parseBool(row['Observation Enabled (Yes/No)'] ?? row.observation_enabled ?? row.observationenabled, false),
-        emergencyEnabled: parseBool(row['Emergency Enabled (Yes/No)'] ?? row.emergency_enabled ?? row.emergencyenabled, false),
-        admissionEnabled: parseBool(row['Admission Enabled (Yes/No)'] ?? row.admission_enabled ?? row.admissionenabled, true),
-        pharmacyRelated: parseBool(row['Pharmacy Related (Yes/No)'] ?? row.pharmacy_related ?? row.pharmacyrelated, false),
+        opdEnabled: row['OPD Enabled (Yes/No)'] !== undefined || row.opd_enabled !== undefined
+          ? parseBool(row['OPD Enabled (Yes/No)'] ?? row.opd_enabled, true)
+          : matchedType !== 'Pharmacy',
+        observationEnabled: row['Observation Enabled (Yes/No)'] !== undefined || row.observation_enabled !== undefined
+          ? parseBool(row['Observation Enabled (Yes/No)'] ?? row.observation_enabled, false)
+          : (matchedType === 'Emergency' || matchedType === 'Clinical' || matchedType === 'Surgical'),
+        emergencyEnabled: row['Emergency Enabled (Yes/No)'] !== undefined || row.emergency_enabled !== undefined
+          ? parseBool(row['Emergency Enabled (Yes/No)'] ?? row.emergency_enabled, false)
+          : matchedType === 'Emergency',
+        admissionEnabled: row['Admission Enabled (Yes/No)'] !== undefined || row.admission_enabled !== undefined
+          ? parseBool(row['Admission Enabled (Yes/No)'] ?? row.admission_enabled, true)
+          : (matchedType === 'Clinical' || matchedType === 'Surgical' || matchedType === 'Emergency'),
+        pharmacyRelated: row['Pharmacy Related (Yes/No)'] !== undefined || row.pharmacy_related !== undefined
+          ? parseBool(row['Pharmacy Related (Yes/No)'] ?? row.pharmacy_related, false)
+          : matchedType === 'Pharmacy',
         doctorCount: 0,
         staffCount: 0,
         serviceCount: 0,
