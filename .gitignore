@@ -16,3 +16,7 @@ Thumbs.db
 *.tsbuildinfo
 *-test-results.json
 test-results-current.json
+.vite/
+deploy_packages/
+release/
+
