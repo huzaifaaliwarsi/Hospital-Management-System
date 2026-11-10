@@ -42,6 +42,8 @@ export const ImportDepartmentsModal: React.FC<ImportDepartmentsModalProps> = ({
     DepartmentImportValidationResult[]
   >([]);
   const [importedCount, setImportedCount] = useState<number>(0);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importFailures, setImportFailures] = useState<string[]>([]);
 
   if (!isOpen) return null;
 
@@ -122,9 +124,6 @@ export const ImportDepartmentsModal: React.FC<ImportDepartmentsModalProps> = ({
   const validRows = validationResults.filter((r) => r.status === 'Valid');
   const invalidRows = validationResults.filter((r) => r.status === 'Invalid');
   const duplicateRows = validationResults.filter((r) => r.status === 'Duplicate');
-
-  const [isImporting, setIsImporting] = useState(false);
-  const [importFailures, setImportFailures] = useState<string[]>([]);
 
   const handleConfirmImport = async () => {
     const departmentsToImport = validRows

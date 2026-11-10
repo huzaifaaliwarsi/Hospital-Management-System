@@ -41,6 +41,7 @@ export const ServiceImportModal: React.FC<ServiceImportModalProps> = ({
     useState<ServiceImportValidationResult | null>(null);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'all' | 'valid' | 'invalid'>('all');
+  const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
@@ -76,8 +77,6 @@ export const ServiceImportModal: React.FC<ServiceImportModalProps> = ({
       handleFileChange(e.dataTransfer.files[0]);
     }
   };
-
-  const [isImporting, setIsImporting] = useState(false);
 
   const handleCommit = async () => {
     if (!validationResult || validationResult.validRows.length === 0) return;

@@ -32,9 +32,9 @@ export const PatientExportModal: React.FC<PatientExportModalProps> = ({
   filters,
   currentUser,
 }) => {
-  if (!isOpen) return null;
-
   const [exportingFormat, setExportingFormat] = useState<string | null>(null);
+
+  if (!isOpen) return null;
 
   const filterSummary = formatPatientFilterSummary(filters);
 

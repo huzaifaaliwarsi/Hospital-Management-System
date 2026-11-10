@@ -51,6 +51,7 @@ export const WardsRoomsBedsImportModal: React.FC<WardsRoomsBedsImportModalProps>
   const [validationResult, setValidationResult] = useState<any>(null);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [filterMode, setFilterMode] = useState<'all' | 'valid' | 'invalid'>('all');
+  const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
@@ -98,8 +99,6 @@ export const WardsRoomsBedsImportModal: React.FC<WardsRoomsBedsImportModalProps>
     };
     reader.readAsArrayBuffer(selectedFile);
   };
-
-  const [isImporting, setIsImporting] = useState(false);
 
   const handleCommit = async () => {
     if (!validationResult || validationResult.validRows.length === 0) return;
