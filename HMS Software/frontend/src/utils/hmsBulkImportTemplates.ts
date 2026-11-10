@@ -858,10 +858,123 @@ export function downloadBedsBulkTemplate(): void {
 // 6. ALL-IN-ONE WARDS, ROOMS & BEDS MASTER TEMPLATE
 // ─────────────────────────────────────────────────────────────────────────────
 
+export const UNIFIED_INPATIENT_HEADERS = [
+  'Ward Name *',
+  'Department *',
+  'Ward Type *',
+  'Floor',
+  'Location / Wing',
+  'Room Number *',
+  'Room Type *',
+  'Daily Room Rate (PKR) *',
+  'Bed Number *',
+  'Bed Type *',
+  'Status (Active/Inactive)',
+];
+
+export const UNIFIED_INPATIENT_SAMPLE_ROWS = [
+  {
+    'Ward Name *': 'Male Medical Ward',
+    'Department *': 'General Medicine',
+    'Ward Type *': 'General',
+    'Floor': 'Ground Floor',
+    'Location / Wing': 'East Wing',
+    'Room Number *': '101',
+    'Room Type *': 'General',
+    'Daily Room Rate (PKR) *': 2500,
+    'Bed Number *': 'BED-101-A',
+    'Bed Type *': 'Standard Bed',
+    'Status (Active/Inactive)': 'Active',
+  },
+  {
+    'Ward Name *': 'Male Medical Ward',
+    'Department *': 'General Medicine',
+    'Ward Type *': 'General',
+    'Floor': 'Ground Floor',
+    'Location / Wing': 'East Wing',
+    'Room Number *': '101',
+    'Room Type *': 'General',
+    'Daily Room Rate (PKR) *': 2500,
+    'Bed Number *': 'BED-101-B',
+    'Bed Type *': 'Standard Bed',
+    'Status (Active/Inactive)': 'Active',
+  },
+  {
+    'Ward Name *': 'Male Medical Ward',
+    'Department *': 'General Medicine',
+    'Ward Type *': 'General',
+    'Floor': 'Ground Floor',
+    'Location / Wing': 'East Wing',
+    'Room Number *': '102',
+    'Room Type *': 'Semi-Private',
+    'Daily Room Rate (PKR) *': 4500,
+    'Bed Number *': 'BED-102-A',
+    'Bed Type *': 'Standard Bed',
+    'Status (Active/Inactive)': 'Active',
+  },
+  {
+    'Ward Name *': 'Intensive Care Unit (ICU)',
+    'Department *': 'Critical Care',
+    'Ward Type *': 'ICU',
+    'Floor': '1st Floor',
+    'Location / Wing': 'ICU Block',
+    'Room Number *': 'ICU-01',
+    'Room Type *': 'ICU / CCU',
+    'Daily Room Rate (PKR) *': 15000,
+    'Bed Number *': 'ICU-BED-01',
+    'Bed Type *': 'ICU Bed (Electric)',
+    'Status (Active/Inactive)': 'Active',
+  },
+  {
+    'Ward Name *': 'Female Surgical Ward',
+    'Department *': 'General Surgery',
+    'Ward Type *': 'Surgical',
+    'Floor': '2nd Floor',
+    'Location / Wing': 'North Wing',
+    'Room Number *': '201',
+    'Room Type *': 'Private',
+    'Daily Room Rate (PKR) *': 7500,
+    'Bed Number *': 'BED-201-A',
+    'Bed Type *': 'Deluxe Patient Bed',
+    'Status (Active/Inactive)': 'Active',
+  },
+];
+
+export const UNIFIED_INPATIENT_INSTRUCTIONS = [
+  { 'Column Name': 'Ward Name *', 'Requirement': 'MANDATORY', 'Allowed Values / Examples': 'Male Medical Ward, ICU, Female Surgical Ward', 'Description': 'Name of the inpatient ward. Wards are automatically created if they do not exist.' },
+  { 'Column Name': 'Department *', 'Requirement': 'MANDATORY', 'Allowed Values / Examples': 'General Medicine, Surgery, Critical Care', 'Description': 'Clinical department associated with this ward. Matches department code or name.' },
+  { 'Column Name': 'Ward Type *', 'Requirement': 'MANDATORY', 'Allowed Values / Examples': 'General, Semi-Private, Private, ICU, CCU, NICU, PICU, HDU, Post-Op, Emergency, Dialysis, Isolation, Day Care', 'Description': 'Clinical category of the ward.' },
+  { 'Column Name': 'Floor', 'Requirement': 'OPTIONAL', 'Allowed Values / Examples': 'Ground Floor, 1st Floor, 2nd Floor, Basement', 'Description': 'Hospital floor location.' },
+  { 'Column Name': 'Location / Wing', 'Requirement': 'OPTIONAL', 'Allowed Values / Examples': 'East Wing, North Wing, ICU Block', 'Description': 'Hospital wing or corridor section.' },
+  { 'Column Name': 'Room Number *', 'Requirement': 'MANDATORY', 'Allowed Values / Examples': '101, 102, ICU-01, RM-201', 'Description': 'Unique room identifier within the ward. Rooms are automatically linked to the ward in the same row.' },
+  { 'Column Name': 'Room Type *', 'Requirement': 'MANDATORY', 'Allowed Values / Examples': 'General, Semi-Private, Private, Deluxe, VIP Suite, Isolation, ICU / CCU, HDU', 'Description': 'Room classification determining base amenities.' },
+  { 'Column Name': 'Daily Room Rate (PKR) *', 'Requirement': 'MANDATORY', 'Allowed Values / Examples': '2500, 4500, 7500, 15000', 'Description': 'Daily accommodation billing charge in Pakistani Rupees.' },
+  { 'Column Name': 'Bed Number *', 'Requirement': 'MANDATORY', 'Allowed Values / Examples': 'BED-101-A, BED-101-B, ICU-BED-01', 'Description': 'Individual bed identifier. Automatically linked to the room in the same row.' },
+  { 'Column Name': 'Bed Type *', 'Requirement': 'MANDATORY', 'Allowed Values / Examples': 'Standard Bed, Electric Bed, Fowler Bed, ICU Bed, Pediatric Cot', 'Description': 'Physical bed apparatus category.' },
+  { 'Column Name': 'Status (Active/Inactive)', 'Requirement': 'OPTIONAL', 'Allowed Values / Examples': 'Active, Inactive (default: Active)', 'Description': 'Current operational readiness of the ward, room, and bed.' },
+];
+
 export function downloadCompleteWardsRoomsBedsTemplate(): void {
   const wb = XLSX.utils.book_new();
 
-  // Tab 1: Wards
+  // Tab 1: Unified Inpatient Master Setup (Single Flat Sheet)
+  const wsUnified = XLSX.utils.json_to_sheet(UNIFIED_INPATIENT_SAMPLE_ROWS, { header: UNIFIED_INPATIENT_HEADERS });
+  applyTableStyles(wsUnified, UNIFIED_INPATIENT_HEADERS, [
+    { wch: 30 }, // Ward Name
+    { wch: 24 }, // Department
+    { wch: 18 }, // Ward Type
+    { wch: 18 }, // Floor
+    { wch: 20 }, // Location / Wing
+    { wch: 18 }, // Room Number
+    { wch: 20 }, // Room Type
+    { wch: 24 }, // Daily Room Rate
+    { wch: 20 }, // Bed Number
+    { wch: 22 }, // Bed Type
+    { wch: 22 }, // Status
+  ]);
+  XLSX.utils.book_append_sheet(wb, wsUnified, 'Inpatient Master Setup');
+
+  // Tab 2: Wards
   const wsWards = XLSX.utils.json_to_sheet(WARDS_SAMPLE_ROWS, { header: WARDS_HEADERS });
   applyTableStyles(wsWards, WARDS_HEADERS, [
     { wch: 34 }, { wch: 28 }, { wch: 18 }, { wch: 16 }, { wch: 18 },
@@ -869,7 +982,7 @@ export function downloadCompleteWardsRoomsBedsTemplate(): void {
   ]);
   XLSX.utils.book_append_sheet(wb, wsWards, 'Wards');
 
-  // Tab 2: Rooms
+  // Tab 3: Rooms
   const wsRooms = XLSX.utils.json_to_sheet(ROOMS_SAMPLE_ROWS, { header: ROOMS_HEADERS });
   applyTableStyles(wsRooms, ROOMS_HEADERS, [
     { wch: 18 }, { wch: 32 }, { wch: 18 }, { wch: 24 }, { wch: 28 },
@@ -877,15 +990,16 @@ export function downloadCompleteWardsRoomsBedsTemplate(): void {
   ]);
   XLSX.utils.book_append_sheet(wb, wsRooms, 'Rooms');
 
-  // Tab 3: Beds
+  // Tab 4: Beds
   const wsBeds = XLSX.utils.json_to_sheet(BEDS_SAMPLE_ROWS, { header: BEDS_HEADERS });
   applyTableStyles(wsBeds, BEDS_HEADERS, [
     { wch: 18 }, { wch: 22 }, { wch: 18 }, { wch: 16 }, { wch: 20 }, { wch: 38 },
   ]);
   XLSX.utils.book_append_sheet(wb, wsBeds, 'Beds');
 
-  // Tab 4: Instructions
+  // Tab 5: Instructions
   const combinedInstructions = [
+    ...UNIFIED_INPATIENT_INSTRUCTIONS.map((i) => ({ Section: 'Unified All-in-One', ...i })),
     ...WARDS_INSTRUCTIONS.map((i) => ({ Section: 'Wards', ...i })),
     ...ROOMS_INSTRUCTIONS.map((i) => ({ Section: 'Rooms', ...i })),
     ...BEDS_INSTRUCTIONS.map((i) => ({ Section: 'Beds', ...i })),
@@ -894,12 +1008,37 @@ export function downloadCompleteWardsRoomsBedsTemplate(): void {
   applyTableStyles(
     wsInstructions,
     ['Section', 'Column Name', 'Requirement', 'Allowed Values / Examples', 'Description'],
-    [{ wch: 14 }, { wch: 26 }, { wch: 16 }, { wch: 45 }, { wch: 70 }],
+    [{ wch: 20 }, { wch: 26 }, { wch: 16 }, { wch: 45 }, { wch: 70 }],
     true
   );
   XLSX.utils.book_append_sheet(wb, wsInstructions, 'Instructions');
 
   XLSX.writeFile(wb, `hospital_inpatient_setup_template_${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+/**
+ * Downloads a single-sheet Unified Inpatient Template
+ */
+export function downloadUnifiedInpatientTemplate(): void {
+  const wb = XLSX.utils.book_new();
+
+  const wsUnified = XLSX.utils.json_to_sheet(UNIFIED_INPATIENT_SAMPLE_ROWS, { header: UNIFIED_INPATIENT_HEADERS });
+  applyTableStyles(wsUnified, UNIFIED_INPATIENT_HEADERS, [
+    { wch: 30 }, { wch: 24 }, { wch: 18 }, { wch: 18 }, { wch: 20 },
+    { wch: 18 }, { wch: 20 }, { wch: 24 }, { wch: 20 }, { wch: 22 }, { wch: 22 },
+  ]);
+  XLSX.utils.book_append_sheet(wb, wsUnified, 'Inpatient Setup');
+
+  const wsInstructions = XLSX.utils.json_to_sheet(UNIFIED_INPATIENT_INSTRUCTIONS);
+  applyTableStyles(
+    wsInstructions,
+    ['Column Name', 'Requirement', 'Allowed Values / Examples', 'Description'],
+    [{ wch: 26 }, { wch: 16 }, { wch: 45 }, { wch: 70 }],
+    true
+  );
+  XLSX.utils.book_append_sheet(wb, wsInstructions, 'Instructions');
+
+  XLSX.writeFile(wb, `hospital_unified_inpatient_template_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -985,6 +1124,151 @@ export async function parseExcelOrCsvFile(
     });
     return normalized;
   });
+}
+
+export interface AllInOneInpatientParsed {
+  mode: 'unified' | 'multi_sheet';
+  sheetCount: number;
+  wardsRows: any[];
+  roomsRows: any[];
+  bedsRows: any[];
+}
+
+/**
+ * Intelligently parses an All-in-One Inpatient Workbook.
+ * Supports BOTH:
+ *  1. Unified single sheet (each row contains Ward, Room, and Bed together)
+ *  2. Multi-tab workbook (separate Wards, Rooms, Beds sheets)
+ */
+export async function parseAllInOneInpatientFile(file: File): Promise<AllInOneInpatientParsed> {
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: 'array' });
+  const sheetNames = workbook.SheetNames || [];
+  if (sheetNames.length === 0) {
+    return { mode: 'unified', sheetCount: 0, wardsRows: [], roomsRows: [], bedsRows: [] };
+  }
+
+  const skipRegex = /instruction|guide|readme|metadata|info|notes/i;
+  const dataSheets = sheetNames.filter((s) => !skipRegex.test(s));
+
+  // Check if any sheet is a Unified Sheet (has columns for ward, room, and bed together)
+  for (const name of dataSheets) {
+    const ws = workbook.Sheets[name];
+    if (!ws) continue;
+    const rawRows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' });
+    if (rawRows.length === 0) continue;
+
+    const sampleRow = rawRows[0];
+    const keysNorm = Object.keys(sampleRow).map((k) => normalizeHeaderKey(k));
+    const hasWard = keysNorm.some((k) => k.includes('ward'));
+    const hasRoom = keysNorm.some((k) => k.includes('room'));
+    const hasBed = keysNorm.some((k) => k.includes('bed'));
+
+    if (hasWard && hasRoom && hasBed) {
+      // UNIFIED SHEET DETECTED!
+      const wardsMap = new Map<string, any>();
+      const roomsMap = new Map<string, any>();
+      const bedsList: any[] = [];
+
+      rawRows.forEach((r, idx) => {
+        const norm: Record<string, any> = {};
+        Object.entries(r).forEach(([k, v]) => {
+          norm[k] = v;
+          norm[normalizeHeaderKey(k)] = v;
+        });
+
+        const wardName = String(norm['wardname'] || norm['ward'] || '').trim();
+        const wardType = String(norm['wardtype'] || 'General').trim();
+        const dept = String(norm['department'] || norm['dept'] || '').trim();
+        const floor = String(norm['floor'] || '').trim();
+        const location = String(norm['locationwing'] || norm['location'] || norm['wing'] || '').trim();
+        const roomNumber = String(norm['roomnumber'] || norm['room'] || '').trim();
+        const roomType = String(norm['roomtype'] || 'General').trim();
+        const dailyRate = Number(norm['dailyroomratepkr'] || norm['dailyroomrate'] || norm['rate'] || 0);
+        const bedNumber = String(norm['bednumber'] || norm['bed'] || '').trim();
+        const bedType = String(norm['bedtype'] || 'Standard Bed').trim();
+        const status = String(norm['statusactiveinactive'] || norm['status'] || 'Active').trim();
+
+        // 1. Unique Wards
+        if (wardName && !wardsMap.has(wardName.toUpperCase())) {
+          wardsMap.set(wardName.toUpperCase(), {
+            'Ward Name *': wardName,
+            'Department *': dept,
+            'Ward Type *': wardType,
+            'Floor': floor,
+            'Location / Wing': location,
+            'Status': status,
+            _sourceRow: idx + 2,
+          });
+        }
+
+        // 2. Unique Rooms (keyed by ward + room number)
+        if (roomNumber) {
+          const roomKey = `${wardName.toUpperCase()}__${roomNumber.toUpperCase()}`;
+          if (!roomsMap.has(roomKey)) {
+            roomsMap.set(roomKey, {
+              'Room Number *': roomNumber,
+              'Ward Name / Code *': wardName,
+              'Room Type *': roomType,
+              'Daily Room Rate (PKR) *': dailyRate,
+              'Capacity (Beds) *': 1,
+              'Status': status,
+              _sourceRow: idx + 2,
+            });
+          } else {
+            const existing = roomsMap.get(roomKey);
+            existing['Capacity (Beds) *'] = (Number(existing['Capacity (Beds) *']) || 1) + 1;
+          }
+        }
+
+        // 3. Beds
+        if (bedNumber) {
+          bedsList.push({
+            'Bed Number *': bedNumber,
+            'Room Number / Code *': roomNumber,
+            'Ward Name / Code': wardName,
+            'Bed Type *': bedType,
+            'Operational Status *': status === 'Inactive' ? 'Inactive' : 'Active',
+            _sourceRow: idx + 2,
+          });
+        }
+      });
+
+      return {
+        mode: 'unified',
+        sheetCount: dataSheets.length,
+        wardsRows: Array.from(wardsMap.values()),
+        roomsRows: Array.from(roomsMap.values()),
+        bedsRows: bedsList,
+      };
+    }
+  }
+
+  // Fallback: MULTI-SHEET WORKBOOK (Tabs: Wards, Rooms, Beds)
+  const wardsSheet = dataSheets.find((s) => /ward/i.test(s));
+  const roomsSheet = dataSheets.find((s) => /room/i.test(s));
+  const bedsSheet = dataSheets.find((s) => /bed/i.test(s));
+
+  const extractRows = (sheetName?: string) => {
+    if (!sheetName || !workbook.Sheets[sheetName]) return [];
+    const rows = XLSX.utils.sheet_to_json<Record<string, any>>(workbook.Sheets[sheetName], { defval: '' });
+    return rows.map((r, idx) => {
+      const norm: Record<string, any> = { _sourceRow: idx + 2 };
+      Object.entries(r).forEach(([k, v]) => {
+        norm[k] = v;
+        norm[normalizeHeaderKey(k)] = v;
+      });
+      return norm;
+    });
+  };
+
+  return {
+    mode: 'multi_sheet',
+    sheetCount: dataSheets.length,
+    wardsRows: extractRows(wardsSheet),
+    roomsRows: extractRows(roomsSheet),
+    bedsRows: extractRows(bedsSheet),
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

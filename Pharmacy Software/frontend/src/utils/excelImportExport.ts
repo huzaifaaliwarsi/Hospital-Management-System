@@ -211,14 +211,33 @@ function cleanStr(val: any): string {
 }
 
 /**
- * Find value by fuzzy header matching
+ * Find value by fuzzy header matching with strict protection against cross-column collisions
  */
 function findValue(row: Record<string, any>, candidateKeys: string[]): any {
+  // Pass 1: Exact normalized match across all candidates
   for (const cand of candidateKeys) {
     const candNorm = cand.toLowerCase().replace(/[^a-z0-9]/g, '');
     for (const [k, v] of Object.entries(row)) {
       const kNorm = k.toLowerCase().replace(/[^a-z0-9]/g, '');
-      if (kNorm === candNorm || kNorm.includes(candNorm)) {
+      if (kNorm === candNorm) {
+        if (v !== undefined && v !== null && String(v).trim() !== '') {
+          return v;
+        }
+      }
+    }
+  }
+
+  // Pass 2: Controlled fuzzy fallback (strict guards against dangerous keyword bleed)
+  for (const cand of candidateKeys) {
+    const candNorm = cand.toLowerCase().replace(/[^a-z0-9]/g, '');
+    for (const [k, v] of Object.entries(row)) {
+      const kNorm = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+      // Guard: NEVER match 'genericname' when searching for 'name' / 'medicinename'
+      if ((candNorm === 'name' || candNorm === 'itemname') && kNorm.includes('generic')) continue;
+      // Guard: NEVER match 'purchase' or 'inner' when searching for 'unit' / 'basestockunit'
+      if ((candNorm === 'unit' || candNorm === 'baseunit') && (kNorm.includes('purchase') || kNorm.includes('inner'))) continue;
+
+      if (kNorm.startsWith(candNorm) || (candNorm.length >= 5 && kNorm.includes(candNorm))) {
         if (v !== undefined && v !== null && String(v).trim() !== '') {
           return v;
         }
@@ -254,6 +273,27 @@ export interface ParseResult {
 }
 
 /**
+ * Inspects a worksheet to find the actual header row (scanning rows 0..9)
+ */
+function findHeaderRowIndex(ws: XLSX.WorkSheet): number {
+  const json: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+  const maxScan = Math.min(json.length, 10);
+  for (let r = 0; r < maxScan; r++) {
+    const row = json[r];
+    if (!Array.isArray(row)) continue;
+    const rowText = row.map((cell) => String(cell || '').toLowerCase()).join(' ');
+    if (
+      rowText.includes('medicine') ||
+      rowText.includes('stock unit') ||
+      (rowText.includes('generic') && rowText.includes('strength'))
+    ) {
+      return r;
+    }
+  }
+  return 0;
+}
+
+/**
  * Parse uploaded .xlsx / .xls / .csv file
  */
 export async function parseExcelFile(file: File): Promise<ParseResult> {
@@ -263,20 +303,26 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
     throw new Error('Workbook contains no sheets.');
   }
 
-  // Intelligently find the sheet containing medicine columns (e.g. 'Bulk Upload', 'Medicines Upload', or any sheet with 'Medicine Name' / 'Base Stock Unit')
-  let targetSheetName = workbook.SheetNames.find((name) => {
+  const skipRegex = /instruction|guide|readme|metadata|info|notes/i;
+  const candidateSheets = workbook.SheetNames.filter((name) => !skipRegex.test(name));
+
+  // Find sheet containing medicine columns
+  let targetSheetName = candidateSheets.find((name) => {
     const ws = workbook.Sheets[name];
     if (!ws) return false;
-    const headerRow: any[] = XLSX.utils.sheet_to_json(ws, { header: 1 })[0] || [];
-    return headerRow.some((col: any) => typeof col === 'string' && (
-      col.toLowerCase().includes('medicine name') || col.toLowerCase().includes('base stock unit')
-    ));
+    const headerIdx = findHeaderRowIndex(ws);
+    const json: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    const headerRow = json[headerIdx] || [];
+    return headerRow.some((col: any) => {
+      const c = String(col || '').toLowerCase();
+      return c.includes('medicine') || c.includes('base stock');
+    });
   });
 
   if (!targetSheetName) {
-    targetSheetName = workbook.SheetNames.find((name) =>
+    targetSheetName = candidateSheets.find((name) =>
       /bulk|upload|medicine|formulary|stock|item/i.test(name)
-    ) || workbook.SheetNames[0];
+    ) || candidateSheets[0] || workbook.SheetNames[0];
   }
 
   const sheet = workbook.Sheets[targetSheetName];
@@ -284,7 +330,11 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
     throw new Error('Sheet could not be read.');
   }
 
-  const rawRows: Record<string, any>[] = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+  const headerRowIdx = findHeaderRowIndex(sheet);
+  const rawRows: Record<string, any>[] = XLSX.utils.sheet_to_json(sheet, {
+    range: headerRowIdx,
+    defval: '',
+  });
   const validItems: BulkImportItem[] = [];
   const invalidRows: Array<{ rowNumber: number; data: any; reason: string }> = [];
 

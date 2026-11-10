@@ -899,6 +899,109 @@ export class WardsRoomsBedsService {
     return { imported, failures };
   }
 
+  // ── Combined All-in-One Validation & Import ────────────────────────
+  static validateAllInOneSetup(
+    data: { wardsRows: any[]; roomsRows: any[]; bedsRows: any[] }
+  ): {
+    wardsResult: { totalRows: number; validRows: WardImportRow[]; invalidRows: WardImportRow[] };
+    roomsResult: { totalRows: number; validRows: RoomImportRow[]; invalidRows: RoomImportRow[] };
+    bedsResult: { totalRows: number; validRows: BedImportRow[]; invalidRows: BedImportRow[] };
+  } {
+    const existingWards = this.getWards();
+    const existingRooms = this.getRooms();
+    const existingBeds = this.getBeds();
+
+    // 1. Validate Wards
+    const wardsResult = this.validateWardImportRows(data.wardsRows, existingWards);
+
+    // 2. Synthesize available wards (existing + pending valid)
+    const combinedWards: Ward[] = [
+      ...existingWards,
+      ...wardsResult.validRows.map((w, i) => ({
+        id: `pending-ward-${i}`,
+        code: w.wardCode,
+        name: w.wardName,
+        departmentId: 'pending',
+        departmentName: w.departmentCode,
+        wardType: w.wardType as any,
+        genderPolicy: w.genderPolicy as any,
+        floor: w.floor,
+        location: w.location,
+        description: '',
+        roomCount: 0,
+        bedCount: 0,
+        occupiedBeds: 0,
+        availableBeds: 0,
+        maintenanceBeds: 0,
+        status: w.status,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })),
+    ];
+
+    // 3. Validate Rooms against combined wards
+    const roomsResult = this.validateRoomImportRows(data.roomsRows, existingRooms, combinedWards);
+
+    // 4. Synthesize available rooms (existing + pending valid)
+    const combinedRooms: Room[] = [
+      ...existingRooms,
+      ...roomsResult.validRows.map((r, i) => ({
+        id: `pending-room-${i}`,
+        code: r.roomCode,
+        roomNumber: r.roomNumber,
+        name: r.roomName,
+        wardId: 'pending',
+        wardName: r.wardCode,
+        roomType: r.roomType as any,
+        floor: '',
+        capacity: r.capacity,
+        currentOccupancy: 0,
+        dailyRoomRate: r.dailyRoomRate,
+        bedCount: 0,
+        status: r.status,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })),
+    ];
+
+    // 5. Validate Beds against combined rooms
+    const bedsResult = this.validateBedImportRows(data.bedsRows, existingBeds, combinedRooms, combinedWards);
+
+    return { wardsResult, roomsResult, bedsResult };
+  }
+
+  static async importAllInOneSetup(payload: {
+    wards: WardImportRow[];
+    rooms: RoomImportRow[];
+    beds: BedImportRow[];
+  }): Promise<{
+    importedWards: number;
+    importedRooms: number;
+    importedBeds: number;
+    failures: string[];
+  }> {
+    const allFailures: string[] = [];
+
+    // Step 1: Import Wards
+    const wardRes = await this.importWards(payload.wards);
+    if (wardRes.failures.length > 0) allFailures.push(...wardRes.failures);
+
+    // Step 2: Import Rooms
+    const roomRes = await this.importRooms(payload.rooms);
+    if (roomRes.failures.length > 0) allFailures.push(...roomRes.failures);
+
+    // Step 3: Import Beds
+    const bedRes = await this.importBeds(payload.beds);
+    if (bedRes.failures.length > 0) allFailures.push(...bedRes.failures);
+
+    return {
+      importedWards: wardRes.imported,
+      importedRooms: roomRes.imported,
+      importedBeds: bedRes.imported,
+      failures: allFailures,
+    };
+  }
+
   // ── Filtering ──────────────────────────────────────────────────────
   static filterWards(wards: Ward[], filters: WardFilterState): Ward[] {
     return wards.filter((w) => {

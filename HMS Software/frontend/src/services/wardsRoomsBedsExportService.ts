@@ -21,6 +21,7 @@ import {
   downloadRoomsBulkTemplate,
   downloadBedsBulkTemplate,
   downloadCompleteWardsRoomsBedsTemplate,
+  downloadUnifiedInpatientTemplate as downloadUnifiedTemplate,
 } from '../utils/hmsBulkImportTemplates';
 
 export function getDynamicDateString(date = new Date()): string {
@@ -695,4 +696,8 @@ export function downloadBedsImportTemplate(): void {
 
 export function downloadAllInOneInpatientTemplate(): void {
   downloadCompleteWardsRoomsBedsTemplate();
+}
+
+export function downloadUnifiedInpatientTemplate(): void {
+  downloadUnifiedTemplate();
 }
