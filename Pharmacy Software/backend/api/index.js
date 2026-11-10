@@ -36376,9 +36376,16 @@ function getHmsBaseUrls() {
   const url = (env.HMS_BACKEND_URL || "").trim().replace(/\/+$/, "");
   const urls = [];
   if (url) urls.push(url);
-  if (process.env.NODE_ENV !== "production") {
+  if (process.env.NODE_ENV === "production") {
+    if (!urls.includes("https://api.hms.isywarecloud.com/api/v1")) {
+      urls.push("https://api.hms.isywarecloud.com/api/v1");
+    }
+  } else {
     if (!urls.includes("http://localhost:4000/api/v1")) {
       urls.push("http://localhost:4000/api/v1");
+    }
+    if (!urls.includes("https://api.hms.isywarecloud.com/api/v1")) {
+      urls.push("https://api.hms.isywarecloud.com/api/v1");
     }
   }
   return urls;
