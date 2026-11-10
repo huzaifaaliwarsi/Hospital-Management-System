@@ -1490,4 +1490,3 @@ export function downloadAdminUsersBulkTemplate(): void {
 
   XLSX.writeFile(wb, `hospital_admin_users_bulk_template_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
-
