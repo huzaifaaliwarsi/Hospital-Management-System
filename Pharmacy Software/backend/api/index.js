@@ -36579,9 +36579,11 @@ var hmsRequestsService = {
           externalAdmissionRef: body.externalAdmissionRef,
           externalRequestRef: body.externalRequestRef,
           patientNameSnapshot: body.patientNameSnapshot,
-          urgency: body.urgency,
+          urgency: body.isHighCost && !body.isApproved ? "HIGH_COST_PENDING" : body.urgency,
           requestedByExternal: body.requestedByExternal,
           handledById: validActorId,
+          approvedById: body.isApproved && validActorId ? validActorId : void 0,
+          approvedAt: body.isApproved ? /* @__PURE__ */ new Date() : void 0,
           lines: {
             create: body.lines.map((l) => ({
               medicineId: l.medicineId,
@@ -36689,6 +36691,9 @@ var hmsRequestsService = {
     if (!request) throw new NotFoundError("Medicine request not found");
     if (request.status !== "REQUESTED" && request.status !== "PARTIALLY_ACCEPTED") {
       throw new ConflictError(`Cannot fulfill a request with status ${request.status}`);
+    }
+    if (request.urgency === "HIGH_COST_PENDING" && !request.approvedById) {
+      throw new ConflictError("This medicine request contains high-cost medicines and requires HMS Admin/Super Admin approval before dispensing.");
     }
     if (settings.highValueApprovalEnabled) {
       const value = await hmsRequestsService.estimatedValue(id);
@@ -37048,6 +37053,62 @@ var hmsRequestsService = {
       },
       orderBy: { createdAt: "desc" }
     });
+  },
+  async handleHighCostApprovalCallback(body) {
+    const request = await prisma.medicineRequest.findFirst({
+      where: {
+        OR: [
+          { externalRequestRef: body.externalRequestRef },
+          { id: body.externalRequestRef }
+        ]
+      }
+    });
+    if (!request) {
+      throw new NotFoundError(`Medicine request not found for external reference ${body.externalRequestRef}`);
+    }
+    if (body.isApproved) {
+      let approverId = request.handledById;
+      if (!approverId) {
+        const sysUser = await prisma.portalUser.findFirst({ where: { role: "ADMIN" } });
+        approverId = sysUser?.id || null;
+      }
+      const updated = await prisma.medicineRequest.update({
+        where: { id: request.id },
+        data: {
+          urgency: "ROUTINE",
+          approvedById: approverId,
+          approvedAt: /* @__PURE__ */ new Date()
+        }
+      });
+      broadcastHmsNotification({
+        type: "NEW_HMS_REQUEST",
+        requestNumber: request.requestNumber,
+        patientName: request.patientNameSnapshot || "Patient",
+        admissionRef: request.externalAdmissionRef,
+        urgency: "ROUTINE",
+        medicinesSummary: `HMS Approval Granted by ${body.approvedBy || "Management"} \u2014 Unlocked for Dispensing`,
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      });
+      return updated;
+    } else {
+      const updated = await prisma.medicineRequest.update({
+        where: { id: request.id },
+        data: {
+          status: "REJECTED",
+          rejectionReason: body.rejectionReason || "Rejected by HMS Management"
+        }
+      });
+      broadcastHmsNotification({
+        type: "NEW_HMS_REQUEST",
+        requestNumber: request.requestNumber,
+        patientName: request.patientNameSnapshot || "Patient",
+        admissionRef: request.externalAdmissionRef,
+        urgency: "ROUTINE",
+        medicinesSummary: `HMS High-Cost Request Rejected: ${body.rejectionReason || "Declined"}`,
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      });
+      return updated;
+    }
   }
 };
 
@@ -37102,6 +37163,10 @@ var hmsRequestsController = {
     const data = await hmsRequestsService.handlePatientCollected(req.body);
     res.json({ data });
   },
+  async handleHighCostApprovalCallback(req, res) {
+    const data = await hmsRequestsService.handleHighCostApprovalCallback(req.body);
+    res.json({ data });
+  },
   async reconcileCollection(req, res) {
     const data = await hmsRequestsService.reconcileHmsCollected(req.body);
     res.json({ data });
@@ -37132,9 +37197,18 @@ var createRequestBodySchema = external_exports.object({
   externalAdmissionRef: external_exports.string().min(1).max(100),
   externalRequestRef: external_exports.string().max(100).optional(),
   patientNameSnapshot: external_exports.string().max(150).optional(),
-  urgency: external_exports.enum(["ROUTINE", "URGENT", "STAT"]).optional(),
+  urgency: external_exports.enum(["ROUTINE", "URGENT", "STAT", "HIGH_COST_PENDING"]).optional(),
   requestedByExternal: external_exports.string().max(150).optional(),
+  isHighCost: external_exports.boolean().optional(),
+  isApproved: external_exports.boolean().optional(),
+  highCostStatus: external_exports.string().optional(),
   lines: external_exports.array(requestLineSchema).min(1)
+});
+var highCostApprovalCallbackSchema = external_exports.object({
+  externalRequestRef: external_exports.string().min(1),
+  isApproved: external_exports.boolean(),
+  approvedBy: external_exports.string().optional(),
+  rejectionReason: external_exports.string().optional()
 });
 var listRequestsQuerySchema = external_exports.object({
   status: external_exports.enum(["REQUESTED", "ACCEPTED", "PARTIALLY_ACCEPTED", "REJECTED", "DISPENSED"]).optional()
@@ -37194,6 +37268,7 @@ router5.get("/:id", view3, validate({ params: idParamsSchema2 }), asyncHandler(h
 router5.post("/:id/approve", edit3, validate({ params: idParamsSchema2 }), asyncHandler(hmsRequestsController.approve));
 router5.post("/:id/reject", create3, validate({ params: idParamsSchema2, body: rejectRequestBodySchema }), asyncHandler(hmsRequestsController.reject));
 router5.post("/:id/fulfill", create3, validate({ params: idParamsSchema2, body: fulfillRequestBodySchema }), asyncHandler(hmsRequestsController.fulfill));
+router5.post("/callback/high-cost-approval", bridgeAuth, validate({ body: highCostApprovalCallbackSchema }), asyncHandler(hmsRequestsController.handleHighCostApprovalCallback));
 router5.post("/callback/patient-collected", bridgeAuth, validate({ body: patientCollectedCallbackSchema }), asyncHandler(hmsRequestsController.patientCollectedCallback));
 router5.post("/callback/reconcile-collection", bridgeAuth, validate({ body: reconcileCollectionBodySchema }), asyncHandler(hmsRequestsController.reconcileCollection));
 router5.post("/settlements/request", create3, validate({ body: createSettlementRequestBodySchema }), asyncHandler(hmsRequestsController.createSettlementRequest));

@@ -179,6 +179,7 @@ const MainPortalRouter: React.FC = () => {
         ) : currentPortal === 'super-admin' || currentPortal === 'admin' ? (
           // Dedicated Super Admin & Admin shared hospital management views
           <SuperAdminModuleView
+            key={currentModule}
             moduleId={currentModule}
             moduleName={currentModuleName}
             groupTitle={currentGroupTitle}
@@ -186,6 +187,7 @@ const MainPortalRouter: React.FC = () => {
         ) : currentPortal === 'front-desk' ? (
           // Front Desk — every nav item is real (v7.2 §3.3, Panel Billing shipped last)
           <FrontDeskModuleView
+            key={currentModule}
             moduleId={currentModule}
             moduleName={currentModuleName}
             groupTitle={currentGroupTitle}
@@ -195,6 +197,7 @@ const MainPortalRouter: React.FC = () => {
           // (v7.2 §2.4) and the High-Cost Medicine gate (§2.6) are still on
           // the pre-v7.2 mechanism, a deliberately separate next pass.
           <AdmissionModuleView
+            key={currentModule}
             moduleId={currentModule}
             moduleName={currentModuleName}
             groupTitle={currentGroupTitle}
@@ -204,6 +207,7 @@ const MainPortalRouter: React.FC = () => {
           // 11-14 build the rest); everything else still falls through to
           // ModulePlaceholderView inside InventoryModuleView itself.
           <InventoryModuleView
+            key={currentModule}
             moduleId={currentModule}
             moduleName={currentModuleName}
             groupTitle={currentGroupTitle}

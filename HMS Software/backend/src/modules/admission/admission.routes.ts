@@ -39,6 +39,12 @@ router.get(
 );
 
 router.get(
+  '/high-cost-authorizations/pending',
+  view,
+  asyncHandler(c.listPendingHighCostAuthorizations),
+);
+
+router.get(
   '/:id',
   view,
   validate({ params: s.admissionIdParamsSchema }),

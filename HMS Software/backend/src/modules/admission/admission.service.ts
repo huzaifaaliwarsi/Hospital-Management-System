@@ -1314,9 +1314,12 @@ export const admissionService = {
   },
 
   /**
-   * Helper: Dispatches an authorized pharmacy clearance request to the Standalone Pharmacy API.
+   * Helper: Dispatches an authorized or pending pharmacy clearance request to the Standalone Pharmacy API.
    */
-  async dispatchToPharmacyBridge(clearanceId: string) {
+  async dispatchToPharmacyBridge(
+    clearanceId: string,
+    highCostMeta?: { isHighCost?: boolean; isApproved?: boolean; highCostStatus?: string },
+  ) {
     try {
       const clearance = (await prisma.pharmacyClearance.findUnique({
         where: { id: clearanceId },
@@ -1329,6 +1332,7 @@ export const admissionService = {
           },
           lines: { include: { medicine: true } },
           requestedBy: { select: { username: true, displayName: true } },
+          highCostAuthorization: true,
         },
       })) as any;
 
@@ -1338,12 +1342,24 @@ export const admissionService = {
         clearance.admissionRecord?.selfPayEncounter?.fullName ||
         'Patient';
 
+      const isHighCost = highCostMeta?.isHighCost ?? Boolean(clearance.highCostAuthorization);
+      const isApproved =
+        highCostMeta?.isApproved ??
+        (clearance.status !== 'AUTHORIZATION_REQUIRED' &&
+          (!clearance.highCostAuthorization || clearance.highCostAuthorization?.status === 'AUTHORIZED'));
+      const highCostStatus =
+        highCostMeta?.highCostStatus ??
+        (clearance.highCostAuthorization?.status || (isHighCost ? 'PENDING_APPROVAL' : 'NOT_REQUIRED'));
+
       await pharmacyBridgeClient.dispatchMedicineRequest({
         externalAdmissionRef: clearance.admissionRecord.admissionNumber,
         externalRequestRef: clearance.medicineRequestNumber,
         patientNameSnapshot: patientName,
-        urgency: 'ROUTINE',
+        urgency: isHighCost && !isApproved ? 'HIGH_COST_PENDING' : 'ROUTINE',
         requestedByExternal: clearance.requestedBy?.displayName || clearance.requestedBy?.username || 'Doctor',
+        isHighCost,
+        isApproved,
+        highCostStatus,
         lines: (clearance.lines || []).map((l: any) => ({
           medicineId: l.medicineId,
           requestedQuantity: Number(l.requestedQuantity),
@@ -1353,13 +1369,11 @@ export const admissionService = {
     } catch (err: any) {
       // eslint-disable-next-line no-console
       console.warn('[dispatchToPharmacyBridge] Outbound dispatch warning (queued in HMS for sync):', err?.message || err);
-      // Keep request in REQUESTED status so it remains in the queue!
-      // When Pharmacy starts up or runs periodic sync, it will pull this request.
+      // Keep request marked for sync retry
       await prisma.pharmacyClearance
         .update({
           where: { id: clearanceId },
           data: {
-            status: 'REQUESTED',
             notes: 'QUEUED_FOR_PHARMACY_SYNC',
           },
         })
@@ -1541,7 +1555,7 @@ export const admissionService = {
       return { ...clearance, highCostAuthorization };
     }, { maxWait: 15000, timeout: 30000 });
 
-    if (result.status === 'REQUESTED') {
+    if (result.status === 'REQUESTED' || result.status === 'AUTHORIZATION_REQUIRED') {
       await this.dispatchToPharmacyBridge(result.id).catch((err: any) => {
         // eslint-disable-next-line no-console
         console.error('[createPharmacyRequest] Bridge dispatch error:', err?.message || err);
@@ -1616,6 +1630,16 @@ export const admissionService = {
         managementSatisfied = true;
       }
 
+      if (!managementSatisfied && actorId) {
+        const currentActor = await tx.portalUser.findUnique({ where: { id: actorId } });
+        if (currentActor && ['ADMIN', 'SUPER_ADMIN'].includes(currentActor.role)) {
+          updateData.managementApprovedById = currentActor.id;
+          updateData.managementReason = body.managementReason || 'Approved via Admin Panel';
+          updateData.managementApprovedAt = new Date();
+          managementSatisfied = true;
+        }
+      }
+
       const combinedSatisfied =
         policy.combinedLogic === 'ATTENDANT_ONLY'
           ? attendantSatisfied
@@ -1646,12 +1670,22 @@ export const admissionService = {
 
     this.dispatchToPharmacyBridge(clearanceId).catch(() => null);
 
+    // Notify Pharmacy Bridge of approval to unblock dispensing automatically
+    pharmacyBridgeClient.notifyHighCostApproval({
+      externalRequestRef: clearanceId,
+      isApproved: true,
+      approvedBy: result.managementApprovedById ? 'HMS Management' : 'Attendant Confirmed',
+    }).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.warn('[authorizeHighCostMedicine] Failed to notify pharmacy bridge:', err?.message || err);
+    });
+
     return result;
   },
 
   /** Explicit decline — no credential requirement, matches "Rejected/Pending request cannot be dispensed" as the safe default. */
   async rejectHighCostMedicine(admissionId: string, clearanceId: string, body: RejectHighCostMedicineBody) {
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const clearance = await tx.pharmacyClearance.findUnique({
         where: { id: clearanceId },
         include: { highCostAuthorization: true },
@@ -1670,6 +1704,64 @@ export const admissionService = {
       await tx.pharmacyClearance.update({ where: { id: clearance.id }, data: { status: 'REJECTED' } });
 
       return updated;
+    });
+
+    // Notify Pharmacy Bridge of rejection to block dispensing permanently
+    pharmacyBridgeClient.notifyHighCostApproval({
+      externalRequestRef: clearanceId,
+      isApproved: false,
+      rejectionReason: body.reason,
+    }).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.warn('[rejectHighCostMedicine] Failed to notify pharmacy bridge:', err?.message || err);
+    });
+
+    return result;
+  },
+
+  /**
+   * List all high-cost medicine authorizations that are pending management/guardian approval.
+   */
+  async listPendingHighCostAuthorizations() {
+    return prisma.highCostMedicineAuthorization.findMany({
+      where: { status: 'PENDING' },
+      include: {
+        pharmacyClearance: {
+          include: {
+            admissionRecord: {
+              include: {
+                panelPatient: {
+                  include: {
+                    corporatePanel: true,
+                  },
+                },
+                selfPayEncounter: true,
+                bed: {
+                  include: {
+                    room: {
+                      include: {
+                        ward: true,
+                      },
+                    },
+                  },
+                },
+                doctor: {
+                  select: { id: true, fullName: true, designation: true, category: true },
+                },
+              },
+            },
+            lines: {
+              include: {
+                medicine: true,
+              },
+            },
+            requestedBy: {
+              select: { id: true, displayName: true, username: true, role: true },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
     });
   },
 

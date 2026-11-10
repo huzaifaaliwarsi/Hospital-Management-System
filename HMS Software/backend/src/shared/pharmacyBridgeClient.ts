@@ -2,9 +2,9 @@ import { env } from '@/config/env';
 
 function resolvePharmacyBaseUrl(): string {
   let url = (env.PHARMACY_BACKEND_URL || '').trim();
-  if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
+  if (process.env.NODE_ENV === 'production') {
     if (!url || url.includes('localhost') || url.includes('127.0.0.1')) {
-      url = 'https://pharmacy-software-backend.vercel.app/api/v1';
+      url = 'https://api.pharmacy.isywarecloud.com/api/v1';
     }
   }
   return (url || 'http://localhost:4100/api/v1').replace(/\/+$/, '');
@@ -16,8 +16,8 @@ function getPharmacyBaseUrls(): string[] {
   if (!urls.includes('http://localhost:4100/api/v1')) {
     urls.push('http://localhost:4100/api/v1');
   }
-  if (!urls.includes('https://pharmacy-software-backend.vercel.app/api/v1')) {
-    urls.push('https://pharmacy-software-backend.vercel.app/api/v1');
+  if (!urls.includes('https://api.pharmacy.isywarecloud.com/api/v1')) {
+    urls.push('https://api.pharmacy.isywarecloud.com/api/v1');
   }
   return urls;
 }
@@ -85,6 +85,9 @@ export const pharmacyBridgeClient = {
     patientNameSnapshot?: string;
     urgency?: string;
     requestedByExternal?: string;
+    isHighCost?: boolean;
+    isApproved?: boolean;
+    highCostStatus?: string;
     lines: Array<{ medicineId: string; requestedQuantity: number; notes?: string }>;
   }) {
     const urlsToTry = getPharmacyBaseUrls();
@@ -119,6 +122,36 @@ export const pharmacyBridgeClient = {
     // eslint-disable-next-line no-console
     console.error('[pharmacyBridgeClient] dispatchMedicineRequest failed on all candidates:', lastError?.message);
     throw lastError;
+  },
+
+  async notifyHighCostApproval(payload: {
+    externalRequestRef: string;
+    isApproved: boolean;
+    approvedBy?: string;
+    rejectionReason?: string;
+  }) {
+    const urlsToTry = getPharmacyBaseUrls();
+    for (const baseUrl of urlsToTry) {
+      try {
+        const url = `${baseUrl}/hms-requests/callback/high-cost-approval`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-bridge-token': env.INTERNAL_BRIDGE_SECRET,
+          },
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          return (json as any).data;
+        }
+      } catch (err: any) {
+        // eslint-disable-next-line no-console
+        console.warn(`[pharmacyBridgeClient] notifyHighCostApproval failed on ${baseUrl}: ${err.message}`);
+      }
+    }
+    return null;
   },
 
   async notifyPatientCollected(payload: {

@@ -5,10 +5,16 @@ function getHmsBaseUrls(): string[] {
   const urls: string[] = [];
   if (url) urls.push(url);
 
-  // In development only, allow localhost fallback if not already added
-  if (process.env.NODE_ENV !== 'production') {
+  if (process.env.NODE_ENV === 'production') {
+    if (!urls.includes('https://api.hms.isywarecloud.com/api/v1')) {
+      urls.push('https://api.hms.isywarecloud.com/api/v1');
+    }
+  } else {
     if (!urls.includes('http://localhost:4000/api/v1')) {
       urls.push('http://localhost:4000/api/v1');
+    }
+    if (!urls.includes('https://api.hms.isywarecloud.com/api/v1')) {
+      urls.push('https://api.hms.isywarecloud.com/api/v1');
     }
   }
   return urls;

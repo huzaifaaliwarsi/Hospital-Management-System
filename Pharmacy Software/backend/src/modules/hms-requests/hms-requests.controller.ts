@@ -12,6 +12,7 @@ import type {
   ReconcileCollectionBody,
   CreateSettlementRequestBody,
   ReleaseSettlementCallbackBody,
+  HighCostApprovalCallbackBody,
 } from './hms-requests.schemas';
 
 
@@ -65,6 +66,10 @@ export const hmsRequestsController = {
   // ── Callbacks & Inter-Entity Settlements ─────────────────────────────────
   async patientCollectedCallback(req: Request, res: Response) {
     const data = await hmsRequestsService.handlePatientCollected(req.body as PatientCollectedCallbackBody);
+    res.json({ data });
+  },
+  async handleHighCostApprovalCallback(req: Request, res: Response) {
+    const data = await hmsRequestsService.handleHighCostApprovalCallback(req.body as HighCostApprovalCallbackBody);
     res.json({ data });
   },
   async reconcileCollection(req: Request, res: Response) {

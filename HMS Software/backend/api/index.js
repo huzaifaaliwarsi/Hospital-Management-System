@@ -36546,9 +36546,9 @@ function assertCaseAuthorization(companyRequiresAuthorization, ruleRequiresAutho
 // src/shared/pharmacyBridgeClient.ts
 function resolvePharmacyBaseUrl() {
   let url = (env.PHARMACY_BACKEND_URL || "").trim();
-  if (process.env.VERCEL || process.env.NODE_ENV === "production") {
+  if (process.env.NODE_ENV === "production") {
     if (!url || url.includes("localhost") || url.includes("127.0.0.1")) {
-      url = "https://pharmacy-software-backend.vercel.app/api/v1";
+      url = "https://api.pharmacy.isywarecloud.com/api/v1";
     }
   }
   return (url || "http://localhost:4100/api/v1").replace(/\/+$/, "");
@@ -36559,8 +36559,8 @@ function getPharmacyBaseUrls() {
   if (!urls.includes("http://localhost:4100/api/v1")) {
     urls.push("http://localhost:4100/api/v1");
   }
-  if (!urls.includes("https://pharmacy-software-backend.vercel.app/api/v1")) {
-    urls.push("https://pharmacy-software-backend.vercel.app/api/v1");
+  if (!urls.includes("https://api.pharmacy.isywarecloud.com/api/v1")) {
+    urls.push("https://api.pharmacy.isywarecloud.com/api/v1");
   }
   return urls;
 }
@@ -36639,6 +36639,29 @@ var pharmacyBridgeClient = {
     }
     console.error("[pharmacyBridgeClient] dispatchMedicineRequest failed on all candidates:", lastError?.message);
     throw lastError;
+  },
+  async notifyHighCostApproval(payload) {
+    const urlsToTry = getPharmacyBaseUrls();
+    for (const baseUrl of urlsToTry) {
+      try {
+        const url = `${baseUrl}/hms-requests/callback/high-cost-approval`;
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-bridge-token": env.INTERNAL_BRIDGE_SECRET
+          },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+          const json = await res.json();
+          return json.data;
+        }
+      } catch (err) {
+        console.warn(`[pharmacyBridgeClient] notifyHighCostApproval failed on ${baseUrl}: ${err.message}`);
+      }
+    }
+    return null;
   },
   async notifyPatientCollected(payload) {
     const urlsToTry = getPharmacyBaseUrls();
@@ -38389,9 +38412,9 @@ var admissionService = {
     });
   },
   /**
-   * Helper: Dispatches an authorized pharmacy clearance request to the Standalone Pharmacy API.
+   * Helper: Dispatches an authorized or pending pharmacy clearance request to the Standalone Pharmacy API.
    */
-  async dispatchToPharmacyBridge(clearanceId) {
+  async dispatchToPharmacyBridge(clearanceId, highCostMeta) {
     try {
       const clearance = await prisma.pharmacyClearance.findUnique({
         where: { id: clearanceId },
@@ -38403,17 +38426,24 @@ var admissionService = {
             }
           },
           lines: { include: { medicine: true } },
-          requestedBy: { select: { username: true, displayName: true } }
+          requestedBy: { select: { username: true, displayName: true } },
+          highCostAuthorization: true
         }
       });
       if (!clearance) return;
       const patientName2 = clearance.admissionRecord?.panelPatient?.fullName || clearance.admissionRecord?.selfPayEncounter?.fullName || "Patient";
+      const isHighCost = highCostMeta?.isHighCost ?? Boolean(clearance.highCostAuthorization);
+      const isApproved = highCostMeta?.isApproved ?? (clearance.status !== "AUTHORIZATION_REQUIRED" && (!clearance.highCostAuthorization || clearance.highCostAuthorization?.status === "AUTHORIZED"));
+      const highCostStatus = highCostMeta?.highCostStatus ?? (clearance.highCostAuthorization?.status || (isHighCost ? "PENDING_APPROVAL" : "NOT_REQUIRED"));
       await pharmacyBridgeClient.dispatchMedicineRequest({
         externalAdmissionRef: clearance.admissionRecord.admissionNumber,
         externalRequestRef: clearance.medicineRequestNumber,
         patientNameSnapshot: patientName2,
-        urgency: "ROUTINE",
+        urgency: isHighCost && !isApproved ? "HIGH_COST_PENDING" : "ROUTINE",
         requestedByExternal: clearance.requestedBy?.displayName || clearance.requestedBy?.username || "Doctor",
+        isHighCost,
+        isApproved,
+        highCostStatus,
         lines: (clearance.lines || []).map((l) => ({
           medicineId: l.medicineId,
           requestedQuantity: Number(l.requestedQuantity),
@@ -38425,7 +38455,6 @@ var admissionService = {
       await prisma.pharmacyClearance.update({
         where: { id: clearanceId },
         data: {
-          status: "REQUESTED",
           notes: "QUEUED_FOR_PHARMACY_SYNC"
         }
       }).catch(() => null);
@@ -38566,7 +38595,7 @@ var admissionService = {
       }
       return { ...clearance, highCostAuthorization };
     }, { maxWait: 15e3, timeout: 3e4 });
-    if (result.status === "REQUESTED") {
+    if (result.status === "REQUESTED" || result.status === "AUTHORIZATION_REQUIRED") {
       await this.dispatchToPharmacyBridge(result.id).catch((err) => {
         console.error("[createPharmacyRequest] Bridge dispatch error:", err?.message || err);
       });
@@ -38627,6 +38656,15 @@ var admissionService = {
         updateData.managementApprovedAt = /* @__PURE__ */ new Date();
         managementSatisfied = true;
       }
+      if (!managementSatisfied && actorId17) {
+        const currentActor = await tx.portalUser.findUnique({ where: { id: actorId17 } });
+        if (currentActor && ["ADMIN", "SUPER_ADMIN"].includes(currentActor.role)) {
+          updateData.managementApprovedById = currentActor.id;
+          updateData.managementReason = body.managementReason || "Approved via Admin Panel";
+          updateData.managementApprovedAt = /* @__PURE__ */ new Date();
+          managementSatisfied = true;
+        }
+      }
       const combinedSatisfied = policy2.combinedLogic === "ATTENDANT_ONLY" ? attendantSatisfied : policy2.combinedLogic === "MANAGEMENT_ONLY" ? managementSatisfied : policy2.combinedLogic === "EITHER" ? attendantSatisfied || managementSatisfied : attendantSatisfied && managementSatisfied;
       if (!combinedSatisfied) {
         const missing = [
@@ -38644,11 +38682,18 @@ var admissionService = {
       return updated;
     });
     this.dispatchToPharmacyBridge(clearanceId).catch(() => null);
+    pharmacyBridgeClient.notifyHighCostApproval({
+      externalRequestRef: clearanceId,
+      isApproved: true,
+      approvedBy: result.managementApprovedById ? "HMS Management" : "Attendant Confirmed"
+    }).catch((err) => {
+      console.warn("[authorizeHighCostMedicine] Failed to notify pharmacy bridge:", err?.message || err);
+    });
     return result;
   },
   /** Explicit decline — no credential requirement, matches "Rejected/Pending request cannot be dispensed" as the safe default. */
   async rejectHighCostMedicine(admissionId, clearanceId, body) {
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const clearance = await tx.pharmacyClearance.findUnique({
         where: { id: clearanceId },
         include: { highCostAuthorization: true }
@@ -38665,6 +38710,59 @@ var admissionService = {
       });
       await tx.pharmacyClearance.update({ where: { id: clearance.id }, data: { status: "REJECTED" } });
       return updated;
+    });
+    pharmacyBridgeClient.notifyHighCostApproval({
+      externalRequestRef: clearanceId,
+      isApproved: false,
+      rejectionReason: body.reason
+    }).catch((err) => {
+      console.warn("[rejectHighCostMedicine] Failed to notify pharmacy bridge:", err?.message || err);
+    });
+    return result;
+  },
+  /**
+   * List all high-cost medicine authorizations that are pending management/guardian approval.
+   */
+  async listPendingHighCostAuthorizations() {
+    return prisma.highCostMedicineAuthorization.findMany({
+      where: { status: "PENDING" },
+      include: {
+        pharmacyClearance: {
+          include: {
+            admissionRecord: {
+              include: {
+                panelPatient: {
+                  include: {
+                    corporatePanel: true
+                  }
+                },
+                selfPayEncounter: true,
+                bed: {
+                  include: {
+                    room: {
+                      include: {
+                        ward: true
+                      }
+                    }
+                  }
+                },
+                doctor: {
+                  select: { id: true, fullName: true, designation: true, category: true }
+                }
+              }
+            },
+            lines: {
+              include: {
+                medicine: true
+              }
+            },
+            requestedBy: {
+              select: { id: true, displayName: true, username: true, role: true }
+            }
+          }
+        }
+      },
+      orderBy: { createdAt: "desc" }
     });
   },
   /**
@@ -51625,6 +51723,10 @@ var admissionController = {
     );
     res.json({ data: result });
   },
+  listPendingHighCostAuthorizations: async (_req, res) => {
+    const list = await admissionService.listPendingHighCostAuthorizations();
+    res.json({ data: list });
+  },
   closeHospitalDay: async (req, res) => {
     const result = await admissionService.closeHospitalDay(
       req.body,
@@ -51823,6 +51925,11 @@ router16.get(
   view11,
   validate({ query: listAdmissionsQuerySchema }),
   asyncHandler(admissionController.listAdmissions)
+);
+router16.get(
+  "/high-cost-authorizations/pending",
+  view11,
+  asyncHandler(admissionController.listPendingHighCostAuthorizations)
 );
 router16.get(
   "/:id",

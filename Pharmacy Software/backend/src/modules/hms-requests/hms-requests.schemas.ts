@@ -18,11 +18,22 @@ export const createRequestBodySchema = z.object({
   externalAdmissionRef: z.string().min(1).max(100),
   externalRequestRef: z.string().max(100).optional(),
   patientNameSnapshot: z.string().max(150).optional(),
-  urgency: z.enum(['ROUTINE', 'URGENT', 'STAT']).optional(),
+  urgency: z.enum(['ROUTINE', 'URGENT', 'STAT', 'HIGH_COST_PENDING']).optional(),
   requestedByExternal: z.string().max(150).optional(),
+  isHighCost: z.boolean().optional(),
+  isApproved: z.boolean().optional(),
+  highCostStatus: z.string().optional(),
   lines: z.array(requestLineSchema).min(1),
 });
 export type CreateRequestBody = z.infer<typeof createRequestBodySchema>;
+
+export const highCostApprovalCallbackSchema = z.object({
+  externalRequestRef: z.string().min(1),
+  isApproved: z.boolean(),
+  approvedBy: z.string().optional(),
+  rejectionReason: z.string().optional(),
+});
+export type HighCostApprovalCallbackBody = z.infer<typeof highCostApprovalCallbackSchema>;
 
 export const listRequestsQuerySchema = z.object({
   status: z.enum(['REQUESTED', 'ACCEPTED', 'PARTIALLY_ACCEPTED', 'REJECTED', 'DISPENSED']).optional(),

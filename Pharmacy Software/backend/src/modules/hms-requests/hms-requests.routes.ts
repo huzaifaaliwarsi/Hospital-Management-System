@@ -24,6 +24,7 @@ router.post('/:id/reject', create, validate({ params: s.idParamsSchema, body: s.
 router.post('/:id/fulfill', create, validate({ params: s.idParamsSchema, body: s.fulfillRequestBodySchema }), asyncHandler(c.fulfill));
 
 // Inter-Entity Settlement & Webhook Endpoints
+router.post('/callback/high-cost-approval', bridgeAuth, validate({ body: s.highCostApprovalCallbackSchema }), asyncHandler(c.handleHighCostApprovalCallback));
 router.post('/callback/patient-collected', bridgeAuth, validate({ body: s.patientCollectedCallbackSchema }), asyncHandler(c.patientCollectedCallback));
 router.post('/callback/reconcile-collection', bridgeAuth, validate({ body: s.reconcileCollectionBodySchema }), asyncHandler(c.reconcileCollection));
 router.post('/settlements/request', create, validate({ body: s.createSettlementRequestBodySchema }), asyncHandler(c.createSettlementRequest));

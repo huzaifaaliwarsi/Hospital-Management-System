@@ -174,6 +174,11 @@ export const admissionController = {
     res.json({ data: result });
   },
 
+  listPendingHighCostAuthorizations: async (_req: Request, res: Response) => {
+    const list = await admissionService.listPendingHighCostAuthorizations();
+    res.json({ data: list });
+  },
+
   closeHospitalDay: async (req: Request, res: Response) => {
     const result = await admissionService.closeHospitalDay(
       req.body as CloseHospitalDayBody,

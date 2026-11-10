@@ -16,6 +16,7 @@ import type {
   ReconcileCollectionBody,
   CreateSettlementRequestBody,
   ReleaseSettlementCallbackBody,
+  HighCostApprovalCallbackBody,
 } from './hms-requests.schemas';
 
 async function getOrCreateSettings() {
@@ -156,9 +157,11 @@ export const hmsRequestsService = {
           externalAdmissionRef: body.externalAdmissionRef,
           externalRequestRef: body.externalRequestRef,
           patientNameSnapshot: body.patientNameSnapshot,
-          urgency: body.urgency,
+          urgency: (body.isHighCost && !body.isApproved) ? 'HIGH_COST_PENDING' : body.urgency,
           requestedByExternal: body.requestedByExternal,
           handledById: validActorId,
+          approvedById: (body.isApproved && validActorId) ? validActorId : undefined,
+          approvedAt: body.isApproved ? new Date() : undefined,
           lines: {
             create: body.lines.map((l) => ({
               medicineId: l.medicineId,
@@ -285,6 +288,10 @@ export const hmsRequestsService = {
     if (!request) throw new NotFoundError('Medicine request not found');
     if (request.status !== 'REQUESTED' && request.status !== 'PARTIALLY_ACCEPTED') {
       throw new ConflictError(`Cannot fulfill a request with status ${request.status}`);
+    }
+
+    if (request.urgency === 'HIGH_COST_PENDING' && !request.approvedById) {
+      throw new ConflictError('This medicine request contains high-cost medicines and requires HMS Admin/Super Admin approval before dispensing.');
     }
 
     if (settings.highValueApprovalEnabled) {
@@ -707,5 +714,68 @@ export const hmsRequestsService = {
       },
       orderBy: { createdAt: 'desc' },
     });
+  },
+
+  async handleHighCostApprovalCallback(body: HighCostApprovalCallbackBody) {
+    const request = await prisma.medicineRequest.findFirst({
+      where: {
+        OR: [
+          { externalRequestRef: body.externalRequestRef },
+          { id: body.externalRequestRef },
+        ],
+      },
+    });
+    if (!request) {
+      throw new NotFoundError(`Medicine request not found for external reference ${body.externalRequestRef}`);
+    }
+
+    if (body.isApproved) {
+      let approverId = request.handledById;
+      if (!approverId) {
+        const sysUser = await prisma.portalUser.findFirst({ where: { role: 'ADMIN' } });
+        approverId = sysUser?.id || null;
+      }
+
+      const updated = await prisma.medicineRequest.update({
+        where: { id: request.id },
+        data: {
+          urgency: 'ROUTINE',
+          approvedById: approverId,
+          approvedAt: new Date(),
+        },
+      });
+
+      broadcastHmsNotification({
+        type: 'NEW_HMS_REQUEST',
+        requestNumber: request.requestNumber,
+        patientName: request.patientNameSnapshot || 'Patient',
+        admissionRef: request.externalAdmissionRef,
+        urgency: 'ROUTINE',
+        medicinesSummary: `HMS Approval Granted by ${body.approvedBy || 'Management'} — Unlocked for Dispensing`,
+        timestamp: new Date().toISOString(),
+      });
+
+      return updated;
+    } else {
+      const updated = await prisma.medicineRequest.update({
+        where: { id: request.id },
+        data: {
+          status: 'REJECTED',
+          rejectionReason: body.rejectionReason || 'Rejected by HMS Management',
+        },
+      });
+
+      broadcastHmsNotification({
+        type: 'NEW_HMS_REQUEST',
+        requestNumber: request.requestNumber,
+        patientName: request.patientNameSnapshot || 'Patient',
+        admissionRef: request.externalAdmissionRef,
+        urgency: 'ROUTINE',
+        medicinesSummary: `HMS High-Cost Request Rejected: ${body.rejectionReason || 'Declined'}`,
+        timestamp: new Date().toISOString(),
+      });
+
+      return updated;
+    }
   },
 };

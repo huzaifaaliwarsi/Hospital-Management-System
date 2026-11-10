@@ -702,6 +702,15 @@ export async function rejectHighCostMedicine(admissionId: string, clearanceId: s
   }
 }
 
+export async function listPendingHighCostAuthorizations(): Promise<any[]> {
+  try {
+    const res = await apiClient.get<{ data: any[] }>('/admissions/high-cost-authorizations/pending');
+    return res.data?.data || [];
+  } catch (err) {
+    throw new Error(toErrorMessage(err));
+  }
+}
+
 export async function grantAdmissionClearance(id: string, values: { clearanceType: ClearanceType; notes?: string }): Promise<any> {
   try {
     const res = await apiClient.post<{ data: any }>(`/admissions/${id}/clearances`, values);

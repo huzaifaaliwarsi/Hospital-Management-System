@@ -222,11 +222,13 @@ export const HmsRequestQueuePage: React.FC<{ canApprove: boolean }> = ({ canAppr
       align: 'center',
       width: '140px',
       render: (r) => {
+        const isHighCostPending = r.urgency === 'HIGH_COST_PENDING' && !r.approvedById;
         const needsApproval =
-          settings?.highValueApprovalEnabled &&
-          r.status === 'REQUESTED' &&
-          !r.approvedById &&
-          estimatedValue(r) >= Number(settings.highValueThreshold);
+          isHighCostPending ||
+          (settings?.highValueApprovalEnabled &&
+            r.status === 'REQUESTED' &&
+            !r.approvedById &&
+            estimatedValue(r) >= Number(settings.highValueThreshold));
         return (
           <div className="flex items-center justify-center gap-1.5 whitespace-nowrap">
             <span className="inline-flex items-center gap-1.5 text-xs font-semibold whitespace-nowrap text-slate-800">
@@ -234,14 +236,21 @@ export const HmsRequestQueuePage: React.FC<{ canApprove: boolean }> = ({ canAppr
                 className={`h-2 w-2 rounded-full shrink-0 ${
                   r.status === 'DISPENSED'
                     ? 'bg-[#0e7d5a]'
-                    : r.status === 'CANCELLED'
+                    : r.status === 'CANCELLED' || r.status === 'REJECTED'
                     ? 'bg-rose-500'
-                    : 'bg-amber-500'
+                    : isHighCostPending
+                    ? 'bg-amber-500'
+                    : 'bg-emerald-500'
                 }`}
               />
               {r.status.replace('_', ' ')}
             </span>
-            {needsApproval && (
+            {isHighCostPending && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200" title="Awaiting HMS Management Approval">
+                Pending Approval
+              </span>
+            )}
+            {!isHighCostPending && needsApproval && (
               <span title="High-value approval required">
                 <ShieldAlert className="h-3.5 w-3.5 text-amber-600 shrink-0" />
               </span>
@@ -539,7 +548,13 @@ const DetailModal: React.FC<{
   const [fulfilling, setFulfilling] = useState(false);
   const toast = useToast();
 
-  const needsApproval = settings?.highValueApprovalEnabled && request.status === 'REQUESTED' && !request.approvedById && estimatedValue(request) >= Number(settings.highValueThreshold);
+  const isHighCostPending = request.urgency === 'HIGH_COST_PENDING' && !request.approvedById;
+  const needsApproval =
+    isHighCostPending ||
+    (settings?.highValueApprovalEnabled &&
+      request.status === 'REQUESTED' &&
+      !request.approvedById &&
+      estimatedValue(request) >= Number(settings.highValueThreshold));
   const canFulfill = (request.status === 'REQUESTED' || request.status === 'PARTIALLY_ACCEPTED') && !needsApproval;
 
   const handleFulfill = async () => {
@@ -571,10 +586,25 @@ const DetailModal: React.FC<{
         </div>
 
         <div className="p-5 space-y-4 overflow-y-auto">
-          {needsApproval && (
+          {isHighCostPending ? (
+            <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start gap-2">
+              <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5 text-amber-600" />
+              <span>
+                <strong>High-Cost Medicine Policy Lock:</strong> This request contains medication exceeding the hospital policy threshold and is awaiting HMS Management authorization. Dispensing is locked until approved in HMS.
+              </span>
+            </div>
+          ) : needsApproval ? (
             <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start gap-2">
               <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
               <span>Estimated value {formatPKR(estimatedValue(request))} is at/above the high-value threshold ({formatPKR(settings.highValueThreshold)}) — an Admin/Super Admin must approve before dispensing.</span>
+            </div>
+          ) : null}
+          {request.approvedById && (
+            <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex items-center gap-2">
+              <Check className="h-4 w-4 shrink-0 text-emerald-600" />
+              <span>
+                <strong>Approved for Dispensing:</strong> HMS Management authorization confirmed ({request.approvedByUser || 'Authorized'}).
+              </span>
             </div>
           )}
           {request.status === 'REJECTED' && request.rejectionReason && (
