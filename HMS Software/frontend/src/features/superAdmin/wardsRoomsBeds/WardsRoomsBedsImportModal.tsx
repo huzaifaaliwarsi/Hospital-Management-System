@@ -23,7 +23,9 @@ import {
   downloadWardsImportTemplate,
   downloadRoomsImportTemplate,
   downloadBedsImportTemplate,
+  downloadAllInOneInpatientTemplate,
 } from '../../../services/wardsRoomsBedsExportService';
+import { parseExcelOrCsvFile } from '../../../utils/hmsBulkImportTemplates';
 
 interface WardsRoomsBedsImportModalProps {
   isOpen: boolean;
@@ -68,36 +70,40 @@ export const WardsRoomsBedsImportModal: React.FC<WardsRoomsBedsImportModalProps>
     else downloadBedsImportTemplate();
   };
 
-  const handleFileChange = (selectedFile: File) => {
+  const handleFileChange = async (selectedFile: File) => {
     setFile(selectedFile);
     setIsProcessing(true);
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const data = new Uint8Array(e.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: 'array' });
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-        const json = XLSX.utils.sheet_to_json(worksheet);
+    try {
+      const keywords =
+        targetEntity === 'wards'
+          ? ['ward', 'name', 'type', 'department']
+          : targetEntity === 'rooms'
+          ? ['room', 'ward', 'rate', 'capacity']
+          : ['bed', 'room', 'type', 'status'];
 
-        let result;
-        if (targetEntity === 'wards') {
-          result = WardsRoomsBedsService.validateWardImportRows(json, wards);
-        } else if (targetEntity === 'rooms') {
-          result = WardsRoomsBedsService.validateRoomImportRows(json, rooms, wards);
-        } else {
-          result = WardsRoomsBedsService.validateBedImportRows(json, beds, rooms, wards);
-        }
-        setValidationResult(result);
-      } catch (err) {
-        console.error('Failed to parse file:', err);
-        alert('Could not parse the spreadsheet. Please verify the file format.');
-      } finally {
+      const rows = await parseExcelOrCsvFile(selectedFile, keywords);
+      if (!rows || rows.length === 0) {
+        alert('The uploaded spreadsheet appears to be empty or does not contain recognizable data rows.');
         setIsProcessing(false);
+        return;
       }
-    };
-    reader.readAsArrayBuffer(selectedFile);
+
+      let result;
+      if (targetEntity === 'wards') {
+        result = WardsRoomsBedsService.validateWardImportRows(rows, wards);
+      } else if (targetEntity === 'rooms') {
+        result = WardsRoomsBedsService.validateRoomImportRows(rows, rooms, wards);
+      } else {
+        result = WardsRoomsBedsService.validateBedImportRows(rows, beds, rooms, wards);
+      }
+      setValidationResult(result);
+    } catch (err) {
+      console.error('Failed to parse file:', err);
+      alert('Could not parse the spreadsheet. Please verify the file format.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleCommit = async () => {
@@ -213,25 +219,35 @@ export const WardsRoomsBedsImportModal: React.FC<WardsRoomsBedsImportModalProps>
           </div>
 
           {/* Template Download Prompt */}
-          <div className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
             <div className="flex items-center gap-3">
-              <FileSpreadsheet className="w-5 h-5 text-[#08775A]" />
+              <FileSpreadsheet className="w-5 h-5 text-[#08775A] shrink-0" />
               <div>
                 <div className="text-xs font-bold text-slate-800">
-                  {targetEntity.toUpperCase()} Official Excel Template
+                  Official {targetEntity.toUpperCase()} Excel Import Template
                 </div>
                 <div className="text-[11px] text-slate-500">
-                  Pre-configured headers matching database constraints and foreign key linkages
+                  Styled with Navy Blue headers, pre-filled realistic examples, Instructions sheet & auto-generated codes (no technical IDs needed).
                 </div>
               </div>
             </div>
-            <button
-              onClick={handleDownloadTemplate}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-[#08775A] bg-white border border-[#c2e7db] rounded-lg hover:bg-[#effaf5] transition-colors"
-            >
-              <Download className="w-3.5 h-3.5" />
-              Download {targetEntity.toUpperCase()} Template (.xlsx)
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={handleDownloadTemplate}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-[#08775A] bg-white border border-[#c2e7db] rounded-lg hover:bg-[#effaf5] transition-colors"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Download {targetEntity.toUpperCase()} Template (.xlsx)
+              </button>
+              <button
+                onClick={downloadAllInOneInpatientTemplate}
+                title="Download 1 single workbook containing Wards, Rooms, Beds tabs"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+              >
+                <Download className="w-3.5 h-3.5 text-slate-500" />
+                All-in-One Template
+              </button>
+            </div>
           </div>
 
           {/* Upload Dropzone */}

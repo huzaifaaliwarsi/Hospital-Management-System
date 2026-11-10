@@ -318,56 +318,11 @@ export async function downloadServicesExcel(
   XLSX.writeFile(workbook, filename);
 }
 
+import { downloadServicesBulkTemplate } from '../utils/hmsBulkImportTemplates';
+
 /**
- * Generate and download Excel Import Template
+ * Generate and download Excel Import Template with professional Navy Blue styling and Instructions tab
  */
 export function downloadServicesImportTemplate(): void {
-  const templateRows = [
-    {
-      service_code: 'SRV-OPD-099',
-      service_name: 'Dermatology Initial Consultation',
-      department_code: 'DEP-DERM',
-      category: 'Consultation',
-      description: 'Skin, hair and nail specialist evaluation',
-      billing_unit: 'Per Consultation',
-      standard_rate: 3000,
-      panel_eligible: 'Yes',
-      discount_allowed: 'Yes',
-      manual_rate_override_allowed: 'No',
-      status: 'Active',
-    },
-    {
-      service_code: 'SRV-LAB-HBA1C',
-      service_name: 'HbA1c Glycated Hemoglobin Test',
-      department_code: 'DEP-PATH',
-      category: 'Laboratory',
-      description: '3-month average plasma glucose concentration',
-      billing_unit: 'Per Test',
-      standard_rate: 1400,
-      panel_eligible: 'Yes',
-      discount_allowed: 'Yes',
-      manual_rate_override_allowed: 'No',
-      status: 'Active',
-    },
-  ];
-
-  const worksheet = XLSX.utils.json_to_sheet(templateRows);
-  worksheet['!cols'] = [
-    { wch: 16 },
-    { wch: 32 },
-    { wch: 18 },
-    { wch: 16 },
-    { wch: 40 },
-    { wch: 18 },
-    { wch: 14 },
-    { wch: 14 },
-    { wch: 16 },
-    { wch: 26 },
-    { wch: 12 },
-  ];
-
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Services_Template');
-
-  XLSX.writeFile(workbook, 'Hospital_Services_Import_Template.xlsx');
+  downloadServicesBulkTemplate();
 }

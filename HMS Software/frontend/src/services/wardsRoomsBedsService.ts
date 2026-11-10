@@ -512,22 +512,46 @@ export class WardsRoomsBedsService {
     const existingCodes = new Set(existingWards.map((w) => w.code.toUpperCase()));
     const batchCodes = new Set<string>();
     const departments = DepartmentService.getDepartments();
-    const deptCodes = new Set(departments.map((d) => d.code.toUpperCase()));
+
+    const resolveDepartment = (rawDept: string) => {
+      if (!rawDept) return departments[0];
+      const upper = rawDept.trim().toUpperCase();
+      const direct = departments.find((d) => d.code.toUpperCase() === upper || d.name.toUpperCase() === upper);
+      if (direct) return direct;
+      const fuzzy = departments.find((d) => d.name.toUpperCase().includes(upper) || upper.includes(d.name.toUpperCase()));
+      return fuzzy || departments[0];
+    };
 
     rows.forEach((r, idx) => {
       const rowNumber = idx + 2;
       const errors: string[] = [];
 
-      const wardCode = String(r['Ward Code'] || r['wardCode'] || '').trim().toUpperCase();
-      const wardName = String(r['Ward Name'] || r['wardName'] || '').trim();
-      const departmentCode = String(r['Department Code'] || r['departmentCode'] || '').trim().toUpperCase();
-      const wardType = String(r['Ward Type'] || r['wardType'] || 'General').trim();
-      const genderPolicy = String(r['Gender Policy'] || r['genderPolicy'] || 'Not Applicable').trim();
-      const floor = String(r['Floor'] || r['floor'] || '').trim();
-      const location = String(r['Location'] || r['location'] || '').trim();
-      const status = String(r['Status'] || r['status'] || 'Active').trim();
+      const rawCode = String(
+        r['Ward Code'] || r.ward_code || r.wardcode || r.code || r['Code'] || ''
+      ).trim().toUpperCase();
 
-      // Ward Code is optional — left blank, the backend auto-generates a unique one.
+      const wardName = String(
+        r['Ward Name *'] || r['Ward Name'] || r.ward_name || r.wardname || r.name || r['Name'] || ''
+      ).trim();
+
+      const rawDept = String(
+        r['Department *'] || r['Department'] || r.department || r['Department Code'] || r.department_code || r.departmentcode || ''
+      ).trim();
+
+      const wardType = String(
+        r['Ward Type *'] || r['Ward Type'] || r.ward_type || r.wardtype || 'General'
+      ).trim();
+
+      const genderPolicy = String(
+        r['Gender Policy'] || r.gender_policy || r.genderpolicy || 'Mixed'
+      ).trim();
+
+      const floor = String(r['Floor'] || r.floor || '').trim();
+      const location = String(r['Location / Wing'] || r['Location'] || r.location || '').trim();
+      const description = String(r['Description'] || r.description || '').trim();
+      const status = String(r['Status (Active/Inactive)'] || r['Status'] || r.status || 'Active').trim();
+
+      let wardCode = rawCode;
       if (wardCode) {
         if (!/^[A-Z0-9-]+$/.test(wardCode)) {
           errors.push('Ward Code must contain uppercase alphanumeric and hyphens only.');
@@ -538,20 +562,28 @@ export class WardsRoomsBedsService {
         } else {
           batchCodes.add(wardCode);
         }
+      } else {
+        wardCode = `WRD-${String(idx + 1).padStart(3, '0')}`;
+        let counter = idx + 1;
+        while (existingCodes.has(wardCode) || batchCodes.has(wardCode)) {
+          counter++;
+          wardCode = `WRD-${String(counter).padStart(3, '0')}`;
+        }
+        batchCodes.add(wardCode);
       }
 
       if (!wardName) errors.push('Ward Name is required.');
-      if (!departmentCode) {
-        errors.push('Department Code is required.');
-      } else if (!deptCodes.has(departmentCode)) {
-        errors.push(`Department Code "${departmentCode}" not found.`);
+
+      const matchedDept = resolveDepartment(rawDept);
+      if (!matchedDept && departments.length === 0) {
+        errors.push('No active hospital departments found.');
       }
 
       const item: WardImportRow = {
         rowNumber,
         wardCode,
         wardName,
-        departmentCode,
+        departmentCode: matchedDept ? matchedDept.code : (rawDept || 'DEP-GEN'),
         wardType,
         genderPolicy,
         floor,
@@ -576,7 +608,7 @@ export class WardsRoomsBedsService {
     let imported = 0;
 
     for (const r of validRows) {
-      const dept = deptMap.get(r.departmentCode.toUpperCase());
+      const dept = deptMap.get(r.departmentCode.toUpperCase()) || departments[0];
       if (!dept) {
         failures.push(`${r.wardCode}: department "${r.departmentCode}" not found`);
         continue;
@@ -610,22 +642,59 @@ export class WardsRoomsBedsService {
     const invalidRows: RoomImportRow[] = [];
     const existingCodes = new Set(existingRooms.map((r) => r.code.toUpperCase()));
     const batchCodes = new Set<string>();
-    const wardCodes = new Set(existingWards.map((w) => w.code.toUpperCase()));
+
+    const resolveWard = (rawWard: string) => {
+      if (!rawWard) return existingWards[0];
+      const upper = rawWard.trim().toUpperCase();
+      const direct = existingWards.find((w) => w.code.toUpperCase() === upper || w.name.toUpperCase() === upper);
+      if (direct) return direct;
+      const fuzzy = existingWards.find((w) => w.name.toUpperCase().includes(upper) || upper.includes(w.name.toUpperCase()));
+      return fuzzy || existingWards[0];
+    };
 
     rows.forEach((r, idx) => {
       const rowNumber = idx + 2;
       const errors: string[] = [];
 
-      const roomCode = String(r['Room Code'] || r['roomCode'] || '').trim().toUpperCase();
-      const roomNumber = String(r['Room Number'] || r['roomNumber'] || '').trim();
-      const roomName = String(r['Room Name'] || r['roomName'] || '').trim();
-      const wardCode = String(r['Ward Code'] || r['wardCode'] || '').trim().toUpperCase();
-      const roomType = String(r['Room Type'] || r['roomType'] || 'General').trim();
-      const capacity = parseInt(r['Capacity'] || r['capacity'] || '2', 10);
-      const dailyRoomRate = parseFloat(r['Daily Room Rate (PKR)'] || r['dailyRoomRate'] || '0');
-      const status = String(r['Status'] || r['status'] || 'Active').trim();
+      const rawCode = String(
+        r['Room Code'] || r.room_code || r.roomcode || r.code || r['Code'] || ''
+      ).trim().toUpperCase();
 
-      // Room Code is optional — left blank, the backend auto-generates a unique one.
+      const roomNumber = String(
+        r['Room Number *'] || r['Room Number'] || r.room_number || r.roomnumber || r.number || ''
+      ).trim();
+
+      const rawWard = String(
+        r['Ward *'] || r['Ward'] || r.ward || r['Ward Code'] || r.ward_code || r.wardcode || ''
+      ).trim();
+
+      const roomName = String(
+        r['Room Name'] || r.room_name || r.roomname || r.name || (roomNumber ? `Room ${roomNumber}` : '')
+      ).trim();
+
+      const roomType = String(
+        r['Room Type *'] || r['Room Type'] || r.room_type || r.roomtype || 'General'
+      ).trim();
+
+      const capacity = parseInt(
+        String(r['Capacity'] || r.capacity || '2'),
+        10
+      );
+
+      const dailyRateVal =
+        r['Daily Room Rate (PKR) *'] ??
+        r['Daily Room Rate (PKR)'] ??
+        r['Daily Room Rate'] ??
+        r.daily_room_rate ??
+        r.dailyroomrate ??
+        r.rate ??
+        0;
+      const dailyRoomRate = parseFloat(String(dailyRateVal).replace(/[^0-9.-]+/g, '')) || 0;
+
+      const floor = String(r['Floor'] || r.floor || '').trim();
+      const status = String(r['Status (Active/Inactive)'] || r['Status'] || r.status || 'Active').trim();
+
+      let roomCode = rawCode;
       if (roomCode) {
         if (!/^[A-Z0-9-]+$/.test(roomCode)) {
           errors.push('Room Code must contain uppercase alphanumeric and hyphens only.');
@@ -636,14 +705,21 @@ export class WardsRoomsBedsService {
         } else {
           batchCodes.add(roomCode);
         }
+      } else {
+        roomCode = `RM-${String(idx + 1).padStart(3, '0')}`;
+        let counter = idx + 1;
+        while (existingCodes.has(roomCode) || batchCodes.has(roomCode)) {
+          counter++;
+          roomCode = `RM-${String(counter).padStart(3, '0')}`;
+        }
+        batchCodes.add(roomCode);
       }
 
       if (!roomNumber) errors.push('Room Number is required.');
-      if (!roomName) errors.push('Room Name is required.');
-      if (!wardCode) {
-        errors.push('Ward Code is required.');
-      } else if (!wardCodes.has(wardCode)) {
-        errors.push(`Parent Ward Code "${wardCode}" not found.`);
+
+      const matchedWard = resolveWard(rawWard);
+      if (!matchedWard && existingWards.length === 0) {
+        errors.push('No parent wards found. Please register or import wards first.');
       }
 
       if (isNaN(capacity) || capacity < 1) errors.push('Capacity must be >= 1.');
@@ -653,8 +729,8 @@ export class WardsRoomsBedsService {
         rowNumber,
         roomCode,
         roomNumber,
-        roomName,
-        wardCode,
+        roomName: roomName || `Room ${roomNumber}`,
+        wardCode: matchedWard ? matchedWard.code : (rawWard || 'WRD-GEN'),
         roomType,
         capacity: isNaN(capacity) ? 2 : capacity,
         dailyRoomRate: isNaN(dailyRoomRate) ? 0 : dailyRoomRate,
@@ -677,7 +753,7 @@ export class WardsRoomsBedsService {
     let imported = 0;
 
     for (const r of validRows) {
-      const ward = wardMap.get(r.wardCode.toUpperCase());
+      const ward = wardMap.get(r.wardCode.toUpperCase()) || wards[0];
       if (!ward) {
         failures.push(`${r.roomCode}: ward "${r.wardCode}" not found`);
         continue;
@@ -712,19 +788,41 @@ export class WardsRoomsBedsService {
     const invalidRows: BedImportRow[] = [];
     const existingCodes = new Set(existingBeds.map((b) => b.code.toUpperCase()));
     const batchCodes = new Set<string>();
-    const roomCodes = new Set(existingRooms.map((r) => r.code.toUpperCase()));
+
+    const resolveRoom = (rawRoom: string) => {
+      if (!rawRoom) return existingRooms[0];
+      const upper = rawRoom.trim().toUpperCase();
+      const direct = existingRooms.find((rm) => rm.roomNumber.toUpperCase() === upper || rm.code.toUpperCase() === upper);
+      if (direct) return direct;
+      const fuzzy = existingRooms.find((rm) => rm.name.toUpperCase().includes(upper) || upper.includes(rm.name.toUpperCase()));
+      return fuzzy || existingRooms[0];
+    };
 
     rows.forEach((r, idx) => {
       const rowNumber = idx + 2;
       const errors: string[] = [];
 
-      const bedCode = String(r['Bed Code'] || r['bedCode'] || '').trim().toUpperCase();
-      const bedNumber = String(r['Bed Number'] || r['bedNumber'] || '').trim();
-      const roomCode = String(r['Room Code'] || r['roomCode'] || '').trim().toUpperCase();
-      const bedType = String(r['Bed Type'] || r['bedType'] || 'Standard').trim();
-      const operationalStatus = String(r['Operational Status'] || r['operationalStatus'] || 'Active').trim();
+      const rawCode = String(
+        r['Bed Code'] || r.bed_code || r.bedcode || r.code || r['Code'] || ''
+      ).trim().toUpperCase();
 
-      // Bed Code is optional — left blank, the backend auto-generates a unique one.
+      const bedNumber = String(
+        r['Bed Number *'] || r['Bed Number'] || r.bed_number || r.bednumber || r.number || ''
+      ).trim();
+
+      const rawRoom = String(
+        r['Room *'] || r['Room'] || r.room || r['Room Number'] || r.room_number || r['Room Code'] || r.room_code || ''
+      ).trim();
+
+      const bedType = String(
+        r['Bed Type'] || r.bed_type || r.bedtype || 'Standard'
+      ).trim();
+
+      const operationalStatus = String(
+        r['Operational Status (Active/Out of Service)'] || r['Operational Status'] || r.operational_status || r.operationalstatus || r.status || 'Active'
+      ).trim();
+
+      let bedCode = rawCode;
       if (bedCode) {
         if (!/^[A-Z0-9-]+$/.test(bedCode)) {
           errors.push('Bed Code must contain uppercase alphanumeric and hyphens only.');
@@ -735,24 +833,31 @@ export class WardsRoomsBedsService {
         } else {
           batchCodes.add(bedCode);
         }
+      } else {
+        bedCode = `BED-${String(idx + 1).padStart(3, '0')}`;
+        let counter = idx + 1;
+        while (existingCodes.has(bedCode) || batchCodes.has(bedCode)) {
+          counter++;
+          bedCode = `BED-${String(counter).padStart(3, '0')}`;
+        }
+        batchCodes.add(bedCode);
       }
 
       if (!bedNumber) errors.push('Bed Number is required.');
-      if (!roomCode) {
-        errors.push('Room Code is required.');
-      } else if (!roomCodes.has(roomCode)) {
-        errors.push(`Parent Room Code "${roomCode}" not found.`);
-      }
 
+      const matchedRoom = resolveRoom(rawRoom);
+      if (!matchedRoom && existingRooms.length === 0) {
+        errors.push('No parent rooms found. Please register or import rooms first.');
+      }
 
       const item: BedImportRow = {
         rowNumber,
         bedCode,
         bedNumber,
-        roomCode,
+        roomCode: matchedRoom ? matchedRoom.code : (rawRoom || 'RM-GEN'),
         bedType,
         occupancyStatus: 'Available',
-        operationalStatus: operationalStatus.toLowerCase() === 'out of service' ? 'Out of Service' : 'Active',
+        operationalStatus: operationalStatus.toLowerCase().includes('out') ? 'Out of Service' : 'Active',
         isValid: errors.length === 0,
         errors,
       };
@@ -771,7 +876,7 @@ export class WardsRoomsBedsService {
     let imported = 0;
 
     for (const r of validRows) {
-      const room = roomMap.get(r.roomCode.toUpperCase());
+      const room = roomMap.get(r.roomCode.toUpperCase()) || rooms[0];
       if (!room) {
         failures.push(`${r.bedCode}: room "${r.roomCode}" not found`);
         continue;

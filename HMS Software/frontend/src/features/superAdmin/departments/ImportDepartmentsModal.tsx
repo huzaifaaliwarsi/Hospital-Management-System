@@ -19,6 +19,7 @@ import {
 } from '../../../types/department';
 import { DepartmentService } from '../../../services/departmentService';
 import { SAMPLE_IMPORT_BATCH_DATA } from './departmentMockData';
+import { parseExcelOrCsvFile } from '../../../utils/hmsBulkImportTemplates';
 
 interface ImportDepartmentsModalProps {
   isOpen: boolean;
@@ -104,16 +105,33 @@ export const ImportDepartmentsModal: React.FC<ImportDepartmentsModalProps> = ({
     setStep('preview');
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      const text = evt.target?.result as string;
-      parseCSVText(text);
-    };
-    reader.readAsText(file);
+    try {
+      const rows = await parseExcelOrCsvFile(file, ['department', 'name', 'type', 'code']);
+      if (!rows || rows.length === 0) {
+        alert('The uploaded spreadsheet appears to be empty or does not contain recognizable data rows.');
+        return;
+      }
+      const results = DepartmentService.validateImportRows(
+        rows,
+        existingDepartments,
+        headOptions
+      );
+      setValidationResults(results);
+      setStep('preview');
+    } catch (err) {
+      console.error('Failed to parse department spreadsheet:', err);
+      // Fallback to text CSV reading if needed
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        const text = evt.target?.result as string;
+        parseCSVText(text);
+      };
+      reader.readAsText(file);
+    }
   };
 
   const handleLoadSampleBatch = () => {
@@ -202,7 +220,7 @@ export const ImportDepartmentsModal: React.FC<ImportDepartmentsModalProps> = ({
                 <div>
                   <h4 className="font-bold text-[#08775A]">1. Download Official Excel Template</h4>
                   <p className="text-slate-600 mt-0.5">
-                    Preformatted with all required columns: department code, name, type, head, and capability flags.
+                    Navy Blue styled headers, pre-filled hospital clinical examples, Instructions sheet & auto-generated codes (no technical IDs needed).
                   </p>
                 </div>
                 <button
@@ -211,7 +229,7 @@ export const ImportDepartmentsModal: React.FC<ImportDepartmentsModalProps> = ({
                   className="inline-flex items-center gap-2 rounded-lg bg-white border border-[#08775A] px-3.5 py-2 text-xs font-semibold text-[#08775A] hover:bg-[#effaf5] transition-colors shadow-2xs shrink-0"
                 >
                   <Download className="h-4 w-4" />
-                  <span>Download Template</span>
+                  <span>Download Template (.xlsx)</span>
                 </button>
               </div>
 

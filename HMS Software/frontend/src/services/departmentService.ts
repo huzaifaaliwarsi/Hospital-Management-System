@@ -176,6 +176,8 @@ export async function primeDepartmentsCache(): Promise<void> {
 /**
  * Client service layer for Departments module — backed by the live API.
  */
+import { downloadDepartmentsBulkTemplate } from '../utils/hmsBulkImportTemplates';
+
 export class DepartmentService {
   /**
    * Legacy entry point kept for existing call sites: returns the real,
@@ -351,7 +353,7 @@ export class DepartmentService {
    * Validate uploaded Excel / CSV rows against schema and existing data
    */
   static validateImportRows(
-    rows: DepartmentImportRow[],
+    rows: any[],
     existingDepartments: Department[],
     headOptions: DepartmentHeadOption[]
   ): DepartmentImportValidationResult[] {
@@ -360,16 +362,44 @@ export class DepartmentService {
 
     return rows.map((row, idx) => {
       const rowNumber = idx + 2; // Row 1 is header
-      const rawCode = (row.department_code || '').trim().toUpperCase();
-      const rawName = (row.department_name || '').trim();
-      const rawType = (row.department_type || '').trim();
-      const rawHead = (row.head_identifier || '').trim();
-      const rawStatus = (row.status || 'Active').trim();
 
-      // Code is optional — left blank, the backend auto-generates a unique one.
-      if (rawCode) {
+      const rawCode = String(
+        row['Department Code'] || row.department_code || row.departmentcode || row.code || row['Code'] || ''
+      ).trim().toUpperCase();
+
+      const rawName = String(
+        row['Department Name *'] || row['Department Name'] || row.department_name || row.departmentname || row.name || row['Name'] || ''
+      ).trim();
+
+      const rawType = String(
+        row['Department Type *'] || row['Department Type'] || row.department_type || row.departmenttype || row.type || row['Type'] || 'Clinical'
+      ).trim();
+
+      const rawHead = String(
+        row['Head Doctor / Incharge'] || row['Head Doctor'] || row.head_identifier || row.headidentifier || row.head_doctor || row['Head'] || ''
+      ).trim();
+
+      const rawDesc = String(
+        row['Description'] || row.description || ''
+      ).trim();
+
+      const rawExt = String(
+        row['Contact Extension'] || row.contact_extension || row.contactextension || row.extension || ''
+      ).trim();
+
+      const rawLoc = String(
+        row['Location / Floor'] || row['Location'] || row.location || row['Floor'] || row.floor || ''
+      ).trim();
+
+      const rawStatus = String(
+        row['Status (Active/Inactive)'] || row['Status'] || row.status || 'Active'
+      ).trim();
+
+      // Department Code is optional — if omitted, auto-generate a readable code
+      let deptCode = rawCode;
+      if (deptCode) {
         const codeRegex = /^[A-Z0-9-]+$/;
-        if (!codeRegex.test(rawCode)) {
+        if (!codeRegex.test(deptCode)) {
           return {
             rowNumber,
             data: row,
@@ -378,29 +408,35 @@ export class DepartmentService {
           };
         }
 
-        if (existingCodes.has(rawCode) || seenFileCodes.has(rawCode)) {
+        if (existingCodes.has(deptCode) || seenFileCodes.has(deptCode)) {
           return {
             rowNumber,
             data: row,
             status: 'Duplicate',
-            errorMessage: `Duplicate code "${rawCode}" already registered in hospital system`,
+            errorMessage: `Duplicate code "${deptCode}" already registered in hospital system`,
           };
         }
-        seenFileCodes.add(rawCode);
+        seenFileCodes.add(deptCode);
+      } else {
+        // Auto-generate clean code e.g. DEP-001 or DEP-CARD
+        const cleanNamePart = rawName.slice(0, 4).toUpperCase().replace(/[^A-Z]/g, '') || 'GEN';
+        deptCode = `DEP-${cleanNamePart}-${String(idx + 1).padStart(2, '0')}`;
+        let counter = idx + 1;
+        while (existingCodes.has(deptCode) || seenFileCodes.has(deptCode)) {
+          counter++;
+          deptCode = `DEP-${cleanNamePart}-${String(counter).padStart(2, '0')}`;
+        }
+        seenFileCodes.add(deptCode);
       }
 
       if (!rawName) {
         return { rowNumber, data: row, status: 'Invalid', errorMessage: 'Missing required Department Name' };
       }
 
-      const matchedType = VALID_DEPARTMENT_TYPES.find((t) => t.toLowerCase() === rawType.toLowerCase());
+      // Forgiving type matching
+      let matchedType = VALID_DEPARTMENT_TYPES.find((t) => t.toLowerCase() === rawType.toLowerCase());
       if (!matchedType) {
-        return {
-          rowNumber,
-          data: row,
-          status: 'Invalid',
-          errorMessage: `Invalid Department Type "${rawType}". Allowed: ${VALID_DEPARTMENT_TYPES.join(', ')}`,
-        };
+        matchedType = VALID_DEPARTMENT_TYPES.find((t) => t.toLowerCase().includes(rawType.toLowerCase()) || rawType.toLowerCase().includes(t.toLowerCase())) || 'Clinical';
       }
 
       const normalizedStatus = rawStatus.toLowerCase() === 'inactive' ? 'Inactive' : 'Active';
@@ -411,37 +447,41 @@ export class DepartmentService {
         const foundHead = headOptions.find(
           (h) => h.userId.toLowerCase() === rawHead.toLowerCase() || h.name.toLowerCase() === rawHead.toLowerCase()
         );
-        if (!foundHead) {
-          return { rowNumber, data: row, status: 'Invalid', errorMessage: `Unknown Head / In-charge identifier "${rawHead}"` };
+        if (foundHead) {
+          resolvedHeadUserId = foundHead.userId;
+          resolvedHeadName = foundHead.name;
+        } else {
+          // Accept the name as typed rather than failing the import
+          resolvedHeadName = rawHead;
         }
-        resolvedHeadUserId = foundHead.userId;
-        resolvedHeadName = foundHead.name;
       }
 
-      const parseBool = (val: any): boolean => {
+      const parseBool = (val: any, defaultVal = false): boolean => {
+        if (val === undefined || val === null || val === '') return defaultVal;
         if (typeof val === 'boolean') return val;
         if (typeof val === 'string') {
           const lower = val.trim().toLowerCase();
-          return lower === 'true' || lower === '1' || lower === 'yes';
+          return lower === 'true' || lower === '1' || lower === 'yes' || lower === 'y';
         }
-        return false;
+        return defaultVal;
       };
 
       const convertedDept: Department = {
-        id: `DEP-IMP-${Date.now().toString().slice(-4)}-${idx}`, // replaced with the real id once createDepartmentFromImportRow() persists it
-        code: rawCode,
+        id: `DEP-IMP-${Date.now().toString().slice(-4)}-${idx}`,
+        code: deptCode,
         name: rawName,
-        type: matchedType,
-        description: (row.description || '').trim(),
+        type: matchedType as DepartmentType,
+        description: rawDesc,
         headUserId: resolvedHeadUserId,
         headName: resolvedHeadName,
-        contactExtension: (row.contact_extension || '').trim(),
-        location: (row.location || '').trim(),
-        opdEnabled: parseBool(row.opd_enabled),
-        observationEnabled: parseBool(row.observation_enabled),
-        emergencyEnabled: parseBool(row.emergency_enabled),
-        admissionEnabled: parseBool(row.admission_enabled),
-        pharmacyRelated: parseBool(row.pharmacy_related),
+        contactExtension: rawExt,
+        location: rawLoc,
+        floor: rawLoc,
+        opdEnabled: parseBool(row['OPD Enabled (Yes/No)'] ?? row.opd_enabled ?? row.opdenabled, true),
+        observationEnabled: parseBool(row['Observation Enabled (Yes/No)'] ?? row.observation_enabled ?? row.observationenabled, false),
+        emergencyEnabled: parseBool(row['Emergency Enabled (Yes/No)'] ?? row.emergency_enabled ?? row.emergencyenabled, false),
+        admissionEnabled: parseBool(row['Admission Enabled (Yes/No)'] ?? row.admission_enabled ?? row.admissionenabled, true),
+        pharmacyRelated: parseBool(row['Pharmacy Related (Yes/No)'] ?? row.pharmacy_related ?? row.pharmacyrelated, false),
         doctorCount: 0,
         staffCount: 0,
         serviceCount: 0,
@@ -459,66 +499,9 @@ export class DepartmentService {
     });
   }
 
-  /** Helper to trigger download of sample CSV template */
+  /** Helper to trigger download of professional styled Excel template with Navy Blue headers */
   static downloadTemplate(): void {
-    const headers = [
-      'department_code',
-      'department_name',
-      'department_type',
-      'description',
-      'head_identifier',
-      'contact_extension',
-      'location',
-      'opd_enabled',
-      'observation_enabled',
-      'emergency_enabled',
-      'admission_enabled',
-      'pharmacy_related',
-      'status',
-    ].join(',');
-
-    const sampleRow1 = [
-      'DEP-ENT',
-      'Otolaryngology (ENT)',
-      'Surgical',
-      'Ear Nose and Throat clinic and audiology',
-      'DOC-008',
-      'Ext. 314',
-      'Third Floor Block B',
-      'TRUE',
-      'FALSE',
-      'FALSE',
-      'TRUE',
-      'FALSE',
-      'Active',
-    ].join(',');
-
-    const sampleRow2 = [
-      'DEP-DERM',
-      'Dermatology',
-      'Clinical',
-      'Skin disease outpatient care',
-      'DOC-004',
-      'Ext. 318',
-      'Third Floor Block A',
-      'TRUE',
-      'FALSE',
-      'FALSE',
-      'FALSE',
-      'FALSE',
-      'Active',
-    ].join(',');
-
-    const csvContent = `${headers}\n${sampleRow1}\n${sampleRow2}\n`;
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', 'CHSS_Department_Import_Template.csv');
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    downloadDepartmentsBulkTemplate();
   }
 
   /** Export CSV utility respecting active filters */

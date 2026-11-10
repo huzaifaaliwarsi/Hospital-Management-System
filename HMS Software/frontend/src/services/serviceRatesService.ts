@@ -325,6 +325,27 @@ export class ServiceRatesService {
       if (d.name) deptMap.set(d.name.toUpperCase().trim(), d);
     });
 
+    const findDepartmentForgiving = (key: string) => {
+      if (!key) return departments.length > 0 ? departments[0] : undefined;
+      const upper = key.toUpperCase().trim();
+      if (deptMap.has(upper)) return deptMap.get(upper);
+
+      // Substring fuzzy match
+      const lower = key.toLowerCase().trim();
+      const matched = departments.find((d) => {
+        const dName = d.name.toLowerCase();
+        const dCode = (d.code || '').toLowerCase();
+        return (
+          dName === lower ||
+          dCode === lower ||
+          dName.includes(lower) ||
+          lower.includes(dName) ||
+          (dCode && (dCode.includes(lower) || lower.includes(dCode)))
+        );
+      });
+      return matched || (departments.length > 0 ? departments[0] : undefined);
+    };
+
     const existingCodeSet = new Set(existingServices.map((s) => s.code.toUpperCase()));
     const seenFileCodes = new Set<string>();
 
@@ -335,70 +356,134 @@ export class ServiceRatesService {
       const rowNum = idx + 2;
       const errors: string[] = [];
 
-      // Support camelCase, snake_case, and spaced Excel title headers
-      const rawCode = String(row.service_code || row.code || row['Service Code'] || row['Code'] || '').trim().toUpperCase();
-      const rawName = String(row.service_name || row.name || row['Service Name'] || row['Name'] || '').trim();
-      const rawDeptKey = String(row.department_code || row.dept_code || row.department || row['Department Code'] || row['Department'] || row['Dept Code'] || '').trim().toUpperCase();
-      const rawCatInput = String(row.category || row['Category'] || '').trim();
-      const rawDesc = String(row.description || row['Description'] || '').trim();
-      const rawUnitInput = String(row.billing_unit || row.unit || row['Billing Unit'] || row['Unit'] || 'Per Procedure').trim();
-      const rawRate = Number(row.standard_rate ?? row.rate ?? row['Standard Rate'] ?? row['Rate'] ?? row['Price']);
-      const rawPanel = String(row.panel_eligible || row['Panel Eligible'] || '').trim().toLowerCase();
-      const rawDiscount = String(row.discount_allowed || row['Discount Allowed'] || '').trim().toLowerCase();
-      const rawOverride = String(row.manual_rate_override_allowed || row['Manual Rate Override Allowed'] || '').trim().toLowerCase();
-      const rawStatus = String(row.status || row['Status'] || 'Active').trim();
+      // Support human title headers, snake_case, camelCase, and stripped lowercase keys
+      const rawCode = String(
+        row['Service Code'] || row.service_code || row.servicecode || row.code || row['Code'] || ''
+      ).trim().toUpperCase();
 
-      // Normalize category (case-insensitive lookup against valid categories)
-      const matchedCat = VALID_SERVICE_CATEGORIES.find(
-        (c) => c.toLowerCase() === rawCatInput.toLowerCase()
-      ) || (rawCatInput ? (VALID_SERVICE_CATEGORIES.find((c) => c.toLowerCase().includes(rawCatInput.toLowerCase())) || 'Other') : undefined);
+      const rawName = String(
+        row['Service Name *'] || row['Service Name'] || row.service_name || row.servicename || row.name || row['Name'] || ''
+      ).trim();
 
-      // Normalize billing unit (case-insensitive lookup against valid units)
-      const matchedUnit = VALID_BILLING_UNITS.find(
-        (u) => u.toLowerCase() === rawUnitInput.toLowerCase()
-      ) || (VALID_BILLING_UNITS.find((u) => u.toLowerCase().includes(rawUnitInput.toLowerCase())) || 'One-Time');
+      const rawDeptKey = String(
+        row['Department *'] || row['Department'] || row.department || row['Department Code'] || row.department_code || row.departmentcode || row.dept_code || row['Dept Code'] || ''
+      ).trim();
 
-      // Code is optional — left blank, auto-generated
-      if (rawCode) {
-        if (!/^[A-Z0-9_-]+$/.test(rawCode)) {
+      const rawCatInput = String(
+        row['Category *'] || row['Category'] || row.category || ''
+      ).trim();
+
+      const rawDesc = String(
+        row['Description'] || row.description || ''
+      ).trim();
+
+      const rawUnitInput = String(
+        row['Billing Unit *'] || row['Billing Unit'] || row.billing_unit || row.billingunit || row.unit || row['Unit'] || 'Per Procedure'
+      ).trim();
+
+      const rawRateVal =
+        row['Standard Rate (PKR) *'] ??
+        row['Standard Rate (PKR)'] ??
+        row['Standard Rate'] ??
+        row.standard_rate ??
+        row.standardrate ??
+        row.standardratepkr ??
+        row.rate ??
+        row['Rate'] ??
+        row['Price'] ??
+        0;
+      const rawRate = Number(String(rawRateVal).replace(/[^0-9.-]+/g, ''));
+
+      const rawPanel = String(
+        row['Panel Eligible (Yes/No)'] || row['Panel Eligible'] || row.panel_eligible || row.paneleligible || 'Yes'
+      ).trim().toLowerCase();
+
+      const rawDiscount = String(
+        row['Discount Allowed (Yes/No)'] || row['Discount Allowed'] || row.discount_allowed || row.discountallowed || 'Yes'
+      ).trim().toLowerCase();
+
+      const rawOverride = String(
+        row['Manual Rate Override (Yes/No)'] || row['Manual Rate Override'] || row.manual_rate_override_allowed || row.manualrateoverride || 'No'
+      ).trim().toLowerCase();
+
+      const rawStatus = String(
+        row['Status (Active/Inactive)'] || row['Status'] || row.status || 'Active'
+      ).trim();
+
+      // Normalize category (case-insensitive lookup against valid categories, fallback to Miscellaneous/Procedure)
+      let matchedCat: ServiceCategory = 'Miscellaneous';
+      if (rawCatInput) {
+        const found = VALID_SERVICE_CATEGORIES.find(
+          (c) => c.toLowerCase() === rawCatInput.toLowerCase()
+        ) || VALID_SERVICE_CATEGORIES.find(
+          (c) => c.toLowerCase().includes(rawCatInput.toLowerCase()) || rawCatInput.toLowerCase().includes(c.toLowerCase())
+        );
+        if (found) matchedCat = found;
+      } else {
+        matchedCat = 'Consultation';
+      }
+
+      // Normalize billing unit (case-insensitive lookup against valid units, fallback to Per Procedure)
+      let matchedUnit: BillingUnit = 'Per Procedure';
+      if (rawUnitInput) {
+        const found = VALID_BILLING_UNITS.find(
+          (u) => u.toLowerCase() === rawUnitInput.toLowerCase()
+        ) || VALID_BILLING_UNITS.find(
+          (u) => u.toLowerCase().includes(rawUnitInput.toLowerCase()) || rawUnitInput.toLowerCase().includes(u.toLowerCase())
+        );
+        if (found) matchedUnit = found;
+      }
+
+      // Code is optional — left blank, auto-generated sequentially without database UUID
+      let serviceCode = rawCode;
+      if (serviceCode) {
+        if (!/^[A-Z0-9_-]+$/.test(serviceCode)) {
           errors.push('Code must contain uppercase letters, numbers, hyphens, and underscores only.');
-        } else if (existingCodeSet.has(rawCode)) {
-          errors.push(`Service code "${rawCode}" already exists in master catalog.`);
-        } else if (seenFileCodes.has(rawCode)) {
-          errors.push(`Duplicate code "${rawCode}" found within uploaded file.`);
+        } else if (existingCodeSet.has(serviceCode)) {
+          errors.push(`Service code "${serviceCode}" already exists in master catalog.`);
+        } else if (seenFileCodes.has(serviceCode)) {
+          errors.push(`Duplicate code "${serviceCode}" found within uploaded file.`);
         } else {
-          seenFileCodes.add(rawCode);
+          seenFileCodes.add(serviceCode);
         }
+      } else {
+        // Auto-generate clean, readable service code
+        serviceCode = `SRV-${String(idx + 1).padStart(3, '0')}`;
+        let counter = idx + 1;
+        while (existingCodeSet.has(serviceCode) || seenFileCodes.has(serviceCode)) {
+          counter++;
+          serviceCode = `SRV-${String(counter).padStart(3, '0')}`;
+        }
+        seenFileCodes.add(serviceCode);
       }
 
-      if (!rawName) errors.push('Missing service name.');
-
-      const matchedDept = rawDeptKey ? deptMap.get(rawDeptKey) : (departments.length > 0 ? departments[0] : undefined);
-      if (!rawDeptKey && departments.length === 0) {
-        errors.push('Missing department code or name.');
-      } else if (rawDeptKey && !matchedDept) {
-        errors.push(`Department "${rawDeptKey}" not recognized in hospital directory.`);
+      if (!rawName) {
+        errors.push('Missing required Service Name.');
       }
 
-      if (!matchedCat) {
-        errors.push(`Missing or invalid category "${rawCatInput}". Valid: ${VALID_SERVICE_CATEGORIES.join(', ')}.`);
+      const matchedDept = findDepartmentForgiving(rawDeptKey);
+      if (!matchedDept && departments.length === 0) {
+        errors.push('No departments registered in hospital system.');
       }
 
-      if (isNaN(rawRate) || rawRate < 0) errors.push('Standard rate must be a non-negative number.');
+      if (isNaN(rawRate) || rawRate < 0) {
+        errors.push('Standard rate must be a non-negative number.');
+      }
 
-      const normalizedStatus: 'Active' | 'Inactive' = rawStatus.toLowerCase() === 'inactive' ? 'Inactive' : 'Active';
-      const panelEligible = ['true', 'yes', '1', 'y'].includes(rawPanel);
-      const discountAllowed = ['true', 'yes', '1', 'y'].includes(rawDiscount);
+      const normalizedStatus: 'Active' | 'Inactive' =
+        rawStatus.toLowerCase() === 'inactive' ? 'Inactive' : 'Active';
+      const panelEligible = !['false', 'no', '0', 'n'].includes(rawPanel);
+      const discountAllowed = !['false', 'no', '0', 'n'].includes(rawDiscount);
       const manualRateOverrideAllowed = ['true', 'yes', '1', 'y'].includes(rawOverride);
 
       const parsedRow: ServiceImportRow = {
         rowNumber: rowNum,
-        serviceCode: rawCode || `SRV-${Date.now().toString(36).toUpperCase()}-${idx + 1}`,
+        serviceCode,
         serviceName: rawName,
-        departmentCode: matchedDept ? matchedDept.code : rawDeptKey,
-        category: (matchedCat || 'Other') as ServiceCategory,
+        departmentCode: matchedDept ? matchedDept.code : (rawDeptKey || 'DEP-GEN'),
+        category: matchedCat,
         description: rawDesc,
-        billingUnit: (matchedUnit || 'One-Time') as BillingUnit,
+        billingUnit: matchedUnit,
         standardRate: isNaN(rawRate) ? 0 : rawRate,
         panelEligible,
         discountAllowed,

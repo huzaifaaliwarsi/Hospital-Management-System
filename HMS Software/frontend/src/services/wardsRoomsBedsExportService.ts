@@ -16,6 +16,12 @@ import {
 } from './hospitalProfileService';
 import { formatDisplayDate } from '../utils/dateConstants';
 import { DepartmentService } from './departmentService';
+import {
+  downloadWardsBulkTemplate,
+  downloadRoomsBulkTemplate,
+  downloadBedsBulkTemplate,
+  downloadCompleteWardsRoomsBedsTemplate,
+} from '../utils/hmsBulkImportTemplates';
 
 export function getDynamicDateString(date = new Date()): string {
   const year = date.getFullYear();
@@ -247,29 +253,7 @@ export async function downloadWardsExcel(
 }
 
 export function downloadWardsImportTemplate(): void {
-  const rows = [
-    {
-      ward_code: 'WRD-SURG-01',
-      ward_name: 'Post-Operative Surgical Ward',
-      department_code: 'DEP-SURG',
-      ward_type: 'General',
-      gender_policy: 'Mixed',
-      floor: '3rd Floor',
-      location: 'South Wing Surgical Tower',
-      description: 'Immediate post-surgical recovery and intermediate nursing observation',
-      status: 'Active',
-    },
-  ];
-
-  const worksheet = XLSX.utils.json_to_sheet(rows);
-  worksheet['!cols'] = [
-    { wch: 16 }, { wch: 32 }, { wch: 18 }, { wch: 16 }, { wch: 16 },
-    { wch: 14 }, { wch: 30 }, { wch: 45 }, { wch: 12 },
-  ];
-
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Wards_Template');
-  XLSX.writeFile(workbook, 'Hospital_Wards_Import_Template.xlsx');
+  downloadWardsBulkTemplate();
 }
 
 // ----------------------------------------------------
@@ -487,29 +471,7 @@ export async function downloadRoomsExcel(
 }
 
 export function downloadRoomsImportTemplate(): void {
-  const rows = [
-    {
-      room_code: 'RM-SURG-301',
-      room_number: '301',
-      room_name: 'Post-Op Observation Suite',
-      ward_code: 'WRD-SURG-01',
-      room_type: 'Semi-Private',
-      floor: '3rd Floor',
-      capacity: 2,
-      daily_room_rate: 6000,
-      status: 'Active',
-    },
-  ];
-
-  const worksheet = XLSX.utils.json_to_sheet(rows);
-  worksheet['!cols'] = [
-    { wch: 16 }, { wch: 14 }, { wch: 28 }, { wch: 18 }, { wch: 16 },
-    { wch: 14 }, { wch: 12 }, { wch: 16 }, { wch: 12 },
-  ];
-
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Rooms_Template');
-  XLSX.writeFile(workbook, 'Hospital_Rooms_Import_Template.xlsx');
+  downloadRoomsBulkTemplate();
 }
 
 // ----------------------------------------------------
@@ -728,23 +690,9 @@ export async function downloadBedsExcel(
 }
 
 export function downloadBedsImportTemplate(): void {
-  const rows = [
-    {
-      bed_code: 'BED-SURG-301-A',
-      bed_number: '301-A',
-      room_code: 'RM-SURG-301',
-      bed_type: 'Standard',
-      daily_rate: 3000,
-      operational_status: 'Active',
-    },
-  ];
+  downloadBedsBulkTemplate();
+}
 
-  const worksheet = XLSX.utils.json_to_sheet(rows);
-  worksheet['!cols'] = [
-    { wch: 18 }, { wch: 14 }, { wch: 18 }, { wch: 16 }, { wch: 14 }, { wch: 18 },
-  ];
-
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Beds_Template');
-  XLSX.writeFile(workbook, 'Hospital_Beds_Import_Template.xlsx');
+export function downloadAllInOneInpatientTemplate(): void {
+  downloadCompleteWardsRoomsBedsTemplate();
 }

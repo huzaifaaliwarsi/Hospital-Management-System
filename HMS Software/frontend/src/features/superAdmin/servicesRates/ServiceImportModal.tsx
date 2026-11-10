@@ -18,6 +18,7 @@ import {
 import { User } from '../../../types';
 import { ServiceRatesService } from '../../../services/serviceRatesService';
 import { downloadServicesImportTemplate } from '../../../services/serviceRatesExportService';
+import { parseExcelOrCsvFile } from '../../../utils/hmsBulkImportTemplates';
 
 interface ServiceImportModalProps {
   isOpen: boolean;
@@ -46,29 +47,25 @@ export const ServiceImportModal: React.FC<ServiceImportModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleFileChange = (selectedFile: File) => {
+  const handleFileChange = async (selectedFile: File) => {
     setFile(selectedFile);
     setIsProcessing(true);
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const data = new Uint8Array(e.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: 'array' });
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-        const json = XLSX.utils.sheet_to_json(worksheet);
-
-        const result = ServiceRatesService.validateImportRows(json, existingServices, departments);
-        setValidationResult(result);
-      } catch (err) {
-        console.error('Failed to parse Excel file:', err);
-        alert('Could not parse the selected spreadsheet. Please ensure it is a valid Excel or CSV file.');
-      } finally {
+    try {
+      const rows = await parseExcelOrCsvFile(selectedFile, ['service', 'rate', 'department']);
+      if (!rows || rows.length === 0) {
+        alert('The uploaded spreadsheet appears to be empty or has no recognizable data rows.');
         setIsProcessing(false);
+        return;
       }
-    };
-    reader.readAsArrayBuffer(selectedFile);
+      const result = ServiceRatesService.validateImportRows(rows, existingServices, departments);
+      setValidationResult(result);
+    } catch (err) {
+      console.error('Failed to parse Excel file:', err);
+      alert('Could not parse the selected spreadsheet. Please ensure it is a valid Excel or CSV file.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -150,10 +147,10 @@ export const ServiceImportModal: React.FC<ServiceImportModalProps> = ({
               <FileSpreadsheet className="w-5 h-5 text-[#08775A]" />
               <div>
                 <div className="text-xs font-bold text-slate-800">
-                  Standard Excel Import Template
+                  Official Excel Import Template Ready
                 </div>
                 <div className="text-[11px] text-slate-500">
-                  Includes formatted columns: service_code, service_name, department_code, standard_rate, etc.
+                  Pre-styled with Navy Blue headers, sample clinical services, Instructions sheet & auto-generated codes (no technical IDs needed).
                 </div>
               </div>
             </div>
