@@ -1051,3 +1051,508 @@ export async function parseExcelOrCsvFile(
     return normalized;
   });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8. PATIENTS BULK TEMPLATE
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const PATIENTS_HEADERS = [
+  'Full Name *',
+  'Father / Guardian Name *',
+  'Gender *',
+  'Phone Number *',
+  'Date of Birth (YYYY-MM-DD)',
+  'Age',
+  'CNIC',
+  'Blood Group',
+  'Payer Type',
+  'Panel Code / Name',
+  'Panel Member ID',
+  'Address',
+  'City',
+  'Emergency Contact Name',
+  'Emergency Contact Phone',
+  'Status (Active/Inactive)',
+];
+
+export const PATIENTS_SAMPLE_ROWS = [
+  {
+    'Full Name *': 'Muhammad Farhan Akram',
+    'Father / Guardian Name *': 'Muhammad Akram',
+    'Gender *': 'Male',
+    'Phone Number *': '0300-1234567',
+    'Date of Birth (YYYY-MM-DD)': '1988-03-15',
+    'Age': '',
+    'CNIC': '35201-1234567-1',
+    'Blood Group': 'B+',
+    'Payer Type': 'Self Pay',
+    'Panel Code / Name': '',
+    'Panel Member ID': '',
+    'Address': 'House 14, Street 2, Sector B, DHA Phase 5',
+    'City': 'Lahore',
+    'Emergency Contact Name': 'Muhammad Akram',
+    'Emergency Contact Phone': '0300-7654321',
+    'Status (Active/Inactive)': 'Active',
+  },
+  {
+    'Full Name *': 'Samina Perveen',
+    'Father / Guardian Name *': 'Tariq Mehmood',
+    'Gender *': 'Female',
+    'Phone Number *': '0333-9876543',
+    'Date of Birth (YYYY-MM-DD)': '',
+    'Age': 45,
+    'CNIC': '35202-7654321-2',
+    'Blood Group': 'O+',
+    'Payer Type': 'Corporate / Panel',
+    'Panel Code / Name': 'State Life Insurance',
+    'Panel Member ID': 'SLI-112233-PK',
+    'Address': 'Flat 5, Block G, Johar Town',
+    'City': 'Lahore',
+    'Emergency Contact Name': 'Tariq Mehmood',
+    'Emergency Contact Phone': '0333-1122334',
+    'Status (Active/Inactive)': 'Active',
+  },
+  {
+    'Full Name *': 'Ali Hassan',
+    'Father / Guardian Name *': 'Hassan Raza',
+    'Gender *': 'Male',
+    'Phone Number *': '0321-5554321',
+    'Date of Birth (YYYY-MM-DD)': '2015-06-20',
+    'Age': 11,
+    'CNIC': '',
+    'Blood Group': 'A+',
+    'Payer Type': 'Self Pay',
+    'Panel Code / Name': '',
+    'Panel Member ID': '',
+    'Address': 'House 22, Street 8, Gulberg III',
+    'City': 'Lahore',
+    'Emergency Contact Name': 'Hassan Raza',
+    'Emergency Contact Phone': '0321-5554321',
+    'Status (Active/Inactive)': 'Active',
+  },
+];
+
+export const PATIENTS_INSTRUCTIONS = [
+  {
+    'Column Name': 'Full Name *',
+    'Requirement': 'MANDATORY',
+    'Allowed Values / Examples': 'e.g., Muhammad Farhan Akram, Samina Perveen',
+    'Description': 'Patient official full name as on government identity document (CNIC / B-Form).',
+  },
+  {
+    'Column Name': 'Father / Guardian Name *',
+    'Requirement': 'MANDATORY',
+    'Allowed Values / Examples': 'e.g., Muhammad Akram, Tariq Mehmood',
+    'Description': 'Father or legal guardian name for medical records and identity confirmation.',
+  },
+  {
+    'Column Name': 'Gender *',
+    'Requirement': 'MANDATORY',
+    'Allowed Values / Examples': 'Male, Female, Other / Not Specified',
+    'Description': 'Patient biological sex for clinical vitals and inpatient bed allocation safety.',
+  },
+  {
+    'Column Name': 'Phone Number *',
+    'Requirement': 'MANDATORY',
+    'Allowed Values / Examples': 'e.g., 0300-1234567, 0333-9876543',
+    'Description': 'Primary mobile telephone number for SMS token alerts and emergency communication.',
+  },
+  {
+    'Column Name': 'Date of Birth (YYYY-MM-DD)',
+    'Requirement': 'CONDITIONAL',
+    'Allowed Values / Examples': 'Format: YYYY-MM-DD (e.g. 1988-03-15) OR leave empty if Age is given',
+    'Description': 'Exact date of birth. If unknown, leave empty and provide Age.',
+  },
+  {
+    'Column Name': 'Age',
+    'Requirement': 'CONDITIONAL',
+    'Allowed Values / Examples': 'Numeric years (e.g. 45, 12, 60)',
+    'Description': 'Approximate age in years if exact DOB is unknown. System will auto-estimate birth year.',
+  },
+  {
+    'Column Name': 'CNIC',
+    'Requirement': 'OPTIONAL',
+    'Allowed Values / Examples': 'Format: 5-7-1 digits (e.g. 35201-1234567-1)',
+    'Description': 'NADRA Pakistani National Identity Card number or Juvenile B-Form number.',
+  },
+  {
+    'Column Name': 'Blood Group',
+    'Requirement': 'OPTIONAL',
+    'Allowed Values / Examples': 'A+, A-, B+, B-, AB+, AB-, O+, O-, Unknown (Default: Unknown)',
+    'Description': 'ABO and Rh blood group profile.',
+  },
+  {
+    'Column Name': 'Payer Type',
+    'Requirement': 'OPTIONAL',
+    'Allowed Values / Examples': 'Self Pay, Corporate / Panel (Default: Self Pay)',
+    'Description': 'Billing payer classification.',
+  },
+  {
+    'Column Name': 'Panel Code / Name',
+    'Requirement': 'CONDITIONAL',
+    'Allowed Values / Examples': 'e.g., State Life Insurance, Sehat Sahulat, Pak-Qatar Takaful',
+    'Description': 'Insurance or panel provider name. Required if Payer Type is Corporate / Panel.',
+  },
+  {
+    'Column Name': 'Panel Member ID',
+    'Requirement': 'CONDITIONAL',
+    'Allowed Values / Examples': 'Policy / Member ID (e.g. SLI-112233-PK)',
+    'Description': 'Patient policy or employee verification number under the corporate panel.',
+  },
+  {
+    'Column Name': 'Status (Active/Inactive)',
+    'Requirement': 'OPTIONAL',
+    'Allowed Values / Examples': 'Active / Inactive (Default: Active)',
+    'Description': 'Patient profile status. Inactive archives the profile from new booking lists.',
+  },
+];
+
+export function downloadPatientsBulkTemplate(): void {
+  const wb = XLSX.utils.book_new();
+
+  const wsPatients = XLSX.utils.json_to_sheet(PATIENTS_SAMPLE_ROWS, { header: PATIENTS_HEADERS });
+  applyTableStyles(wsPatients, PATIENTS_HEADERS, [
+    { wch: 28 }, // Full Name
+    { wch: 26 }, // Father Name
+    { wch: 14 }, // Gender
+    { wch: 18 }, // Phone
+    { wch: 22 }, // DOB
+    { wch: 10 }, // Age
+    { wch: 20 }, // CNIC
+    { wch: 14 }, // Blood Group
+    { wch: 18 }, // Payer Type
+    { wch: 24 }, // Panel Code / Name
+    { wch: 20 }, // Panel Member ID
+    { wch: 38 }, // Address
+    { wch: 16 }, // City
+    { wch: 24 }, // Emergency Name
+    { wch: 20 }, // Emergency Phone
+    { wch: 22 }, // Status
+  ]);
+  XLSX.utils.book_append_sheet(wb, wsPatients, 'Patients Upload');
+
+  const wsInstructions = XLSX.utils.json_to_sheet(PATIENTS_INSTRUCTIONS);
+  applyTableStyles(
+    wsInstructions,
+    ['Column Name', 'Requirement', 'Allowed Values / Examples', 'Description'],
+    [{ wch: 28 }, { wch: 16 }, { wch: 48 }, { wch: 75 }],
+    true
+  );
+  XLSX.utils.book_append_sheet(wb, wsInstructions, 'Instructions');
+
+  XLSX.writeFile(wb, `hospital_patients_bulk_template_${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 9. STAFF USERS BULK TEMPLATE
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const STAFF_HEADERS = [
+  'Full Name *',
+  'Staff Category *',
+  'Phone Number *',
+  'CNIC *',
+  'Father / Guardian Name *',
+  'Date of Birth (YYYY-MM-DD) *',
+  'Email',
+  'Designation',
+  'Department',
+  'Doctor Active Services',
+  'Access Type (PORTAL_USER / STAFF_RECORD_ONLY)',
+  'Assigned Portal',
+  'Staff Role',
+  'Employee Code',
+  'Username',
+  'Status (Active/Inactive)',
+];
+
+export const STAFF_SAMPLE_ROWS = [
+  {
+    'Full Name *': 'Dr. Shahzad Ali',
+    'Staff Category *': 'Doctor',
+    'Phone Number *': '0300-7654321',
+    'CNIC *': '35202-2233445-2',
+    'Father / Guardian Name *': 'Ali Nawaz',
+    'Date of Birth (YYYY-MM-DD) *': '1980-08-01',
+    'Email': 'shahzad.ali@hospital.com',
+    'Designation': 'Consultant Pediatrician',
+    'Department': 'Pediatrics',
+    'Doctor Active Services': 'Specialist Consultation, Newborn Checkup',
+    'Access Type (PORTAL_USER / STAFF_RECORD_ONLY)': 'STAFF_RECORD_ONLY',
+    'Assigned Portal': '',
+    'Staff Role': '',
+    'Employee Code': '',
+    'Username': '',
+    'Status (Active/Inactive)': 'Active',
+  },
+  {
+    'Full Name *': 'Bilal Khan',
+    'Staff Category *': 'Front Desk / Billing',
+    'Phone Number *': '0300-1234567',
+    'CNIC *': '35201-1122334-1',
+    'Father / Guardian Name *': 'Muhammad Khan',
+    'Date of Birth (YYYY-MM-DD) *': '1995-04-12',
+    'Email': 'bilal.khan@hospital.com',
+    'Designation': 'Reception & Cashier Officer',
+    'Department': 'Patient Registration',
+    'Doctor Active Services': '',
+    'Access Type (PORTAL_USER / STAFF_RECORD_ONLY)': 'PORTAL_USER',
+    'Assigned Portal': 'front-desk',
+    'Staff Role': 'Front Desk Officer',
+    'Employee Code': '',
+    'Username': 'bilal.reception',
+    'Status (Active/Inactive)': 'Active',
+  },
+  {
+    'Full Name *': 'Sister Maryam Bibi',
+    'Staff Category *': 'Nurse',
+    'Phone Number *': '0312-3456789',
+    'CNIC *': '35203-3344556-3',
+    'Father / Guardian Name *': 'Abdul Rehman',
+    'Date of Birth (YYYY-MM-DD) *': '1992-11-20',
+    'Email': 'maryam.nurse@hospital.com',
+    'Designation': 'Head Staff Nurse',
+    'Department': 'General Surgery',
+    'Doctor Active Services': '',
+    'Access Type (PORTAL_USER / STAFF_RECORD_ONLY)': 'STAFF_RECORD_ONLY',
+    'Assigned Portal': '',
+    'Staff Role': '',
+    'Employee Code': '',
+    'Username': '',
+    'Status (Active/Inactive)': 'Active',
+  },
+];
+
+export const STAFF_INSTRUCTIONS = [
+  {
+    'Column Name': 'Full Name *',
+    'Requirement': 'MANDATORY',
+    'Allowed Values / Examples': 'e.g., Dr. Shahzad Ali, Bilal Khan',
+    'Description': 'Official employee name as on government CNIC identity.',
+  },
+  {
+    'Column Name': 'Staff Category *',
+    'Requirement': 'MANDATORY',
+    'Allowed Values / Examples': 'Doctor, Nurse, Front Desk / Billing, Pharmacist, Lab Technician, Radiologist, Accountant, Security / Maintenance, Administrative, Other',
+    'Description': 'Employee professional category in the hospital hierarchy.',
+  },
+  {
+    'Column Name': 'Phone Number *',
+    'Requirement': 'MANDATORY',
+    'Allowed Values / Examples': 'e.g., 0300-7654321',
+    'Description': 'Active mobile telephone number for login notifications and hospital directory.',
+  },
+  {
+    'Column Name': 'CNIC *',
+    'Requirement': 'MANDATORY',
+    'Allowed Values / Examples': 'Format: 5-7-1 digits (e.g. 35202-2233445-2)',
+    'Description': 'NADRA Pakistani National Identity Card number.',
+  },
+  {
+    'Column Name': 'Father / Guardian Name *',
+    'Requirement': 'MANDATORY',
+    'Allowed Values / Examples': 'e.g., Ali Nawaz',
+    'Description': 'Employee father or guardian name.',
+  },
+  {
+    'Column Name': 'Date of Birth (YYYY-MM-DD) *',
+    'Requirement': 'MANDATORY',
+    'Allowed Values / Examples': 'Format: YYYY-MM-DD (e.g. 1980-08-01)',
+    'Description': 'Employee birth date for HR and retirement records.',
+  },
+  {
+    'Column Name': 'Department',
+    'Requirement': 'CONDITIONAL',
+    'Allowed Values / Examples': 'Department Name (e.g. Pediatrics) OR Code (e.g. DEP-04)',
+    'Description': 'Assigned department. Required for clinical doctors and departmental staff.',
+  },
+  {
+    'Column Name': 'Doctor Active Services',
+    'Requirement': 'CONDITIONAL',
+    'Allowed Values / Examples': 'Comma-separated Service Names or Codes (e.g. Consultation, OPD-CONS)',
+    'Description': 'Services that this doctor can deliver on OPD / appointment rosters.',
+  },
+  {
+    'Column Name': 'Access Type',
+    'Requirement': 'OPTIONAL',
+    'Allowed Values / Examples': 'PORTAL_USER, STAFF_RECORD_ONLY (Default: STAFF_RECORD_ONLY)',
+    'Description': 'PORTAL_USER generates login credentials. STAFF_RECORD_ONLY creates HR directory record only.',
+  },
+  {
+    'Column Name': 'Assigned Portal',
+    'Requirement': 'CONDITIONAL',
+    'Allowed Values / Examples': 'front-desk, admission, inventory (Required if Access Type = PORTAL_USER)',
+    'Description': 'Software workstation portal accessible to this user.',
+  },
+  {
+    'Column Name': 'Employee Code',
+    'Requirement': 'OPTIONAL',
+    'Allowed Values / Examples': 'e.g. EMP-001 or LEAVE BLANK',
+    'Description': 'Unique hospital employee number. If blank, auto-generated sequentially without database UUIDs.',
+  },
+  {
+    'Column Name': 'Username',
+    'Requirement': 'OPTIONAL',
+    'Allowed Values / Examples': 'e.g. bilal.reception or LEAVE BLANK',
+    'Description': 'Login username for PORTAL_USER. If blank, auto-generated from full name.',
+  },
+  {
+    'Column Name': 'Status (Active/Inactive)',
+    'Requirement': 'OPTIONAL',
+    'Allowed Values / Examples': 'Active / Inactive (Default: Active)',
+    'Description': 'Active employees can access their portal and appear on hospital rosters.',
+  },
+];
+
+export function downloadStaffUsersBulkTemplate(): void {
+  const wb = XLSX.utils.book_new();
+
+  const wsStaff = XLSX.utils.json_to_sheet(STAFF_SAMPLE_ROWS, { header: STAFF_HEADERS });
+  applyTableStyles(wsStaff, STAFF_HEADERS, [
+    { wch: 26 }, // Full Name
+    { wch: 22 }, // Staff Category
+    { wch: 18 }, // Phone
+    { wch: 20 }, // CNIC
+    { wch: 24 }, // Father Name
+    { wch: 24 }, // DOB
+    { wch: 26 }, // Email
+    { wch: 26 }, // Designation
+    { wch: 22 }, // Department
+    { wch: 32 }, // Doctor Services
+    { wch: 36 }, // Access Type
+    { wch: 18 }, // Assigned Portal
+    { wch: 22 }, // Staff Role
+    { wch: 16 }, // Employee Code
+    { wch: 18 }, // Username
+    { wch: 22 }, // Status
+  ]);
+  XLSX.utils.book_append_sheet(wb, wsStaff, 'Staff Upload');
+
+  const wsInstructions = XLSX.utils.json_to_sheet(STAFF_INSTRUCTIONS);
+  applyTableStyles(
+    wsInstructions,
+    ['Column Name', 'Requirement', 'Allowed Values / Examples', 'Description'],
+    [{ wch: 28 }, { wch: 16 }, { wch: 48 }, { wch: 75 }],
+    true
+  );
+  XLSX.utils.book_append_sheet(wb, wsInstructions, 'Instructions');
+
+  XLSX.writeFile(wb, `hospital_staff_users_bulk_template_${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 10. ADMIN USERS BULK TEMPLATE
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const ADMIN_HEADERS = [
+  'Full Name *',
+  'Username *',
+  'Email *',
+  'Role *',
+  'Phone Number',
+  'Staff Code',
+  'Status (Active/Inactive)',
+];
+
+export const ADMIN_SAMPLE_ROWS = [
+  {
+    'Full Name *': 'Kamran Akmal',
+    'Username *': 'kamran.admin',
+    'Email *': 'kamran.admin@sharif-saeed.hospital',
+    'Role *': 'Hospital Administrator',
+    'Phone Number': '0300-9876543',
+    'Staff Code': '',
+    'Status (Active/Inactive)': 'Active',
+  },
+  {
+    'Full Name *': 'Zainab Fatima',
+    'Username *': 'zainab.hr',
+    'Email *': 'zainab.hr@sharif-saeed.hospital',
+    'Role *': 'HR Administrator',
+    'Phone Number': '0321-1234567',
+    'Staff Code': '',
+    'Status (Active/Inactive)': 'Active',
+  },
+  {
+    'Full Name *': 'Waqas Ahmed',
+    'Username *': 'waqas.finance',
+    'Email *': 'waqas.finance@sharif-saeed.hospital',
+    'Role *': 'Finance Administrator',
+    'Phone Number': '0333-5551234',
+    'Staff Code': '',
+    'Status (Active/Inactive)': 'Active',
+  },
+];
+
+export const ADMIN_INSTRUCTIONS = [
+  {
+    'Column Name': 'Full Name *',
+    'Requirement': 'MANDATORY',
+    'Allowed Values / Examples': 'e.g., Kamran Akmal, Zainab Fatima',
+    'Description': 'Official full name of the hospital system administrator.',
+  },
+  {
+    'Column Name': 'Username *',
+    'Requirement': 'MANDATORY',
+    'Allowed Values / Examples': 'Lowercase alphanumeric with dot/underscore (e.g. kamran.admin)',
+    'Description': 'Unique username used to log into the Executive Administration Console.',
+  },
+  {
+    'Column Name': 'Email *',
+    'Requirement': 'MANDATORY',
+    'Allowed Values / Examples': 'Valid email address (e.g. kamran.admin@hospital.com)',
+    'Description': 'Official email address for security password reset notifications.',
+  },
+  {
+    'Column Name': 'Role *',
+    'Requirement': 'MANDATORY',
+    'Allowed Values / Examples': 'Super Admin, Hospital Administrator, HR Administrator, Finance Administrator, Operations Administrator',
+    'Description': 'Administrative security privilege level governing module permissions.',
+  },
+  {
+    'Column Name': 'Phone Number',
+    'Requirement': 'OPTIONAL',
+    'Allowed Values / Examples': 'e.g., 0300-9876543',
+    'Description': 'Administrator contact telephone number.',
+  },
+  {
+    'Column Name': 'Staff Code',
+    'Requirement': 'OPTIONAL',
+    'Allowed Values / Examples': 'e.g. ADM-001 or LEAVE BLANK',
+    'Description': 'Unique administrative identifier. If blank, auto-generated sequentially without database UUIDs.',
+  },
+  {
+    'Column Name': 'Status (Active/Inactive)',
+    'Requirement': 'OPTIONAL',
+    'Allowed Values / Examples': 'Active / Inactive (Default: Active)',
+    'Description': 'Only Active administrators can access administrative dashboards.',
+  },
+];
+
+export function downloadAdminUsersBulkTemplate(): void {
+  const wb = XLSX.utils.book_new();
+
+  const wsAdmin = XLSX.utils.json_to_sheet(ADMIN_SAMPLE_ROWS, { header: ADMIN_HEADERS });
+  applyTableStyles(wsAdmin, ADMIN_HEADERS, [
+    { wch: 28 }, // Full Name
+    { wch: 20 }, // Username
+    { wch: 32 }, // Email
+    { wch: 26 }, // Role
+    { wch: 18 }, // Phone
+    { wch: 16 }, // Staff Code
+    { wch: 22 }, // Status
+  ]);
+  XLSX.utils.book_append_sheet(wb, wsAdmin, 'Admin Users Upload');
+
+  const wsInstructions = XLSX.utils.json_to_sheet(ADMIN_INSTRUCTIONS);
+  applyTableStyles(
+    wsInstructions,
+    ['Column Name', 'Requirement', 'Allowed Values / Examples', 'Description'],
+    [{ wch: 28 }, { wch: 16 }, { wch: 48 }, { wch: 75 }],
+    true
+  );
+  XLSX.utils.book_append_sheet(wb, wsInstructions, 'Instructions');
+
+  XLSX.writeFile(wb, `hospital_admin_users_bulk_template_${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+

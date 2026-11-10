@@ -617,30 +617,100 @@ export function validateImportRow(
   const errors: string[] = [];
   const allKnown = [...existingPatients, ...stagedNewPatients];
 
-  const fullName = String(row['full_name'] || '').trim();
-  const fatherGuardianName = String(row['father_guardian_name'] || '').trim();
-  const rawGuardianRelation = String(row['guardian_relation'] || 'Father').trim();
-  const dobStr = String(row['date_of_birth'] || '').trim();
-  const rawAge = row['age'];
-  const rawGender = String(row['gender'] || '').trim();
-  const rawCnic = String(row['cnic'] || '').trim();
-  const rawPassport = String(row['passport_number'] || '').trim();
-  const rawPhone = String(row['primary_phone'] || '').trim();
-  const altPhone = String(row['alternate_phone'] || '').trim();
-  const email = String(row['email'] || '').trim();
-  const addressLine1 = String(row['address_line_1'] || '').trim();
-  const addressLine2 = String(row['address_line_2'] || '').trim();
-  const city = String(row['city'] || '').trim();
-  const province = String(row['province'] || '').trim();
-  const country = String(row['country'] || 'Pakistan').trim();
-  const rawBlood = String(row['blood_group'] || 'Unknown').trim();
-  const rawPayer = String(row['payer_type'] || 'Self Pay').trim();
-  const rawPanelCode = String(row['panel_code'] || '').trim();
-  const rawPanelMemberId = String(row['panel_member_id'] || '').trim();
-  const emergencyName = String(row['emergency_contact_name'] || '').trim();
-  const emergencyRelation = String(row['emergency_contact_relation'] || '').trim();
-  const emergencyPhone = String(row['emergency_contact_phone'] || '').trim();
-  const rawStatus = String(row['status'] || 'ACTIVE').trim().toUpperCase();
+  const fullName = String(
+    row['Full Name *'] || row['Full Name'] || row['Patient Name'] || row.full_name || row.fullname || row.name || ''
+  ).trim();
+
+  const fatherGuardianName = String(
+    row['Father / Guardian Name *'] || row['Father / Guardian Name'] || row['Father Name'] || row['Guardian Name'] || row.father_guardian_name || row.fatherguardianname || row.father_name || ''
+  ).trim();
+
+  const rawGuardianRelation = String(
+    row['Guardian Relation'] || row.guardian_relation || row.guardianrelation || 'Father'
+  ).trim();
+
+  const dobStr = String(
+    row['Date of Birth (YYYY-MM-DD)'] || row['Date of Birth'] || row['DOB'] || row.date_of_birth || row.dateofbirth || row.dob || ''
+  ).trim();
+
+  const rawAge =
+    row['Age'] ?? row.age ?? '';
+
+  const rawGender = String(
+    row['Gender *'] || row['Gender'] || row.gender || ''
+  ).trim();
+
+  const rawCnic = String(
+    row['CNIC'] || row['CNIC Number'] || row.cnic || ''
+  ).trim();
+
+  const rawPassport = String(
+    row['Passport Number'] || row.passport_number || row.passport || ''
+  ).trim();
+
+  const rawPhone = String(
+    row['Phone Number *'] || row['Phone Number'] || row['Mobile'] || row['Contact Number'] || row.primary_phone || row.primaryphone || row.phone || ''
+  ).trim();
+
+  const altPhone = String(
+    row['Alternate Phone'] || row.alternate_phone || row.alternatephone || ''
+  ).trim();
+
+  const email = String(
+    row['Email'] || row.email || ''
+  ).trim();
+
+  const addressLine1 = String(
+    row['Address'] || row['Address Line 1'] || row.address_line_1 || row.address || ''
+  ).trim();
+
+  const addressLine2 = String(
+    row['Address Line 2'] || row.address_line_2 || ''
+  ).trim();
+
+  const city = String(
+    row['City'] || row.city || 'Lahore'
+  ).trim();
+
+  const province = String(
+    row['Province'] || row.province || 'Punjab'
+  ).trim();
+
+  const country = String(
+    row['Country'] || row.country || 'Pakistan'
+  ).trim();
+
+  const rawBlood = String(
+    row['Blood Group'] || row.blood_group || row.bloodgroup || 'Unknown'
+  ).trim();
+
+  const rawPayer = String(
+    row['Payer Type'] || row.payer_type || row.payertype || 'Self Pay'
+  ).trim();
+
+  const rawPanelCode = String(
+    row['Panel Code / Name'] || row['Panel Code'] || row['Panel'] || row.panel_code || row.panelcode || ''
+  ).trim();
+
+  const rawPanelMemberId = String(
+    row['Panel Member ID'] || row['Policy Number'] || row.panel_member_id || row.panelmemberid || ''
+  ).trim();
+
+  const emergencyName = String(
+    row['Emergency Contact Name'] || row['Emergency Contact'] || row.emergency_contact_name || row.emergencycontactname || ''
+  ).trim();
+
+  const emergencyRelation = String(
+    row['Emergency Contact Relation'] || row.emergency_contact_relation || ''
+  ).trim();
+
+  const emergencyPhone = String(
+    row['Emergency Contact Phone'] || row.emergency_contact_phone || ''
+  ).trim();
+
+  const rawStatus = String(
+    row['Status (Active/Inactive)'] || row['Status'] || row.status || 'ACTIVE'
+  ).trim().toUpperCase();
 
   if (!fullName) errors.push('Missing patient full_name');
 

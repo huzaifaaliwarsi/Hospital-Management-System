@@ -23,6 +23,7 @@ import {
 import { DepartmentService } from './departmentService';
 import { ServiceRatesService } from './serviceRatesService';
 import { formatDisplayDate } from '../utils/dateConstants';
+import { downloadStaffUsersBulkTemplate, pickDataSheetName } from '../utils/hmsBulkImportTemplates';
 
 // ── Add Staff wizard → backend payload mappers ─────────────────────────────
 
@@ -733,64 +734,7 @@ export class StaffUserService {
   }
 
   static generateImportTemplate(): void {
-    const templateData = [
-      {
-        employee_code: 'EMP-FD-10',
-        full_name: 'Bilal Khan',
-        father_guardian_name: 'Muhammad Khan',
-        cnic: '35201-1122334-1',
-        date_of_birth: '1995-04-12',
-        phone: '+92 300 1234567',
-        alternate_phone: '',
-        email: 'bilal.khan@sharif-saeed.hospital',
-        designation: 'Reception Officer',
-        department_code: '',
-        services: '',
-        staff_category: 'Front Desk / Billing',
-        access_type: 'PORTAL_USER',
-        assigned_portal: 'front-desk',
-        staff_role: 'Front Desk Officer',
-        status: 'ACTIVE',
-        username: 'bilal.reception',
-      },
-      {
-        employee_code: 'EMP-DOC-15',
-        full_name: 'Dr. Shahzad Ali',
-        father_guardian_name: 'Ali Nawaz',
-        cnic: '35202-2233445-2',
-        date_of_birth: '1980-08-01',
-        phone: '+92 300 7654321',
-        alternate_phone: '',
-        email: 'shahzad.ali@sharif-saeed.hospital',
-        designation: 'Consultant Pediatrician',
-        department_code: 'DEP-04',
-        services: 'CONS-OPD, LAB-CBC',
-        staff_category: 'Doctor',
-        access_type: 'STAFF_RECORD_ONLY',
-        assigned_portal: '',
-        staff_role: '',
-        status: 'ACTIVE',
-        username: '',
-      },
-    ];
-
-    const instructionsData = [
-      { Instruction: 'Allowed staff_category values:', ValidOptions: STAFF_CATEGORIES.join(', ') },
-      { Instruction: 'Mandatory fields (all rows):', ValidOptions: 'full_name, father_guardian_name, cnic (xxxxx-xxxxxxx-x), date_of_birth (YYYY-MM-DD), phone, staff_category' },
-      { Instruction: 'Doctor rows only:', ValidOptions: 'department_code (Clinical Department) and services (comma-separated active service codes) are required' },
-      { Instruction: 'Allowed access_type values:', ValidOptions: 'PORTAL_USER, STAFF_RECORD_ONLY' },
-      { Instruction: 'Allowed assigned_portal values:', ValidOptions: 'front-desk, admission, inventory (Leave blank for STAFF_RECORD_ONLY)' },
-      { Instruction: 'Allowed status values:', ValidOptions: 'ACTIVE, INACTIVE, SUSPENDED' },
-      { Instruction: 'Role mapping:', ValidOptions: 'Must match valid roles for the selected portal (e.g. Front Desk Officer, Billing Officer, Admission Officer, Inventory Manager)' },
-      { Instruction: 'Automatic Passwords:', ValidOptions: 'For PORTAL_USER rows, secure temporary credentials will be auto-generated and available for download upon import confirmation.' },
-    ];
-
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(templateData);
-    const wsInfo = XLSX.utils.json_to_sheet(instructionsData);
-    XLSX.utils.book_append_sheet(wb, ws, 'Staff Import Template');
-    XLSX.utils.book_append_sheet(wb, wsInfo, 'Field Instructions');
-    XLSX.writeFile(wb, 'staff_users_import_template.xlsx');
+    downloadStaffUsersBulkTemplate();
   }
 
   static async parseAndValidateImport(file: File): Promise<StaffImportValidationResult> {
@@ -801,8 +745,8 @@ export class StaffUserService {
         try {
           const data = new Uint8Array(e.target?.result as ArrayBuffer);
           const workbook = XLSX.read(data, { type: 'array' });
-          const firstSheetName = workbook.SheetNames[0];
-          const worksheet = workbook.Sheets[firstSheetName];
+          const sheetName = pickDataSheetName(workbook, ['staff', 'employee', 'doctor', 'name']);
+          const worksheet = workbook.Sheets[sheetName];
           const rawRows: any[] = XLSX.utils.sheet_to_json(worksheet);
 
           const existingUsers = this.getStaffUsers();
@@ -823,6 +767,7 @@ export class StaffUserService {
           activeServices.forEach((s) => {
             serviceMap.set(s.code.toLowerCase(), { id: s.id, name: s.name });
             serviceMap.set(s.id.toLowerCase(), { id: s.id, name: s.name });
+            serviceMap.set(s.name.toLowerCase(), { id: s.id, name: s.name });
           });
 
           const seenBatchCodes = new Set<string>();
@@ -833,35 +778,96 @@ export class StaffUserService {
             const rowNumber = idx + 2;
             const errors: string[] = [];
 
-            const employeeCode = String(row.employee_code || row.EmployeeCode || '').trim();
-            const fullName = String(row.full_name || row.FullName || row.Name || '').trim();
-            const fatherGuardianName = String(row.father_guardian_name || row.FatherName || '').trim();
-            const phone = String(row.phone || row.Phone || row.Contact || '').trim();
-            const alternatePhone = String(row.alternate_phone || '').trim();
-            const email = String(row.email || row.Email || '').trim().toLowerCase();
-            const cnic = String(row.cnic || row.CNIC || '').trim();
-            const dateOfBirth = String(row.date_of_birth || row.DateOfBirth || row.dob || '').trim();
-            const designation = String(row.designation || row.Designation || '').trim();
-            const departmentCode = String(row.department_code || row.DepartmentCode || row.department || '').trim();
-            const serviceCodesRaw = String(row.services || row.Services || '').trim();
-            const staffCategory = String(row.staff_category || row.StaffCategory || row.category || '').trim();
-            const accessType = String(row.access_type || row.AccessType || 'PORTAL_USER').trim().toUpperCase();
-            const assignedPortal = String(row.assigned_portal || row.AssignedPortal || row.portal || '').trim().toLowerCase();
-            const staffRole = String(row.staff_role || row.StaffRole || row.role || '').trim();
-            const rawUsername = String(row.username || row.Username || '').trim();
-            const status = String(row.status || row.Status || 'ACTIVE').trim().toUpperCase();
+            const rawEmployeeCode = String(
+              row['Employee Code'] || row.employee_code || row.employeecode || row.EmployeeCode || row['Code'] || ''
+            ).trim();
 
-            if (!employeeCode) {
-              errors.push('Employee Code is required.');
-            } else if (existingCodes.has(employeeCode.toLowerCase())) {
-              errors.push(`Employee Code "${employeeCode}" already exists in system.`);
-            } else if (seenBatchCodes.has(employeeCode.toLowerCase())) {
-              errors.push(`Duplicate Employee Code "${employeeCode}" within uploaded spreadsheet.`);
+            const fullName = String(
+              row['Full Name *'] || row['Full Name'] || row.full_name || row.fullname || row.FullName || row.name || row['Name'] || ''
+            ).trim();
+
+            const fatherGuardianName = String(
+              row['Father / Guardian Name *'] || row['Father / Guardian Name'] || row.father_guardian_name || row.fatherguardianname || row.FatherName || ''
+            ).trim();
+
+            const phone = String(
+              row['Phone Number *'] || row['Phone Number'] || row.phone || row.Phone || row.Contact || row['Mobile'] || ''
+            ).trim();
+
+            const alternatePhone = String(
+              row['Alternate Phone'] || row.alternate_phone || ''
+            ).trim();
+
+            const email = String(
+              row['Email'] || row.email || row.Email || ''
+            ).trim().toLowerCase();
+
+            const cnic = String(
+              row['CNIC *'] || row['CNIC'] || row.cnic || row.CNIC || ''
+            ).trim();
+
+            const dateOfBirth = String(
+              row['Date of Birth (YYYY-MM-DD) *'] || row['Date of Birth'] || row.date_of_birth || row.dateofbirth || row.DateOfBirth || row.dob || ''
+            ).trim();
+
+            const designation = String(
+              row['Designation'] || row.designation || row.Designation || ''
+            ).trim();
+
+            const departmentCode = String(
+              row['Department'] || row.department_code || row.departmentcode || row.DepartmentCode || row.department || ''
+            ).trim();
+
+            const serviceCodesRaw = String(
+              row['Doctor Active Services'] || row.services || row.Services || ''
+            ).trim();
+
+            const staffCategory = String(
+              row['Staff Category *'] || row['Staff Category'] || row.staff_category || row.staffcategory || row.StaffCategory || row.category || ''
+            ).trim();
+
+            const accessType = String(
+              row['Access Type (PORTAL_USER / STAFF_RECORD_ONLY)'] || row['Access Type'] || row.access_type || row.accesstype || row.AccessType || 'PORTAL_USER'
+            ).trim().toUpperCase();
+
+            const assignedPortal = String(
+              row['Assigned Portal'] || row.assigned_portal || row.assignedportal || row.AssignedPortal || row.portal || ''
+            ).trim().toLowerCase();
+
+            const staffRole = String(
+              row['Staff Role'] || row.staff_role || row.staffrole || row.StaffRole || row.role || ''
+            ).trim();
+
+            const rawUsername = String(
+              row['Username'] || row.username || row.Username || ''
+            ).trim();
+
+            const status = String(
+              row['Status (Active/Inactive)'] || row['Status'] || row.status || row.Status || 'ACTIVE'
+            ).trim().toUpperCase();
+
+            // Employee Code is optional — if blank, auto-generate sequential code without database UUIDs
+            let employeeCode = rawEmployeeCode;
+            if (employeeCode) {
+              if (existingCodes.has(employeeCode.toLowerCase())) {
+                errors.push(`Employee Code "${employeeCode}" already exists in system.`);
+              } else if (seenBatchCodes.has(employeeCode.toLowerCase())) {
+                errors.push(`Duplicate Employee Code "${employeeCode}" within uploaded spreadsheet.`);
+              } else {
+                seenBatchCodes.add(employeeCode.toLowerCase());
+              }
             } else {
+              employeeCode = `EMP-${String(existingUsers.length + idx + 1).padStart(3, '0')}`;
+              let counter = existingUsers.length + idx + 1;
+              while (existingCodes.has(employeeCode.toLowerCase()) || seenBatchCodes.has(employeeCode.toLowerCase())) {
+                counter++;
+                employeeCode = `EMP-${String(counter).padStart(3, '0')}`;
+              }
               seenBatchCodes.add(employeeCode.toLowerCase());
             }
 
             if (!fullName) errors.push('Staff Full Name is required.');
+            if (!fatherGuardianName) errors.push('Father / Guardian Name is required.');
             if (!fatherGuardianName) errors.push('Father / Guardian Name is required.');
             if (!phone) errors.push('Phone number is required.');
             if (!dateOfBirth || Number.isNaN(new Date(dateOfBirth).getTime())) {

@@ -26,6 +26,7 @@ import {
   downloadPatientImportTemplate,
   downloadImportErrorRows,
 } from '../../../services/patientExportService';
+import { parseExcelOrCsvFile } from '../../../utils/hmsBulkImportTemplates';
 import { User } from '../../../types';
 
 interface PatientImportModalProps {
@@ -63,43 +64,39 @@ export const PatientImportModal: React.FC<PatientImportModalProps> = ({
     }
   };
 
-  const processFile = (selectedFile: File) => {
+  const processFile = async (selectedFile: File) => {
     setFile(selectedFile);
     setIsProcessing(true);
     setIsCommitted(false);
     setCommitSummary(null);
 
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      try {
-        const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
-
-        // Use first sheet
-        const sheetName = wb.SheetNames[0];
-        const ws = wb.Sheets[sheetName];
-        const rawJson: Record<string, any>[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
-
-        const existing = getAllPatients();
-        const stagedPatients: Patient[] = [];
-        const validatedRows: ImportPatientRowResult[] = [];
-
-        rawJson.forEach((row, index) => {
-          const rowResult = validateImportRow(row, index + 2, existing, stagedPatients);
-          validatedRows.push(rowResult);
-          if (rowResult.patient && rowResult.status === 'VALID') {
-            stagedPatients.push(rowResult.patient);
-          }
-        });
-
-        setResults(validatedRows);
-      } catch (err) {
-        console.error('Error parsing Excel import file:', err);
-      } finally {
+    try {
+      const rawJson = await parseExcelOrCsvFile(selectedFile, ['patient', 'name', 'phone', 'cnic']);
+      if (!rawJson || rawJson.length === 0) {
+        alert('The uploaded spreadsheet appears to be empty or has no recognizable data rows.');
         setIsProcessing(false);
+        return;
       }
-    };
-    reader.readAsBinaryString(selectedFile);
+
+      const existing = getAllPatients();
+      const stagedPatients: Patient[] = [];
+      const validatedRows: ImportPatientRowResult[] = [];
+
+      rawJson.forEach((row, index) => {
+        const rowResult = validateImportRow(row, index + 2, existing, stagedPatients);
+        validatedRows.push(rowResult);
+        if (rowResult.patient && rowResult.status === 'VALID') {
+          stagedPatients.push(rowResult.patient);
+        }
+      });
+
+      setResults(validatedRows);
+    } catch (err) {
+      console.error('Error parsing Excel import file:', err);
+      alert('Could not parse the selected spreadsheet. Please ensure it is a valid Excel or CSV file.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const validCount = results.filter((r) => r.status === 'VALID').length;
@@ -161,10 +158,10 @@ export const PatientImportModal: React.FC<PatientImportModalProps> = ({
               <FileSpreadsheet className="w-6 h-6 text-[#08775A] shrink-0" />
               <div>
                 <h4 className="text-xs font-bold text-emerald-900 uppercase tracking-wider">
-                  Official Patient Import Template
+                  Official Patient Import Template Ready
                 </h4>
                 <p className="text-xs text-emerald-700">
-                  Includes required column headers, formatting rules, and corporate panel codes.
+                  Styled with Navy Blue headers, realistic Pakistani patient examples, Instructions reference sheet & auto-generated MR numbers (no database IDs needed).
                 </p>
               </div>
             </div>

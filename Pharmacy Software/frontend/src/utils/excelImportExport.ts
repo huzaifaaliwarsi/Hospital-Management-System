@@ -1,5 +1,35 @@
-import * as XLSX from 'xlsx';
+import * as XLSX from 'xlsx-js-style';
 import { BulkImportItem, MedicineRow } from '../services/pharmacyApi';
+
+const NAVY_HEADER_STYLE = {
+  fill: { fgColor: { rgb: '0E3A5D' } },
+  font: { name: 'Segoe UI', sz: 10.5, bold: true, color: { rgb: 'FFFFFF' } },
+  alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+  border: {
+    top: { style: 'thin', color: { rgb: '1E4A73' } },
+    bottom: { style: 'medium', color: { rgb: '08253D' } },
+    left: { style: 'thin', color: { rgb: '1E4A73' } },
+    right: { style: 'thin', color: { rgb: '1E4A73' } },
+  },
+};
+
+const INSTRUCTIONS_HEADER_STYLE = {
+  fill: { fgColor: { rgb: '08775A' } },
+  font: { name: 'Segoe UI', sz: 10.5, bold: true, color: { rgb: 'FFFFFF' } },
+  alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+};
+
+const MANDATORY_STYLE = {
+  fill: { fgColor: { rgb: 'FEE2E2' } },
+  font: { name: 'Segoe UI', sz: 9.5, bold: true, color: { rgb: '991B1B' } },
+  alignment: { horizontal: 'center', vertical: 'center' },
+};
+
+const OPTIONAL_STYLE = {
+  fill: { fgColor: { rgb: 'F1F5F9' } },
+  font: { name: 'Segoe UI', sz: 9.5, color: { rgb: '475569' } },
+  alignment: { horizontal: 'center', vertical: 'center' },
+};
 
 export const STANDARD_EXCEL_HEADERS = [
   'Medicine Name *',
@@ -141,11 +171,32 @@ export function downloadSampleTemplate(): void {
     { wch: 24 }, // Purchase / Cost Rate
   ];
 
+  wsTemplate['!rows'] = [{ hpt: 28 }];
+  STANDARD_EXCEL_HEADERS.forEach((_, colIdx) => {
+    const addr = XLSX.utils.encode_cell({ r: 0, c: colIdx });
+    if (wsTemplate[addr]) wsTemplate[addr].s = NAVY_HEADER_STYLE;
+  });
+
   XLSX.utils.book_append_sheet(wb, wsTemplate, 'Medicines Upload');
 
   // Sheet 2: Field Instructions & Guide
   const wsInstructions = XLSX.utils.json_to_sheet(INSTRUCTIONS_ROWS);
-  wsInstructions['!cols'] = [{ wch: 26 }, { wch: 14 }, { wch: 70 }];
+  wsInstructions['!cols'] = [{ wch: 28 }, { wch: 16 }, { wch: 75 }];
+  wsInstructions['!rows'] = [{ hpt: 28 }];
+  ['Column Name', 'Mandatory', 'Description'].forEach((_, colIdx) => {
+    const addr = XLSX.utils.encode_cell({ r: 0, c: colIdx });
+    if (wsInstructions[addr]) wsInstructions[addr].s = INSTRUCTIONS_HEADER_STYLE;
+  });
+
+  const range = XLSX.utils.decode_range(wsInstructions['!ref'] || 'A1:C1');
+  for (let r = 1; r <= range.e.r; r++) {
+    const cell = wsInstructions[XLSX.utils.encode_cell({ r, c: 1 })];
+    if (cell) {
+      const val = String(cell.v || '').toUpperCase();
+      cell.s = val === 'YES' || val === 'MANDATORY' ? MANDATORY_STYLE : OPTIONAL_STYLE;
+    }
+  }
+
   XLSX.utils.book_append_sheet(wb, wsInstructions, 'Instructions');
 
   XLSX.writeFile(wb, `pharmacy_bulk_import_template_${new Date().toISOString().slice(0, 10)}.xlsx`);

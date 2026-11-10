@@ -14,6 +14,10 @@ import {
 import * as XLSX from 'xlsx';
 import { ImportedAdminRow, AdminUser, AdminUserStatus } from '../../../types/adminUser';
 import { AdminUserService } from '../../../services/adminUserService';
+import {
+  downloadAdminUsersBulkTemplate,
+  parseExcelOrCsvFile,
+} from '../../../utils/hmsBulkImportTemplates';
 import { User } from '../../../types';
 
 interface AdminUserImportModalProps {
@@ -41,52 +45,14 @@ export const AdminUserImportModal: React.FC<AdminUserImportModalProps> = ({
   if (!isOpen) return null;
 
   const downloadSampleTemplate = () => {
-    const sampleData = [
-      {
-        full_name: 'Dr. Sarah Tariq',
-        employee_code: 'EMP-ADM-10',
-        username: 'sarah.tariq',
-        email: 'sarah.tariq@sharif-saeed.hospital',
-        phone: '+92 300 1122334',
-        status: 'ACTIVE',
-      },
-      {
-        full_name: 'Muhammad Asif',
-        employee_code: 'EMP-ADM-11',
-        username: 'asif.finance',
-        email: 'asif.finance@sharif-saeed.hospital',
-        phone: '+92 321 4455667',
-        status: 'ACTIVE',
-      },
-      {
-        full_name: 'Noreen Akhtar',
-        employee_code: 'EMP-ADM-12',
-        username: 'noreen.admin',
-        email: 'noreen.akhtar@sharif-saeed.hospital',
-        phone: '+92 333 7788990',
-        status: 'ACTIVE',
-      },
-    ];
-
-    const ws = XLSX.utils.json_to_sheet(sampleData);
-    ws['!cols'] = [
-      { wch: 24 },
-      { wch: 18 },
-      { wch: 18 },
-      { wch: 32 },
-      { wch: 18 },
-      { wch: 14 },
-    ];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Admin_Import_Template');
-    XLSX.writeFile(wb, 'Hospital_Admin_Import_Template.xlsx');
+    downloadAdminUsersBulkTemplate();
   };
 
   const loadSampleDataDirectly = () => {
     const sampleData = [
       {
         full_name: 'Dr. Sarah Tariq',
-        employee_code: 'EMP-ADM-10',
+        employee_code: 'ADM-001',
         username: 'sarah.tariq',
         email: 'sarah.tariq@sharif-saeed.hospital',
         phone: '+92 300 1122334',
@@ -94,7 +60,7 @@ export const AdminUserImportModal: React.FC<AdminUserImportModalProps> = ({
       },
       {
         full_name: 'Muhammad Asif',
-        employee_code: 'EMP-ADM-11',
+        employee_code: 'ADM-002',
         username: 'asif.finance',
         email: 'asif.finance@sharif-saeed.hospital',
         phone: '+92 321 4455667',
@@ -102,7 +68,7 @@ export const AdminUserImportModal: React.FC<AdminUserImportModalProps> = ({
       },
       {
         full_name: 'Noreen Akhtar',
-        employee_code: 'EMP-ADM-12',
+        employee_code: 'ADM-003',
         username: 'noreen.admin',
         email: 'noreen.akhtar@sharif-saeed.hospital',
         phone: '+92 333 7788990',
@@ -115,18 +81,54 @@ export const AdminUserImportModal: React.FC<AdminUserImportModalProps> = ({
 
   const parseRawRows = (rows: Record<string, unknown>[]) => {
     const existing = AdminUserService.getAdminUsers();
+    const existingCodes = new Set(existing.map((u) => u.employeeCode.toLowerCase()));
     const stagedUsernames = new Set<string>();
     const stagedEmails = new Set<string>();
 
     const processed: ImportedAdminRow[] = rows.map((r, idx) => {
-      const fullName = String(r.full_name || r.name || r['Full Name'] || '').trim();
-      const employeeCode = String(r.employee_code || r['Employee Code'] || '').trim();
-      const username = String(r.username || r['Username'] || '').trim().toLowerCase();
-      const email = String(r.email || r['Email'] || '').trim().toLowerCase();
-      const phone = String(r.phone || r['Phone'] || '').trim();
-      const statusRaw = String(r.status || r['Status'] || 'ACTIVE').trim().toUpperCase();
+      const fullName = String(
+        r['Full Name *'] || r['Full Name'] || r.full_name || r.fullname || r.name || ''
+      ).trim();
+
+      const rawEmployeeCode = String(
+        r['Staff Code'] || r['Employee Code'] || r.employee_code || r.employeecode || r.code || ''
+      ).trim();
+
+      const rawUsername = String(
+        r['Username *'] || r['Username'] || r.username || ''
+      ).trim().toLowerCase();
+
+      // Auto-generate username from fullName if left blank
+      const username =
+        rawUsername ||
+        fullName.toLowerCase().replace(/[^a-z0-9]/g, '.').replace(/\.+/g, '.').slice(0, 20) ||
+        `admin.${idx + 1}`;
+
+      const email = String(
+        r['Email *'] || r['Email'] || r.email || ''
+      ).trim().toLowerCase();
+
+      const phone = String(
+        r['Phone Number'] || r['Phone'] || r.phone || ''
+      ).trim();
+
+      const statusRaw = String(
+        r['Status (Active/Inactive)'] || r['Status'] || r.status || 'ACTIVE'
+      ).trim().toUpperCase();
+
       const status: AdminUserStatus =
         statusRaw === 'INACTIVE' ? 'INACTIVE' : statusRaw === 'SUSPENDED' ? 'SUSPENDED' : 'ACTIVE';
+
+      // Auto-generate staff code sequentially if blank
+      let employeeCode = rawEmployeeCode;
+      if (!employeeCode) {
+        employeeCode = `ADM-${String(existing.length + idx + 1).padStart(3, '0')}`;
+        let counter = existing.length + idx + 1;
+        while (existingCodes.has(employeeCode.toLowerCase())) {
+          counter++;
+          employeeCode = `ADM-${String(counter).padStart(3, '0')}`;
+        }
+      }
 
       const validation = AdminUserService.validateImportRow(
         { fullName, username, email, status },
@@ -155,30 +157,20 @@ export const AdminUserImportModal: React.FC<AdminUserImportModalProps> = ({
     setUploadError(null);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      try {
-        const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
-        const wsName = wb.SheetNames[0];
-        const ws = wb.Sheets[wsName];
-        const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws);
-
-        if (!raw || raw.length === 0) {
-          setUploadError('The selected spreadsheet does not contain any readable records.');
-          return;
-        }
-
-        parseRawRows(raw);
-      } catch (err) {
-        setUploadError('Failed to parse file. Please upload a valid .xlsx or .csv template.');
+    try {
+      const raw = await parseExcelOrCsvFile(file, ['admin', 'user', 'name', 'username']);
+      if (!raw || raw.length === 0) {
+        setUploadError('The selected spreadsheet does not contain any readable records.');
+        return;
       }
-    };
-    reader.readAsBinaryString(file);
+      parseRawRows(raw);
+    } catch (err) {
+      setUploadError('Failed to parse file. Please upload a valid .xlsx or .csv template.');
+    }
   };
 
   const handleExecuteImport = async () => {
@@ -283,7 +275,7 @@ export const AdminUserImportModal: React.FC<AdminUserImportModalProps> = ({
                     Official Admin Import Template
                   </div>
                   <div className="text-[11px] text-slate-500">
-                    Columns: full_name, employee_code, username, email, phone, status
+                    Navy Blue styled headers, sample administrative accounts, Instructions sheet & auto-generated codes (no database IDs needed).
                   </div>
                 </div>
                 <div className="flex items-center gap-2 w-full sm:w-auto">

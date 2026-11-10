@@ -197,7 +197,7 @@ export const StaffUserImportModal: React.FC<StaffUserImportModalProps> = ({
                   <div>
                     <h4 className="font-bold text-[#111827]">Download Official Excel Template</h4>
                     <p className="text-[11px] text-[#52665e]">
-                      Includes sample rows, reference department codes, and portal role lists.
+                      Navy Blue styled headers, pre-filled clinical & support staff examples, Instructions reference & auto-generated employee codes (no technical IDs needed).
                     </p>
                   </div>
                 </div>
