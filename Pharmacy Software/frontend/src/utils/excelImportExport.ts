@@ -196,6 +196,7 @@ function parseExcelDate(val: any): string | null {
 }
 
 export interface ParseResult {
+  sheetName: string;
   validItems: BulkImportItem[];
   invalidRows: Array<{ rowNumber: number; data: any; reason: string }>;
   totalRows: number;
@@ -207,12 +208,27 @@ export interface ParseResult {
 export async function parseExcelFile(file: File): Promise<ParseResult> {
   const data = await file.arrayBuffer();
   const workbook = XLSX.read(data, { type: 'array' });
-  const firstSheetName = workbook.SheetNames[0];
-  if (!firstSheetName) {
+  if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
     throw new Error('Workbook contains no sheets.');
   }
 
-  const sheet = workbook.Sheets[firstSheetName];
+  // Intelligently find the sheet containing medicine columns (e.g. 'Bulk Upload', 'Medicines Upload', or any sheet with 'Medicine Name' / 'Base Stock Unit')
+  let targetSheetName = workbook.SheetNames.find((name) => {
+    const ws = workbook.Sheets[name];
+    if (!ws) return false;
+    const headerRow: any[] = XLSX.utils.sheet_to_json(ws, { header: 1 })[0] || [];
+    return headerRow.some((col: any) => typeof col === 'string' && (
+      col.toLowerCase().includes('medicine name') || col.toLowerCase().includes('base stock unit')
+    ));
+  });
+
+  if (!targetSheetName) {
+    targetSheetName = workbook.SheetNames.find((name) =>
+      /bulk|upload|medicine|formulary|stock|item/i.test(name)
+    ) || workbook.SheetNames[0];
+  }
+
+  const sheet = workbook.Sheets[targetSheetName];
   if (!sheet) {
     throw new Error('Sheet could not be read.');
   }
@@ -284,6 +300,7 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
   });
 
   return {
+    sheetName: targetSheetName,
     validItems,
     invalidRows,
     totalRows: rawRows.length,

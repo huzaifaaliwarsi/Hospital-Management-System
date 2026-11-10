@@ -199,6 +199,11 @@ export const BulkImportMedicineModal: React.FC<Props> = ({ open, onClose, onSucc
                       <FileSpreadsheet className="h-5 w-5 text-emerald-700" />
                       <div>
                         <span className="font-bold text-slate-800">{file?.name}</span>
+                        {parseResult.sheetName && (
+                          <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full ml-2">
+                            Sheet: {parseResult.sheetName}
+                          </span>
+                        )}
                         <div className="text-[11px] text-slate-400">
                           {parseResult.validItems.length} valid medicines detected &bull; {parseResult.invalidRows.length} errors
                         </div>
