@@ -21,7 +21,6 @@ import { UsersPage } from './pages/UsersPage';
 import { StockMovementsPage } from './pages/StockMovementsPage';
 import { HmsRequestQueuePage } from './pages/HmsRequestQueuePage';
 import { ReportView } from './components/ReportView';
-import { OperatingProfitPage } from './pages/OperatingProfitPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ComingSoonPage } from './pages/ComingSoonPage';
 import { useHmsNotifications } from './context/HmsNotificationContext';
@@ -32,6 +31,7 @@ import { useHmsNotifications } from './context/HmsNotificationContext';
 // table/export UI and navigation.ts's 'reports' group for the menu entries.
 const REPORT_PAGES: { page: string; type: import('./components/ReportView').ReportType; title: string; subtitle: string }[] = [
   { page: 'reports-income-expense', type: 'INCOME_EXPENSE', title: 'Income & Expense', subtitle: 'Full-payment revenue, matched medicine cost and supplier payments.' },
+  { page: 'reports-operating-profit', type: 'OPERATING_PROFIT', title: 'Operating Profit', subtitle: 'Recognized revenue, matched medicine COGS, overhead expenses and net operating result.' },
   { page: 'reports-sales', type: 'SALES_COLLECTION', title: 'Detailed Income', subtitle: 'Every retail and HMS-linked invoice, payment status and collector.' },
   { page: 'reports-hms', type: 'HMS_DISPENSE', title: 'HMS Request / Dispense', subtitle: 'Inpatient medicine requests, dispensing status and clearance.' },
   { page: 'reports-purchase', type: 'PURCHASE', title: 'Purchase Inward', subtitle: 'Goods received, landed cost and vendor payment status per GRN.' },
@@ -50,7 +50,7 @@ const REPORT_PAGES: { page: string; type: import('./components/ReportView').Repo
 const VALID_PAGES = [
   'dashboard', 'medicines', 'pos', 'invoices', 'hms-requests', 'stock-movements',
   'vendors', 'purchases', 'stock-in', 'balance-sheet', 'settlements', 'hms-receivables', 'expenses',
-  'users', 'settings', 'reports', 'reports-operating-profit', ...REPORT_PAGES.map((r) => r.page),
+  'users', 'settings', 'reports', ...REPORT_PAGES.map((r) => r.page),
 ];
 
 function pageFromPath(): string {
@@ -60,7 +60,6 @@ function pageFromPath(): string {
 
 function findLabel(groups: NavGroup[], id: string): string {
   if (id === 'reports') return 'Reports & Analytics';
-  if (id === 'reports-operating-profit') return 'Operating Profit Report';
   const reportPage = REPORT_PAGES.find((r) => r.page === id);
   if (reportPage) return reportPage.title;
   for (const g of groups) {
@@ -142,8 +141,6 @@ const App: React.FC = () => {
         return <UsersPage />;
       case 'settings':
         return <SettingsPage />;
-      case 'reports-operating-profit':
-        return <OperatingProfitPage onNavigate={navigate} />;
       case 'reports':
         return (
           <ReportView

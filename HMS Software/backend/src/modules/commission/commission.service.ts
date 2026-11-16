@@ -294,13 +294,13 @@ export const commissionService = {
         return { amount: total, count: previous.length };
       }
       const balances = rows.map(row => commissionBalance(row));
-      if (rows.some((row, i) => !['APPROVED', 'PARTIALLY_PAID'].includes(row.status) || balances[i].remaining.lte(0))) throw new ConflictError('Commission balances changed. Refresh and review the total before paying.');
+      if (rows.some((row, i) => !['APPROVED', 'PARTIALLY_PAID'].includes(row.status) || balances[i]!.remaining.lte(0))) throw new ConflictError('Commission balances changed. Refresh and review the total before paying.');
       const total = balances.reduce((sum, balance) => sum.plus(balance.remaining), new Decimal(0));
       if (!total.equals(body.amount)) throw new ConflictError('Commission balances changed. Refresh and review the total before paying.');
       // Keep allocations linked to each sale for statements and payment reversals.
       // All allocations and cash deductions commit together or roll back together.
       for (const [i, row] of rows.entries()) {
-        const amount = balances[i].remaining;
+        const amount = balances[i]!.remaining;
         const cashEntryId = await postStaffPaymentCash(tx, actorId, amount, body.method, 'COMMISSION_PAYMENT', `Combined commission payment ${body.requestKey}, accrual ${row.id}`);
         await tx.commissionPayout.create({ data: { doctorCommissionAccrualId: row.id, amount, method: body.method, reference: body.reference, requestKey: `${body.requestKey}:${row.id}`, paidById: actorId, cashEntryId } });
         await tx.doctorCommissionAccrual.update({ where: { id: row.id }, data: { status: 'PAID' } });

@@ -14,7 +14,7 @@ import {
   fetchCommissionAccruals,
   approveCommissionAccrual,
   approveAllCommissionAccruals,
-  payCommissionAccrual,
+  payDoctorCommissionTotal,
   adjustCommission,
 } from '../../../services/commissionService';
 import { fetchStaffUsers } from '../../../services/staffUserService';
@@ -28,6 +28,8 @@ import { ConfirmModal } from '../../../components/common/ConfirmModal';
 import { TextInput, NumberInput, Select } from '../../../components/forms/FormControls';
 import { useToast } from '../../../context/ToastContext';
 import { HospitalKpiHeader, KpiItem } from '../../../components/common/HospitalKpiHeader';
+
+type DoctorPaymentTotal = { staffId: string; doctorName: string; accrualIds: string[]; remaining: number };
 
 const emptyForm = (): CommissionRuleFormValues => ({
   staffId: '',
@@ -66,8 +68,7 @@ export const DoctorCommissionView: React.FC = () => {
 
   const [accruals, setAccruals] = useState<CommissionAccrual[]>([]);
   const [isLoadingAccruals, setIsLoadingAccruals] = useState(true);
-  const [payingAccrual, setPayingAccrual] = useState<CommissionAccrual | null>(null);
-  const [payAmount, setPayAmount] = useState<number | ''>('');
+  const [payingAccrual, setPayingAccrual] = useState<DoctorPaymentTotal | null>(null);
   const [payMethod, setPayMethod] = useState('BANK');
   const [payReference, setPayReference] = useState('');
   const [payRequestKey, setPayRequestKey] = useState('');
@@ -120,19 +121,18 @@ export const DoctorCommissionView: React.FC = () => {
     }
   };
 
-  const openPay = (accrual: CommissionAccrual) => {
+  const openPay = (accrual: DoctorPaymentTotal) => {
     setPayRequestKey(crypto.randomUUID());
     setPayingAccrual(accrual);
-    setPayAmount(accrual.remaining);
     setPayMethod('BANK');
     setPayReference('');
   };
 
   const submitPay = async () => {
-    if (!payingAccrual || payAmount === '' || Number(payAmount) <= 0) return;
+    if (!payingAccrual || isSubmittingPay) return;
     setIsSubmittingPay(true);
     try {
-      await payCommissionAccrual(payingAccrual.id, { requestKey: payRequestKey, amount: Number(payAmount), method: payMethod, reference: payReference || undefined });
+      await payDoctorCommissionTotal({ staffId: payingAccrual.staffId, accrualIds: payingAccrual.accrualIds, requestKey: payRequestKey, amount: payingAccrual.remaining, method: payMethod, reference: payReference || undefined });
       toast.success(`Commission payment recorded for ${payingAccrual.doctorName}.`);
       setPayingAccrual(null);
       await loadAccruals();
@@ -179,6 +179,18 @@ export const DoctorCommissionView: React.FC = () => {
   const filteredAccruals = useMemo(() => {
     return accruals.filter((a) => doctorFilter === 'All' || a.staffId === doctorFilter);
   }, [accruals, doctorFilter]);
+
+  const paymentTotals = useMemo(() => {
+    const totals = new Map<string, DoctorPaymentTotal>();
+    for (const a of filteredAccruals) {
+      if (!['APPROVED', 'PARTIALLY_PAID'].includes(a.status) || a.remaining <= 0) continue;
+      const total = totals.get(a.staffId) ?? { staffId: a.staffId, doctorName: a.doctorName, accrualIds: [], remaining: 0 };
+      total.accrualIds.push(a.id);
+      total.remaining = (Math.round(total.remaining * 100) + Math.round(a.remaining * 100)) / 100;
+      totals.set(a.staffId, total);
+    }
+    return [...totals.values()];
+  }, [filteredAccruals]);
 
   const pendingAccruals = useMemo(() => {
     return filteredAccruals.filter((a) => a.status === 'ACCRUED');
@@ -573,15 +585,6 @@ export const DoctorCommissionView: React.FC = () => {
                               <ShieldCheck className="h-3.5 w-3.5" /> Approve
                             </button>
                           )}
-                          {(a.status === 'APPROVED' || a.status === 'PARTIALLY_PAID') && a.remaining > 0 && (
-                            <button
-                              type="button"
-                              onClick={() => openPay(a)}
-                              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg cursor-pointer shadow-2xs transition-colors"
-                            >
-                              <Banknote className="h-3.5 w-3.5" /> Pay
-                            </button>
-                          )}
                           {['APPROVED', 'PARTIALLY_PAID', 'PAID'].includes(a.status) && (
                             <button
                               className="ml-2 text-xs font-semibold text-[#08775A] hover:underline cursor-pointer"
@@ -600,21 +603,33 @@ export const DoctorCommissionView: React.FC = () => {
         )}
       </div>
 
+      <section className="bg-white border border-[#e2eae5] rounded-xl p-4 space-y-3">
+        <h2 className="font-bold text-[#123e2b]">Overall Commission Payment</h2>
+        <p className="text-xs text-slate-500">Pay each doctor's approved outstanding commission together across all services and runs. Totals include tax, refunds, adjustments and previous payments. Sale records remain above.</p>
+        {!isLoadingAccruals && !accrualError && !paymentTotals.length && <p className="text-sm text-slate-500">No approved commission remaining to pay.</p>}
+        {paymentTotals.map(total => <div key={total.staffId} className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
+          <div><p className="text-sm font-semibold">{total.doctorName}</p><p className="text-xs text-slate-500">{total.accrualIds.length} approved entries</p></div>
+          <div className="flex items-center gap-4"><strong className="text-[#08775A]">{formatPKR(total.remaining)}</strong>
+            <button type="button" disabled={isLoadingAccruals || !!accrualError || isSubmittingPay} onClick={() => openPay(total)} className="px-3 py-2 rounded-lg bg-[#08775A] text-white text-xs font-semibold disabled:opacity-50">Pay Total</button>
+          </div>
+        </div>)}
+      </section>
+
       {adjusting && <FinancialAdjustmentModal title={`Commission correction — ${adjusting.doctorName}`} onClose={() => setAdjusting(null)} onSave={async (amount, reason) => { await adjustCommission(adjusting.id, amount, reason); await loadAccruals(); }} />}
 
       {payingAccrual && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
           <div className="bg-white rounded-2xl max-w-sm w-full shadow-2xl border border-slate-200 overflow-hidden">
             <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200">
-              <h3 className="font-bold text-slate-900 text-sm">Record Commission Payment</h3>
-              <p className="text-[11px] text-slate-500">{payingAccrual.doctorName} · {payingAccrual.serviceName || '—'}</p>
+              <h3 className="font-bold text-slate-900 text-sm">Pay Overall Commission</h3>
+              <p className="text-[11px] text-slate-500">{payingAccrual.doctorName} · {payingAccrual.accrualIds.length} approved entries</p>
             </div>
             <div className="p-5 space-y-3.5">
               <p className="text-xs text-slate-600">Cash payments deduct from your cash balance sheet. Bank/Card/Online records the payout; no hospital bank account balance is maintained here.</p>
               <PreferredPaymentAccount staffId={payingAccrual.staffId} purpose="Commission" onMethod={setPayMethod} />
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Amount (PKR) — remaining {formatPKR(payingAccrual.remaining)}</label>
-                <input type="number" onWheel={(e) => e.currentTarget.blur()} min={0} value={payAmount} onChange={(e) => setPayAmount(e.target.value === '' ? '' : Number(e.target.value))} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono bg-white" />
+                <p className="text-xl font-bold text-[#08775A]">{formatPKR(payingAccrual.remaining)}</p>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Method</label>
@@ -630,7 +645,7 @@ export const DoctorCommissionView: React.FC = () => {
                 <input type="text" value={payReference} onChange={(e) => setPayReference(e.target.value)} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white" />
               </div>
               <div className="flex justify-end gap-2 pt-2 border-t border-slate-200">
-                <button type="button" onClick={() => setPayingAccrual(null)} className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer">Cancel</button>
+                <button type="button" disabled={isSubmittingPay} onClick={() => setPayingAccrual(null)} className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer">Cancel</button>
                 <button type="button" disabled={isSubmittingPay} onClick={submitPay} className="px-3.5 py-1.5 text-xs font-semibold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg cursor-pointer disabled:opacity-50">
                   {isSubmittingPay ? 'Saving…' : 'Record Payment'}
                 </button>

@@ -5,6 +5,7 @@ import { formatPKR, formatNumber } from '../utils/format';
 
 export type ReportType =
   | 'INCOME_EXPENSE'
+  | 'OPERATING_PROFIT'
   | 'SALES_COLLECTION'
   | 'HMS_DISPENSE'
   | 'PURCHASE'
@@ -25,6 +26,7 @@ interface ReportColumn {
 
 export const REPORT_COLUMNS: Record<ReportType, ReportColumn[]> = {
   INCOME_EXPENSE: [{ key: 'section', label: 'Section' }, { key: 'metric', label: 'Financial Metric' }, { key: 'amount', label: 'Amount (PKR)', money: true, align: 'right' }],
+  OPERATING_PROFIT: [{ key: 'section', label: 'Section' }, { key: 'metric', label: 'Financial Metric' }, { key: 'amount', label: 'Amount (PKR)', money: true, align: 'right' }],
   SALES_COLLECTION: [
     { key: 'invoiceNumber', label: 'Invoice #' },
     { key: 'channel', label: 'Channel' },
@@ -150,8 +152,8 @@ interface Props {
 }
 
 export const ALL_REPORTS_LIST = [
-  { page: 'reports-operating-profit', type: 'INCOME_EXPENSE' as ReportType, label: 'Operating Profit' },
   { page: 'reports-income-expense', type: 'INCOME_EXPENSE' as ReportType, label: 'Income & Expense' },
+  { page: 'reports-operating-profit', type: 'OPERATING_PROFIT' as ReportType, label: 'Operating Profit' },
   { page: 'reports-sales', type: 'SALES_COLLECTION' as ReportType, label: 'Detailed Income' },
   { page: 'reports-hms', type: 'HMS_DISPENSE' as ReportType, label: 'HMS Dispense' },
   { page: 'reports-purchase', type: 'PURCHASE' as ReportType, label: 'Purchase Inward' },
@@ -171,8 +173,9 @@ export const ALL_REPORTS_LIST = [
  */
 export const ReportView: React.FC<Props> = ({ type, title, subtitle, onNavigate, currentPage }) => {
   const today = new Date(Date.now() + 5 * 3600000).toISOString().slice(0, 10);
-  const [from, setFrom] = useState(type === 'INCOME_EXPENSE' ? today : '');
-  const [to, setTo] = useState(type === 'INCOME_EXPENSE' ? today : '');
+  const isStatement = type === 'INCOME_EXPENSE' || type === 'OPERATING_PROFIT';
+  const [from, setFrom] = useState(isStatement ? today : '');
+  const [to, setTo] = useState(isStatement ? today : '');
   const [rows, setRows] = useState<any[]>([]);
   const [totals, setTotals] = useState<Record<string, number | null> | null>(null);
   const [loading, setLoading] = useState(false);
@@ -302,15 +305,15 @@ export const ReportView: React.FC<Props> = ({ type, title, subtitle, onNavigate,
         <p className="text-xs text-slate-500 mt-1">{subtitle}</p><p className="text-xs text-slate-500 mt-1">{reportPeriod}</p>
       </div>
 
-      {(type === 'SALES_COLLECTION' || type === 'INCOME_EXPENSE') && totals && <div className="p-3 bg-emerald-50 rounded-lg text-sm">
-        <p>Recognized Revenue: {formatPKR(totals.recognizedRevenue ?? 0)} | COGS: {formatPKR(totals.recognizedCogs ?? 0)} | Operating Expenses: {formatPKR(totals.operatingExpenses ?? 0)} | Operating Profit / Loss: {totals.operatingProfit == null ? 'Unavailable: incomplete history' : formatPKR(totals.operatingProfit)}</p>
+      {(type === 'SALES_COLLECTION' || isStatement) && totals && <div className="p-3 bg-emerald-50 rounded-lg text-sm">
+        <p>Recognized Revenue: {formatPKR(totals.recognizedRevenue ?? 0)} | COGS: {formatPKR(totals.recognizedCogs ?? totals.medicineCogs ?? 0)} | Operating Expenses: {formatPKR(totals.operatingExpenses ?? 0)} | Operating Profit / Loss: {totals.operatingProfit == null ? 'Unavailable: incomplete history' : formatPKR(totals.operatingProfit)}</p>
         <p>Revenue is recognized only on full payment. Collections follow payment dates; outstanding includes earlier invoices. Tax and stock purchases are excluded from revenue/profit.</p>
         {!!totals.incompleteInvoices && <p role="alert">{totals.incompleteInvoices} invoices need dated collection/return or historical cost evidence. Revenue includes verified amounts only.</p>}
       </div>}
       {/* Filter Toolbar — date range only; the report type is this page's identity, not a dropdown anymore */}
       <div className="bg-white p-3 rounded-xl border border-slate-300/80 shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-wrap items-center justify-between gap-2.5">
         <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-[280px]">
-          {type === 'INCOME_EXPENSE' && <select aria-label="Date preset" defaultValue="today" className="h-9 border rounded-lg px-3 text-xs" onChange={e => {
+          {isStatement && <select aria-label="Date preset" defaultValue="today" className="h-9 border rounded-lg px-3 text-xs" onChange={e => {
             if (e.target.value === 'custom') return;
             const date = new Date(today + 'T12:00:00Z');
             if (e.target.value === 'yesterday') date.setUTCDate(date.getUTCDate() - 1);
@@ -416,7 +419,7 @@ export const ReportView: React.FC<Props> = ({ type, title, subtitle, onNavigate,
         </div>
 
         <div ref={bottomScrollRef} onScroll={syncBottomToTop} className="overflow-x-auto max-h-[calc(100vh-380px)] scrollbar-thin">
-          <table className={`w-full ${type === "INCOME_EXPENSE" ? "" : "min-w-[1400px]"} border-collapse text-left text-xs}`}>
+          <table className={`w-full ${isStatement ? "" : "min-w-[1400px]"} border-collapse text-left text-xs`}>
             <thead className="bg-[#f8fafc] text-slate-700 font-bold sticky top-0 z-10 border-b border-slate-200 uppercase tracking-wider select-none text-xs">
               <tr>
                 <th className="py-3 px-3.5 text-center border-r border-slate-200 w-14 whitespace-nowrap">#</th>
@@ -475,7 +478,7 @@ export const ReportView: React.FC<Props> = ({ type, title, subtitle, onNavigate,
                 ))
               )}
             </tbody>
-            {type !== 'INCOME_EXPENSE' && totals && !loading && !error && rows.length > 0 && (
+            {!isStatement && totals && !loading && !error && rows.length > 0 && (
               <tfoot className="bg-[#f8fafc] font-bold border-t-2 border-b border-slate-300 text-slate-900 text-xs">
                 <tr>
                   <td className="py-4 px-3.5 text-center border-r border-slate-200 whitespace-nowrap">

@@ -80,6 +80,7 @@ export const settingsService = {
       // HMS↔Pharmacy inter-entity settlement requests also reference the
       // invoice (RESTRICT) — must go before the invoice too.
       await tx.hmsReceivableSettlement.deleteMany({});
+      await tx.pharmacyFinancialEvent.deleteMany({});
       const invoices = await tx.pharmacyInvoice.deleteMany({});
 
       // 3. Purchases, Purchase Orders & Vendor Ledgers

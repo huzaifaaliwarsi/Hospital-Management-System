@@ -79,7 +79,7 @@ export async function operatingProfitReport(
   // Include invoices that either have gross sales, collections, recognized revenue, or were created in range
   const invoicesList = rows
     .filter((r) => {
-      if (r.grossSales.gt(0) || r.collections.gt(0) || r.recognizedRevenue.gt(0)) return true;
+      if (r.grossSales.gt(0) || r.collections.gt(0) || r.recognizedRevenue.gt(0) || r.outstanding.gt(0)) return true;
       if (range.gte && r.createdAt < range.gte) return false;
       if (range.lte && r.createdAt > range.lte) return false;
       return true;
@@ -202,7 +202,43 @@ export async function operatingProfitReport(
       };
     });
 
+  const metrics = [
+    ['1. Revenue & Sales', 'Gross Sales (Dispensed Value)', grossSales],
+    ['1. Revenue & Sales', 'Discounts & Returns', discounts],
+    ['1. Revenue & Sales', 'Net Sales / Billing (excluding tax)', netBilling],
+    ['1. Revenue & Sales', 'Actual Collections Received', actualCollections],
+    ['1. Revenue & Sales', 'Sales Returns & Cash Refunds', totalRefunded],
+    ['1. Revenue & Sales', 'Outstanding Receivables (as of report end)', outstanding],
+    ['2. Revenue Recognition', 'Recognized Revenue (Fully Paid Sales, excl. tax)', recognizedRevenue],
+    ['3. Cost of Goods Sold', 'Medicine COGS (Historical Batch Cost)', medicineCogs],
+    ['4. Gross Margin', 'Gross Profit (Recognized Revenue − COGS)', grossProfit],
+    ['5. Operating Overheads', 'Operating Expenses (Overhead & Operations)', operatingExpenses],
+    ['6. Operating Result', 'Net Operating Profit / Loss', operatingProfit],
+    ['7. Vendor Settlements (Informational)', 'Total Vendor Payments (Capital movement — not an expense)', totalVendorPayments],
+    ['7. Vendor Settlements (Informational)', 'Supplier Refunds Received', supplierRefundsReceived],
+    ['7. Vendor Settlements (Informational)', 'Vendor Outstanding Balance', vendorOutstanding],
+    ['7. Vendor Settlements (Informational)', 'Supplier Advances / Credits', supplierAdvances],
+  ] as const;
+
+  const tableRows = metrics.map(([section, metric, amount]) => ({
+    section,
+    metric,
+    amount,
+  }));
+
+  const totalsObj = {
+    ...totals,
+    grossProfit,
+    operatingProfit,
+    vendorPayments: totalVendorPayments,
+    vendorRefunds: supplierRefundsReceived,
+    vendorOutstanding,
+    supplierAdvances,
+  };
+
   return {
+    rows: tableRows,
+    totals: totalsObj,
     breakdown: {
       grossSales,
       discounts,
