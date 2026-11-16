@@ -100,7 +100,9 @@ export const approveDiscountSchema = z.object({
 export type ApproveDiscountBody = z.infer<typeof approveDiscountSchema>;
 
 export const collectPaymentSchema = z.object({
-  amount: z.coerce.number().positive('Payment amount must be greater than zero'),
+  requestKey: z.string().uuid().optional(),
+  paymentAccount: z.string().trim().min(2).max(150).optional(),
+  amount: z.coerce.number().finite().positive('Payment amount must be greater than zero').multipleOf(0.01),
   paymentMethod: z.enum(['CASH', 'CARD', 'BANK', 'ONLINE']).default('CASH'),
   reference: z.string().optional(),
 });
@@ -109,6 +111,7 @@ export type CollectPaymentBody = z.infer<typeof collectPaymentSchema>;
 
 export const refundPaymentSchema = z.object({
   requestKey: z.string().uuid().optional(),
+  paymentAccount: z.string().trim().min(2).max(150).optional(),
   paymentReceiptId: z.string().uuid().optional(),
   amount: z.coerce.number().positive('Refund amount must be greater than zero'),
   refundMethod: z.enum(['CASH', 'CARD', 'BANK', 'ONLINE']).default('CASH'),
@@ -118,6 +121,7 @@ export const refundPaymentSchema = z.object({
 export type RefundPaymentBody = z.infer<typeof refundPaymentSchema>;
 
 export const listInvoicesQuerySchema = z.object({
+  transactions: z.enum(['true', 'false']).optional(),
   sourceType: z.enum(['APPOINTMENT', 'WALK_IN', 'ADMISSION']).optional(),
   encounterType: z.enum(['OPD', 'OBSERVATION', 'EMERGENCY', 'CUSTOM']).optional(),
   status: z.enum(['UNPAID', 'PARTIALLY_PAID', 'PAID', 'VOID']).optional(),

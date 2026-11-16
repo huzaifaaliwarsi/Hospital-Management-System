@@ -141,6 +141,7 @@ export const cashService = {
         isPhysicalCash: t.isPhysicalCash,
         isSettled: t.isSettled,
         occurredAt: t.occurredAt,
+        paymentAccount: t.paymentReceipt?.paymentAccount ?? null,
         receiptNumber: t.paymentReceipt?.receiptNumber ?? null,
         invoiceNumber: t.paymentReceipt?.hospitalInvoice?.invoiceNumber ?? null,
         paymentMethod: t.paymentReceipt?.method ?? (t.isPhysicalCash ? 'CASH' : 'NON_CASH'),

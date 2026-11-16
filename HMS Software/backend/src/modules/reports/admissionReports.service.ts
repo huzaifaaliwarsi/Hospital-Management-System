@@ -1,3 +1,4 @@
+import { invoiceAsOf, receiptsThrough, remittancesThrough } from '@/shared/invoiceAsOf';
 import { Decimal } from '@prisma/client/runtime/library';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
@@ -58,13 +59,13 @@ export const admissionReportsService = {
       prisma.admissionRecord.count({ where: { status: 'DISCHARGE_PENDING', ...deptFilter } }),
       prisma.bed.findMany({ select: { status: true } }),
       prisma.hospitalInvoice.findMany({
-        where: { admissionRecordId: { not: null }, status: { in: ['UNPAID', 'PARTIALLY_PAID'] }, ...(query.departmentId ? { departmentId: query.departmentId } : {}) },
-        select: { total: true, paidTotal: true },
+        where: { admissionRecordId: { not: null }, createdAt: { lte: end }, status: { not: 'VOID' }, ...(query.departmentId ? { departmentId: query.departmentId } : {}) },
+        select: { total: true, status: true, panelReceivable: true, paymentReceipts: receiptsThrough(end), panelRemittanceAllocations: remittancesThrough(end) },
       }),
     ]);
 
     const occupied = beds.filter((b) => b.status === 'OCCUPIED').length;
-    const outstanding = outstandingInvoices.reduce((s, i) => s.plus(i.total.minus(i.paidTotal)), new Decimal(0));
+    const outstanding = outstandingInvoices.map(invoiceAsOf).reduce((s, i) => s.plus(i.balance.due), new Decimal(0));
 
     const dischargedWithStay = await prisma.admissionRecord.findMany({
       where: { dischargedAt: { not: null }, admittedAt: { not: null }, ...deptFilter },
@@ -376,27 +377,28 @@ export const admissionReportsService = {
   /** Guide §5.15 — active/discharged admissions with Hospital balances still outstanding (never includes standalone Pharmacy due). */
   async getInpatientOutstandingBalance(query: InpatientOutstandingQuery) {
     const { start, end, label } = resolveDateRange(query);
-    const rows = await prisma.hospitalInvoice.findMany({
+    const invoices = await prisma.hospitalInvoice.findMany({
       where: {
         admissionRecordId: { not: null },
-        createdAt: { gte: start, lte: end },
-        status: { in: ['UNPAID', 'PARTIALLY_PAID'] },
+        createdAt: { lte: end },
+        status: { not: 'VOID' },
         ...(query.departmentId ? { departmentId: query.departmentId } : {}),
         ...(query.payerType === 'PANEL' ? { corporatePanelId: { not: null } } : {}),
         ...(query.payerType === 'SELF_PAY' ? { corporatePanelId: null } : {}),
         ...(query.status ? { admissionRecord: { status: query.status } } : {}),
       },
-      include: { ...patientNameSelect, admissionRecord: { select: { admissionNumber: true, status: true } } },
+      include: { paymentReceipts: receiptsThrough(end), panelRemittanceAllocations: remittancesThrough(end), ...patientNameSelect, admissionRecord: { select: { admissionNumber: true, status: true } } },
       orderBy: { createdAt: 'desc' },
-      take: 500,
+
     });
 
+    const rows = invoices.map(invoiceAsOf).filter(r => r.balance.due.gt(0));
     const totalOutstanding = rows.reduce((s, r) => {
-      const diff = r.total.minus(r.paidTotal);
+      const diff = r.balance.due;
       return diff.greaterThan(0) ? s.plus(diff) : s;
     }, new Decimal(0));
     const activeOutstanding = rows.filter((r) => r.admissionRecord?.status !== 'DISCHARGED').reduce((s, r) => {
-      const diff = r.total.minus(r.paidTotal);
+      const diff = r.balance.due;
       return diff.greaterThan(0) ? s.plus(diff) : s;
     }, new Decimal(0));
 
@@ -404,12 +406,12 @@ export const admissionReportsService = {
       period: { label, start: start.toISOString(), end: end.toISOString() },
       summary: { totalHospitalOutstanding: totalOutstanding, activeOutstanding, dischargedOutstanding: totalOutstanding.minus(activeOutstanding) },
       rows: rows.map((r) => {
-        const diff = r.total.minus(r.paidTotal);
+        const diff = r.balance.due;
         return {
           admissionNumber: r.admissionRecord!.admissionNumber,
           patient: patientDisplayName(r),
           hospitalNet: r.total,
-          hospitalPaid: r.paidTotal,
+          hospitalPaid: r.balance.collected,
           hospitalOutstanding: diff.greaterThan(0) ? diff : new Decimal(0),
           admissionStatus: r.admissionRecord!.status,
           invoiceStatus: r.status,

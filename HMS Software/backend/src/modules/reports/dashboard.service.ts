@@ -1,3 +1,4 @@
+import { invoiceAsOf, receiptsThrough, remittancesThrough } from '@/shared/invoiceAsOf';
 import { prisma } from '@/db/client';
 import { getPositiveBatchBalances } from '@/shared/inventoryBatchBalances';
 import type { GetSuperAdminDashboardQuery } from './dashboard.schemas';
@@ -331,7 +332,8 @@ export const dashboardService = {
     const [invoices, receipts] = await Promise.all([
       prisma.hospitalInvoice.findMany({
         where: {
-          createdAt: { gte: periodStart, lte: periodEnd },
+          createdAt: { lte: periodEnd },
+          status: { not: 'VOID' },
         },
         select: {
           id: true,
@@ -339,6 +341,9 @@ export const dashboardService = {
           discountTotal: true,
           total: true,
           paidTotal: true,
+          panelReceivable: true,
+          paymentReceipts: receiptsThrough(periodEnd),
+          panelRemittanceAllocations: remittancesThrough(periodEnd),
           status: true,
           panelPatientId: true,
           encounterType: true,
@@ -369,19 +374,20 @@ export const dashboardService = {
     let emergencyInvoicesCount = 0;
     let observationInvoicesCount = 0;
 
-    for (const inv of invoices) {
+    const periodInvoices = invoices.filter(inv => inv.createdAt >= periodStart);
+    for (const inv of invoices.map(invoiceAsOf)) {
       const sub = Number(inv.subtotal || 0);
       const disc = Number(inv.discountTotal || 0);
       const tot = Number(inv.total || 0);
       const pd = Number(inv.paidTotal || 0);
-      const bal = Math.max(0, tot - pd);
+      const bal = inv.balance.due.toNumber();
+      outstandingAmount += bal;
+      if (inv.createdAt < periodStart) continue;
 
       grossBilling += sub;
       discounts += disc;
       netBilling += tot;
       paidAmount += pd;
-      outstandingAmount += bal;
-
       if (inv.status === 'PARTIALLY_PAID') {
         partiallyPaidInvoicesCount += 1;
         partiallyPaidAmount += pd;
@@ -891,7 +897,7 @@ export const dashboardService = {
         value: `PKR ${netBilling.toLocaleString()}`,
         numericValue: netBilling,
         iconName: 'Receipt',
-        contextText: `${invoices.length} invoices generated`,
+        contextText: `${periodInvoices.length} invoices generated`,
         colorClass: 'text-[#08775A]',
         accentBg: 'bg-emerald-50',
         navModule: 'billing_overview',
@@ -990,7 +996,7 @@ export const dashboardService = {
         wards: wardSummaries,
       },
       billingSummary: {
-        totalInvoices: invoices.length,
+        totalInvoices: periodInvoices.length,
         grossBilling,
         discounts,
         netBilling,

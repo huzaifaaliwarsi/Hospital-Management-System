@@ -24,7 +24,7 @@ beforeEach(() => vi.clearAllMocks());
 it('AUDIT-03: a fully paid panel invoice must disappear from outstanding reporting', async () => {
   db.hospitalInvoice.findMany.mockResolvedValue([{
     id: 'invoice', invoiceNumber: 'AUDIT', createdAt: new Date(), status: 'PAID',
-    total: new Decimal(1000), paidTotal: new Decimal(200),
+    total: new Decimal(1000), paidTotal: new Decimal(200), paymentReceipts: [{ amount: new Decimal(200) }],
     patientShare: new Decimal(200), panelReceivable: new Decimal(800),
     corporatePanelId: 'panel', corporatePanel: { organizationName: 'Audit panel' },
     panelRemittanceAllocations: [{ allocatedAmount: new Decimal(800) }],
@@ -41,7 +41,7 @@ it('scopes mixed-invoice panel outstanding to the service department', async () 
   const lab = { id: 'lab', name: 'LAB' }, opd = { id: 'opd', name: 'OPD' };
   db.hospitalInvoice.findMany.mockResolvedValue([{
     id: 'invoice', departmentId: 'opd', department: opd,
-    total: new Decimal(1000), paidTotal: new Decimal(200), panelReceivable: new Decimal(800),
+    total: new Decimal(1000), paidTotal: new Decimal(200), paymentReceipts: [{ amount: new Decimal(200) }], panelReceivable: new Decimal(800),
     panelRemittanceAllocations: [{ allocatedAmount: new Decimal(400) }],
     lines: [
       { lineNet: new Decimal(600), patientShare: new Decimal(0), panelReceivable: new Decimal(600), serviceRate: { department: lab } },

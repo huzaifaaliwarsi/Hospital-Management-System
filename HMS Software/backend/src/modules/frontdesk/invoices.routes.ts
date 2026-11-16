@@ -87,14 +87,14 @@ invoicesRouter.post(
 invoicesRouter.post(
   '/:id/payments',
   invCreate,
-  validate({ params: s.invoiceIdParamsSchema, body: s.collectPaymentSchema }),
+  validate({ params: s.invoiceIdParamsSchema, body: s.collectPaymentSchema.required({ requestKey: true }).refine(body => body.paymentMethod === 'CASH' || !!body.paymentAccount, 'Select or enter the receiving bank / online account') }),
   asyncHandler(c.collectPayment),
 );
 
 invoicesRouter.post(
   '/:id/refund',
   invRefund,
-  validate({ params: s.invoiceIdParamsSchema, body: s.refundPaymentSchema }),
+  validate({ params: s.invoiceIdParamsSchema, body: s.refundPaymentSchema.required({ requestKey: true }).refine(body => body.refundMethod === 'CASH' || !!body.paymentAccount || !!body.paymentReceiptId, 'Provide the refund bank / online account or original receipt') }),
   asyncHandler(c.refundPayment),
 );
 

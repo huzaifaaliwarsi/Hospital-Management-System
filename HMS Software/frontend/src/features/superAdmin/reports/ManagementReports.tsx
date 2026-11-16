@@ -147,7 +147,7 @@ export const BillingCollectionReport: React.FC = () => {
     <>
       <GenericReportView<BillingCollectionRow>
         title="Billing & Collection"
-        subtitle="Every Hospital invoice with its discount, collection, payment method and the user who collected it."
+        subtitle="Original invoices with billing and collections in the selected period. Outstanding is calculated at period end."
         icon={Receipt}
         filenamePrefix="Billing_Collection"
         compact
@@ -171,8 +171,9 @@ export const BillingCollectionReport: React.FC = () => {
           { header: 'Department', cell: (r) => r.department || '—' },
           money('Gross', (r) => r.gross),
           money('Discount', (r) => r.discount),
-          money('Net', (r) => r.net),
-          money('Collected', (r) => r.collected),
+          money('Invoice Net', (r) => r.net),
+          money('New Billing in Period', (r) => r.periodBilled),
+          money('Collected in Period', (r) => r.collected),
           money('Outstanding', (r) => r.outstanding),
           {
             header: 'Payment Method',

@@ -1,7 +1,7 @@
 import { ServiceSourcePicker } from '../../../components/forms/ServiceSourcePicker';
 import { selectionFromSource } from '../../../utils/serviceSelection';
 import { HOSPITAL_SERVICE_SOURCE, NO_ACTIVE_DEPARTMENT_SERVICES, serviceSourceOptions, servicesForSource } from '../../../utils/serviceSelection';
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Plus, Tag, CreditCard, RotateCcw, Loader2, AlertCircle, CheckCircle2, Printer, Receipt, X } from 'lucide-react';
 import { formatPKR } from '../../../utils/formatters';
 import { useToast } from '../../../context/ToastContext';
@@ -154,6 +154,10 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
   const [paymentAmount, setPaymentAmount] = useState<number | ''>('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
   const [paymentReference, setPaymentReference] = useState('');
+  const [paymentAccount, setPaymentAccount] = useState('');
+  const paymentAttempt = useRef<{ key: string; signature: string } | null>(null);
+  const paymentInFlight = useRef(false);
+  const refundAttempt = useRef<{ key: string; signature: string } | null>(null);
 
   // Refund form state
   const [refundAmount, setRefundAmount] = useState<number | ''>('');
@@ -227,7 +231,8 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
   }, [invoice]);
 
   const hasHospitalServices = eligibleHospitalServicesGross > 0;
-  const isDiscountDisabled = invoice?.payerType === 'Corporate / Panel' || !hasHospitalServices;
+  const isRemainingCollection = !!invoice?.receipts?.some(r => r.amount > 0) || (!!invoice && invoice.createdAtIso.slice(0, 10) !== new Date().toISOString().slice(0, 10));
+  const isDiscountDisabled = isRemainingCollection || invoice?.payerType === 'Corporate / Panel' || !hasHospitalServices;
 
   // Pre-fill payment amount and automatically focus the Discount field on open
   useEffect(() => {
@@ -346,13 +351,17 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
 
   const handleCollectPayment = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (paymentInFlight.current) return;
     const payAmt = paymentAmount === '' ? 0 : Number(paymentAmount);
-    const discAmt = invoice?.status === 'PAID' || discountAmount === '' ? 0 : Number(discountAmount);
+    const discAmt = isRemainingCollection || invoice?.status === 'PAID' || discountAmount === '' ? 0 : Number(discountAmount);
 
     if (payAmt <= 0 && discAmt <= 0) {
       setActionError('Enter a payment amount or a discount.');
       return;
     }
+    if (payAmt > (invoice?.balanceDue ?? 0)) { setActionError('Payment exceeds remaining outstanding.'); return; }
+    if (payAmt > 0 && paymentMethod !== 'CASH' && !paymentAccount.trim()) { setActionError('Enter the receiving bank / online account name.'); return; }
+    paymentInFlight.current = true;
     setIsSaving(true);
     setActionError(null);
     try {
@@ -368,12 +377,17 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
       let latestReceipt: any = null;
       let freshInvoice: InvoiceDetail | null = null;
       if (payAmt > 0) {
+        const signature = JSON.stringify([invoiceId, payAmt, paymentMethod, paymentReference.trim(), paymentAccount.trim()]);
+        if (!paymentAttempt.current || paymentAttempt.current.signature !== signature) paymentAttempt.current = { key: crypto.randomUUID(), signature };
         const collectRes = await collectPayment(invoiceId, {
+          requestKey: paymentAttempt.current.key,
+          paymentAccount: paymentMethod === 'CASH' ? undefined : paymentAccount.trim(),
           amount: payAmt,
           paymentMethod,
           reference: paymentReference.trim() || undefined,
         });
         latestReceipt = collectRes?.receipt || null;
+        paymentAttempt.current = null;
       }
 
       await afterMutate(
@@ -406,13 +420,14 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
     } catch (err: any) {
       setActionError(err?.response?.data?.error?.message || err?.message || 'Failed to process payment.');
     } finally {
+      paymentInFlight.current = false;
       setIsSaving(false);
     }
   };
 
   const isFullyPaid = invoice?.status === 'PAID';
   const isVoid = invoice?.status === 'VOID';
-  const canCollectPayment = !!invoice && !isVoid && (!isFullyPaid || invoice.sourceType === 'ADMISSION');
+  const canCollectPayment = !!invoice && !isVoid && invoice.balanceDue > 0;
 
   // Pressing Enter when invoice is fully paid closes modal to immediately take next patient
   useEffect(() => {
@@ -445,7 +460,10 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
     setIsSaving(true);
     setActionError(null);
     try {
-      await refundPayment(invoiceId, { amount: Number(refundAmount), refundMethod, reason: refundReason.trim() });
+      const signature = JSON.stringify([invoiceId, refundAmount, refundMethod, refundReason.trim(), paymentAccount.trim()]);
+      if (!refundAttempt.current || refundAttempt.current.signature !== signature) refundAttempt.current = { key: crypto.randomUUID(), signature };
+      await refundPayment(invoiceId, { amount: Number(refundAmount), refundMethod, reason: refundReason.trim(), requestKey: refundAttempt.current.key, paymentAccount: refundMethod === 'CASH' ? undefined : paymentAccount.trim() });
+      refundAttempt.current = null;
       await afterMutate('Refund posted.');
     } catch (err: any) {
       setActionError(err?.response?.data?.error?.message || err?.message || 'Failed to post refund.');
@@ -1020,7 +1038,8 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                   <tr className="bg-white text-slate-600 font-bold border-b border-slate-100 text-[10px] uppercase">
                     <th className="py-2 px-3">Receipt #</th>
                     <th className="py-2 px-3">Date &amp; Time</th>
-                    <th className="py-2 px-3">Method</th>
+                    <th className="py-2 px-3">Method / Account</th>
+                    <th className="py-2 px-3">Collected By</th>
                     <th className="py-2 px-3 text-right">Amount</th>
                     <th className="py-2 px-3 text-center">80mm Print</th>
                   </tr>
@@ -1032,9 +1051,10 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                       <td className="py-2 px-3 text-slate-600 text-[11px]">{r.collectedAt}</td>
                       <td className="py-2 px-3">
                         <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
-                          {r.method}
+                          {r.method}{r.paymentAccount ? ` / ${r.paymentAccount}` : ''}
                         </span>
                       </td>
+                      <td className="py-2 px-3">{r.collectedByName}</td>
                       <td className="py-2 px-3 text-right font-mono font-bold text-emerald-800">{formatPKR(r.amount)}</td>
                       <td className="py-2 px-3 text-center">
                         <button
@@ -1082,7 +1102,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                           onClick={() => setActiveAction('payment')}
                           className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-[#08775A] bg-[#effaf5] hover:bg-[#dff5ea] border border-[#c2e7db] rounded-md transition-colors cursor-pointer"
                         >
-                          <CreditCard className="h-3 w-3" /> {invoice.sourceType === 'ADMISSION' ? 'Collect Payment / Advance' : 'Collect Payment'}
+                          <CreditCard className="h-3 w-3" /> {isRemainingCollection ? 'Collect Remaining Payment' : 'Collect Payment'}
                         </button>
                       )}
                       {!isVoid && (
@@ -1199,15 +1219,15 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
             <form onSubmit={handleCollectPayment} className="p-3.5 bg-[#effaf5] rounded-xl border border-[#c2e7db] space-y-3 animate-in fade-in">
               <div className="flex items-center justify-between pb-1.5 border-b border-[#c2e7db]/70">
                 <span className="text-xs font-bold text-[#08775A] flex items-center gap-1.5">
-                  <CreditCard className="h-4 w-4" /> Fast Payment &amp; Discount Settlement
+                  <CreditCard className="h-4 w-4" /> {isRemainingCollection ? 'Collect Remaining Payment' : 'Payment & Discount Settlement'}
                 </span>
                 <span className="text-[11px] text-slate-600 font-sans font-semibold">
                   Remaining Due: <strong className="text-slate-900">{formatPKR(invoice.balanceDue)}</strong>
                 </span>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {/* 1. Discount with % / PKR Mode Switch */}
-                <div>
+                {/* Original prices and discounts stay unchanged during remaining collection. */}
+                {!isRemainingCollection && <div>
                   <div className="flex items-center justify-between mb-1">
                     <label htmlFor="modal-discount-input" className="text-xs font-bold text-slate-700 flex items-center gap-1">
                       <span>{isDiscountDisabled ? "Discount (Not Permitted)" : "Discount"}</span>
@@ -1310,10 +1330,12 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                         ? `Discount applies to Hospital Services only (Max ${formatPKR(eligibleHospitalServicesGross)}).`
                         : "Enter to advance to Amount Paid"}
                   </div>
-                </div>
+                </div>}
 
                 {/* 2. Amount Paid (Enter on this triggers payment submission!) */}
                 <NumberInput
+                  max={invoice.balanceDue}
+                  step={0.01}
                   id="modal-payment-input"
                   label="Amount Paid (PKR)"
                   required
@@ -1332,6 +1354,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                   hint={invoice.sourceType === 'ADMISSION' ? 'Any amount may be received. Excess remains as patient credit.' : 'Enter to confirm & submit payment'}
                 />
 
+                {paymentMethod !== 'CASH' && <TextInput label="Receiving Bank / Online Account" required value={paymentAccount} onChange={e => setPaymentAccount(e.target.value)} placeholder="Bank / wallet name and account identifier" />}
                 {/* 3. Payment Method */}
                 <Select
                   label="Payment Method"
@@ -1492,6 +1515,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                   onChange={(e) => setRefundAmount(e.target.value === '' ? '' : Number(e.target.value))}
                   hint={`Max refundable: ${formatPKR(invoice.paidTotal)}`}
                 />
+                {refundMethod !== 'CASH' && <TextInput label="Refund Bank / Online Account" required value={paymentAccount} onChange={e => setPaymentAccount(e.target.value)} />}
                 <Select label="Method" options={PAYMENT_METHODS} value={refundMethod} onChange={(e) => setRefundMethod(e.target.value as PaymentMethod)} />
               </div>
               <TextInput label="Reason" required placeholder="Mandatory reason for refund" value={refundReason} onChange={(e) => setRefundReason(e.target.value)} />
@@ -1540,7 +1564,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                   className="px-4 py-2 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
                 >
                   <CreditCard className="h-4 w-4" />
-                  <span>{invoice.sourceType === 'ADMISSION' ? 'Collect Payment / Advance' : 'Collect Payment'}</span>
+                  <span>{isRemainingCollection ? 'Collect Remaining Payment' : 'Collect Payment'}</span>
                 </button>
               )}
               <button

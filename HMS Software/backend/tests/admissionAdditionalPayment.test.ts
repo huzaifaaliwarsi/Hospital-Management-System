@@ -27,11 +27,16 @@ describe('additional admission payments and advance', () => {
     [0, 0, 10000, 'PAID', 10000],
     [5000, 0, 10000, 'PAID', 5000],
     [5000, 1000, 1000, 'PARTIALLY_PAID', 0],
-  ])('collects against charges %s and existing payments %s', async (total, paid, amount, status, credit) => {
+  ])('caps invoice collections at charges %s less existing payments %s', async (total, paid, amount, status, credit) => {
     tx.hospitalInvoice.findUnique.mockResolvedValue({
       id: 'invoice', invoiceNumber: 'INV-TEST', sourceType: 'ADMISSION',
       total: new Decimal(total), paidTotal: new Decimal(paid), status: paid >= total ? 'PAID' : 'UNPAID',
     });
+    if (paid >= total || amount > total - paid) {
+      await expect(invoicesService.collectPayment('invoice', { amount, paymentMethod: 'CASH' }, 'actor')).rejects.toThrow();
+      expect(tx.paymentReceipt.create).not.toHaveBeenCalled();
+      return; // Admission advances use the separate canonical admission billing endpoint.
+    }
     const result = await invoicesService.collectPayment('invoice', { amount, paymentMethod: 'CASH' }, 'actor');
     expect(result.invoice.status).toBe(status);
     expect(result.invoice.paidTotal.toNumber()).toBe(paid + amount);

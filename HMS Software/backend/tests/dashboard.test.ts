@@ -1,3 +1,4 @@
+import { Decimal } from '@prisma/client/runtime/library';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dashboardService } from '../src/modules/reports/dashboard.service';
 import { prisma } from '@/db/client';
@@ -62,7 +63,9 @@ vi.mock('@/db/client', () => {
             id: 'inv-1',
             subtotal: 1000,
             discountTotal: 100,
-            total: 900,
+            total: new Decimal(900),
+            paymentReceipts: [{ amount: new Decimal(900) }],
+            panelRemittanceAllocations: [],
             paidTotal: 900,
             status: 'PAID',
             panelPatientId: null,

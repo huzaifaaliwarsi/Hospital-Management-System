@@ -224,6 +224,13 @@ export const StockInPage: React.FC<Props> = ({ prefill, onConsumedPrefill }) => 
   const handleSubmit = async (post: boolean, printGrn = false) => {
     if (!vendorId) return toast.error('Please select a vendor supplier.');
     if (!purchaseDate) return toast.error('Purchase date is required.');
+    const numPaid = Number(paidNow) || 0;
+    if (numPaid > 0 && !paymentType) {
+      return toast.error('A payment method (Cash, Card, or Online) is required when Paid Now is greater than 0.');
+    }
+    if (numPaid > 0 && paymentType !== 'CASH' && !paymentAccountId) {
+      return toast.error('Select an active payment account for non-cash payment.');
+    }
     const payload = buildPayload(post);
     if (!payload)
       return toast.error('Add at least one valid line item (medicine, batch, expiry, unit, quantity).');
@@ -418,8 +425,27 @@ export const StockInPage: React.FC<Props> = ({ prefill, onConsumedPrefill }) => 
             </div>
           </div>
 
-          {paymentType && paymentType !== "CASH" && <PaymentAccountSelect value={paymentAccountId} onChange={setPaymentAccountId} />}
-          <div className="w-48">
+          <div className="w-44">
+            <label className="block text-[10.5px] font-semibold text-slate-600 mb-1">
+              Payment Settlement
+            </label>
+            <select
+              value={paymentType}
+              onChange={(e) => {
+                const pt = e.target.value as any;
+                setPaymentType(pt);
+                if (!pt) setPaidNow('0');
+              }}
+              className="w-full h-8 px-2 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-slate-900 font-semibold focus:outline-none focus:ring-1 focus:ring-[#0e7d5a] focus:border-[#0e7d5a] cursor-pointer transition-colors"
+            >
+              <option value="">Credit on Ledger (Pay Later)</option>
+              <option value="CASH">Cash Disbursement</option>
+              <option value="CARD">Bank / Card Payment</option>
+              <option value="ONLINE">Online Bank Transfer</option>
+            </select>
+          </div>
+
+          <div className="w-40">
             <label className="block text-[10.5px] font-semibold text-slate-600 mb-1 flex items-center gap-1">
               <CreditCard className="h-3 w-3 text-slate-400" />
               Paid Now Amount (PKR)
@@ -428,11 +454,23 @@ export const StockInPage: React.FC<Props> = ({ prefill, onConsumedPrefill }) => 
               type="number"
               min={0}
               value={paidNow}
-              onChange={(e) => setPaidNow(e.target.value)}
+              onChange={(e) => {
+                const val = e.target.value;
+                setPaidNow(val);
+                if (Number(val) > 0 && !paymentType) {
+                  setPaymentType('CASH');
+                }
+              }}
               placeholder="0.00"
               className="w-full h-8 px-2.5 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-slate-900 font-bold focus:outline-none focus:ring-1 focus:ring-[#0e7d5a] focus:border-[#0e7d5a] transition-colors text-right"
             />
           </div>
+
+          {paymentType && paymentType !== 'CASH' && (
+            <div className="w-48">
+              <PaymentAccountSelect value={paymentAccountId} onChange={setPaymentAccountId} />
+            </div>
+          )}
 
           <div>
             <div className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wider">

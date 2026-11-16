@@ -127,6 +127,7 @@ export interface BillingCollectionRow {
   gross: number;
   discount: number;
   net: number;
+  periodBilled: number;
   collected: number;
   outstanding: number;
   methods: string;
@@ -139,7 +140,7 @@ export async function fetchBillingCollection(range: RangeParams, filters?: Repor
   return {
     periodLabel: d.period.label,
     rows: d.rows.map((r: any) => ({
-      ...toNumbers<BillingCollectionRow>(r, ['gross', 'discount', 'net', 'collected', 'outstanding']),
+      ...toNumbers<BillingCollectionRow>(r, ['gross', 'discount', 'net', 'periodBilled', 'collected', 'outstanding']),
       createdAt: formatDateTimeDDMMYYYY(r.createdAt),
     })),
   };

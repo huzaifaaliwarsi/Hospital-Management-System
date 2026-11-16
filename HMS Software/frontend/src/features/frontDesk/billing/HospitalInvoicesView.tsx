@@ -173,6 +173,7 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
 
     try {
       const data = await fetchInvoices({
+        transactions: true,
         hasDiscount: recordFilter === 'DISCOUNTED' ? true : undefined,
         hasRefund: recordFilter === 'REFUNDED' ? true : undefined,
         hasPayment: recordFilter === 'PAID' ? true : undefined,
@@ -272,6 +273,7 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
   };
 
   // Filtered dataset
+  const [sortDirection, setSortDirection] = useState<'desc' | 'asc'>('desc');
   const filteredInvoices = useMemo(() => {
     return invoices.filter((inv) => {
       // 1. Queue / Care type filter
@@ -291,7 +293,7 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
       if (payerFilter === 'PANEL' && inv.payerType !== 'Corporate / Panel') return false;
 
       // 5. Custom Date Range filter
-      const invDateStr = getLocalDateString(inv.createdAtIso);
+      const invDateStr = getLocalDateString(inv.transactionAtIso || inv.createdAtIso);
       if (startDate && invDateStr && invDateStr < startDate) return false;
       if (endDate && invDateStr && invDateStr > endDate) return false;
 
@@ -313,23 +315,29 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
           (inv.patientCnic.toLowerCase().includes(q) ||
             (qDigits.length >= 4 && inv.patientCnic.replace(/\D/g, '').includes(qDigits)))
         );
-        if (!numMatch && !tokenMatch && !nameMatch && !mrMatch && !phoneMatch && !cnicMatch) return false;
+        const receiptMatch = [inv.receiptNumber, inv.receiptMethod, inv.receiptAccount, inv.receiptCollector, inv.transactionType].some(value => value?.toLowerCase().includes(q));
+        if (!receiptMatch && !numMatch && !tokenMatch && !nameMatch && !mrMatch && !phoneMatch && !cnicMatch) return false;
       }
 
       return true;
+    }).sort((a, b) => {
+      const diff = new Date(a.transactionAtIso || a.createdAtIso).getTime() - new Date(b.transactionAtIso || b.createdAtIso).getTime();
+      return (sortDirection === 'asc' ? 1 : -1) * (diff || (a.transactionId || a.id).localeCompare(b.transactionId || b.id));
     });
-  }, [invoices, activeQueue, isOutstandingOnly, statusFilter, payerFilter, startDate, endDate, searchTerm]);
+  }, [invoices, activeQueue, isOutstandingOnly, statusFilter, payerFilter, startDate, endDate, searchTerm, sortDirection]);
 
   // Summary Metrics of filtered data
   const metrics = useMemo(() => {
+    const seen = new Set<string>();
     return filteredInvoices.reduce(
       (acc, i) => {
-        acc.totalInvoices += 1;
-        acc.totalGross += (i.subtotal || (i.total + (i.discountTotal || 0)));
-        acc.totalDiscount += (i.discountTotal || 0);
-        acc.totalBilled += i.total;
-        acc.totalPaid += i.paidTotal;
-        acc.totalDue += i.balanceDue;
+        acc.totalInvoices += i.transactionType === 'Original Invoice' ? 1 : 0;
+        acc.totalGross += i.grossAmount ?? i.subtotal;
+        acc.totalDiscount += i.discountAmount ?? i.discountTotal;
+        acc.totalBilled += i.billingAmount ?? i.total;
+        acc.totalPaid += i.collectedAmount ?? i.paidTotal;
+        if (!seen.has(i.id)) acc.totalDue += i.balanceDue;
+        seen.add(i.id);
         return acc;
       },
       { totalInvoices: 0, totalGross: 0, totalDiscount: 0, totalBilled: 0, totalPaid: 0, totalDue: 0 }
@@ -370,17 +378,21 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
     return filteredInvoices.slice(start, start + pageSize);
   }, [filteredInvoices, currentPage, pageSize]);
 
+  useEffect(() => {
+    setCurrentPage(page => Math.min(page, Math.max(1, Math.ceil(filteredInvoices.length / pageSize))));
+  }, [filteredInvoices.length, pageSize]);
+
   // Reset page when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [activeQueue, statusFilter, payerFilter, startDate, endDate, searchTerm]);
+  }, [activeQueue, statusFilter, payerFilter, startDate, endDate, searchTerm, sortDirection, pageSize, isOutstandingOnly]);
 
   const handleExportCsv = () => {
     if (filteredInvoices.length === 0) {
       toast.warning('No invoices match the selected filters to export.', 'Export');
       return;
     }
-    const headers = ['#', 'Invoice Number', 'Service ID', 'MR #', 'Patient Name', 'Care Type', 'Payer', 'Gross', 'Discount', 'Net Payable', 'Paid', 'Due', 'Status', 'Date'];
+    const headers = ['#', 'Invoice Number', 'Service ID', 'MR #', 'Patient Name', 'Care Type', 'Payer', 'Gross', 'Discount', 'Billing', 'Collected', 'Current Outstanding', 'Status', 'Transaction Date', 'Type', 'Receipt', 'Method', 'Account', 'Collected By'];
     const rows = filteredInvoices.map((inv, idx) => [
       idx + 1,
       `"${inv.invoiceNumber}"`,
@@ -389,13 +401,14 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
       `"${inv.patientName}"`,
       `"${getInvoiceCareQueue(inv)}"`,
       `"${inv.payerType}"`,
-      inv.subtotal || (inv.total + inv.discountTotal),
-      inv.discountTotal,
-      inv.total,
-      inv.paidTotal,
+      inv.grossAmount ?? inv.subtotal,
+      inv.discountAmount ?? inv.discountTotal,
+      inv.billingAmount ?? inv.total,
+      inv.collectedAmount ?? inv.paidTotal,
       inv.balanceDue,
       `"${inv.status}"`,
-      `"${inv.createdAt}"`
+      `"${inv.transactionAt || inv.createdAt}"`,
+      ...[inv.transactionType, inv.receiptNumber, inv.receiptMethod, inv.receiptAccount, inv.receiptCollector].map(v => `"${String(v || '').replaceAll('"', '""')}"`)
     ]);
     const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -413,7 +426,7 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
       toast.warning('No invoices match the selected filters to export.', 'Export');
       return;
     }
-    const headers = ['#', 'Invoice Number', 'Service ID', 'MR #', 'Patient Name', 'Care Type', 'Payer', 'Gross', 'Discount', 'Net Payable', 'Paid', 'Due', 'Status', 'Date'];
+    const headers = ['#', 'Invoice Number', 'Service ID', 'MR #', 'Patient Name', 'Care Type', 'Payer', 'Gross', 'Discount', 'Billing', 'Collected', 'Current Outstanding', 'Status', 'Transaction Date', 'Type', 'Receipt', 'Method', 'Account', 'Collected By'];
     const rowsHtml = filteredInvoices.map((inv, idx) => `
       <tr>
         <td>${idx + 1}</td>
@@ -423,13 +436,14 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
         <td>${inv.patientName}</td>
         <td>${getInvoiceCareQueue(inv)}</td>
         <td>${inv.payerType}</td>
-        <td>${inv.subtotal || (inv.total + inv.discountTotal)}</td>
-        <td>${inv.discountTotal}</td>
-        <td>${inv.total}</td>
-        <td>${inv.paidTotal}</td>
+        <td>${inv.grossAmount ?? inv.subtotal}</td>
+        <td>${inv.discountAmount ?? inv.discountTotal}</td>
+        <td>${inv.billingAmount ?? inv.total}</td>
+        <td>${inv.collectedAmount ?? inv.paidTotal}</td>
         <td>${inv.balanceDue}</td>
         <td>${inv.status}</td>
-        <td>${inv.createdAt}</td>
+        <td>${inv.transactionAt || inv.createdAt}</td>
+        ${[inv.transactionType, inv.receiptNumber, inv.receiptMethod, inv.receiptAccount, inv.receiptCollector].map(v => `<td>${String(v || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')}</td>`).join('')}
       </tr>
     `).join('');
 
@@ -806,17 +820,17 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
             <thead className="bg-[#f1f5f9] border-b border-slate-300 text-slate-800 font-bold uppercase text-[11.5px] tracking-wider sticky top-0 z-10 select-none">
               <tr>
                 <th className="w-12 py-3 px-3 text-center border-r border-slate-300 font-bold text-slate-700">#</th>
-                <th className="py-3 px-3.5 border-r border-slate-300 whitespace-nowrap">Invoice #</th>
+                <th className="py-3 px-3.5 border-r border-slate-300 whitespace-nowrap">Invoice # / Type</th>
                 <th className="py-3 px-3.5 border-r border-slate-300 whitespace-nowrap">Service ID</th>
-                <th className="py-3 px-3.5 border-r border-slate-300 whitespace-nowrap">Date</th>
+                <th className="py-3 px-3.5 border-r border-slate-300 whitespace-nowrap"><button type="button" onClick={() => setSortDirection(d => d === 'asc' ? 'desc' : 'asc')} title="Sort by transaction date">Transaction Date {sortDirection === 'asc' ? '(oldest first)' : '(newest first)'}</button></th>
                 <th className="py-3 px-3.5 border-r border-slate-300 whitespace-nowrap">Patient</th>
                 <th className="py-3 px-3.5 border-r border-slate-300 whitespace-nowrap">Source</th>
                 <th className="py-3 px-3.5 border-r border-slate-300 whitespace-nowrap">Department</th>
                 <th className="py-3 px-3.5 border-r border-slate-300 text-right whitespace-nowrap">Gross</th>
                 <th className="py-3 px-3.5 border-r border-slate-300 text-right whitespace-nowrap">Discount</th>
-                <th className="py-3 px-3.5 border-r border-slate-300 text-right whitespace-nowrap">Net</th>
-                <th className="py-3 px-3.5 border-r border-slate-300 text-right whitespace-nowrap">Paid</th>
-                <th className="py-3 px-3.5 border-r border-slate-300 text-right whitespace-nowrap">Balance</th>
+                <th className="py-3 px-3.5 border-r border-slate-300 text-right whitespace-nowrap">Billing</th>
+                <th className="py-3 px-3.5 border-r border-slate-300 text-right whitespace-nowrap">Collected</th>
+                <th className="py-3 px-3.5 border-r border-slate-300 text-right whitespace-nowrap">Current Outstanding</th>
                 <th className="py-3 px-3.5 border-r border-slate-300 text-center whitespace-nowrap">Status</th>
                 <th className="py-3 px-3.5 text-center whitespace-nowrap">Actions</th>
               </tr>
@@ -831,7 +845,7 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
 
                 return (
                   <tr
-                    key={inv.id}
+                    key={inv.transactionId || inv.id}
                     className="hover:bg-slate-50/90 transition-colors border-b border-slate-200 last:border-b-0 cursor-pointer"
                     onClick={() => openInvoice(inv.id)}
                   >
@@ -843,6 +857,13 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
                     {/* Invoice # */}
                     <td className="py-2.5 px-3.5 border-r border-slate-200 font-mono font-semibold text-[#08775A] whitespace-nowrap">
                       <span>{inv.invoiceNumber}</span>
+                      <span className="block text-xs font-sans text-slate-700">{inv.transactionType}</span>
+                      {inv.receiptNumber && <details onClick={e => e.stopPropagation()} className="text-xs font-sans font-normal text-slate-600">
+                        <summary className="cursor-pointer">{inv.receiptNumber}</summary>
+                        <div>{inv.receiptMethod} {inv.receiptAccount || ''}</div>
+                        <div>Collected by: {inv.receiptCollector || 'Unknown'}</div>
+                        <div>Original invoice: {inv.createdAt}</div>
+                      </details>}
                     </td>
 
                     {/* Service ID (Token / Encounter Queue Number) */}
@@ -858,7 +879,7 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
 
                     {/* Date */}
                     <td className="py-2.5 px-3.5 border-r border-slate-200 text-slate-700 whitespace-nowrap text-xs">
-                      {inv.createdAt}
+                      {inv.transactionAt || inv.createdAt}
                     </td>
 
                     {/* Patient */}
@@ -883,22 +904,22 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
 
                     {/* Gross */}
                     <td className="py-2.5 px-3.5 border-r border-slate-200 text-right font-mono text-slate-700 whitespace-nowrap">
-                      {formatPKR(inv.subtotal || (inv.total + (inv.discountTotal || 0)))}
+                      {formatPKR(inv.grossAmount ?? inv.subtotal)}
                     </td>
 
                     {/* Discount */}
                     <td className="py-2.5 px-3.5 border-r border-slate-200 text-right font-mono text-slate-700 whitespace-nowrap">
-                      {inv.discountTotal > 0 ? formatPKR(inv.discountTotal) : 'PKR 0'}
+                      {formatPKR(inv.discountAmount ?? inv.discountTotal)}
                     </td>
 
                     {/* Net */}
                     <td className="py-2.5 px-3.5 border-r border-slate-200 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
-                      {formatPKR(inv.total)}
+                      {formatPKR(inv.billingAmount ?? inv.total)}
                     </td>
 
                     {/* Paid */}
                     <td className="py-2.5 px-3.5 border-r border-slate-200 text-right font-mono text-slate-800 whitespace-nowrap">
-                      {formatPKR(inv.paidTotal)}
+                      {formatPKR(inv.collectedAmount ?? inv.paidTotal)}
                     </td>
 
                     {/* Balance */}
@@ -935,15 +956,15 @@ export const HospitalInvoicesView: React.FC<HospitalInvoicesViewProps> = ({
                           <Eye className="h-3.5 w-3.5" />
                           <span>View</span>
                         </button>
-                        {!isVoid && (inv.balanceDue > 0 || inv.sourceType === 'ADMISSION') && (
+                        {!isVoid && (inv.balanceDue > 0) && (
                           <button
                             type="button"
                             onClick={() => openInvoice(inv.id, 'payment')}
                             className="inline-flex items-center gap-1 px-2 py-1 bg-white hover:bg-slate-100 text-[#08775A] border border-[#c2e7db] rounded text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
-                            title="Collect payment"
+                            title="Collect Remaining Payment"
                           >
                             <CreditCard className="h-3 w-3" />
-                            <span>Pay</span>
+                            <span>Collect Remaining Payment</span>
                           </button>
                         )}
                         {!isVoid && inv.paidTotal > 0 && (

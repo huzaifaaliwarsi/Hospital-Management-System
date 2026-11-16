@@ -36,11 +36,24 @@ export interface PaymentReceiptRow {
   method: PaymentMethod;
   reference: string;
   isReversed: boolean;
+  paymentAccount?: string | null;
   collectedByName: string;
   collectedAt: string;
 }
 
 export interface InvoiceSummary {
+  transactionId?: string;
+  transactionType?: string;
+  transactionAt?: string;
+  transactionAtIso?: string;
+  billingAmount?: number;
+  grossAmount?: number;
+  discountAmount?: number;
+  collectedAmount?: number;
+  receiptNumber?: string;
+  receiptMethod?: string;
+  receiptAccount?: string;
+  receiptCollector?: string;
   id: string;
   invoiceNumber: string;
   sourceType: string;
@@ -153,6 +166,18 @@ function toInvoiceSummary(raw: Record<string, any>): InvoiceSummary {
   const panelReceivable = Number(raw.panelReceivable ?? 0);
   const balanceDue = Math.max(0, patientShare - paidTotal);
   return {
+    transactionId: raw.transactionId,
+    transactionType: raw.transactionType,
+    transactionAt: formatTimestamp(raw.transactionAt),
+    transactionAtIso: raw.transactionAt,
+    billingAmount: raw.billingAmount,
+    grossAmount: raw.grossAmount,
+    discountAmount: raw.discountAmount,
+    collectedAmount: raw.collectedAmount,
+    receiptNumber: raw.transactionReceipt?.receiptNumber,
+    receiptMethod: raw.transactionReceipt?.method,
+    receiptAccount: raw.transactionReceipt?.paymentAccount,
+    receiptCollector: raw.transactionReceipt?.collectedBy?.username,
     id: raw.id,
     invoiceNumber: raw.invoiceNumber,
     sourceType: raw.sourceType,
@@ -238,7 +263,8 @@ function toInvoiceDetail(raw: Record<string, any>): InvoiceDetail {
       method: r.method,
       reference: r.referenceNote || '',
       isReversed: !!r.isReversed,
-      collectedByName: r.collectedBy?.username || '',
+      paymentAccount: r.paymentAccount,
+      collectedByName: r.collectedBy?.displayName || r.collectedBy?.username || '',
       collectedAt: formatTimestamp(r.collectedAt),
     })),
   };
@@ -246,6 +272,7 @@ function toInvoiceDetail(raw: Record<string, any>): InvoiceDetail {
 
 export async function fetchInvoices(params?: {
   status?: InvoiceStatus;
+  transactions?: boolean;
   encounterType?: EncounterType;
   sourceType?: 'APPOINTMENT' | 'WALK_IN' | 'ADMISSION';
   date?: string;
@@ -289,7 +316,7 @@ export async function applyDiscount(
 
 export async function collectPayment(
   invoiceId: string,
-  values: { amount: number; paymentMethod: PaymentMethod; reference?: string },
+  values: { amount: number; paymentMethod: PaymentMethod; reference?: string; requestKey: string; paymentAccount?: string },
 ): Promise<{ receipt: any; invoice: any }> {
   const res = await apiClient.post<{ data: { receipt: any; invoice: any } }>(`/invoices/${invoiceId}/payments`, values);
   return res.data?.data;
@@ -297,7 +324,7 @@ export async function collectPayment(
 
 export async function refundPayment(
   invoiceId: string,
-  values: { paymentReceiptId?: string; amount: number; refundMethod: PaymentMethod; reason: string },
+  values: { paymentReceiptId?: string; amount: number; refundMethod: PaymentMethod; reason: string; requestKey: string; paymentAccount?: string },
 ): Promise<void> {
   await apiClient.post(`/invoices/${invoiceId}/refund`, values);
 }
@@ -349,4 +376,3 @@ export async function createEncounter(values: CreateEncounterFormValues): Promis
 export async function updateInvoiceWeight(invoiceId: string, weightKg: number): Promise<void> {
   await apiClient.patch(`/invoices/${invoiceId}/weight`, { weightKg });
 }
-

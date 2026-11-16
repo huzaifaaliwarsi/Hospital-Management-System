@@ -1,3 +1,4 @@
+import { invoiceTransactions } from '../../shared/invoiceTransactions';
 import { assertSelectableService } from '@/shared/serviceClassification';
 import { resolvePanelCoverage } from '@/shared/panelCoverage';
 import { assertMembershipEligible } from '@/shared/panelMembership';
@@ -608,13 +609,23 @@ export const invoicesService = {
       });
 
       if (!invoice) throw new NotFoundError('Invoice not found');
-      if (invoice.sourceType !== 'ADMISSION' && patientPaymentStatus(invoice, invoice.paidTotal) === 'PAID') throw new ValidationError('This invoice is already fully paid');
+      if (body.requestKey) {
+        const previous = await tx.paymentReceipt.findUnique({ where: { collectionRequestKey: body.requestKey } });
+        if (previous) {
+          if (previous.hospitalInvoiceId !== invoiceId || previous.collectedById !== actorId || !previous.amount.equals(body.amount) || previous.method !== body.paymentMethod || (previous.paymentAccount ?? '') !== (body.paymentMethod === 'CASH' ? '' : body.paymentAccount?.trim() ?? '') || previous.reference !== (body.reference ?? `Payment for Invoice ${invoice.invoiceNumber}`)) {
+            throw new ValidationError('Payment request key was already used for different payment details');
+          }
+          return { receipt: previous, invoice, pharmacyNotifications: [] };
+        }
+      }
+      if (patientPaymentStatus(invoice, invoice.paidTotal) === 'PAID') throw new ValidationError('This invoice is already fully paid. Record admission advances through admission billing.');
       if (invoice.status === 'VOID') throw new ValidationError('Cannot pay a void invoice');
 
       const amountDecimal = new Decimal(body.amount);
+      if (!amountDecimal.isFinite() || amountDecimal.lte(0) || amountDecimal.decimalPlaces() > 2) throw new ValidationError('Payment must be positive with at most two decimal places');
       const remainingBalance = patientResponsibility(invoice).minus(invoice.paidTotal);
 
-      if ((invoice.panelPatientId || invoice.sourceType !== 'ADMISSION') && amountDecimal.greaterThan(remainingBalance)) {
+      if (amountDecimal.greaterThan(remainingBalance)) {
         throw new ValidationError(
           `Payment amount of PKR ${amountDecimal.toFixed(2)} exceeds remaining balance of PKR ${remainingBalance.toFixed(2)}`,
         );
@@ -624,6 +635,9 @@ export const invoicesService = {
 
       const receipt = await tx.paymentReceipt.create({
         data: {
+          collectedAt: new Date(),
+          collectionRequestKey: body.requestKey,
+          paymentAccount: body.paymentMethod === 'CASH' ? null : body.paymentAccount?.trim(),
           receiptNumber,
           hospitalInvoiceId: invoice.id,
           amount: amountDecimal,
@@ -645,6 +659,7 @@ export const invoicesService = {
           category: 'COLLECTION',
           isPhysicalCash: body.paymentMethod === 'CASH',
           paymentReceiptId: receipt.id,
+          occurredAt: receipt.collectedAt,
         },
       });
 
@@ -810,7 +825,7 @@ export const invoicesService = {
       if (body.requestKey) {
         const previous = await tx.paymentReceipt.findUnique({ where: { refundRequestKey: body.requestKey } });
         if (previous) {
-          if (previous.hospitalInvoiceId !== invoiceId || !previous.amount.equals(new Decimal(body.amount).negated()) || previous.method !== body.refundMethod || previous.originalReceiptId !== (body.paymentReceiptId ?? null)) {
+          if (previous.hospitalInvoiceId !== invoiceId || previous.collectedById !== actorId || previous.reference !== `Refund for ${invoice.invoiceNumber}: ${body.reason}` || !previous.amount.equals(new Decimal(body.amount).negated()) || previous.method !== body.refundMethod || previous.originalReceiptId !== (body.paymentReceiptId ?? null)) {
             throw new ValidationError('Refund request key was already used for a different refund');
           }
           return { refundReceipt: previous, invoice, pharmacyNotifications: [] };
@@ -819,7 +834,7 @@ export const invoicesService = {
       if (invoice.status === 'VOID') throw new ValidationError('Cannot refund a void invoice');
 
       const refundAmount = new Decimal(body.amount);
-      if (!refundAmount.gt(0)) throw new ValidationError('Refund amount must be positive');
+      if (!refundAmount.isFinite() || !refundAmount.gt(0) || refundAmount.decimalPlaces() > 2) throw new ValidationError('Refund amount must be positive with at most two decimal places');
       if (body.paymentReceiptId) {
         const original = invoice.paymentReceipts.find(r => r.id === body.paymentReceiptId && r.amount.gt(0) && !r.isReversed);
         if (!original) throw new ValidationError('Original receipt does not belong to this invoice or is not refundable');
@@ -844,6 +859,8 @@ export const invoicesService = {
           admissionRecordId: invoice.admissionRecordId,
           originalReceiptId: body.paymentReceiptId,
           refundRequestKey: body.requestKey,
+          collectedAt: new Date(),
+          paymentAccount: body.refundMethod === 'CASH' ? null : body.paymentAccount ?? (body.paymentReceiptId ? invoice.paymentReceipts.find(r => r.id === body.paymentReceiptId)?.paymentAccount : null),
           method: body.refundMethod,
           reference: `Refund for ${invoice.invoiceNumber}: ${body.reason}`,
           collectedById: actorId,
@@ -861,6 +878,7 @@ export const invoicesService = {
           category: 'REFUND',
           isPhysicalCash: body.refundMethod === 'CASH',
           paymentReceiptId: reversalReceipt.id,
+          occurredAt: reversalReceipt.collectedAt,
         },
       });
 
@@ -1128,7 +1146,7 @@ export const invoicesService = {
     if (query.panelPatientId) where.panelPatientId = query.panelPatientId;
     if (query.selfPayEncounterId) where.selfPayEncounterId = query.selfPayEncounterId;
 
-    if (query.date) {
+    if (query.date && query.transactions !== 'true') {
       const startOfDay = new Date(`${query.date}T00:00:00.000Z`);
       const endOfDay = new Date(`${query.date}T23:59:59.999Z`);
       where.createdAt = { gte: startOfDay, lte: endOfDay };
@@ -1223,17 +1241,20 @@ export const invoicesService = {
         doctor: { select: { id: true, fullName: true, employeeId: true } },
         rmo: { select: { id: true, fullName: true, employeeId: true } },
         lines: { select: { id: true, lineNet: true, quantity: true } },
-        paymentReceipts: { select: { id: true, receiptNumber: true, amount: true, method: true, isReversed: true } },
+        paymentReceipts: { select: { id: true, receiptNumber: true, amount: true, method: true, isReversed: true, collectedAt: true, paymentAccount: true, collectedBy: { select: { username: true } } } },
       },
       orderBy: { createdAt: 'desc' },
-      take: 200,
+      // Receivables must retain older unpaid invoices beyond the recent-sales window.
+      ...(query.hasOutstandingBalance === 'true' || query.transactions === 'true' ? {} : { take: 200 }),
     });
 
-    return invoices.map((inv) => ({
+    const summaries = invoices.map((inv) => ({
       ...inv,
       balanceDue: patientBalanceDue(inv, inv.paidTotal).toNumber(),
       status: inv.status === 'VOID' ? 'VOID' : patientPaymentStatus(inv, inv.paidTotal),
     }));
+    if (query.transactions !== 'true') return summaries;
+    return invoiceTransactions(summaries).filter(row => !query.date || new Date(row.transactionAt.getTime() + 18000000).toISOString().slice(0, 10) === query.date);
   },
 
   async getInvoice(id: string) {

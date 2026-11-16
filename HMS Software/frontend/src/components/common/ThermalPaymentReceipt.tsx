@@ -1,3 +1,4 @@
+import { receiptSettlement } from '../../utils/receiptSettlement';
 import React, { useState, useEffect } from 'react';
 import { Printer, X, RefreshCw } from 'lucide-react';
 import { formatAmount } from '../../utils/formatters';
@@ -194,8 +195,11 @@ export function buildThermalReceiptData(
     ? Number(receipt.amount || 0)
     : totalPaidOnInvoice;
 
+  const historicalSettlement = receiptSettlement(invoice.receipts ?? [], receipt, netPayable);
   let previouslyPaid = 0;
-  if (options?.receivedNow != null) {
+  if (historicalSettlement) {
+    previouslyPaid = historicalSettlement.previouslyPaid;
+  } else if (options?.receivedNow != null) {
     previouslyPaid = Math.max(0, totalPaidOnInvoice - options.receivedNow);
   } else if (receipt && invoice.receipts && invoice.receipts.length > 0) {
     const idx = invoice.receipts.findIndex((r: any) => r.receiptNumber === receipt.receiptNumber || r.id === receipt.id);
@@ -212,7 +216,9 @@ export function buildThermalReceiptData(
   }
 
   let rawOutstanding = 0;
-  if (invoice.status === 'PAID') {
+  if (historicalSettlement) {
+    rawOutstanding = historicalSettlement.outstanding;
+  } else if (invoice.status === 'PAID') {
     rawOutstanding = 0;
   } else if (options?.receivedNow != null && options.receivedNow > 0) {
     if (invoice.balanceDue != null && invoice.balanceDue <= 0) {
@@ -228,7 +234,7 @@ export function buildThermalReceiptData(
     rawOutstanding = Math.max(0, netPayable - totalPaidOnInvoice);
   }
 
-  const effectiveTotalPaid = previouslyPaid + receivedNow;
+  const effectiveTotalPaid = historicalSettlement?.paid ?? previouslyPaid + receivedNow;
   const advanceCredit = effectiveTotalPaid > netPayable ? effectiveTotalPaid - netPayable : 0;
 
   const paymentMethod = options?.paymentMethod || receipt?.method || 'CASH';

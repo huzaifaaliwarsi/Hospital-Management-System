@@ -36457,6 +36457,36 @@ var commissionService = {
     });
     return { count: updated.count };
   },
+  async payDoctorTotal(body, actorId17) {
+    return prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${body.requestKey}))`;
+      const ids = [...body.accrualIds].sort();
+      for (const id of ids) {
+        await tx.$queryRaw`SELECT id FROM doctor_commission_accruals WHERE id = ${id} FOR UPDATE`;
+      }
+      const rows = await tx.doctorCommissionAccrual.findMany({ where: { id: { in: ids } }, include: commissionInclude, orderBy: { id: "asc" } });
+      if (rows.length !== ids.length || rows.some((row) => row.staffId !== body.staffId)) throw new ValidationError("Commission entries must belong to the selected doctor.");
+      const previous = await tx.commissionPayout.findMany({ where: { requestKey: { startsWith: `${body.requestKey}:` } } });
+      if (previous.length) {
+        const total2 = previous.reduce((sum, p) => sum.plus(p.amount), new import_library4.Decimal(0));
+        if (previous.length !== ids.length || !total2.equals(body.amount) || previous.some((p) => !ids.includes(p.doctorCommissionAccrualId) || p.paidById !== actorId17 || p.method !== body.method || (p.reference ?? "") !== (body.reference ?? ""))) {
+          throw new ConflictError("Payment request key was already used for different payment details.");
+        }
+        return { amount: total2, count: previous.length };
+      }
+      const balances = rows.map((row) => commissionBalance(row));
+      if (rows.some((row, i) => !["APPROVED", "PARTIALLY_PAID"].includes(row.status) || balances[i].remaining.lte(0))) throw new ConflictError("Commission balances changed. Refresh and review the total before paying.");
+      const total = balances.reduce((sum, balance) => sum.plus(balance.remaining), new import_library4.Decimal(0));
+      if (!total.equals(body.amount)) throw new ConflictError("Commission balances changed. Refresh and review the total before paying.");
+      for (const [i, row] of rows.entries()) {
+        const amount = balances[i].remaining;
+        const cashEntryId = await postStaffPaymentCash(tx, actorId17, amount, body.method, "COMMISSION_PAYMENT", `Combined commission payment ${body.requestKey}, accrual ${row.id}`);
+        await tx.commissionPayout.create({ data: { doctorCommissionAccrualId: row.id, amount, method: body.method, reference: body.reference, requestKey: `${body.requestKey}:${row.id}`, paidById: actorId17, cashEntryId } });
+        await tx.doctorCommissionAccrual.update({ where: { id: row.id }, data: { status: "PAID" } });
+      }
+      return { amount: total, count: rows.length };
+    }, { timeout: 3e4 });
+  },
   async payAccrual(id, body, actorId17) {
     return prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM doctor_commission_accruals WHERE id = ${id} FOR UPDATE`;
@@ -43814,15 +43844,31 @@ var createShiftSchema = external_exports.object({
 var updateShiftSchema = createShiftSchema.partial();
 
 // src/modules/setup/setup.service.ts
-var import_library12 = require("@prisma/client/runtime/library");
+var import_library13 = require("@prisma/client/runtime/library");
 
 // src/shared/mainFundLock.ts
 async function lockMainFund(tx) {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('hms-main-cash-fund'))`;
 }
 
-// src/shared/inventoryBatchBalances.ts
+// src/shared/invoiceAsOf.ts
 var import_library11 = require("@prisma/client/runtime/library");
+var receiptsThrough = (end) => ({
+  where: { ...signedReceiptWhere, collectedAt: { lte: end } },
+  select: { amount: true, collectedAt: true }
+});
+var remittancesThrough = (end) => ({
+  where: { panelRemittance: { receivedAt: { lte: end } } },
+  select: { allocatedAmount: true }
+});
+function invoiceAsOf(invoice) {
+  const paidTotal = invoice.paymentReceipts.reduce((sum, receipt) => sum.plus(receipt.amount), new import_library11.Decimal(0));
+  const status = invoice.status === "VOID" ? "VOID" : invoicePaymentStatus(invoice.total.minus(invoice.panelReceivable ?? 0), paidTotal);
+  return { ...invoice, paidTotal, status, balance: invoiceBalance({ ...invoice, paidTotal }) };
+}
+
+// src/shared/inventoryBatchBalances.ts
+var import_library12 = require("@prisma/client/runtime/library");
 async function getPositiveBatchBalances(expiryBeforeInclusive) {
   const rows = await prisma.stockLedger.findMany({
     where: { batchNo: { not: null }, expiryDate: { not: null } },
@@ -43835,7 +43881,7 @@ async function getPositiveBatchBalances(expiryBeforeInclusive) {
     if (existing) {
       existing.balance = existing.balance.plus(r.quantityDelta);
     } else {
-      byBatch.set(key, { stockItemId: r.stockItemId, batchNo: r.batchNo, expiryDate: r.expiryDate, balance: new import_library11.Decimal(r.quantityDelta) });
+      byBatch.set(key, { stockItemId: r.stockItemId, batchNo: r.batchNo, expiryDate: r.expiryDate, balance: new import_library12.Decimal(r.quantityDelta) });
     }
   }
   return Array.from(byBatch.values()).filter(
@@ -43981,7 +44027,8 @@ var dashboardService = {
     const [invoices, receipts] = await Promise.all([
       prisma.hospitalInvoice.findMany({
         where: {
-          createdAt: { gte: periodStart, lte: periodEnd }
+          createdAt: { lte: periodEnd },
+          status: { not: "VOID" }
         },
         select: {
           id: true,
@@ -43989,6 +44036,9 @@ var dashboardService = {
           discountTotal: true,
           total: true,
           paidTotal: true,
+          panelReceivable: true,
+          paymentReceipts: receiptsThrough(periodEnd),
+          panelRemittanceAllocations: remittancesThrough(periodEnd),
           status: true,
           panelPatientId: true,
           encounterType: true,
@@ -44016,17 +44066,19 @@ var dashboardService = {
     let panelBillingAmount = 0;
     let emergencyInvoicesCount = 0;
     let observationInvoicesCount = 0;
-    for (const inv of invoices) {
+    const periodInvoices = invoices.filter((inv) => inv.createdAt >= periodStart);
+    for (const inv of invoices.map(invoiceAsOf)) {
       const sub = Number(inv.subtotal || 0);
       const disc = Number(inv.discountTotal || 0);
       const tot = Number(inv.total || 0);
       const pd = Number(inv.paidTotal || 0);
-      const bal = Math.max(0, tot - pd);
+      const bal = inv.balance.due.toNumber();
+      outstandingAmount += bal;
+      if (inv.createdAt < periodStart) continue;
       grossBilling += sub;
       discounts += disc;
       netBilling += tot;
       paidAmount += pd;
-      outstandingAmount += bal;
       if (inv.status === "PARTIALLY_PAID") {
         partiallyPaidInvoicesCount += 1;
         partiallyPaidAmount += pd;
@@ -44456,7 +44508,7 @@ var dashboardService = {
         value: `PKR ${netBilling.toLocaleString()}`,
         numericValue: netBilling,
         iconName: "Receipt",
-        contextText: `${invoices.length} invoices generated`,
+        contextText: `${periodInvoices.length} invoices generated`,
         colorClass: "text-[#08775A]",
         accentBg: "bg-emerald-50",
         navModule: "billing_overview"
@@ -44554,7 +44606,7 @@ var dashboardService = {
         wards: wardSummaries
       },
       billingSummary: {
-        totalInvoices: invoices.length,
+        totalInvoices: periodInvoices.length,
         grossBilling,
         discounts,
         netBilling,
@@ -45957,20 +46009,20 @@ var setupService = {
           ] } });
           if (ambiguous) throw new ValidationError("Existing vouchers are unassigned or belong to a different provider. Reconcile these vouchers before making another payment.");
           const ledger = await departmentCollectionLedger(tx, /* @__PURE__ */ new Date(), body.departmentId);
-          const eligible = ledger.filter((r) => r.departmentId === body.departmentId).reduce((sum, r) => sum.plus(r.amount), new import_library12.Decimal(0));
+          const eligible = ledger.filter((r) => r.departmentId === body.departmentId).reduce((sum, r) => sum.plus(r.amount), new import_library13.Decimal(0));
           const prior = await tx.providerSettlement.aggregate({
             where: { departmentId: body.departmentId },
             _sum: { settlementAmount: true }
           });
-          const settled = prior._sum.settlementAmount ?? new import_library12.Decimal(0);
+          const settled = prior._sum.settlementAmount ?? new import_library13.Decimal(0);
           const remaining = eligible.minus(settled);
-          const amount = new import_library12.Decimal(body.settlementAmount);
+          const amount = new import_library13.Decimal(body.settlementAmount);
           if (!amount.gt(0) || amount.decimalPlaces() > 2 || amount.gt(remaining)) {
-            throw new ValidationError("Settlement exceeds available payable (" + import_library12.Decimal.max(remaining, 0).toFixed(2) + ") or is not a valid amount in cents.");
+            throw new ValidationError("Settlement exceeds available payable (" + import_library13.Decimal.max(remaining, 0).toFixed(2) + ") or is not a valid amount in cents.");
           }
           if (body.paymentMethod === "CASH") {
             const rows = await tx.mainCashFundEntry.findMany({ select: { direction: true, amount: true } });
-            const available = rows.reduce((sum, r) => r.direction === "IN" ? sum.plus(r.amount) : sum.minus(r.amount), new import_library12.Decimal(0));
+            const available = rows.reduce((sum, r) => r.direction === "IN" ? sum.plus(r.amount) : sum.minus(r.amount), new import_library13.Decimal(0));
             if (available.lt(amount)) {
               throw new ValidationError(`Insufficient Main Fund cash (${available.toFixed(2)} available). Deposit or accept cash handovers before paying the provider.`);
             }
@@ -46098,15 +46150,15 @@ var setupService = {
         periodBilled += net;
       }
       const collections = ledger.filter((r) => r.departmentId === d.id);
-      const sum = (values) => values.reduce((a, b) => a.plus(b), new import_library12.Decimal(0)).toNumber();
+      const sum = (values) => values.reduce((a, b) => a.plus(b), new import_library13.Decimal(0)).toNumber();
       periodRealized = sum(collections.filter((r) => r.collectedAt >= start).map((r) => r.amount));
       const cumulativeRealized = sum(collections.map((r) => r.amount));
       const deptSettlements = settlements.filter((s) => s.departmentId === d.id);
       const alreadySettled = sum(deptSettlements.map((s) => s.settlementAmount));
       const periodSettled = sum(deptSettlements.filter((s) => s.settledAt >= start).map((s) => s.settlementAmount));
       const isOutsourced = d.fulfillmentOwnership === "OUTSOURCED";
-      const closingBalance = isOutsourced ? new import_library12.Decimal(cumulativeRealized).minus(alreadySettled).toNumber() : 0;
-      const openingBalance = isOutsourced ? new import_library12.Decimal(closingBalance).minus(periodRealized).plus(periodSettled).toNumber() : 0;
+      const closingBalance = isOutsourced ? new import_library13.Decimal(cumulativeRealized).minus(alreadySettled).toNumber() : 0;
+      const openingBalance = isOutsourced ? new import_library13.Decimal(closingBalance).minus(periodRealized).plus(periodSettled).toNumber() : 0;
       const remainingPayable = Math.max(0, closingBalance);
       const requiresSettlementReconciliation = settlements.some((s) => s.outsourcedProviderId === d.outsourcedProviderId && !s.departmentId || s.departmentId === d.id && s.outsourcedProviderId !== d.outsourcedProviderId);
       return {
@@ -46955,7 +47007,7 @@ var patients_routes_default = router8;
 var import_express9 = __toESM(require_express2());
 
 // src/modules/frontdesk/appointments.service.ts
-var import_library13 = require("@prisma/client/runtime/library");
+var import_library14 = require("@prisma/client/runtime/library");
 var appointmentsService = {
   async bookAppointment(body, actorId17) {
     return prisma.$transaction(async (tx) => {
@@ -47005,7 +47057,7 @@ var appointmentsService = {
         }
         assertMembershipEligible(panelPatient, body.slotAt);
       }
-      const estimatedAmount = body.estimatedAmount !== void 0 ? new import_library13.Decimal(body.estimatedAmount) : serviceRate?.standardRate ?? doctor.consultationFee;
+      const estimatedAmount = body.estimatedAmount !== void 0 ? new import_library14.Decimal(body.estimatedAmount) : serviceRate?.standardRate ?? doctor.consultationFee;
       const appointment = await tx.appointment.create({
         data: {
           panelPatientId: body.panelPatientId,
@@ -47029,7 +47081,7 @@ var appointmentsService = {
       });
       let receipt = null;
       if (body.advanceAmount && body.advanceAmount > 0) {
-        const advDecimal = new import_library13.Decimal(body.advanceAmount);
+        const advDecimal = new import_library14.Decimal(body.advanceAmount);
         const receiptNumber = await generateReceiptNumber();
         receipt = await tx.paymentReceipt.create({
           data: {
@@ -47184,7 +47236,7 @@ var appointmentsService = {
         include: { hospitalInvoices: true }
       });
       if (!appointment) throw new NotFoundError("Appointment not found");
-      const amountDecimal = new import_library13.Decimal(body.amount);
+      const amountDecimal = new import_library14.Decimal(body.amount);
       const receiptNumber = await generateReceiptNumber(tx);
       const targetInvoice = appointment.hospitalInvoices[0];
       const receipt = await tx.paymentReceipt.create({
@@ -47260,7 +47312,7 @@ var appointmentsService = {
           appointment.serviceRateId ?? "DOCTOR_CHARGE",
           /* @__PURE__ */ new Date(),
           appointment.serviceRate?.departmentId ?? appointment.departmentId,
-          new import_library13.Decimal(1),
+          new import_library14.Decimal(1),
           appointment.panelPatient
         );
         const lineNet = rate.minus(discountAmount);
@@ -47273,7 +47325,7 @@ var appointmentsService = {
         });
         const totalAdvance = unlinkedReceipts.reduce(
           (sum, r) => sum.plus(r.amount),
-          new import_library13.Decimal(0)
+          new import_library14.Decimal(0)
         );
         const newPaidTotal = totalAdvance;
         const newStatus = patientPaymentStatus(
@@ -47306,7 +47358,7 @@ var appointmentsService = {
                 billingSource: appointment.serviceRate?.billingSource ?? "DOCTOR_CHARGE",
                 descriptionSnapshot: appointment.serviceRate?.name ?? (appointment.doctor?.fullName ?? "Doctor") + " Visit",
                 rateSnapshot: rate,
-                quantity: new import_library13.Decimal(1),
+                quantity: new import_library14.Decimal(1),
                 lineGross: rate,
                 discountAmount,
                 discountReason,
@@ -47521,23 +47573,23 @@ var appointments_routes_default = router9;
 var import_express10 = __toESM(require_express2());
 
 // src/modules/frontdesk/paymentRequests.service.ts
-var import_library16 = require("@prisma/client/runtime/library");
+var import_library17 = require("@prisma/client/runtime/library");
 
 // src/modules/frontdesk/admissionBilling.service.ts
-var import_library15 = require("@prisma/client/runtime/library");
+var import_library16 = require("@prisma/client/runtime/library");
 
 // src/shared/pharmacyFifoCredit.ts
-var import_library14 = require("@prisma/client/runtime/library");
+var import_library15 = require("@prisma/client/runtime/library");
 function computePharmacyPortion(lines, previousPaidTotal, newPaidTotal) {
-  let cursor = new import_library14.Decimal(0);
-  let pharmacyPortion = new import_library14.Decimal(0);
+  let cursor = new import_library15.Decimal(0);
+  let pharmacyPortion = new import_library15.Decimal(0);
   for (const line of lines) {
     const lineStart = cursor;
     const lineEnd = cursor.plus(line.patientShare);
     cursor = lineEnd;
     if (line.billingSource !== "PHARMACY") continue;
-    const overlapStart = import_library14.Decimal.max(lineStart, previousPaidTotal);
-    const overlapEnd = import_library14.Decimal.min(lineEnd, newPaidTotal);
+    const overlapStart = import_library15.Decimal.max(lineStart, previousPaidTotal);
+    const overlapEnd = import_library15.Decimal.min(lineEnd, newPaidTotal);
     if (overlapEnd.greaterThan(overlapStart)) {
       pharmacyPortion = pharmacyPortion.plus(overlapEnd.minus(overlapStart));
     }
@@ -47651,11 +47703,11 @@ var admissionBillingService = {
       where: { admissionRecordId: admissionId, hospitalInvoiceId: null, isReversed: false },
       _sum: { amount: true }
     });
-    let remainingCredit = unallocated._sum.amount ?? new import_library15.Decimal(0);
+    let remainingCredit = unallocated._sum.amount ?? new import_library16.Decimal(0);
     const unallocatedCreditTotal = remainingCredit;
     const departmentInvoices = admission.hospitalInvoices.map((inv) => {
-      const rawOutstanding = import_library15.Decimal.max(0, patientResponsibility(inv).minus(inv.paidTotal));
-      const creditApplied = import_library15.Decimal.min(remainingCredit, rawOutstanding);
+      const rawOutstanding = import_library16.Decimal.max(0, patientResponsibility(inv).minus(inv.paidTotal));
+      const creditApplied = import_library16.Decimal.min(remainingCredit, rawOutstanding);
       remainingCredit = remainingCredit.minus(creditApplied);
       const isPharmacy = inv.lines?.some((l) => l.billingSource === "PHARMACY");
       return {
@@ -47689,13 +47741,13 @@ var admissionBillingService = {
         outstanding: acc.outstanding.plus(inv.outstanding)
       }),
       {
-        subtotal: new import_library15.Decimal(0),
-        discountTotal: new import_library15.Decimal(0),
-        total: new import_library15.Decimal(0),
-        paidTotal: new import_library15.Decimal(0),
-        patientShare: new import_library15.Decimal(0),
-        panelReceivable: new import_library15.Decimal(0),
-        outstanding: new import_library15.Decimal(0)
+        subtotal: new import_library16.Decimal(0),
+        discountTotal: new import_library16.Decimal(0),
+        total: new import_library16.Decimal(0),
+        paidTotal: new import_library16.Decimal(0),
+        patientShare: new import_library16.Decimal(0),
+        panelReceivable: new import_library16.Decimal(0),
+        outstanding: new import_library16.Decimal(0)
       }
     );
     const effectivePharmacyCharge = pharmacyCharge;
@@ -47771,14 +47823,14 @@ var admissionBillingService = {
     for (const r of receipts) {
       const admId = r.admissionRecordId ?? r.hospitalInvoice?.admissionRecordId;
       if (!admId) continue;
-      paidByAdmission.set(admId, (paidByAdmission.get(admId) ?? new import_library15.Decimal(0)).plus(r.amount));
+      paidByAdmission.set(admId, (paidByAdmission.get(admId) ?? new import_library16.Decimal(0)).plus(r.amount));
     }
     return admissions.map((a) => {
-      const billedCharges = a.hospitalInvoices.reduce((sum, inv) => sum.plus(patientResponsibility(inv)), new import_library15.Decimal(0));
+      const billedCharges = a.hospitalInvoices.reduce((sum, inv) => sum.plus(patientResponsibility(inv)), new import_library16.Decimal(0));
       const currentCharges = billedCharges;
-      const totalPaid = paidByAdmission.get(a.id) ?? new import_library15.Decimal(0);
-      const outstanding = import_library15.Decimal.max(0, currentCharges.minus(totalPaid));
-      const availableCredit = import_library15.Decimal.max(0, totalPaid.minus(currentCharges));
+      const totalPaid = paidByAdmission.get(a.id) ?? new import_library16.Decimal(0);
+      const outstanding = import_library16.Decimal.max(0, currentCharges.minus(totalPaid));
+      const availableCredit = import_library16.Decimal.max(0, totalPaid.minus(currentCharges));
       const billingStatus = currentCharges.equals(0) && totalPaid.equals(0) ? "NO_CHARGES" : totalPaid.greaterThanOrEqualTo(currentCharges) && currentCharges.greaterThan(0) ? "PAID" : totalPaid.greaterThan(0) ? "PARTIALLY_PAID" : "UNPAID";
       return {
         id: a.id,
@@ -47847,11 +47899,11 @@ var admissionBillingService = {
       },
       orderBy: { collectedAt: "asc" }
     });
-    const billedCharges = admission.hospitalInvoices.reduce((sum, inv) => sum.plus(patientResponsibility(inv)), new import_library15.Decimal(0));
+    const billedCharges = admission.hospitalInvoices.reduce((sum, inv) => sum.plus(patientResponsibility(inv)), new import_library16.Decimal(0));
     const totalCharges = billedCharges;
-    const totalPaid = receipts.reduce((sum, r) => sum.plus(r.amount), new import_library15.Decimal(0));
-    const outstandingBalance = import_library15.Decimal.max(0, totalCharges.minus(totalPaid));
-    const availableCredit = import_library15.Decimal.max(0, totalPaid.minus(totalCharges));
+    const totalPaid = receipts.reduce((sum, r) => sum.plus(r.amount), new import_library16.Decimal(0));
+    const outstandingBalance = import_library16.Decimal.max(0, totalCharges.minus(totalPaid));
+    const availableCredit = import_library16.Decimal.max(0, totalPaid.minus(totalCharges));
     if (!readOnly && admission.status === "DISCHARGE_PENDING" && outstandingBalance.lessThanOrEqualTo(0)) {
       const reconcile = await admissionService.reconcileAdmissionDischarge(prisma, admissionId);
       if (reconcile.isDischarged) {
@@ -47888,32 +47940,32 @@ var admissionBillingService = {
         continue;
       }
       const existing = consolidatedLines.find(
-        (c) => !c.accommodation && c.reference === line.reference && c.type === line.type && new import_library15.Decimal(c.rate ?? 0).equals(new import_library15.Decimal(line.rate ?? 0)) && c.department === line.department && c.description === "[Self-Arranged]" === (line.description === "[Self-Arranged]")
+        (c) => !c.accommodation && c.reference === line.reference && c.type === line.type && new import_library16.Decimal(c.rate ?? 0).equals(new import_library16.Decimal(line.rate ?? 0)) && c.department === line.department && c.description === "[Self-Arranged]" === (line.description === "[Self-Arranged]")
       );
       if (existing) {
-        existing.qty = new import_library15.Decimal(existing.qty).plus(new import_library15.Decimal(line.qty));
-        existing.grossAmount = new import_library15.Decimal(existing.grossAmount ?? 0).plus(new import_library15.Decimal(line.grossAmount ?? 0));
-        existing.discountAmount = new import_library15.Decimal(existing.discountAmount ?? 0).plus(new import_library15.Decimal(line.discountAmount ?? 0));
-        existing.amount = new import_library15.Decimal(existing.amount ?? 0).plus(new import_library15.Decimal(line.amount ?? 0));
+        existing.qty = new import_library16.Decimal(existing.qty).plus(new import_library16.Decimal(line.qty));
+        existing.grossAmount = new import_library16.Decimal(existing.grossAmount ?? 0).plus(new import_library16.Decimal(line.grossAmount ?? 0));
+        existing.discountAmount = new import_library16.Decimal(existing.discountAmount ?? 0).plus(new import_library16.Decimal(line.discountAmount ?? 0));
+        existing.amount = new import_library16.Decimal(existing.amount ?? 0).plus(new import_library16.Decimal(line.amount ?? 0));
         if (!existing.postedBy && line.postedBy) existing.postedBy = line.postedBy;
       } else {
-        consolidatedLines.push({ ...line, qty: new import_library15.Decimal(line.qty) });
+        consolidatedLines.push({ ...line, qty: new import_library16.Decimal(line.qty) });
       }
     }
     const allLines = consolidatedLines.sort((a, b) => a.date.getTime() - b.date.getTime());
-    let remainingPaymentPool = new import_library15.Decimal(totalPaid);
+    let remainingPaymentPool = new import_library16.Decimal(totalPaid);
     const entries = allLines.map((l) => {
-      let paidForLine = new import_library15.Decimal(0);
+      let paidForLine = new import_library16.Decimal(0);
       if (remainingPaymentPool.greaterThan(0)) {
         if (remainingPaymentPool.greaterThanOrEqualTo(l.amount)) {
           paidForLine = l.amount;
           remainingPaymentPool = remainingPaymentPool.minus(l.amount);
         } else {
           paidForLine = remainingPaymentPool;
-          remainingPaymentPool = new import_library15.Decimal(0);
+          remainingPaymentPool = new import_library16.Decimal(0);
         }
       }
-      const dueForLine = import_library15.Decimal.max(0, l.amount.minus(paidForLine));
+      const dueForLine = import_library16.Decimal.max(0, l.amount.minus(paidForLine));
       const isSelfArranged = l.description?.includes("Self-Arranged") || l.description?.includes("Self Arranged");
       const lineStatus = isSelfArranged ? "SELF" : l.isPendingPharmacy && dueForLine.greaterThan(0) && paidForLine.equals(0) ? "REQUESTED" : dueForLine.equals(0) ? "PAID" : paidForLine.greaterThan(0) ? "PARTIAL" : "UNPAID";
       return {
@@ -47949,14 +48001,14 @@ var admissionBillingService = {
     }));
     let panel = null;
     if (admission.panelPatientId) {
-      const patientShare = admission.hospitalInvoices.reduce((sum, inv) => sum.plus(inv.patientShare), new import_library15.Decimal(0));
-      const panelReceivable = admission.hospitalInvoices.reduce((sum, inv) => sum.plus(inv.panelReceivable), new import_library15.Decimal(0));
+      const patientShare = admission.hospitalInvoices.reduce((sum, inv) => sum.plus(inv.patientShare), new import_library16.Decimal(0));
+      const panelReceivable = admission.hospitalInvoices.reduce((sum, inv) => sum.plus(inv.panelReceivable), new import_library16.Decimal(0));
       const realizedGroups = invoiceIds.length === 0 ? [] : await prisma.panelRemittanceAllocation.groupBy({
         by: ["hospitalInvoiceId"],
         where: { hospitalInvoiceId: { in: invoiceIds } },
         _sum: { allocatedAmount: true }
       });
-      const panelRealized = realizedGroups.reduce((sum, g) => sum.plus(g._sum.allocatedAmount ?? new import_library15.Decimal(0)), new import_library15.Decimal(0));
+      const panelRealized = realizedGroups.reduce((sum, g) => sum.plus(g._sum.allocatedAmount ?? new import_library16.Decimal(0)), new import_library16.Decimal(0));
       const patientPaid = totalPaid;
       panel = {
         grossCharges: totalCharges,
@@ -47964,8 +48016,8 @@ var admissionBillingService = {
         panelReceivable,
         patientPaid,
         panelRealized,
-        patientOutstanding: import_library15.Decimal.max(0, patientShare.minus(patientPaid)),
-        panelOutstanding: import_library15.Decimal.max(0, panelReceivable.minus(panelRealized))
+        patientOutstanding: import_library16.Decimal.max(0, patientShare.minus(patientPaid)),
+        panelOutstanding: import_library16.Decimal.max(0, panelReceivable.minus(panelRealized))
       };
     }
     return {
@@ -48027,11 +48079,11 @@ var admissionBillingService = {
             `Discounts cannot be applied to this item.`
           );
         }
-        let discAmt = new import_library15.Decimal(0);
+        let discAmt = new import_library16.Decimal(0);
         if (body.discountPercent !== void 0) {
           discAmt = line.lineGross.mul(body.discountPercent).div(100);
         } else if (body.discountAmount !== void 0) {
-          discAmt = new import_library15.Decimal(body.discountAmount);
+          discAmt = new import_library16.Decimal(body.discountAmount);
         }
         if (discAmt.greaterThan(line.lineGross)) {
           throw new ValidationError(`Discount of PKR ${discAmt.toFixed(2)} exceeds line gross of PKR ${line.lineGross.toFixed(2)}.`);
@@ -48059,12 +48111,12 @@ var admissionBillingService = {
             "Cannot apply discount to this invoice."
           );
         }
-        const eligibleGross = eligibleLines.reduce((acc, l) => acc.plus(l.lineGross), new import_library15.Decimal(0));
-        let totalDiscAmt = new import_library15.Decimal(0);
+        const eligibleGross = eligibleLines.reduce((acc, l) => acc.plus(l.lineGross), new import_library16.Decimal(0));
+        let totalDiscAmt = new import_library16.Decimal(0);
         if (body.discountPercent !== void 0) {
           totalDiscAmt = eligibleGross.mul(body.discountPercent).div(100);
         } else if (body.discountAmount !== void 0) {
-          totalDiscAmt = new import_library15.Decimal(body.discountAmount);
+          totalDiscAmt = new import_library16.Decimal(body.discountAmount);
         }
         if (totalDiscAmt.greaterThan(eligibleGross)) {
           throw new ValidationError(
@@ -48081,7 +48133,7 @@ var admissionBillingService = {
           if (i === eligibleLines.length - 1) {
             lineDisc = remainingDiscAmt;
           } else {
-            const ratio = eligibleGross.greaterThan(0) ? line.lineGross.div(eligibleGross) : new import_library15.Decimal(0);
+            const ratio = eligibleGross.greaterThan(0) ? line.lineGross.div(eligibleGross) : new import_library16.Decimal(0);
             lineDisc = totalDiscAmt.mul(ratio).round();
             remainingDiscAmt = remainingDiscAmt.minus(lineDisc);
           }
@@ -48100,7 +48152,7 @@ var admissionBillingService = {
           if (!line.discountAmount.isZero()) {
             await tx.invoiceLineItem.update({
               where: { id: line.id },
-              data: { discountAmount: new import_library15.Decimal(0), lineNet: line.lineGross, patientShare: line.lineGross }
+              data: { discountAmount: new import_library16.Decimal(0), lineNet: line.lineGross, patientShare: line.lineGross }
             });
           }
         }
@@ -48112,11 +48164,11 @@ var admissionBillingService = {
           await commissionService.repriceCommission(tx, line.id, original.lineNet, line.lineNet, actorId17, `Service discount: ${body.discountReason}`);
         }
       }
-      const newSubtotal = refreshedLines.reduce((acc, l) => acc.plus(l.lineGross), new import_library15.Decimal(0));
-      const newDiscountTotal = refreshedLines.reduce((acc, l) => acc.plus(l.discountAmount), new import_library15.Decimal(0));
-      const newTotal = refreshedLines.reduce((acc, l) => acc.plus(l.lineNet), new import_library15.Decimal(0));
-      const newPatientShare = refreshedLines.reduce((acc, l) => acc.plus(l.patientShare), new import_library15.Decimal(0));
-      const newOutstanding = import_library15.Decimal.max(0, newPatientShare.minus(invoice.paidTotal));
+      const newSubtotal = refreshedLines.reduce((acc, l) => acc.plus(l.lineGross), new import_library16.Decimal(0));
+      const newDiscountTotal = refreshedLines.reduce((acc, l) => acc.plus(l.discountAmount), new import_library16.Decimal(0));
+      const newTotal = refreshedLines.reduce((acc, l) => acc.plus(l.lineNet), new import_library16.Decimal(0));
+      const newPatientShare = refreshedLines.reduce((acc, l) => acc.plus(l.patientShare), new import_library16.Decimal(0));
+      const newOutstanding = import_library16.Decimal.max(0, newPatientShare.minus(invoice.paidTotal));
       const newStatus = newOutstanding.equals(0) ? "PAID" : invoice.paidTotal.greaterThan(0) ? "PARTIALLY_PAID" : "UNPAID";
       return tx.hospitalInvoice.update({
         where: { id: invoice.id },
@@ -48167,18 +48219,18 @@ var admissionBillingService = {
       where: { admissionRecordId: admissionId, sourceType: "ADMISSION", status: { not: "VOID" } },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }]
     });
-    const amountDecimal = new import_library15.Decimal(body.amount);
+    const amountDecimal = new import_library16.Decimal(body.amount);
     let allocations;
     if (body.allocations && body.allocations.length > 0) {
       if (new Set(body.allocations.map((a) => a.invoiceId)).size !== body.allocations.length) {
         throw new ValidationError("Duplicate invoice allocations are not allowed");
       }
       const byId = new Map(invoices.map((inv) => [inv.id, inv]));
-      let sum = new import_library15.Decimal(0);
+      let sum = new import_library16.Decimal(0);
       const explicit = body.allocations.map((a) => {
         const invoice = byId.get(a.invoiceId);
         if (!invoice) throw new ValidationError(`Invoice ${a.invoiceId} does not belong to this admission`);
-        const amt = new import_library15.Decimal(a.amount);
+        const amt = new import_library16.Decimal(a.amount);
         const collectibleFromPatient = invoice.panelPatientId ? invoice.patientShare : invoice.total;
         const outstanding = collectibleFromPatient.minus(invoice.paidTotal);
         if (amt.greaterThan(outstanding)) {
@@ -48198,7 +48250,7 @@ var admissionBillingService = {
       allocations = remainder.greaterThan(0) ? [...explicit, { invoiceId: null, amount: remainder }] : explicit;
     } else {
       const outstandingByInvoice = invoices.map((inv) => ({ invoice: inv, outstanding: (inv.panelPatientId ? inv.patientShare : inv.total).minus(inv.paidTotal) })).filter((x) => x.outstanding.greaterThan(0));
-      const totalOutstanding = outstandingByInvoice.reduce((sum, x) => sum.plus(x.outstanding), new import_library15.Decimal(0));
+      const totalOutstanding = outstandingByInvoice.reduce((sum, x) => sum.plus(x.outstanding), new import_library16.Decimal(0));
       if (totalOutstanding.lessThanOrEqualTo(0)) {
         allocations = [{ invoiceId: null, amount: amountDecimal }];
       } else if (amountDecimal.greaterThan(totalOutstanding)) {
@@ -48206,7 +48258,7 @@ var admissionBillingService = {
         const remainder = amountDecimal.minus(totalOutstanding);
         allocations = [...settled, { invoiceId: null, amount: remainder }];
       } else {
-        let allocated = new import_library15.Decimal(0);
+        let allocated = new import_library16.Decimal(0);
         allocations = outstandingByInvoice.map((x, idx) => {
           const isLast = idx === outstandingByInvoice.length - 1;
           const share = isLast ? amountDecimal.minus(allocated) : amountDecimal.mul(x.outstanding).div(totalOutstanding).toDecimalPlaces(2);
@@ -48270,7 +48322,7 @@ var admissionBillingService = {
             });
             if (charge) {
               const newPatientPaid = charge.patientPaid.plus(pharmacyPortion);
-              const newPatientOutstanding = import_library15.Decimal.max(0, charge.totalAmount.minus(newPatientPaid));
+              const newPatientOutstanding = import_library16.Decimal.max(0, charge.totalAmount.minus(newPatientPaid));
               const chargePaidInFull = newPatientOutstanding.equals(0);
               const newPatientPaymentStatus = chargePaidInFull ? "CLEARED" : "PARTIALLY_COLLECTED";
               const settlementStatus = chargePaidInFull && charge.settlementStatus === "NOT_DUE" ? "PENDING" : charge.settlementStatus;
@@ -48408,9 +48460,9 @@ var paymentRequestsService = {
       if (!request) throw new NotFoundError("Payment request not found");
       if (request.status === "FULFILLED") throw new ValidationError("This payment request is already fulfilled");
       if (request.status === "CANCELLED") throw new ValidationError("This payment request has been cancelled");
-      const alreadyCollected = request.paymentReceipts.reduce((sum, r) => sum.plus(r.amount), new import_library16.Decimal(0));
+      const alreadyCollected = request.paymentReceipts.reduce((sum, r) => sum.plus(r.amount), new import_library17.Decimal(0));
       const remaining = request.requestedAmount.minus(alreadyCollected);
-      const amountDecimal = new import_library16.Decimal(body.amount);
+      const amountDecimal = new import_library17.Decimal(body.amount);
       if (amountDecimal.greaterThan(remaining)) {
         throw new ValidationError(
           `Amount cannot exceed the remaining requested balance (${remaining.toString()})`
@@ -48608,7 +48660,7 @@ var admissionBilling_routes_default = router11;
 var import_express12 = __toESM(require_express2());
 
 // src/modules/frontdesk/panelBilling.service.ts
-var import_library17 = require("@prisma/client/runtime/library");
+var import_library18 = require("@prisma/client/runtime/library");
 var panelBillingService = {
   /** Panel Verification — confirms active membership before any billing action. */
   async verifyPanelPatient(panelPatientId) {
@@ -48649,7 +48701,7 @@ var panelBillingService = {
     if (!panelPatient) throw new NotFoundError("Panel patient not found");
     const serviceRate = await prisma.serviceRate.findUnique({ where: { id: query.serviceRateId } });
     if (!serviceRate) throw new NotFoundError("Service not found");
-    const quantity = new import_library17.Decimal(query.quantity ?? 1);
+    const quantity = new import_library18.Decimal(query.quantity ?? 1);
     const contractAmount = serviceRate.standardRate.mul(quantity);
     if (panelPatient.isActive === false || panelPatient.status && panelPatient.status !== "ACTIVE" || panelPatient.corporatePanel.isActive === false) {
       throw new ValidationError("Panel patient and company must be active");
@@ -48715,9 +48767,9 @@ var panelBillingService = {
       where: { hospitalInvoiceId: { in: invoiceIds } },
       _sum: { allocatedAmount: true }
     });
-    const realizedByInvoice = new Map(realizedGroups.map((g) => [g.hospitalInvoiceId, g._sum.allocatedAmount ?? new import_library17.Decimal(0)]));
+    const realizedByInvoice = new Map(realizedGroups.map((g) => [g.hospitalInvoiceId, g._sum.allocatedAmount ?? new import_library18.Decimal(0)]));
     const rows = invoices.map((inv) => {
-      const panelReceivableRealized = realizedByInvoice.get(inv.id) ?? new import_library17.Decimal(0);
+      const panelReceivableRealized = realizedByInvoice.get(inv.id) ?? new import_library18.Decimal(0);
       const patientShareCollected = inv.paidTotal.lessThan(inv.patientShare) ? inv.paidTotal : inv.patientShare;
       return {
         hospitalInvoiceId: inv.id,
@@ -48746,12 +48798,12 @@ var panelBillingService = {
         panelReceivableOutstanding: acc.panelReceivableOutstanding.plus(r.panelReceivableOutstanding)
       }),
       {
-        patientShare: new import_library17.Decimal(0),
-        patientShareCollected: new import_library17.Decimal(0),
-        patientShareOutstanding: new import_library17.Decimal(0),
-        panelReceivable: new import_library17.Decimal(0),
-        panelReceivableRealized: new import_library17.Decimal(0),
-        panelReceivableOutstanding: new import_library17.Decimal(0)
+        patientShare: new import_library18.Decimal(0),
+        patientShareCollected: new import_library18.Decimal(0),
+        patientShareOutstanding: new import_library18.Decimal(0),
+        panelReceivable: new import_library18.Decimal(0),
+        panelReceivableRealized: new import_library18.Decimal(0),
+        panelReceivableOutstanding: new import_library18.Decimal(0)
       }
     );
     return {
@@ -48785,11 +48837,11 @@ var panelBillingService = {
         where: { hospitalInvoiceId: { in: invoices.map((i) => i.id) } },
         _sum: { allocatedAmount: true }
       });
-      const realizedByInvoice = new Map(realizedGroups.map((g) => [g.hospitalInvoiceId, g._sum.allocatedAmount ?? new import_library17.Decimal(0)]));
+      const realizedByInvoice = new Map(realizedGroups.map((g) => [g.hospitalInvoiceId, g._sum.allocatedAmount ?? new import_library18.Decimal(0)]));
       const outstandingByInvoice = new Map(
-        invoices.map((inv) => [inv.id, inv.panelReceivable.minus(realizedByInvoice.get(inv.id) ?? new import_library17.Decimal(0))])
+        invoices.map((inv) => [inv.id, inv.panelReceivable.minus(realizedByInvoice.get(inv.id) ?? new import_library18.Decimal(0))])
       );
-      const amountDecimal = new import_library17.Decimal(body.amount);
+      const amountDecimal = new import_library18.Decimal(body.amount);
       let allocations;
       if (body.allocations && body.allocations.length > 0) {
         const seen = /* @__PURE__ */ new Set();
@@ -48798,11 +48850,11 @@ var panelBillingService = {
           seen.add(a.hospitalInvoiceId);
         }
         const byId = new Map(invoices.map((inv) => [inv.id, inv]));
-        let sum = new import_library17.Decimal(0);
+        let sum = new import_library18.Decimal(0);
         allocations = body.allocations.map((a) => {
           const invoice = byId.get(a.hospitalInvoiceId);
           if (!invoice) throw new ValidationError(`Invoice ${a.hospitalInvoiceId} does not belong to this panel`);
-          const amt = new import_library17.Decimal(a.amount);
+          const amt = new import_library18.Decimal(a.amount);
           const outstanding = outstandingByInvoice.get(invoice.id);
           if (amt.greaterThan(outstanding)) {
             throw new ValidationError(
@@ -48817,7 +48869,7 @@ var panelBillingService = {
         }
       } else {
         const eligible = invoices.map((inv) => ({ invoice: inv, outstanding: outstandingByInvoice.get(inv.id) })).filter((x) => x.outstanding.greaterThan(0));
-        const totalOutstanding = eligible.reduce((sum, x) => sum.plus(x.outstanding), new import_library17.Decimal(0));
+        const totalOutstanding = eligible.reduce((sum, x) => sum.plus(x.outstanding), new import_library18.Decimal(0));
         if (totalOutstanding.lessThanOrEqualTo(0)) {
           throw new ValidationError("Nothing outstanding to allocate this remittance against for this panel");
         }
@@ -48828,12 +48880,12 @@ var panelBillingService = {
         }
         allocations = eligible.map((x) => ({
           hospitalInvoiceId: x.invoice.id,
-          amount: import_library17.Decimal.min(x.outstanding, amountDecimal.mul(x.outstanding).div(totalOutstanding).toDecimalPlaces(2, import_library17.Decimal.ROUND_DOWN))
+          amount: import_library18.Decimal.min(x.outstanding, amountDecimal.mul(x.outstanding).div(totalOutstanding).toDecimalPlaces(2, import_library18.Decimal.ROUND_DOWN))
         }));
-        let leftover = amountDecimal.minus(allocations.reduce((s, a) => s.plus(a.amount), new import_library17.Decimal(0)));
+        let leftover = amountDecimal.minus(allocations.reduce((s, a) => s.plus(a.amount), new import_library18.Decimal(0)));
         for (let i = 0; i < allocations.length && leftover.greaterThan(0); i++) {
           const room = eligible[i].outstanding.minus(allocations[i].amount);
-          const add = import_library17.Decimal.min(room, leftover);
+          const add = import_library18.Decimal.min(room, leftover);
           allocations[i].amount = allocations[i].amount.plus(add);
           leftover = leftover.minus(add);
         }
@@ -48903,7 +48955,7 @@ var panelBillingService = {
         description: [inv.sourceType, inv.department?.name].filter(Boolean).join(" \u2014 "),
         patientName: inv.panelPatient?.fullName ?? null,
         debit: inv.panelReceivable,
-        credit: new import_library17.Decimal(0)
+        credit: new import_library18.Decimal(0)
       })),
       ...remittances.map((r) => ({
         date: r.receivedAt,
@@ -48911,22 +48963,22 @@ var panelBillingService = {
         reference: r.remittanceNumber,
         description: [r.method, r.reference].filter(Boolean).join(" \u2014 ") || "Remittance received",
         patientName: null,
-        debit: new import_library17.Decimal(0),
+        debit: new import_library18.Decimal(0),
         credit: r.amount
       }))
     ].sort((a, b) => a.date.getTime() - b.date.getTime());
-    let runningBalance = new import_library17.Decimal(0);
+    let runningBalance = new import_library18.Decimal(0);
     const rows = entries.map((e) => {
       runningBalance = runningBalance.plus(e.debit).minus(e.credit);
       return { ...e, runningBalance };
     });
-    const totalDebit = entries.reduce((sum, e) => sum.plus(e.debit), new import_library17.Decimal(0));
-    const totalCredit = entries.reduce((sum, e) => sum.plus(e.credit), new import_library17.Decimal(0));
-    const patientShareTotal = allPatientInvoices.reduce((sum, inv) => sum.plus(inv.patientShare), new import_library17.Decimal(0));
+    const totalDebit = entries.reduce((sum, e) => sum.plus(e.debit), new import_library18.Decimal(0));
+    const totalCredit = entries.reduce((sum, e) => sum.plus(e.credit), new import_library18.Decimal(0));
+    const patientShareTotal = allPatientInvoices.reduce((sum, inv) => sum.plus(inv.patientShare), new import_library18.Decimal(0));
     const patientShareCollected = allPatientInvoices.reduce((sum, inv) => {
       const collected = inv.paidTotal.lessThan(inv.patientShare) ? inv.paidTotal : inv.patientShare;
       return sum.plus(collected);
-    }, new import_library17.Decimal(0));
+    }, new import_library18.Decimal(0));
     return {
       corporatePanelId: corporatePanel.id,
       corporatePanelName: corporatePanel.organizationName,
@@ -49075,8 +49127,30 @@ var panelBilling_routes_default = router12;
 // src/modules/frontdesk/invoices.routes.ts
 var import_express13 = __toESM(require_express2());
 
+// src/shared/invoiceTransactions.ts
+var hospitalDay = (date) => new Date(date.getTime() + 5 * 60 * 60 * 1e3).toISOString().slice(0, 10);
+function invoiceTransactions(invoices) {
+  return invoices.flatMap((invoice) => {
+    const receipts = [...invoice.paymentReceipts].sort((a, b) => a.collectedAt.getTime() - b.collectedAt.getTime() || a.receiptNumber.localeCompare(b.receiptNumber, void 0, { numeric: true }) || a.id.localeCompare(b.id));
+    const first = receipts.find((r) => Number(r.amount) > 0);
+    const initial = first && hospitalDay(first.collectedAt) === hospitalDay(invoice.createdAt) ? first : void 0;
+    const row = (receipt, original = false) => ({
+      ...invoice,
+      transactionId: original ? `invoice:${invoice.id}` : `receipt:${receipt.id}`,
+      transactionType: original ? "Original Invoice" : Number(receipt.amount) < 0 ? "Refund / Reversal" : receipt.isReversed ? "Reversed Receipt" : "Remaining Collection",
+      transactionAt: original ? invoice.createdAt : receipt.collectedAt,
+      billingAmount: original ? Number(invoice.total) : 0,
+      grossAmount: original ? Number(invoice.subtotal) : 0,
+      discountAmount: original ? Number(invoice.discountTotal) : 0,
+      collectedAmount: receipt && (!receipt.isReversed || Number(receipt.amount) < 0) ? Number(receipt.amount) : 0,
+      transactionReceipt: receipt ?? null
+    });
+    return [row(initial, true), ...receipts.filter((r) => r.id !== initial?.id).map((r) => row(r))];
+  }).sort((a, b) => b.transactionAt.getTime() - a.transactionAt.getTime() || a.transactionId.localeCompare(b.transactionId));
+}
+
 // src/modules/frontdesk/invoices.service.ts
-var import_library18 = require("@prisma/client/runtime/library");
+var import_library19 = require("@prisma/client/runtime/library");
 var invoicesService = {
   /**
    * Create immediate encounter (Walk-In, OPD, Observation, Emergency) — §4.6 Sub-flow B
@@ -49087,14 +49161,14 @@ var invoicesService = {
       let selfPayEncounterId = body.selfPayEncounterId;
       let effectiveWeight = null;
       if (body.weightKg != null) {
-        effectiveWeight = new import_library18.Decimal(body.weightKg);
+        effectiveWeight = new import_library19.Decimal(body.weightKg);
       } else if (body.newSelfPayPatient?.weightKg != null) {
-        effectiveWeight = new import_library18.Decimal(body.newSelfPayPatient.weightKg);
+        effectiveWeight = new import_library19.Decimal(body.newSelfPayPatient.weightKg);
       } else if (body.notes) {
         const m = body.notes.match(/weight[:\s]+([0-9]+(?:\.[0-9]+)?)/i);
         if (m && m[1]) {
           try {
-            effectiveWeight = new import_library18.Decimal(m[1]);
+            effectiveWeight = new import_library19.Decimal(m[1]);
           } catch {
           }
         }
@@ -49161,14 +49235,14 @@ var invoicesService = {
           rmoStaffId: body.rmoStaffId || null,
           notes: body.notes || null,
           weightKg: effectiveWeight,
-          subtotal: new import_library18.Decimal(0),
-          discountTotal: new import_library18.Decimal(0),
-          total: new import_library18.Decimal(0),
-          paidTotal: new import_library18.Decimal(0),
+          subtotal: new import_library19.Decimal(0),
+          discountTotal: new import_library19.Decimal(0),
+          total: new import_library19.Decimal(0),
+          paidTotal: new import_library19.Decimal(0),
           status: "UNPAID",
           createdById: actorId17,
           authorizationNumber: body.panelPatientId ? body.authorizationNumber || null : null,
-          authorizationLimit: body.panelPatientId && body.authorizationLimit != null ? new import_library18.Decimal(body.authorizationLimit) : null,
+          authorizationLimit: body.panelPatientId && body.authorizationLimit != null ? new import_library19.Decimal(body.authorizationLimit) : null,
           authorizationValidUntil: body.panelPatientId ? body.authorizationValidUntil || null : null
         },
         include: {
@@ -49184,7 +49258,7 @@ var invoicesService = {
       if (body.departmentId && tx.department?.findUnique) {
         const dept = await tx.department.findUnique({ where: { id: body.departmentId } });
         if (dept?.fixedPrice && Number(dept.fixedPrice) > 0) {
-          const deptFee = new import_library18.Decimal(dept.fixedPrice);
+          const deptFee = new import_library19.Decimal(dept.fixedPrice);
           const panelPatient = invoice.panelPatientId ? await tx.panelPatient.findUnique({
             where: { id: invoice.panelPatientId },
             include: { corporatePanel: { include: { discountRules: true } } }
@@ -49195,7 +49269,7 @@ var invoicesService = {
             "HOSPITAL_SERVICE",
             /* @__PURE__ */ new Date(),
             dept.id,
-            new import_library18.Decimal(1),
+            new import_library19.Decimal(1),
             panelPatient
           );
           const deptLine = await tx.invoiceLineItem.create({
@@ -49204,7 +49278,7 @@ var invoicesService = {
               billingSource: "HOSPITAL_SERVICE",
               descriptionSnapshot: `Department Fee - ${dept.name}`,
               rateSnapshot: deptFee,
-              quantity: new import_library18.Decimal(1),
+              quantity: new import_library19.Decimal(1),
               lineGross: deptFee,
               discountAmount: coverage.discountAmount,
               discountReason: coverage.discountReason,
@@ -49274,21 +49348,21 @@ var invoicesService = {
         if (!serviceRate.manualRateOverrideAllowed && !["SUPER_ADMIN", "ADMIN"].includes(actorRole5)) {
           throw new AuthorizationError("Manual rate override is not permitted for this service");
         }
-        rate = new import_library18.Decimal(body.manualRateOverride);
+        rate = new import_library19.Decimal(body.manualRateOverride);
       }
-      const qty = new import_library18.Decimal(body.quantity);
+      const qty = new import_library19.Decimal(body.quantity);
       const existingLine = invoice.lines.find((l) => {
         if (l.billingSource === "ROOM_BED") return false;
         if (l.serviceRateId !== serviceRate.id) return false;
-        if (!new import_library18.Decimal(l.rateSnapshot).equals(rate)) return false;
+        if (!new import_library19.Decimal(l.rateSnapshot).equals(rate)) return false;
         if (body.performedByStaffId && l.performedByStaffId && l.performedByStaffId !== body.performedByStaffId) {
           return false;
         }
         return true;
       });
-      const effectiveQty = existingLine ? new import_library18.Decimal(existingLine.quantity).plus(qty) : qty;
+      const effectiveQty = existingLine ? new import_library19.Decimal(existingLine.quantity).plus(qty) : qty;
       const lineGross = rate.mul(effectiveQty);
-      let discountAmount = new import_library18.Decimal(0);
+      let discountAmount = new import_library19.Decimal(0);
       let discountReason = body.discountReason ?? existingLine?.discountReason ?? null;
       const coverage = resolvePanelCoverage(
         lineGross,
@@ -49318,9 +49392,9 @@ var invoicesService = {
         if (body.discountPercent !== void 0 && body.discountPercent > 0) {
           discountAmount = lineGross.mul(body.discountPercent).div(100);
         } else if (body.discountAmount !== void 0 && body.discountAmount > 0) {
-          discountAmount = new import_library18.Decimal(body.discountAmount);
+          discountAmount = new import_library19.Decimal(body.discountAmount);
         } else if (existingLine && existingLine.discountAmount.greaterThan(0)) {
-          discountAmount = existingLine.lineGross.greaterThan(0) ? lineGross.mul(existingLine.discountAmount).div(existingLine.lineGross) : new import_library18.Decimal(0);
+          discountAmount = existingLine.lineGross.greaterThan(0) ? lineGross.mul(existingLine.discountAmount).div(existingLine.lineGross) : new import_library19.Decimal(0);
         }
       }
       const hasManualDiscount = body.discountPercent !== void 0 && body.discountPercent > 0 || body.discountAmount !== void 0 && body.discountAmount > 0;
@@ -49341,7 +49415,7 @@ var invoicesService = {
             discountReason,
             lineNet,
             patientShare: invoice.panelPatientId ? coverage.patientShare : lineNet,
-            panelReceivable: invoice.panelPatientId ? coverage.panelReceivable : new import_library18.Decimal(0),
+            panelReceivable: invoice.panelPatientId ? coverage.panelReceivable : new import_library19.Decimal(0),
             coverageSnapshot: invoice.panelPatientId ? coverage.coverageSnapshot : void 0,
             performedByStaffId: existingLine.performedByStaffId ?? (body.performedByStaffId ?? null),
             isCompleted: true
@@ -49365,7 +49439,7 @@ var invoicesService = {
             discountReason,
             lineNet,
             patientShare: invoice.panelPatientId ? coverage.patientShare : lineNet,
-            panelReceivable: invoice.panelPatientId ? coverage.panelReceivable : new import_library18.Decimal(0),
+            panelReceivable: invoice.panelPatientId ? coverage.panelReceivable : new import_library19.Decimal(0),
             coverageSnapshot: invoice.panelPatientId ? coverage.coverageSnapshot : void 0,
             performedByStaffId: body.performedByStaffId ?? null,
             isCompleted: true
@@ -49378,11 +49452,11 @@ var invoicesService = {
       }
       const otherLines = invoice.lines.filter((l) => l.id !== targetLine.id);
       const allLines = [...otherLines, targetLine];
-      const newSubtotal = allLines.reduce((acc, l) => acc.plus(l.lineGross), new import_library18.Decimal(0));
-      const newDiscountTotal = allLines.reduce((acc, l) => acc.plus(l.discountAmount), new import_library18.Decimal(0));
-      const newTotal = allLines.reduce((acc, l) => acc.plus(l.lineNet), new import_library18.Decimal(0));
-      const newPatientShare = allLines.reduce((sum, line) => sum.plus(line.patientShare ?? line.lineNet), new import_library18.Decimal(0));
-      const newPanelReceivable = allLines.reduce((sum, line) => sum.plus(line.panelReceivable ?? 0), new import_library18.Decimal(0));
+      const newSubtotal = allLines.reduce((acc, l) => acc.plus(l.lineGross), new import_library19.Decimal(0));
+      const newDiscountTotal = allLines.reduce((acc, l) => acc.plus(l.discountAmount), new import_library19.Decimal(0));
+      const newTotal = allLines.reduce((acc, l) => acc.plus(l.lineNet), new import_library19.Decimal(0));
+      const newPatientShare = allLines.reduce((sum, line) => sum.plus(line.patientShare ?? line.lineNet), new import_library19.Decimal(0));
+      const newPanelReceivable = allLines.reduce((sum, line) => sum.plus(line.panelReceivable ?? 0), new import_library19.Decimal(0));
       const newStatus = patientPaymentStatus(
         { panelPatientId: invoice.panelPatientId, total: newTotal, patientShare: newPatientShare, panelReceivable: newPanelReceivable },
         invoice.paidTotal
@@ -49417,7 +49491,7 @@ var invoicesService = {
       where: { id: invoiceId },
       data: {
         authorizationNumber: body.authorizationNumber !== void 0 ? body.authorizationNumber || null : void 0,
-        authorizationLimit: body.authorizationLimit !== void 0 ? new import_library18.Decimal(body.authorizationLimit) : void 0,
+        authorizationLimit: body.authorizationLimit !== void 0 ? new import_library19.Decimal(body.authorizationLimit) : void 0,
         authorizationValidUntil: body.authorizationValidUntil !== void 0 ? body.authorizationValidUntil : void 0
       }
     });
@@ -49453,11 +49527,11 @@ var invoicesService = {
             `Discounts cannot be applied to this item.`
           );
         }
-        let discAmt = new import_library18.Decimal(0);
+        let discAmt = new import_library19.Decimal(0);
         if (body.discountPercent !== void 0) {
           discAmt = line.lineGross.mul(body.discountPercent).div(100);
         } else if (body.discountAmount !== void 0) {
-          discAmt = new import_library18.Decimal(body.discountAmount);
+          discAmt = new import_library19.Decimal(body.discountAmount);
         }
         if (discAmt.greaterThan(line.lineGross)) {
           throw new ValidationError(
@@ -49483,12 +49557,12 @@ var invoicesService = {
             `Cannot apply discount to this invoice.`
           );
         }
-        const eligibleGross = eligibleLines.reduce((acc, l) => acc.plus(l.lineGross), new import_library18.Decimal(0));
-        let totalDiscAmt = new import_library18.Decimal(0);
+        const eligibleGross = eligibleLines.reduce((acc, l) => acc.plus(l.lineGross), new import_library19.Decimal(0));
+        let totalDiscAmt = new import_library19.Decimal(0);
         if (body.discountPercent !== void 0) {
           totalDiscAmt = eligibleGross.mul(body.discountPercent).div(100);
         } else if (body.discountAmount !== void 0) {
-          totalDiscAmt = new import_library18.Decimal(body.discountAmount);
+          totalDiscAmt = new import_library19.Decimal(body.discountAmount);
         }
         if (totalDiscAmt.greaterThan(eligibleGross)) {
           throw new ValidationError(
@@ -49505,7 +49579,7 @@ var invoicesService = {
           if (i === eligibleLines.length - 1) {
             lineDisc = remainingDiscAmt;
           } else {
-            const ratio = eligibleGross.greaterThan(0) ? line.lineGross.div(eligibleGross) : new import_library18.Decimal(0);
+            const ratio = eligibleGross.greaterThan(0) ? line.lineGross.div(eligibleGross) : new import_library19.Decimal(0);
             lineDisc = totalDiscAmt.mul(ratio).round();
             remainingDiscAmt = remainingDiscAmt.minus(lineDisc);
           }
@@ -49524,7 +49598,7 @@ var invoicesService = {
             await tx.invoiceLineItem.update({
               where: { id: line.id },
               data: {
-                discountAmount: new import_library18.Decimal(0),
+                discountAmount: new import_library19.Decimal(0),
                 lineNet: line.lineGross
               }
             });
@@ -49540,9 +49614,9 @@ var invoicesService = {
           await commissionService.repriceCommission(tx, line.id, original.lineNet, line.lineNet, _actorId, `Service discount: ${body.discountReason}`);
         }
       }
-      const newSubtotal = refreshedLines.reduce((acc, l) => acc.plus(l.lineGross), new import_library18.Decimal(0));
-      const newDiscountTotal = refreshedLines.reduce((acc, l) => acc.plus(l.discountAmount), new import_library18.Decimal(0));
-      const newTotal = refreshedLines.reduce((acc, l) => acc.plus(l.lineNet), new import_library18.Decimal(0));
+      const newSubtotal = refreshedLines.reduce((acc, l) => acc.plus(l.lineGross), new import_library19.Decimal(0));
+      const newDiscountTotal = refreshedLines.reduce((acc, l) => acc.plus(l.discountAmount), new import_library19.Decimal(0));
+      const newTotal = refreshedLines.reduce((acc, l) => acc.plus(l.lineNet), new import_library19.Decimal(0));
       const newStatus = invoice.paidTotal.greaterThanOrEqualTo(newTotal) ? "PAID" : invoice.paidTotal.greaterThan(0) ? "PARTIALLY_PAID" : "UNPAID";
       const resolvedDeptId = invoice.departmentId || invoice.lines[0]?.serviceRate?.departmentId || null;
       return tx.hospitalInvoice.update({
@@ -49576,11 +49650,21 @@ var invoicesService = {
         include: { paymentReceipts: true, lines: true }
       });
       if (!invoice) throw new NotFoundError("Invoice not found");
-      if (invoice.sourceType !== "ADMISSION" && patientPaymentStatus(invoice, invoice.paidTotal) === "PAID") throw new ValidationError("This invoice is already fully paid");
+      if (body.requestKey) {
+        const previous = await tx.paymentReceipt.findUnique({ where: { collectionRequestKey: body.requestKey } });
+        if (previous) {
+          if (previous.hospitalInvoiceId !== invoiceId || previous.collectedById !== actorId17 || !previous.amount.equals(body.amount) || previous.method !== body.paymentMethod || (previous.paymentAccount ?? "") !== (body.paymentMethod === "CASH" ? "" : body.paymentAccount?.trim() ?? "") || previous.reference !== (body.reference ?? `Payment for Invoice ${invoice.invoiceNumber}`)) {
+            throw new ValidationError("Payment request key was already used for different payment details");
+          }
+          return { receipt: previous, invoice, pharmacyNotifications: [] };
+        }
+      }
+      if (patientPaymentStatus(invoice, invoice.paidTotal) === "PAID") throw new ValidationError("This invoice is already fully paid. Record admission advances through admission billing.");
       if (invoice.status === "VOID") throw new ValidationError("Cannot pay a void invoice");
-      const amountDecimal = new import_library18.Decimal(body.amount);
+      const amountDecimal = new import_library19.Decimal(body.amount);
+      if (!amountDecimal.isFinite() || amountDecimal.lte(0) || amountDecimal.decimalPlaces() > 2) throw new ValidationError("Payment must be positive with at most two decimal places");
       const remainingBalance = patientResponsibility(invoice).minus(invoice.paidTotal);
-      if ((invoice.panelPatientId || invoice.sourceType !== "ADMISSION") && amountDecimal.greaterThan(remainingBalance)) {
+      if (amountDecimal.greaterThan(remainingBalance)) {
         throw new ValidationError(
           `Payment amount of PKR ${amountDecimal.toFixed(2)} exceeds remaining balance of PKR ${remainingBalance.toFixed(2)}`
         );
@@ -49588,6 +49672,9 @@ var invoicesService = {
       const receiptNumber = await generateReceiptNumber(tx);
       const receipt = await tx.paymentReceipt.create({
         data: {
+          collectedAt: /* @__PURE__ */ new Date(),
+          collectionRequestKey: body.requestKey,
+          paymentAccount: body.paymentMethod === "CASH" ? null : body.paymentAccount?.trim(),
           receiptNumber,
           hospitalInvoiceId: invoice.id,
           amount: amountDecimal,
@@ -49605,7 +49692,8 @@ var invoicesService = {
           amount: amountDecimal,
           category: "COLLECTION",
           isPhysicalCash: body.paymentMethod === "CASH",
-          paymentReceiptId: receipt.id
+          paymentReceiptId: receipt.id,
+          occurredAt: receipt.collectedAt
         }
       });
       const previousPaidTotal = invoice.paidTotal;
@@ -49630,15 +49718,15 @@ var invoicesService = {
           orderBy: { createdAt: "asc" },
           select: { billingSource: true, patientShare: true }
         });
-        let cursor = new import_library18.Decimal(0);
-        let pharmacyPortion = new import_library18.Decimal(0);
+        let cursor = new import_library19.Decimal(0);
+        let pharmacyPortion = new import_library19.Decimal(0);
         for (const line of invoiceLines) {
           const lineStart = cursor;
           const lineEnd = cursor.plus(line.patientShare);
           cursor = lineEnd;
           if (line.billingSource !== "PHARMACY") continue;
-          const overlapStart = import_library18.Decimal.max(lineStart, previousPaidTotal);
-          const overlapEnd = import_library18.Decimal.min(lineEnd, newPaidTotal);
+          const overlapStart = import_library19.Decimal.max(lineStart, previousPaidTotal);
+          const overlapEnd = import_library19.Decimal.min(lineEnd, newPaidTotal);
           if (overlapEnd.greaterThan(overlapStart)) {
             pharmacyPortion = pharmacyPortion.plus(overlapEnd.minus(overlapStart));
           }
@@ -49651,11 +49739,11 @@ var invoicesService = {
           let remainingPortion = pharmacyPortion;
           for (const charge of charges) {
             if (remainingPortion.lessThanOrEqualTo(0)) break;
-            const uncollected = import_library18.Decimal.max(0, charge.totalAmount.minus(charge.patientPaid));
+            const uncollected = import_library19.Decimal.max(0, charge.totalAmount.minus(charge.patientPaid));
             if (uncollected.lessThanOrEqualTo(0)) continue;
-            const alloc = import_library18.Decimal.min(remainingPortion, uncollected);
+            const alloc = import_library19.Decimal.min(remainingPortion, uncollected);
             const newPatientPaid = charge.patientPaid.plus(alloc);
-            const newPatientOutstanding = import_library18.Decimal.max(0, charge.totalAmount.minus(newPatientPaid));
+            const newPatientOutstanding = import_library19.Decimal.max(0, charge.totalAmount.minus(newPatientPaid));
             const chargePaidInFull = newPatientOutstanding.equals(0);
             const newPatientPaymentStatus = chargePaidInFull ? "CLEARED" : "PARTIALLY_COLLECTED";
             const settlementStatus = chargePaidInFull && charge.settlementStatus === "NOT_DUE" ? "PENDING" : charge.settlementStatus;
@@ -49748,15 +49836,15 @@ var invoicesService = {
       if (body.requestKey) {
         const previous = await tx.paymentReceipt.findUnique({ where: { refundRequestKey: body.requestKey } });
         if (previous) {
-          if (previous.hospitalInvoiceId !== invoiceId || !previous.amount.equals(new import_library18.Decimal(body.amount).negated()) || previous.method !== body.refundMethod || previous.originalReceiptId !== (body.paymentReceiptId ?? null)) {
+          if (previous.hospitalInvoiceId !== invoiceId || previous.collectedById !== actorId17 || previous.reference !== `Refund for ${invoice.invoiceNumber}: ${body.reason}` || !previous.amount.equals(new import_library19.Decimal(body.amount).negated()) || previous.method !== body.refundMethod || previous.originalReceiptId !== (body.paymentReceiptId ?? null)) {
             throw new ValidationError("Refund request key was already used for a different refund");
           }
           return { refundReceipt: previous, invoice, pharmacyNotifications: [] };
         }
       }
       if (invoice.status === "VOID") throw new ValidationError("Cannot refund a void invoice");
-      const refundAmount = new import_library18.Decimal(body.amount);
-      if (!refundAmount.gt(0)) throw new ValidationError("Refund amount must be positive");
+      const refundAmount = new import_library19.Decimal(body.amount);
+      if (!refundAmount.isFinite() || !refundAmount.gt(0) || refundAmount.decimalPlaces() > 2) throw new ValidationError("Refund amount must be positive with at most two decimal places");
       if (body.paymentReceiptId) {
         const original = invoice.paymentReceipts.find((r) => r.id === body.paymentReceiptId && r.amount.gt(0) && !r.isReversed);
         if (!original) throw new ValidationError("Original receipt does not belong to this invoice or is not refundable");
@@ -49778,6 +49866,8 @@ var invoicesService = {
           admissionRecordId: invoice.admissionRecordId,
           originalReceiptId: body.paymentReceiptId,
           refundRequestKey: body.requestKey,
+          collectedAt: /* @__PURE__ */ new Date(),
+          paymentAccount: body.refundMethod === "CASH" ? null : body.paymentAccount ?? (body.paymentReceiptId ? invoice.paymentReceipts.find((r) => r.id === body.paymentReceiptId)?.paymentAccount : null),
           method: body.refundMethod,
           reference: `Refund for ${invoice.invoiceNumber}: ${body.reason}`,
           collectedById: actorId17,
@@ -49792,7 +49882,8 @@ var invoicesService = {
           amount: refundAmount,
           category: "REFUND",
           isPhysicalCash: body.refundMethod === "CASH",
-          paymentReceiptId: reversalReceipt.id
+          paymentReceiptId: reversalReceipt.id,
+          occurredAt: reversalReceipt.collectedAt
         }
       });
       const newPaidTotal = invoice.paidTotal.minus(refundAmount);
@@ -49808,11 +49899,11 @@ var invoicesService = {
       const pharmacyNotifications = [];
       if (invoice.admissionRecordId) {
         const lines = await tx.invoiceLineItem.findMany({ where: { hospitalInvoiceId: invoice.id }, orderBy: [{ createdAt: "asc" }, { id: "asc" }], select: { billingSource: true, patientShare: true } });
-        let remaining = computePharmacyPortion(lines, new import_library18.Decimal(0), newPaidTotal);
+        let remaining = computePharmacyPortion(lines, new import_library19.Decimal(0), newPaidTotal);
         const charges = await tx.hmsPharmacyCharge.findMany({ where: { admissionRecordId: invoice.admissionRecordId }, orderBy: { createdAt: "asc" } });
         for (const charge of charges) {
-          const paid = import_library18.Decimal.min(charge.patientPaid, remaining);
-          remaining = import_library18.Decimal.max(0, remaining.minus(paid));
+          const paid = import_library19.Decimal.min(charge.patientPaid, remaining);
+          remaining = import_library19.Decimal.max(0, remaining.minus(paid));
           const outstanding = charge.patientOutstanding.plus(charge.patientPaid.minus(paid));
           await tx.hmsPharmacyCharge.update({
             where: { id: charge.id },
@@ -49891,8 +49982,8 @@ var invoicesService = {
     });
     if (!invoice) throw new NotFoundError("Invoice not found");
     const hospitalProfile = await prisma.hospitalProfile.findFirst();
-    const outstanding = import_library18.Decimal.max(0, patientResponsibility(invoice).minus(invoice.paidTotal));
-    const advanceCredit = import_library18.Decimal.max(0, invoice.paidTotal.minus(patientResponsibility(invoice)));
+    const outstanding = import_library19.Decimal.max(0, patientResponsibility(invoice).minus(invoice.paidTotal));
+    const advanceCredit = import_library19.Decimal.max(0, invoice.paidTotal.minus(patientResponsibility(invoice)));
     const latestReceipt = invoice.paymentReceipts.length > 0 ? invoice.paymentReceipts[invoice.paymentReceipts.length - 1] : null;
     const receivedNow = latestReceipt ? Number(latestReceipt.amount) : Number(invoice.paidTotal);
     const previouslyPaid = Math.max(0, Number(invoice.paidTotal) - receivedNow);
@@ -50024,7 +50115,7 @@ var invoicesService = {
     if (query.status) where.status = query.status;
     if (query.panelPatientId) where.panelPatientId = query.panelPatientId;
     if (query.selfPayEncounterId) where.selfPayEncounterId = query.selfPayEncounterId;
-    if (query.date) {
+    if (query.date && query.transactions !== "true") {
       const startOfDay = /* @__PURE__ */ new Date(`${query.date}T00:00:00.000Z`);
       const endOfDay = /* @__PURE__ */ new Date(`${query.date}T23:59:59.999Z`);
       where.createdAt = { gte: startOfDay, lte: endOfDay };
@@ -50111,16 +50202,19 @@ var invoicesService = {
         doctor: { select: { id: true, fullName: true, employeeId: true } },
         rmo: { select: { id: true, fullName: true, employeeId: true } },
         lines: { select: { id: true, lineNet: true, quantity: true } },
-        paymentReceipts: { select: { id: true, receiptNumber: true, amount: true, method: true, isReversed: true } }
+        paymentReceipts: { select: { id: true, receiptNumber: true, amount: true, method: true, isReversed: true, collectedAt: true, paymentAccount: true, collectedBy: { select: { username: true } } } }
       },
       orderBy: { createdAt: "desc" },
-      take: 200
+      // Receivables must retain older unpaid invoices beyond the recent-sales window.
+      ...query.hasOutstandingBalance === "true" || query.transactions === "true" ? {} : { take: 200 }
     });
-    return invoices.map((inv) => ({
+    const summaries = invoices.map((inv) => ({
       ...inv,
       balanceDue: patientBalanceDue(inv, inv.paidTotal).toNumber(),
       status: inv.status === "VOID" ? "VOID" : patientPaymentStatus(inv, inv.paidTotal)
     }));
+    if (query.transactions !== "true") return summaries;
+    return invoiceTransactions(summaries).filter((row) => !query.date || new Date(row.transactionAt.getTime() + 18e6).toISOString().slice(0, 10) === query.date);
   },
   async getInvoice(id) {
     const invoice = await prisma.hospitalInvoice.findUnique({
@@ -50187,7 +50281,7 @@ var invoicesService = {
       include: { selfPayEncounter: true, admissionRecord: true }
     });
     if (!invoice) throw new NotFoundError("Invoice not found");
-    const dec = new import_library18.Decimal(weightKg);
+    const dec = new import_library19.Decimal(weightKg);
     const updated = await prisma.hospitalInvoice.update({
       where: { id },
       data: { weightKg: dec }
@@ -50377,18 +50471,22 @@ var approveDiscountSchema = external_exports.object({
   discountApprovalNotes: external_exports.string().optional()
 });
 var collectPaymentSchema = external_exports.object({
-  amount: external_exports.coerce.number().positive("Payment amount must be greater than zero"),
+  requestKey: external_exports.string().uuid().optional(),
+  paymentAccount: external_exports.string().trim().min(2).max(150).optional(),
+  amount: external_exports.coerce.number().finite().positive("Payment amount must be greater than zero").multipleOf(0.01),
   paymentMethod: external_exports.enum(["CASH", "CARD", "BANK", "ONLINE"]).default("CASH"),
   reference: external_exports.string().optional()
 });
 var refundPaymentSchema = external_exports.object({
   requestKey: external_exports.string().uuid().optional(),
+  paymentAccount: external_exports.string().trim().min(2).max(150).optional(),
   paymentReceiptId: external_exports.string().uuid().optional(),
   amount: external_exports.coerce.number().positive("Refund amount must be greater than zero"),
   refundMethod: external_exports.enum(["CASH", "CARD", "BANK", "ONLINE"]).default("CASH"),
   reason: external_exports.string().min(1, "Refund reason is mandatory")
 });
 var listInvoicesQuerySchema = external_exports.object({
+  transactions: external_exports.enum(["true", "false"]).optional(),
   sourceType: external_exports.enum(["APPOINTMENT", "WALK_IN", "ADMISSION"]).optional(),
   encounterType: external_exports.enum(["OPD", "OBSERVATION", "EMERGENCY", "CUSTOM"]).optional(),
   status: external_exports.enum(["UNPAID", "PARTIALLY_PAID", "PAID", "VOID"]).optional(),
@@ -50478,13 +50576,13 @@ invoicesRouter.post(
 invoicesRouter.post(
   "/:id/payments",
   invCreate,
-  validate({ params: invoiceIdParamsSchema, body: collectPaymentSchema }),
+  validate({ params: invoiceIdParamsSchema, body: collectPaymentSchema.required({ requestKey: true }).refine((body) => body.paymentMethod === "CASH" || !!body.paymentAccount, "Select or enter the receiving bank / online account") }),
   asyncHandler(invoicesController.collectPayment)
 );
 invoicesRouter.post(
   "/:id/refund",
   invRefund,
-  validate({ params: invoiceIdParamsSchema, body: refundPaymentSchema }),
+  validate({ params: invoiceIdParamsSchema, body: refundPaymentSchema.required({ requestKey: true }).refine((body) => body.refundMethod === "CASH" || !!body.paymentAccount || !!body.paymentReceiptId, "Provide the refund bank / online account or original receipt") }),
   asyncHandler(invoicesController.refundPayment)
 );
 invoicesRouter.get(
@@ -50946,10 +51044,10 @@ var attendance_routes_default = router13;
 var import_express15 = __toESM(require_express2());
 
 // src/modules/payroll/payroll.service.ts
-var import_library21 = require("@prisma/client/runtime/library");
+var import_library22 = require("@prisma/client/runtime/library");
 
 // src/modules/payroll/payroll.calc.ts
-var import_library19 = require("@prisma/client/runtime/library");
+var import_library20 = require("@prisma/client/runtime/library");
 var WEEKDAY_NAMES2 = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 var DAY_MS = 864e5;
 var utcDay = (d) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
@@ -50965,7 +51063,7 @@ function countWorkingDays(from, to, working) {
   }
   return n;
 }
-var NO_DEDUCTION = { mode: "NONE", amount: new import_library19.Decimal(0) };
+var NO_DEDUCTION = { mode: "NONE", amount: new import_library20.Decimal(0) };
 function readDeductionRule(rules, key) {
   if (!rules || typeof rules !== "object") return NO_DEDUCTION;
   const rule = rules[key];
@@ -50973,7 +51071,7 @@ function readDeductionRule(rules, key) {
   const mode = rule.mode;
   const amount = rule.amount;
   if (mode !== "PER_MINUTE" && mode !== "FIXED_PER_OCCURRENCE" && mode !== "PERCENTAGE_DAILY") return NO_DEDUCTION;
-  return { mode, amount: new import_library19.Decimal(amount ?? 0) };
+  return { mode, amount: new import_library20.Decimal(amount ?? 0) };
 }
 function computeTimingDeduction(rule, totalMinutes, occurrences, dailyRate) {
   if (rule.mode === "PER_MINUTE") return rule.amount.mul(totalMinutes);
@@ -50981,7 +51079,7 @@ function computeTimingDeduction(rule, totalMinutes, occurrences, dailyRate) {
   if (rule.mode === "PERCENTAGE_DAILY") {
     return dailyRate.mul(rule.amount).div(100).mul(occurrences);
   }
-  return new import_library19.Decimal(0);
+  return new import_library20.Decimal(0);
 }
 function splitIntoMonthSlices(start, end) {
   const slices = [];
@@ -51017,7 +51115,7 @@ function splitIntoMonthSlices(start, end) {
   return slices;
 }
 function computeSalaryAmounts(profile, working, periodStart, periodEnd, records) {
-  const zero3 = new import_library19.Decimal(0);
+  const zero3 = new import_library20.Decimal(0);
   const scheduledPayableDays = countWorkingDays(utcDay(periodStart), utcDay(periodEnd), working);
   if (scheduledPayableDays === 0) return null;
   const base = profile.baseAmount;
@@ -51063,7 +51161,7 @@ function computeSalaryAmounts(profile, working, periodStart, periodEnd, records)
         const eq = PAYABLE_EQUIVALENT[r.status] ?? 0;
         attendanceEquivalentInSlice += eq;
       }
-      const unpaidInSlice = import_library19.Decimal.max(new import_library19.Decimal(scheduledInSlice).minus(attendanceEquivalentInSlice), zero3);
+      const unpaidInSlice = import_library20.Decimal.max(new import_library20.Decimal(scheduledInSlice).minus(attendanceEquivalentInSlice), zero3);
       let sliceBase = zero3;
       let sliceDeductions = zero3;
       let sliceEarned = zero3;
@@ -51073,8 +51171,8 @@ function computeSalaryAmounts(profile, working, periodStart, periodEnd, records)
           sliceDeductions = sliceBase;
           sliceEarned = zero3;
         } else {
-          sliceDeductions = import_library19.Decimal.min(sliceDailyRate.mul(unpaidInSlice), sliceBase);
-          sliceEarned = import_library19.Decimal.max(sliceBase.minus(sliceDeductions), zero3);
+          sliceDeductions = import_library20.Decimal.min(sliceDailyRate.mul(unpaidInSlice), sliceBase);
+          sliceEarned = import_library20.Decimal.max(sliceBase.minus(sliceDeductions), zero3);
         }
       } else {
         sliceBase = sliceDailyRate.mul(slice.calendarDays);
@@ -51082,8 +51180,8 @@ function computeSalaryAmounts(profile, working, periodStart, periodEnd, records)
           sliceDeductions = sliceBase;
           sliceEarned = zero3;
         } else {
-          sliceDeductions = import_library19.Decimal.min(sliceDailyRate.mul(unpaidInSlice), sliceBase);
-          sliceEarned = import_library19.Decimal.max(sliceBase.minus(sliceDeductions), zero3);
+          sliceDeductions = import_library20.Decimal.min(sliceDailyRate.mul(unpaidInSlice), sliceBase);
+          sliceEarned = import_library20.Decimal.max(sliceBase.minus(sliceDeductions), zero3);
         }
       }
       totalPeriodBase = totalPeriodBase.plus(sliceBase);
@@ -51104,7 +51202,7 @@ function computeSalaryAmounts(profile, working, periodStart, periodEnd, records)
     dailyRate = base;
     periodBaseAmount = base.mul(scheduledPayableDays);
     earnedBase = base.mul(attendanceEquivalentDays);
-    attendanceDeductions = import_library19.Decimal.max(periodBaseAmount.minus(earnedBase), zero3);
+    attendanceDeductions = import_library20.Decimal.max(periodBaseAmount.minus(earnedBase), zero3);
   }
   const allowances = profile.fixedAllowance;
   const otherDeductions = profile.fixedDeduction;
@@ -51117,7 +51215,7 @@ function computeSalaryAmounts(profile, working, periodStart, periodEnd, records)
   }
   const lateDeduction = computeTimingDeduction(readDeductionRule(profile.deductionRules, "late"), lateMinutes, lateOccurrences, dailyRate);
   const earlyExitDeduction = computeTimingDeduction(readDeductionRule(profile.deductionRules, "early_exit"), earlyExitMinutes, earlyExitOccurrences, dailyRate);
-  const netAmount = import_library19.Decimal.max(grossAmount.minus(tax).minus(otherDeductions).minus(lateDeduction).minus(earlyExitDeduction), zero3);
+  const netAmount = import_library20.Decimal.max(grossAmount.minus(tax).minus(otherDeductions).minus(lateDeduction).minus(earlyExitDeduction), zero3);
   const money = (amount) => amount.toDecimalPlaces(2);
   return {
     monthlyScheduledDays,
@@ -51140,12 +51238,12 @@ function computeSalaryAmounts(profile, working, periodStart, periodEnd, records)
 }
 
 // src/modules/payroll/payroll.balance.ts
-var import_library20 = require("@prisma/client/runtime/library");
+var import_library21 = require("@prisma/client/runtime/library");
 function salaryBalance(row) {
-  const adjustments = (row.correctionEntries ?? []).reduce((s, r) => s.plus(r.amount), new import_library20.Decimal(0));
-  const payable = import_library20.Decimal.max(row.generatedAmount.plus(adjustments), 0);
-  const paid = row.payments.reduce((s, r) => s.plus(r.amount), new import_library20.Decimal(0));
-  return { adjustments, payable, paid, remaining: import_library20.Decimal.max(payable.minus(paid), 0), overpaid: import_library20.Decimal.max(paid.minus(payable), 0) };
+  const adjustments = (row.correctionEntries ?? []).reduce((s, r) => s.plus(r.amount), new import_library21.Decimal(0));
+  const payable = import_library21.Decimal.max(row.generatedAmount.plus(adjustments), 0);
+  const paid = row.payments.reduce((s, r) => s.plus(r.amount), new import_library21.Decimal(0));
+  return { adjustments, payable, paid, remaining: import_library21.Decimal.max(payable.minus(paid), 0), overpaid: import_library21.Decimal.max(paid.minus(payable), 0) };
 }
 
 // src/modules/payroll/payroll.service.ts
@@ -51252,7 +51350,7 @@ var payrollService = {
   /** Read-only preview — exactly what a Generate would produce, without writing anything. */
   async preview(filters) {
     const { eligible, skipped } = await computeEligibility(filters);
-    const totalAmount = eligible.reduce((sum, r) => sum.plus(r.netAmount), new import_library21.Decimal(0)).toDecimalPlaces(2);
+    const totalAmount = eligible.reduce((sum, r) => sum.plus(r.netAmount), new import_library22.Decimal(0)).toDecimalPlaces(2);
     return { eligible, skipped, totalAmount, staffCount: eligible.length };
   },
   async generate(filters, actorId17) {
@@ -51260,7 +51358,7 @@ var payrollService = {
     if (eligible.length === 0) {
       throw new ConflictError("No staff have both a Salary Profile and approved attendance for this period \u2014 nothing to generate.");
     }
-    const totalAmount = eligible.reduce((sum, r) => sum.plus(r.netAmount), new import_library21.Decimal(0)).toDecimalPlaces(2);
+    const totalAmount = eligible.reduce((sum, r) => sum.plus(r.netAmount), new import_library22.Decimal(0)).toDecimalPlaces(2);
     return prisma.$transaction(async (tx) => {
       for (const row of [...eligible].sort((a, b) => a.staffId.localeCompare(b.staffId))) {
         await tx.$queryRaw`SELECT id FROM staff WHERE id = ${row.staffId} FOR UPDATE`;
@@ -51415,8 +51513,8 @@ var payrollService = {
       }
       if (!["APPROVED", "PARTIALLY_PAID"].includes(slip.status)) throw new ConflictError("Only an approved salary slip can be paid.");
       const balance = salaryBalance(slip);
-      if (balance.remaining.lte(0) || new import_library21.Decimal(body.amount).gt(balance.remaining)) throw new ValidationError(`Payment exceeds remaining salary ${balance.remaining.toFixed(2)}.`);
-      const cashEntryId = await postStaffPaymentCash(tx, actorId17, new import_library21.Decimal(body.amount), body.method, "SALARY_PAYMENT", `Salary payment for slip ${id}`);
+      if (balance.remaining.lte(0) || new import_library22.Decimal(body.amount).gt(balance.remaining)) throw new ValidationError(`Payment exceeds remaining salary ${balance.remaining.toFixed(2)}.`);
+      const cashEntryId = await postStaffPaymentCash(tx, actorId17, new import_library22.Decimal(body.amount), body.method, "SALARY_PAYMENT", `Salary payment for slip ${id}`);
       await tx.salaryPayment.create({ data: { salarySlipId: id, ...body, paidById: actorId17, cashEntryId } });
       const updated = await tx.salarySlip.update({ where: { id }, data: {
         status: balance.paid.plus(body.amount).gte(balance.payable) ? "PAID" : "PARTIALLY_PAID"
@@ -51547,6 +51645,10 @@ var payAccrualBodySchema = external_exports.object({
   method: external_exports.enum(["CASH", "CARD", "BANK", "ONLINE"]),
   reference: external_exports.string().max(200).optional()
 });
+var payDoctorCommissionBodySchema = payAccrualBodySchema.extend({
+  staffId: external_exports.string().uuid(),
+  accrualIds: external_exports.array(external_exports.string().uuid()).min(1).refine((ids) => new Set(ids).size === ids.length, "Duplicate commission entries")
+});
 var financialAdjustmentSchema = external_exports.object({
   amount: external_exports.coerce.number().refine((v) => v !== 0 && Number.isFinite(v) && Math.abs(v * 100 - Math.round(v * 100)) < 1e-6, "Use a nonzero amount with at most two decimal places"),
   reason: external_exports.string().trim().min(3).max(1e3)
@@ -51639,6 +51741,9 @@ function actorId9(req) {
   return req.user.sub;
 }
 var commissionController = {
+  payDoctorTotal: async (req, res) => {
+    res.status(201).json({ data: await commissionService.payDoctorTotal(req.body, actorId9(req)) });
+  },
   adjustAccrual: async (req, res) => {
     res.status(201).json({ data: await commissionService.adjustAccrual(req.params.id, req.body, actorId9(req)) });
   },
@@ -51680,7 +51785,7 @@ var commissionController = {
 
 // src/modules/commission/commissionRun.service.ts
 var import_client36 = require("@prisma/client");
-var import_library22 = require("@prisma/client/runtime/library");
+var import_library23 = require("@prisma/client/runtime/library");
 async function preview(tx, filters) {
   const lines = await tx.doctorCommissionAccrual.findMany({ where: {
     status: "ACCRUED",
@@ -51690,7 +51795,7 @@ async function preview(tx, filters) {
     invoiceLineItem: { ...filters.departmentId ? commissionDepartmentFilter(filters.departmentId) : {}, isCompleted: true, hospitalInvoice: { status: { not: "VOID" } }, ...filters.serviceRateId ? { serviceRateId: filters.serviceRateId } : {} }
   }, include: commissionInclude, orderBy: [{ periodStart: "asc" }, { id: "asc" }] });
   const eligible = lines.map(commissionStatement).filter((line) => line.balance.payable.gt(0));
-  return { lines: eligible, totalAmount: eligible.reduce((s, r) => s.plus(r.balance.payable), new import_library22.Decimal(0)), lineCount: eligible.length };
+  return { lines: eligible, totalAmount: eligible.reduce((s, r) => s.plus(r.balance.payable), new import_library23.Decimal(0)), lineCount: eligible.length };
 }
 var commissionRunService = {
   preview: (filters) => prisma.$transaction((tx) => preview(tx, filters)),
@@ -51740,6 +51845,7 @@ var router15 = (0, import_express16.Router)();
 var view10 = authorize("commission", "view");
 var create10 = authorize("commission", "create");
 var approve3 = authorize("commission", "approve");
+router15.post("/pay-total", create10, validate({ body: payDoctorCommissionBodySchema }), asyncHandler(commissionController.payDoctorTotal));
 router15.post("/payouts/:id/reverse", approve3, validate({ params: accrualIdParamsSchema, body: paymentReversalSchema }), asyncHandler(async (req, res) => {
   res.json({ data: await reverseStaffPayment("COMMISSION", req.params.id, req.body.reason, req.user.sub) });
 }));
@@ -52289,7 +52395,7 @@ var admission_routes_default = router16;
 var import_express18 = __toESM(require_express2());
 
 // src/modules/inventory/inventory.service.ts
-var import_library23 = require("@prisma/client/runtime/library");
+var import_library24 = require("@prisma/client/runtime/library");
 function assertUniqueItems(ids) {
   if (new Set(ids).size !== ids.length) {
     throw new ValidationError("Each item or return line may appear only once. Combine quantities into one line.");
@@ -52304,9 +52410,9 @@ var FIXED_ADJUSTMENT_DIRECTION = {
 };
 function computeOutstanding(entries) {
   return entries.reduce((acc, entry) => {
-    const amount = new import_library23.Decimal(entry.amount);
+    const amount = new import_library24.Decimal(entry.amount);
     return entry.entryType === "PURCHASE_CREDIT" || entry.entryType === "ADJUSTMENT" ? acc.plus(amount) : acc.minus(amount);
-  }, new import_library23.Decimal(0));
+  }, new import_library24.Decimal(0));
 }
 function computeInventoryActiveBatches(stockLedgerEntries, purchaseOrderLines) {
   const batchMap = /* @__PURE__ */ new Map();
@@ -52315,7 +52421,7 @@ function computeInventoryActiveBatches(stockLedgerEntries, purchaseOrderLines) {
     const expStr = entry.expiryDate instanceof Date ? entry.expiryDate.toISOString().slice(0, 10) : entry.expiryDate ? String(entry.expiryDate).slice(0, 10) : "NO_EXP";
     const key = `${bNo ?? "__UNBATCHED__"}::${expStr}`;
     const existing = batchMap.get(key);
-    const delta = new import_library23.Decimal(entry.quantityDelta);
+    const delta = new import_library24.Decimal(entry.quantityDelta);
     const createdAt = entry.createdAt instanceof Date ? entry.createdAt : new Date(entry.createdAt);
     const expDate = entry.expiryDate ? entry.expiryDate instanceof Date ? entry.expiryDate : new Date(entry.expiryDate) : null;
     if (!existing) {
@@ -52332,13 +52438,13 @@ function computeInventoryActiveBatches(stockLedgerEntries, purchaseOrderLines) {
       }
     }
   }
-  const defaultRate = purchaseOrderLines.length > 0 && purchaseOrderLines[0] ? new import_library23.Decimal(purchaseOrderLines[0].rate) : new import_library23.Decimal(0);
+  const defaultRate = purchaseOrderLines.length > 0 && purchaseOrderLines[0] ? new import_library24.Decimal(purchaseOrderLines[0].rate) : new import_library24.Decimal(0);
   const getCostRate = (batchNo) => {
     if (!batchNo) return defaultRate;
     const matched = purchaseOrderLines.find(
       (pol) => pol.batchNo?.trim().toLowerCase() === batchNo.trim().toLowerCase()
     );
-    return matched ? new import_library23.Decimal(matched.rate) : defaultRate;
+    return matched ? new import_library24.Decimal(matched.rate) : defaultRate;
   };
   const now = /* @__PURE__ */ new Date();
   const positiveBatches = Array.from(batchMap.values()).filter((b) => b.available.greaterThan(0));
@@ -52389,7 +52495,7 @@ async function allocateInventoryFefoBatches(stockItemId, requestedQuantity, tx) 
     throw new NotFoundError(`Stock item ${stockItemId} not found or inactive`);
   }
   const activeBatches = computeInventoryActiveBatches(item.stockLedgerEntries, item.purchaseOrderLines);
-  const totalAvailable = activeBatches.reduce((sum, b) => sum.plus(b.available), new import_library23.Decimal(0));
+  const totalAvailable = activeBatches.reduce((sum, b) => sum.plus(b.available), new import_library24.Decimal(0));
   if (totalAvailable.lessThan(requestedQuantity)) {
     throw new ValidationError(
       `Insufficient non-expired stock for "${item.name}". Available: ${totalAvailable.toString()} ${item.unit}, Requested: ${requestedQuantity.toString()} ${item.unit}. Cannot drive stock negative.`
@@ -52513,7 +52619,7 @@ var inventoryService = {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('hms-inventory-ledger'))`;
       const supplier = await tx.supplier.findUnique({ where: { id: supplierId }, include: { supplierLedger: true } });
       if (!supplier || !supplier.isActive) throw new NotFoundError("Supplier not found or inactive");
-      const amount = new import_library23.Decimal(body.amount);
+      const amount = new import_library24.Decimal(body.amount);
       const outstanding = computeOutstanding(supplier.supplierLedger);
       if (outstanding.lessThanOrEqualTo(0)) {
         throw new ValidationError(`${supplier.name}'s account is already fully settled \u2014 there is no outstanding balance to pay.`);
@@ -52543,7 +52649,7 @@ var inventoryService = {
         });
         const currentPhysicalCash = userCashEntries.reduce(
           (sum, e) => e.direction === "IN" ? sum.plus(e.amount) : sum.minus(e.amount),
-          new import_library23.Decimal(0)
+          new import_library24.Decimal(0)
         );
         if (currentPhysicalCash.lessThan(amount)) {
           throw new ValidationError(
@@ -52603,12 +52709,12 @@ var inventoryService = {
           category: body.category,
           unit: body.unit,
           location: body.location,
-          reorderLevel: new import_library23.Decimal(body.reorderLevel),
+          reorderLevel: new import_library24.Decimal(body.reorderLevel),
           createdById: actorId17
         }
       });
-      const initialQty = body.initialQuantity ? new import_library23.Decimal(body.initialQuantity) : new import_library23.Decimal(0);
-      const rate = body.unitCost ? new import_library23.Decimal(body.unitCost) : new import_library23.Decimal(0);
+      const initialQty = body.initialQuantity ? new import_library24.Decimal(body.initialQuantity) : new import_library24.Decimal(0);
+      const rate = body.unitCost ? new import_library24.Decimal(body.unitCost) : new import_library24.Decimal(0);
       if (initialQty.greaterThan(0)) {
         const supplier = body.supplierId ? await tx.supplier.findUnique({ where: { id: body.supplierId } }) : null;
         if (supplier) {
@@ -52685,7 +52791,7 @@ var inventoryService = {
       where: { id },
       data: {
         ...body,
-        reorderLevel: body.reorderLevel !== void 0 ? new import_library23.Decimal(body.reorderLevel) : void 0
+        reorderLevel: body.reorderLevel !== void 0 ? new import_library24.Decimal(body.reorderLevel) : void 0
       }
     });
   },
@@ -52718,7 +52824,7 @@ var inventoryService = {
     return items.map((item) => {
       const currentStock = item.stockLedgerEntries.reduce(
         (sum, entry) => sum.plus(entry.quantityDelta),
-        new import_library23.Decimal(0)
+        new import_library24.Decimal(0)
       );
       const isLowStock = currentStock.lessThanOrEqualTo(item.reorderLevel);
       const activeBatches = computeInventoryActiveBatches(item.stockLedgerEntries, item.purchaseOrderLines);
@@ -52755,7 +52861,7 @@ var inventoryService = {
     if (!item) throw new NotFoundError("Stock item not found");
     const runningStock = item.stockLedgerEntries.reduce(
       (sum, e) => sum.plus(e.quantityDelta),
-      new import_library23.Decimal(0)
+      new import_library24.Decimal(0)
     );
     return {
       item: { id: item.id, code: item.code, name: item.name, unit: item.unit },
@@ -52765,7 +52871,7 @@ var inventoryService = {
   },
   // ── Fund Requests / Petty Cash Received (inventory.md §6.1, §9 step 6) ──
   async approveFundRequest(recipientUserId, amount, reason, issuedById) {
-    const amountDecimal = new import_library23.Decimal(amount);
+    const amountDecimal = new import_library24.Decimal(amount);
     return prisma.userCashBalance.create({
       data: {
         portalUserId: recipientUserId,
@@ -52798,7 +52904,7 @@ var inventoryService = {
   async createInventoryExpense(body, actorId17) {
     return prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('hms-inventory-ledger'))`;
-      const amount = new import_library23.Decimal(body.amount);
+      const amount = new import_library24.Decimal(body.amount);
       let expRef = body.reference?.trim();
       if (!expRef) {
         const expCount = await tx.inventoryExpense.count();
@@ -52850,15 +52956,15 @@ var inventoryService = {
       if (!supplier || !supplier.isActive) {
         throw new NotFoundError("Supplier not found or inactive");
       }
-      let totalAmount = new import_library23.Decimal(0);
+      let totalAmount = new import_library24.Decimal(0);
       const linesData = [];
       for (const line of body.lines) {
         const item = await tx.stockItem.findUnique({ where: { id: line.stockItemId } });
         if (!item || !item.isActive) {
           throw new NotFoundError(`Stock item ${line.stockItemId} not found or inactive`);
         }
-        const qty = new import_library23.Decimal(line.quantity);
-        const rate = new import_library23.Decimal(line.rate);
+        const qty = new import_library24.Decimal(line.quantity);
+        const rate = new import_library24.Decimal(line.rate);
         const batchNo = line.batchNo?.trim() || `BN-${String((linesData.length + 1) % 100 || 1).padStart(2, "0")}`;
         totalAmount = totalAmount.plus(qty.mul(rate));
         linesData.push({
@@ -52876,7 +52982,7 @@ var inventoryService = {
         });
         const currentPhysicalCash = userCashEntries.reduce((sum, entry) => {
           return entry.direction === "IN" ? sum.plus(entry.amount) : sum.minus(entry.amount);
-        }, new import_library23.Decimal(0));
+        }, new import_library24.Decimal(0));
         if (currentPhysicalCash.lessThan(totalAmount)) {
           throw new ValidationError(
             `Insufficient petty cash balance (Current: PKR ${currentPhysicalCash.toFixed(2)}, Required: PKR ${totalAmount.toFixed(2)}). Request petty cash advance first.`
@@ -52970,7 +53076,7 @@ var inventoryService = {
       if (!department2) throw new NotFoundError("Department not found");
       const allocatedLines = [];
       for (const line of body.lines) {
-        const requestedQty = new import_library23.Decimal(line.quantity);
+        const requestedQty = new import_library24.Decimal(line.quantity);
         const allocations = await allocateInventoryFefoBatches(line.stockItemId, requestedQty, tx);
         allocatedLines.push({
           stockItemId: line.stockItemId,
@@ -53044,7 +53150,7 @@ var inventoryService = {
             `Requisition line ${returnLine.departmentRequisitionLineId} not found on requisition ${requisition.id}`
           );
         }
-        const qty = new import_library23.Decimal(returnLine.quantity);
+        const qty = new import_library24.Decimal(returnLine.quantity);
         const remaining = line.quantity.minus(line.returnedQuantity);
         if (qty.greaterThan(remaining)) {
           throw new ValidationError(
@@ -53106,7 +53212,7 @@ var inventoryService = {
       if (!purchaseOrder || purchaseOrder.supplierId !== supplier.id) {
         throw new NotFoundError("Purchase order not found for this supplier");
       }
-      let totalAmount = new import_library23.Decimal(0);
+      let totalAmount = new import_library24.Decimal(0);
       const validatedLines = [];
       for (const line of body.lines) {
         const item = await tx.stockItem.findUnique({
@@ -53118,15 +53224,15 @@ var inventoryService = {
         }
         const currentStock = item.stockLedgerEntries.reduce(
           (sum, e) => sum.plus(e.quantityDelta),
-          new import_library23.Decimal(0)
+          new import_library24.Decimal(0)
         );
-        const qty = new import_library23.Decimal(line.quantity);
+        const qty = new import_library24.Decimal(line.quantity);
         if (currentStock.lessThan(qty)) {
           throw new ValidationError(
             `Insufficient stock for "${item.name}" (Available: ${currentStock.toString()} ${item.unit}, Returning: ${qty.toString()} ${item.unit}). Cannot drive stock negative.`
           );
         }
-        totalAmount = totalAmount.plus(qty.mul(new import_library23.Decimal(line.rate)));
+        totalAmount = totalAmount.plus(qty.mul(new import_library24.Decimal(line.rate)));
         validatedLines.push({ stockItemId: item.id, quantity: qty });
       }
       for (const line of validatedLines) {
@@ -53188,11 +53294,11 @@ var inventoryService = {
         include: { stockLedgerEntries: { select: { quantityDelta: true } } }
       });
       if (!item || !item.isActive) throw new NotFoundError("Stock item not found or inactive");
-      const qty = new import_library23.Decimal(body.quantity);
+      const qty = new import_library24.Decimal(body.quantity);
       if (body.direction === "DECREASE") {
         const currentStock = item.stockLedgerEntries.reduce(
           (sum, e) => sum.plus(e.quantityDelta),
-          new import_library23.Decimal(0)
+          new import_library24.Decimal(0)
         );
         if (currentStock.lessThan(qty)) {
           throw new ValidationError(
@@ -53874,7 +53980,7 @@ async function requirePharmacyDepartment(tx) {
 }
 
 // src/modules/pharmacy-bridge/pharmacy-bridge.service.ts
-var import_library24 = require("@prisma/client/runtime/library");
+var import_library25 = require("@prisma/client/runtime/library");
 var pharmacyBridgeService = {
   // ── List & Get Medicine Requests ──────────────────────────────────────────
   // Read-only. Requests are created via admission.service.ts's
@@ -53967,12 +54073,12 @@ var pharmacyBridgeService = {
             departmentId: admission.departmentId,
             panelPatientId: admission.panelPatientId,
             selfPayEncounterId: admission.selfPayEncounterId,
-            subtotal: new import_library24.Decimal(0),
-            discountTotal: new import_library24.Decimal(0),
-            total: new import_library24.Decimal(0),
-            paidTotal: new import_library24.Decimal(0),
-            patientShare: new import_library24.Decimal(0),
-            panelReceivable: new import_library24.Decimal(0),
+            subtotal: new import_library25.Decimal(0),
+            discountTotal: new import_library25.Decimal(0),
+            total: new import_library25.Decimal(0),
+            paidTotal: new import_library25.Decimal(0),
+            patientShare: new import_library25.Decimal(0),
+            panelReceivable: new import_library25.Decimal(0),
             status: "UNPAID"
           },
           include: { lines: true }
@@ -53990,14 +54096,14 @@ var pharmacyBridgeService = {
       }
       const pharmacyDepartment = await requirePharmacyDepartment(tx);
       const legacyService = await tx.serviceRate.findUnique({ where: { code: "SRV-PHARMACY" } });
-      const totalDecimal = new import_library24.Decimal(body.totalAmount);
-      const subtotalDecimal = new import_library24.Decimal(body.subtotal);
-      const taxDecimal = new import_library24.Decimal(body.taxTotal);
-      const discountDecimal = new import_library24.Decimal(body.discountTotal);
+      const totalDecimal = new import_library25.Decimal(body.totalAmount);
+      const subtotalDecimal = new import_library25.Decimal(body.subtotal);
+      const taxDecimal = new import_library25.Decimal(body.taxTotal);
+      const discountDecimal = new import_library25.Decimal(body.discountTotal);
       const panelDiscountRules = admission.panelPatient?.corporatePanel?.discountRules;
       const applyCoverage = (gross, quantity, reasonPrefix) => {
         if (!admission.panelPatientId) {
-          return { discountAmount: new import_library24.Decimal(0), discountReason: reasonPrefix, lineNet: gross, patientShare: gross, panelReceivable: new import_library24.Decimal(0), coverageSnapshot: void 0 };
+          return { discountAmount: new import_library25.Decimal(0), discountReason: reasonPrefix, lineNet: gross, patientShare: gross, panelReceivable: new import_library25.Decimal(0), coverageSnapshot: void 0 };
         }
         const coverage = resolvePanelCoverage(gross, panelDiscountRules, legacyService?.id ?? "PHARMACY", /* @__PURE__ */ new Date(), pharmacyDepartment.id, quantity, admission.panelPatient);
         return {
@@ -54010,17 +54116,17 @@ var pharmacyBridgeService = {
         };
       };
       const linesToCreate = body.lines && body.lines.length > 0 ? body.lines.map((l) => {
-        const gross = new import_library24.Decimal(l.lineNet);
+        const gross = new import_library25.Decimal(l.lineNet);
         const coverage = applyCoverage(
           gross,
-          new import_library24.Decimal(l.quantity),
+          new import_library25.Decimal(l.quantity),
           `Pharmacy: ${l.medicineName}${l.batchNumber ? ` [Batch: ${l.batchNumber}]` : ""}${l.externalRequestRef ? ` [Req: ${l.externalRequestRef}]` : ""}`
         );
         return {
           billingSource: "PHARMACY",
           descriptionSnapshot: l.medicineName,
-          rateSnapshot: new import_library24.Decimal(l.rate),
-          quantity: new import_library24.Decimal(l.quantity),
+          rateSnapshot: new import_library25.Decimal(l.rate),
+          quantity: new import_library25.Decimal(l.quantity),
           lineGross: gross,
           discountAmount: coverage.discountAmount,
           discountReason: coverage.discountReason,
@@ -54031,12 +54137,12 @@ var pharmacyBridgeService = {
         };
       }) : [
         (() => {
-          const coverage = applyCoverage(totalDecimal, new import_library24.Decimal(1), `Pharmacy Medication Charges${body.externalRequestRef ? ` [Req: ${body.externalRequestRef}]` : ""}`);
+          const coverage = applyCoverage(totalDecimal, new import_library25.Decimal(1), `Pharmacy Medication Charges${body.externalRequestRef ? ` [Req: ${body.externalRequestRef}]` : ""}`);
           return {
             billingSource: "PHARMACY",
             descriptionSnapshot: "Pharmacy Medication",
             rateSnapshot: totalDecimal,
-            quantity: new import_library24.Decimal(1),
+            quantity: new import_library25.Decimal(1),
             lineGross: totalDecimal,
             discountAmount: coverage.discountAmount,
             discountReason: coverage.discountReason,
@@ -54064,16 +54170,16 @@ var pharmacyBridgeService = {
         where: { hospitalInvoiceId: hospitalInvoice.id },
         orderBy: { createdAt: "asc" }
       });
-      const newSubtotal = allLines.reduce((sum, l) => sum.plus(l.lineGross), new import_library24.Decimal(0));
-      const newDiscount = allLines.reduce((sum, l) => sum.plus(l.discountAmount), new import_library24.Decimal(0));
-      const newTotal = allLines.reduce((sum, l) => sum.plus(l.lineNet), new import_library24.Decimal(0));
-      const newPatientShare = allLines.reduce((sum, l) => sum.plus(l.patientShare), new import_library24.Decimal(0));
-      const newPanelReceivable = allLines.reduce((sum, l) => sum.plus(l.panelReceivable), new import_library24.Decimal(0));
+      const newSubtotal = allLines.reduce((sum, l) => sum.plus(l.lineGross), new import_library25.Decimal(0));
+      const newDiscount = allLines.reduce((sum, l) => sum.plus(l.discountAmount), new import_library25.Decimal(0));
+      const newTotal = allLines.reduce((sum, l) => sum.plus(l.lineNet), new import_library25.Decimal(0));
+      const newPatientShare = allLines.reduce((sum, l) => sum.plus(l.patientShare), new import_library25.Decimal(0));
+      const newPanelReceivable = allLines.reduce((sum, l) => sum.plus(l.panelReceivable), new import_library25.Decimal(0));
       const previousPaidTotal = hospitalInvoice.paidTotal;
       const unlinkedAdvance = await tx.paymentReceipt.findMany({
         where: { admissionRecordId: admission.id, hospitalInvoiceId: null, isReversed: false }
       });
-      const advanceTotal = unlinkedAdvance.reduce((sum, r) => sum.plus(r.amount), new import_library24.Decimal(0));
+      const advanceTotal = unlinkedAdvance.reduce((sum, r) => sum.plus(r.amount), new import_library25.Decimal(0));
       if (advanceTotal.greaterThan(0)) {
         await tx.paymentReceipt.updateMany({
           where: { id: { in: unlinkedAdvance.map((r) => r.id) } },
@@ -54081,7 +54187,7 @@ var pharmacyBridgeService = {
         });
       }
       const paidTotal = previousPaidTotal.plus(advanceTotal);
-      const newOutstanding = import_library24.Decimal.max(0, newPatientShare.minus(paidTotal));
+      const newOutstanding = import_library25.Decimal.max(0, newPatientShare.minus(paidTotal));
       const newStatus = newOutstanding.equals(0) ? "PAID" : paidTotal.greaterThan(0) ? "PARTIALLY_PAID" : "UNPAID";
       hospitalInvoice = await tx.hospitalInvoice.update({
         where: { id: hospitalInvoice.id },
@@ -54096,8 +54202,8 @@ var pharmacyBridgeService = {
         },
         include: { lines: true }
       });
-      const pharmacyCovered = computePharmacyPortion(allLines, new import_library24.Decimal(0), paidTotal);
-      const pharmacyPortionFromAdvance = import_library24.Decimal.max(0, pharmacyCovered.minus(existingCharge?.patientPaid ?? 0));
+      const pharmacyCovered = computePharmacyPortion(allLines, new import_library25.Decimal(0), paidTotal);
+      const pharmacyPortionFromAdvance = import_library25.Decimal.max(0, pharmacyCovered.minus(existingCharge?.patientPaid ?? 0));
       const allRequestRefs = /* @__PURE__ */ new Set();
       if (body.externalRequestRef) allRequestRefs.add(body.externalRequestRef);
       for (const line of body.lines || []) {
@@ -54170,11 +54276,11 @@ var pharmacyBridgeService = {
         taxTotal: taxDecimal,
         discountTotal: discountDecimal,
         totalAmount: totalDecimal,
-        patientPaid: existingCharge ? existingCharge.patientPaid : new import_library24.Decimal(0),
-        patientOutstanding: import_library24.Decimal.max(0, totalDecimal.minus(existingCharge ? existingCharge.patientPaid : 0)),
+        patientPaid: existingCharge ? existingCharge.patientPaid : new import_library25.Decimal(0),
+        patientOutstanding: import_library25.Decimal.max(0, totalDecimal.minus(existingCharge ? existingCharge.patientPaid : 0)),
         patientPaymentStatus: existingCharge && existingCharge.patientPaid.greaterThanOrEqualTo(totalDecimal) ? "CLEARED" : existingCharge && existingCharge.patientPaid.greaterThan(0) ? "PARTIALLY_COLLECTED" : "PENDING",
         settlementStatus: existingCharge?.settlementStatus ?? "NOT_DUE",
-        settledAmount: existingCharge?.settledAmount ?? new import_library24.Decimal(0),
+        settledAmount: existingCharge?.settledAmount ?? new import_library25.Decimal(0),
         itemsJson: body.lines && body.lines.length > 0 ? body.lines : [],
         dispensedBySnapshot: body.dispensedBy || "Pharmacy Staff",
         dispensedAt: body.dispensedAt ? new Date(body.dispensedAt) : /* @__PURE__ */ new Date()
@@ -54192,7 +54298,7 @@ var pharmacyBridgeService = {
       }
       if (pharmacyPortionFromAdvance.greaterThan(0)) {
         const newPatientPaid = charge.patientPaid.plus(pharmacyPortionFromAdvance);
-        const newPatientOutstanding = import_library24.Decimal.max(0, charge.totalAmount.minus(newPatientPaid));
+        const newPatientOutstanding = import_library25.Decimal.max(0, charge.totalAmount.minus(newPatientPaid));
         const chargePaidInFull = newPatientOutstanding.equals(0);
         charge = await tx.hmsPharmacyCharge.update({
           where: { id: charge.id },
@@ -54266,8 +54372,8 @@ var pharmacyBridgeService = {
       const settlement = await tx.hmsPharmacySettlement.upsert({
         where: { settlementNumber: body.settlementNumber },
         update: {
-          requestedAmount: new import_library24.Decimal(body.requestedAmount),
-          remainingAmount: new import_library24.Decimal(body.requestedAmount).minus(charge.settledAmount),
+          requestedAmount: new import_library25.Decimal(body.requestedAmount),
+          remainingAmount: new import_library25.Decimal(body.requestedAmount).minus(charge.settledAmount),
           status: "REQUESTED",
           remarks: body.remarks
         },
@@ -54275,8 +54381,8 @@ var pharmacyBridgeService = {
           settlementNumber: body.settlementNumber,
           pharmacyChargeId: charge.id,
           pharmacyInvoiceNumber: body.pharmacyInvoiceNumber,
-          requestedAmount: new import_library24.Decimal(body.requestedAmount),
-          remainingAmount: new import_library24.Decimal(body.requestedAmount),
+          requestedAmount: new import_library25.Decimal(body.requestedAmount),
+          remainingAmount: new import_library25.Decimal(body.requestedAmount),
           status: "REQUESTED",
           requestedByExternal: body.requestedBy,
           remarks: body.remarks
@@ -54324,7 +54430,7 @@ var pharmacyBridgeService = {
     });
     if (!settlement) throw new NotFoundError("Settlement not found");
     if (settlement.status === "SETTLED") throw new ValidationError("Settlement is already settled");
-    const releaseAmt = new import_library24.Decimal(body.releasedAmount);
+    const releaseAmt = new import_library25.Decimal(body.releasedAmount);
     if (releaseAmt.greaterThan(settlement.remainingAmount)) {
       throw new ValidationError(`Release amount (${releaseAmt}) cannot exceed remaining amount (${settlement.remainingAmount})`);
     }
@@ -54652,7 +54758,7 @@ var pharmacy_bridge_routes_default = router19;
 var import_express21 = __toESM(require_express2());
 
 // src/modules/cash/cash.service.ts
-var import_library25 = require("@prisma/client/runtime/library");
+var import_library26 = require("@prisma/client/runtime/library");
 var cashService = {
   /**
    * Cashier Balance Sheet — §4.9, §8.12, D04 p.2–3
@@ -54700,17 +54806,17 @@ var cashService = {
         select: { physicalCash: true, variance: true }
       }) : Promise.resolve([])
     ]);
-    let physicalCashIn = new import_library25.Decimal(0);
-    let physicalCashOut = new import_library25.Decimal(0);
-    let nonPhysicalTotal = new import_library25.Decimal(0);
-    let totalCollections = new import_library25.Decimal(0);
-    let totalRefunds = new import_library25.Decimal(0);
-    let pettyCash = new import_library25.Decimal(0);
-    let cashCollections = new import_library25.Decimal(0);
-    let cashExpenses = new import_library25.Decimal(0);
-    let cashRefunds = new import_library25.Decimal(0);
-    let settledNet = new import_library25.Decimal(0);
-    let remainingNet = new import_library25.Decimal(0);
+    let physicalCashIn = new import_library26.Decimal(0);
+    let physicalCashOut = new import_library26.Decimal(0);
+    let nonPhysicalTotal = new import_library26.Decimal(0);
+    let totalCollections = new import_library26.Decimal(0);
+    let totalRefunds = new import_library26.Decimal(0);
+    let pettyCash = new import_library26.Decimal(0);
+    let cashCollections = new import_library26.Decimal(0);
+    let cashExpenses = new import_library26.Decimal(0);
+    let cashRefunds = new import_library26.Decimal(0);
+    let settledNet = new import_library26.Decimal(0);
+    let remainingNet = new import_library26.Decimal(0);
     for (const tx of transactions) {
       if (tx.isPhysicalCash) {
         const signed = tx.direction === "IN" ? tx.amount : tx.amount.negated();
@@ -54736,7 +54842,7 @@ var cashService = {
         else if (tx.category === "REFUND") totalRefunds = totalRefunds.plus(tx.amount);
       }
     }
-    const carriedForwardAmount = previousSettlement?.carryForwardAmount ?? new import_library25.Decimal(0);
+    const carriedForwardAmount = previousSettlement?.carryForwardAmount ?? new import_library26.Decimal(0);
     const expectedPhysicalCash = physicalCashIn.minus(physicalCashOut).plus(carriedForwardAmount);
     return {
       portalUserId,
@@ -54759,8 +54865,8 @@ var cashService = {
         // Only meaningful for a historical period — the counted cash and
         // variance come from settlements submitted inside that period.
         settlementCount: periodSettlements.length,
-        physicalCashCounted: periodSettlements.reduce((s, p) => s.plus(p.physicalCash), new import_library25.Decimal(0)),
-        variance: periodSettlements.reduce((s, p) => s.plus(p.variance), new import_library25.Decimal(0))
+        physicalCashCounted: periodSettlements.reduce((s, p) => s.plus(p.physicalCash), new import_library26.Decimal(0)),
+        variance: periodSettlements.reduce((s, p) => s.plus(p.variance), new import_library26.Decimal(0))
       },
       transactions: transactions.map((t) => ({
         id: t.id,
@@ -54770,6 +54876,7 @@ var cashService = {
         isPhysicalCash: t.isPhysicalCash,
         isSettled: t.isSettled,
         occurredAt: t.occurredAt,
+        paymentAccount: t.paymentReceipt?.paymentAccount ?? null,
         receiptNumber: t.paymentReceipt?.receiptNumber ?? null,
         invoiceNumber: t.paymentReceipt?.hospitalInvoice?.invoiceNumber ?? null,
         paymentMethod: t.paymentReceipt?.method ?? (t.isPhysicalCash ? "CASH" : "NON_CASH"),
@@ -54780,7 +54887,7 @@ var cashService = {
 };
 
 // src/modules/cash/settlement.service.ts
-var import_library26 = require("@prisma/client/runtime/library");
+var import_library27 = require("@prisma/client/runtime/library");
 var settlementService = {
   async submitSettlement(portalUserId, body) {
     return prisma.$transaction(async (tx) => {
@@ -54805,12 +54912,12 @@ var settlementService = {
           select: { carryForwardAmount: true }
         })
       ]);
-      const broughtForward = previousSettlement?.carryForwardAmount ?? new import_library26.Decimal(0);
+      const broughtForward = previousSettlement?.carryForwardAmount ?? new import_library27.Decimal(0);
       if (unsettled.length === 0 && broughtForward.isZero()) {
         throw new ValidationError("No unsettled transactions to settle.");
       }
-      let physicalCashIn = new import_library26.Decimal(0);
-      let physicalCashOut = new import_library26.Decimal(0);
+      let physicalCashIn = new import_library27.Decimal(0);
+      let physicalCashOut = new import_library27.Decimal(0);
       for (const t of unsettled) {
         if (t.isPhysicalCash) {
           if (t.direction === "IN") physicalCashIn = physicalCashIn.plus(t.amount);
@@ -54818,9 +54925,9 @@ var settlementService = {
         }
       }
       const expectedCash = physicalCashIn.minus(physicalCashOut).plus(broughtForward);
-      const physicalCash = new import_library26.Decimal(body.physicalCash);
+      const physicalCash = new import_library27.Decimal(body.physicalCash);
       const variance = physicalCash.minus(expectedCash);
-      const carryForwardAmount = variance.isNegative() ? variance.abs() : new import_library26.Decimal(0);
+      const carryForwardAmount = variance.isNegative() ? variance.abs() : new import_library27.Decimal(0);
       if (!variance.isZero() && !body.varianceReason?.trim()) {
         throw new ValidationError(
           `Physical cash (${physicalCash.toString()}) does not match expected cash (${expectedCash.toString()}) \u2014 a variance reason is required.`
@@ -54840,7 +54947,7 @@ var settlementService = {
           physicalCash,
           variance,
           varianceReason: body.varianceReason?.trim() || null,
-          handoverAmount: body.handoverAmount != null ? new import_library26.Decimal(body.handoverAmount) : null,
+          handoverAmount: body.handoverAmount != null ? new import_library27.Decimal(body.handoverAmount) : null,
           carryForwardAmount,
           status: "SUBMITTED",
           submittedAt: now,
@@ -54881,7 +54988,7 @@ var settlementService = {
 };
 
 // src/modules/cash/financeControl.service.ts
-var import_library27 = require("@prisma/client/runtime/library");
+var import_library28 = require("@prisma/client/runtime/library");
 var userSummarySelect = { id: true, displayName: true, username: true, role: true };
 var HMS_OVERSIGHT_SCOPES = ["BILLING", "INVENTORY"];
 var ISSUABLE_ROLES = ["INVENTORY_MANAGEMENT", "FRONT_DESK_BILLING"];
@@ -54931,13 +55038,13 @@ var financeControlService = {
         bucket = {
           portalUserId: row.portalUserId,
           user: row.portalUser,
-          physicalCashIn: new import_library27.Decimal(0),
-          physicalCashOut: new import_library27.Decimal(0),
-          nonPhysicalTotal: new import_library27.Decimal(0),
-          totalCollections: new import_library27.Decimal(0),
-          totalRefunds: new import_library27.Decimal(0),
-          pettyCashIssued: new import_library27.Decimal(0),
-          cashExpenses: new import_library27.Decimal(0),
+          physicalCashIn: new import_library28.Decimal(0),
+          physicalCashOut: new import_library28.Decimal(0),
+          nonPhysicalTotal: new import_library28.Decimal(0),
+          totalCollections: new import_library28.Decimal(0),
+          totalRefunds: new import_library28.Decimal(0),
+          pettyCashIssued: new import_library28.Decimal(0),
+          cashExpenses: new import_library28.Decimal(0),
           settledCount: 0,
           unsettledCount: 0
         };
@@ -54967,20 +55074,20 @@ var financeControlService = {
         byUser.set(portalUserId, {
           portalUserId,
           user: cf.user,
-          physicalCashIn: new import_library27.Decimal(0),
-          physicalCashOut: new import_library27.Decimal(0),
-          nonPhysicalTotal: new import_library27.Decimal(0),
-          totalCollections: new import_library27.Decimal(0),
-          totalRefunds: new import_library27.Decimal(0),
-          pettyCashIssued: new import_library27.Decimal(0),
-          cashExpenses: new import_library27.Decimal(0),
+          physicalCashIn: new import_library28.Decimal(0),
+          physicalCashOut: new import_library28.Decimal(0),
+          nonPhysicalTotal: new import_library28.Decimal(0),
+          totalCollections: new import_library28.Decimal(0),
+          totalRefunds: new import_library28.Decimal(0),
+          pettyCashIssued: new import_library28.Decimal(0),
+          cashExpenses: new import_library28.Decimal(0),
           settledCount: 0,
           unsettledCount: 0
         });
       }
     }
     const sheets = Array.from(byUser.values()).map((b) => {
-      const carriedForwardAmount = carryForwards.get(b.portalUserId)?.amount ?? new import_library27.Decimal(0);
+      const carriedForwardAmount = carryForwards.get(b.portalUserId)?.amount ?? new import_library28.Decimal(0);
       return {
         portalUserId: b.portalUserId,
         user: b.user,
@@ -55099,7 +55206,7 @@ var financeControlService = {
         where: { relatedAccountSettlementId: id, direction: "IN" },
         select: { amount: true }
       });
-      const creditedAmount = priorCredits.reduce((sum, e) => sum.plus(e.amount), new import_library27.Decimal(0));
+      const creditedAmount = priorCredits.reduce((sum, e) => sum.plus(e.amount), new import_library28.Decimal(0));
       if (creditedAmount.greaterThan(0)) {
         await tx.mainCashFundEntry.create({
           data: {
@@ -55138,14 +55245,14 @@ var financeControlService = {
       }),
       getLatestCarryForwardsByUser()
     ]);
-    let totalCashCollectedToday = new import_library27.Decimal(0);
-    const byMethod = { CARD: new import_library27.Decimal(0), BANK: new import_library27.Decimal(0), ONLINE: new import_library27.Decimal(0) };
+    let totalCashCollectedToday = new import_library28.Decimal(0);
+    const byMethod = { CARD: new import_library28.Decimal(0), BANK: new import_library28.Decimal(0), ONLINE: new import_library28.Decimal(0) };
     for (const c of collectionRows) {
       if (c.isPhysicalCash) {
         totalCashCollectedToday = totalCashCollectedToday.plus(c.amount);
       } else {
         const method = c.paymentReceipt?.method ?? "CARD";
-        if (!byMethod[method]) byMethod[method] = new import_library27.Decimal(0);
+        if (!byMethod[method]) byMethod[method] = new import_library28.Decimal(0);
         byMethod[method] = byMethod[method].plus(c.amount);
       }
     }
@@ -55154,12 +55261,12 @@ var financeControlService = {
         totalCashCollectedToday = totalCashCollectedToday.minus(refund.amount);
       } else {
         const method = refund.paymentReceipt?.method ?? "CARD";
-        byMethod[method] = (byMethod[method] ?? new import_library27.Decimal(0)).minus(refund.amount);
+        byMethod[method] = (byMethod[method] ?? new import_library28.Decimal(0)).minus(refund.amount);
       }
     }
-    const totalNonCashCollectedToday = Object.values(byMethod).reduce((s, v) => s.plus(v), new import_library27.Decimal(0));
-    const totalRefundsToday = refundRows.reduce((s, r) => s.plus(r.amount), new import_library27.Decimal(0));
-    let totalUnsettledCash = new import_library27.Decimal(0);
+    const totalNonCashCollectedToday = Object.values(byMethod).reduce((s, v) => s.plus(v), new import_library28.Decimal(0));
+    const totalRefundsToday = refundRows.reduce((s, r) => s.plus(r.amount), new import_library28.Decimal(0));
+    let totalUnsettledCash = new import_library28.Decimal(0);
     const usersPendingSettlement = /* @__PURE__ */ new Set();
     for (const u of allTimeUnsettled) {
       if (u.isPhysicalCash) {
@@ -55172,8 +55279,8 @@ var financeControlService = {
       totalUnsettledCash = totalUnsettledCash.plus(cf.amount);
       usersPendingSettlement.add(portalUserId);
     }
-    let totalExpectedCash = new import_library27.Decimal(0);
-    let totalSettledCash = new import_library27.Decimal(0);
+    let totalExpectedCash = new import_library28.Decimal(0);
+    let totalSettledCash = new import_library28.Decimal(0);
     let settlementsCompletedToday = 0;
     let settlementDifferences = 0;
     for (const s of settlementsInRange) {
@@ -55229,7 +55336,7 @@ var financeControlService = {
       const fundRows = await tx.mainCashFundEntry.findMany({ select: { direction: true, amount: true } });
       const fundBalance = fundRows.reduce(
         (sum, r) => r.direction === "IN" ? sum.plus(r.amount) : sum.minus(r.amount),
-        new import_library27.Decimal(0)
+        new import_library28.Decimal(0)
       );
       if (fundBalance.lessThan(body.amount)) {
         throw new BusinessRuleError(
@@ -55265,16 +55372,16 @@ var financeControlService = {
 };
 
 // src/modules/cash/mainFund.service.ts
-var import_library28 = require("@prisma/client/runtime/library");
+var import_library29 = require("@prisma/client/runtime/library");
 var userSummarySelect2 = { id: true, displayName: true, username: true, role: true };
 var mainFundService = {
   async getSummary() {
     const entries = await prisma.mainCashFundEntry.findMany({ select: { direction: true, amount: true, type: true } });
-    let currentBalance = new import_library28.Decimal(0);
-    let totalDeposited = new import_library28.Decimal(0);
-    let totalIssued = new import_library28.Decimal(0);
-    let totalWithdrawn = new import_library28.Decimal(0);
-    let totalSettlementReturns = new import_library28.Decimal(0);
+    let currentBalance = new import_library29.Decimal(0);
+    let totalDeposited = new import_library29.Decimal(0);
+    let totalIssued = new import_library29.Decimal(0);
+    let totalWithdrawn = new import_library29.Decimal(0);
+    let totalSettlementReturns = new import_library29.Decimal(0);
     for (const e of entries) {
       currentBalance = e.direction === "IN" ? currentBalance.plus(e.amount) : currentBalance.minus(e.amount);
       if (e.type === "DEPOSIT") totalDeposited = totalDeposited.plus(e.amount);
@@ -55314,7 +55421,7 @@ var mainFundService = {
     return prisma.$transaction(async (tx) => {
       await lockMainFund(tx);
       const entries = await tx.mainCashFundEntry.findMany({ select: { direction: true, amount: true } });
-      const balance = entries.reduce((sum, row) => row.direction === "IN" ? sum.plus(row.amount) : sum.minus(row.amount), new import_library28.Decimal(0));
+      const balance = entries.reduce((sum, row) => row.direction === "IN" ? sum.plus(row.amount) : sum.minus(row.amount), new import_library29.Decimal(0));
       if (balance.lessThan(body.amount)) {
         throw new BusinessRuleError(`Insufficient Main Fund balance \u2014 PKR ${balance.toFixed(2)} available.`);
       }
@@ -55520,190 +55627,71 @@ var cash_routes_default = router20;
 var import_express22 = __toESM(require_express2());
 
 // src/modules/reports/frontdeskBilling.service.ts
-var import_library29 = require("@prisma/client/runtime/library");
+var import_library30 = require("@prisma/client/runtime/library");
 var frontdeskBillingReportService = {
   async getReport(query) {
     const { start, end, label } = resolveDateRange(query);
-    const dateFilter = { gte: start, lte: end };
     const deptId = query.departmentId;
-    const invoiceDeptFilter = deptId ? {
-      OR: [
-        { departmentId: deptId },
-        { lines: { some: { serviceRate: { departmentId: deptId } } } }
-      ]
-    } : {};
-    const ledgerFilter = {
-      ...query.cashierId ? { portalUserId: query.cashierId } : {},
-      ...deptId ? {
-        paymentReceipt: {
-          hospitalInvoice: invoiceDeptFilter
-        }
-      } : {}
-    };
-    const [collections, refunds, invoices] = await Promise.all([
-      prisma.userCashBalance.findMany({
-        where: { moduleScope: "BILLING", category: "COLLECTION", direction: "IN", occurredAt: dateFilter, ...ledgerFilter },
-        select: {
-          amount: true,
-          isPhysicalCash: true,
-          paymentReceipt: {
-            select: {
-              method: true,
-              hospitalInvoice: {
-                select: {
-                  id: true,
-                  total: true,
-                  departmentId: true,
-                  lines: {
-                    select: {
-                      lineNet: true,
-                      serviceRate: { select: { departmentId: true } }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }),
-      prisma.userCashBalance.findMany({
-        where: { moduleScope: "BILLING", category: "REFUND", direction: "OUT", occurredAt: dateFilter, ...ledgerFilter },
-        select: {
-          amount: true,
-          paymentReceipt: {
-            select: {
-              method: true,
-              hospitalInvoice: {
-                select: {
-                  id: true,
-                  total: true,
-                  departmentId: true,
-                  lines: {
-                    select: {
-                      lineNet: true,
-                      serviceRate: { select: { departmentId: true } }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }),
+    const [receipts, allInvoices] = await Promise.all([
+      prisma.paymentReceipt.findMany({ where: {
+        ...signedReceiptWhere,
+        collectedAt: { gte: start, lte: end },
+        ...query.cashierId ? { collectedById: query.cashierId } : {}
+      }, select: { ...collectionSelect, method: true, paymentAccount: true } }),
       prisma.hospitalInvoice.findMany({
         where: {
-          createdAt: dateFilter,
+          createdAt: { lte: end },
           status: { not: "VOID" },
           ...query.cashierId ? { createdById: query.cashierId } : {},
-          ...invoiceDeptFilter
+          ...deptId ? { OR: [{ departmentId: deptId }, { lines: { some: { serviceRate: { departmentId: deptId } } } }] } : {}
         },
-        select: {
-          id: true,
-          status: true,
-          subtotal: true,
-          discountTotal: true,
-          total: true,
-          paidTotal: true,
-          patientShare: true,
-          panelPatientId: true,
-          panelReceivable: true,
-          departmentId: true,
-          lines: {
-            select: {
-              lineGross: true,
-              discountAmount: true,
-              lineNet: true,
-              serviceRate: {
-                select: {
-                  departmentId: true
-                }
-              }
-            }
-          }
+        include: {
+          department: { select: { id: true, name: true } },
+          lines: { select: { ...collectionInvoiceSelect.lines.select, lineGross: true, discountAmount: true } },
+          paymentReceipts: receiptsThrough(end),
+          panelRemittanceAllocations: remittancesThrough(end)
         }
       })
     ]);
-    const byMethod = { CASH: new import_library29.Decimal(0), CARD: new import_library29.Decimal(0), BANK: new import_library29.Decimal(0), ONLINE: new import_library29.Decimal(0) };
-    let totalCollections = new import_library29.Decimal(0);
-    for (const c of collections) {
-      const method = c.paymentReceipt?.method ?? "CASH";
-      let effAmount = c.amount;
-      if (deptId && c.paymentReceipt?.hospitalInvoice) {
-        const inv = c.paymentReceipt.hospitalInvoice;
-        if (inv.lines && inv.lines.length > 0 && inv.total.greaterThan(0)) {
-          const matchingLines = inv.lines.filter(
-            (l) => l.serviceRate?.departmentId === deptId || !l.serviceRate?.departmentId && inv.departmentId === deptId
-          );
-          const deptNet = matchingLines.reduce((s, l) => s.plus(l.lineNet), new import_library29.Decimal(0));
-          effAmount = c.amount.times(deptNet).dividedBy(inv.total);
-        }
+    const zero3 = () => new import_library30.Decimal(0);
+    const byMethod = { CASH: zero3(), CARD: zero3(), BANK: zero3(), ONLINE: zero3() };
+    const byAccount = {};
+    let collected = zero3(), refunds = zero3();
+    for (const receipt of receipts) {
+      const amount = allocateCollection(receipt).filter((a) => !deptId || a.departmentId === deptId).reduce((sum, a) => sum.plus(a.amount), zero3());
+      byMethod[receipt.method] = byMethod[receipt.method].plus(amount);
+      if (receipt.method !== "CASH") {
+        const account = receipt.paymentAccount ?? "Legacy / account not recorded";
+        byAccount[account] = (byAccount[account] ?? zero3()).plus(amount);
       }
-      byMethod[method] = (byMethod[method] ?? new import_library29.Decimal(0)).plus(effAmount);
-      totalCollections = totalCollections.plus(effAmount);
+      collected = collected.plus(amount);
+      if (amount.lt(0)) refunds = refunds.minus(amount);
     }
-    let totalRefunds = new import_library29.Decimal(0);
-    for (const refund of refunds) {
-      const method = refund.paymentReceipt?.method ?? "CASH";
-      let effAmount = refund.amount;
-      if (deptId && refund.paymentReceipt?.hospitalInvoice) {
-        const inv = refund.paymentReceipt.hospitalInvoice;
-        if (inv.lines && inv.lines.length > 0 && inv.total.greaterThan(0)) {
-          const matchingLines = inv.lines.filter(
-            (l) => l.serviceRate?.departmentId === deptId || !l.serviceRate?.departmentId && inv.departmentId === deptId
-          );
-          const deptNet = matchingLines.reduce((s, l) => s.plus(l.lineNet), new import_library29.Decimal(0));
-          effAmount = refund.amount.times(deptNet).dividedBy(inv.total);
-        }
-      }
-      byMethod[method] = (byMethod[method] ?? new import_library29.Decimal(0)).minus(effAmount);
-      totalRefunds = totalRefunds.plus(effAmount);
-    }
-    let totalDiscounts = new import_library29.Decimal(0);
-    let totalGross = new import_library29.Decimal(0);
-    let totalNet = new import_library29.Decimal(0);
-    let totalOutstanding = new import_library29.Decimal(0);
-    for (const inv of invoices) {
-      if (deptId && inv.lines && inv.lines.length > 0) {
-        const matchingLines = inv.lines.filter(
-          (l) => l.serviceRate?.departmentId === deptId || !l.serviceRate?.departmentId && inv.departmentId === deptId
-        );
-        for (const l of matchingLines) {
-          totalGross = totalGross.plus(l.lineGross);
-          totalDiscounts = totalDiscounts.plus(l.discountAmount);
-          totalNet = totalNet.plus(l.lineNet);
-          if (inv.status !== "PAID") {
-            const linePaid = inv.total.greaterThan(0) ? inv.paidTotal.times(l.lineNet).dividedBy(inv.total) : new import_library29.Decimal(0);
-            totalOutstanding = totalOutstanding.plus(import_library29.Decimal.max(l.lineNet.minus(linePaid), 0));
-          }
+    let totalGross = zero3(), totalDiscounts = zero3(), totalNet = zero3(), totalOutstanding = zero3(), invoiceCount = 0;
+    const invoiceCountsByStatus = {};
+    for (const inv of allInvoices.map(invoiceAsOf)) {
+      const scoped = (amount, basis) => allocateInvoiceAmount(amount, inv, basis).filter((a) => !deptId || a.departmentId === deptId).reduce((sum, a) => sum.plus(a.amount), zero3());
+      totalOutstanding = totalOutstanding.plus(scoped(inv.balance.patientDue, "patientShare")).plus(scoped(inv.balance.panelDue, "panelReceivable"));
+      if (inv.createdAt < start) continue;
+      invoiceCount++;
+      invoiceCountsByStatus[inv.status] = (invoiceCountsByStatus[inv.status] ?? 0) + 1;
+      if (deptId && inv.lines.length) {
+        for (const line of inv.lines.filter((l) => (l.serviceRate?.department?.id ?? inv.departmentId) === deptId)) {
+          totalGross = totalGross.plus(line.lineGross);
+          totalDiscounts = totalDiscounts.plus(line.discountAmount);
+          totalNet = totalNet.plus(line.lineNet);
         }
       } else {
         totalGross = totalGross.plus(inv.subtotal);
         totalDiscounts = totalDiscounts.plus(inv.discountTotal);
         totalNet = totalNet.plus(inv.total);
-        if (inv.status !== "VOID" && inv.status !== "PAID") {
-          totalOutstanding = totalOutstanding.plus(patientBalanceDue(inv, inv.paidTotal));
-        }
       }
-    }
-    const invoiceCountsByStatus = {};
-    for (const inv of invoices) {
-      invoiceCountsByStatus[inv.status] = (invoiceCountsByStatus[inv.status] ?? 0) + 1;
     }
     return {
       period: { label, start: start.toISOString(), end: end.toISOString() },
-      collections: {
-        total: totalCollections.minus(totalRefunds),
-        byMethod
-      },
-      refunds: { total: totalRefunds },
-      billing: {
-        invoiceCount: invoices.length,
-        invoiceCountsByStatus,
-        totalGross,
-        totalDiscounts,
-        totalNet,
-        totalOutstanding
-      }
+      collections: { total: collected, byMethod, byAccount },
+      refunds: { total: refunds },
+      billing: { invoiceCount, invoiceCountsByStatus, totalGross, totalDiscounts, totalNet, totalOutstanding }
     };
   }
 };
@@ -55730,7 +55718,7 @@ var getSuperAdminDashboardQuerySchema = external_exports.object({
 });
 
 // src/modules/reports/frontdeskReports.service.ts
-var import_library30 = require("@prisma/client/runtime/library");
+var import_library31 = require("@prisma/client/runtime/library");
 var userSummarySelect3 = { id: true, displayName: true, username: true, role: true };
 var patientNameSelect = {
   panelPatient: { select: { id: true, fullName: true, mrNumber: true } },
@@ -55811,43 +55799,48 @@ var frontdeskReportsService = {
       ...query.corporatePanelId ? { corporatePanelId: query.corporatePanelId } : {},
       ...query.payerType === "PANEL" ? { corporatePanelId: { not: null } } : {},
       ...query.payerType === "SELF_PAY" ? { corporatePanelId: null } : {},
-      ...query.status ? { status: query.status } : {}
+      ...query.status === "VOID" ? { status: "VOID" } : { status: { not: "VOID" } }
     };
     const rows = await prisma.hospitalInvoice.findMany({
       where,
       include: {
         ...patientNameSelect,
+        paymentReceipts: receiptsThrough(end),
+        panelRemittanceAllocations: remittancesThrough(end),
         department: { select: { id: true, name: true } },
         lines: {
           select: {
             lineGross: true,
             discountAmount: true,
             lineNet: true,
+            patientShare: true,
+            panelReceivable: true,
             serviceRate: { select: { departmentId: true, department: { select: { id: true, name: true } } } }
           }
         },
         createdByUser: { select: userSummarySelect3 }
       },
-      orderBy: { createdAt: "desc" },
-      take: 500
+      orderBy: { createdAt: "desc" }
     });
-    let gross = new import_library30.Decimal(0);
-    let discount = new import_library30.Decimal(0);
-    let net = new import_library30.Decimal(0);
-    let paid = new import_library30.Decimal(0);
-    const mappedRows = rows.map((r) => {
+    let gross = new import_library31.Decimal(0);
+    let discount = new import_library31.Decimal(0);
+    let net = new import_library31.Decimal(0);
+    let paid = new import_library31.Decimal(0);
+    const cutoffRows = rows.map(invoiceAsOf).filter((r) => !query.status || r.status === query.status);
+    const mappedRows = cutoffRows.map((r) => {
       let rowGross = r.subtotal;
       let rowDiscount = r.discountTotal;
       let rowNet = r.total;
-      let rowPaid = r.paidTotal;
+      const scoped = (amount, basis) => !deptId ? amount : allocateInvoiceAmount(amount, r, basis).filter((a) => a.departmentId === deptId).reduce((sum, a) => sum.plus(a.amount), new import_library31.Decimal(0));
+      const rowPaid = scoped(r.paidTotal, "patientShare").plus(scoped(r.balance.panelPaid, "panelReceivable"));
+      const rowBalance = scoped(r.balance.patientDue, "patientShare").plus(scoped(r.balance.panelDue, "panelReceivable"));
       if (deptId && r.lines && r.lines.length > 0) {
         const matchingLines = r.lines.filter(
           (l) => l.serviceRate?.departmentId === deptId || !l.serviceRate?.departmentId && r.departmentId === deptId
         );
-        rowGross = matchingLines.reduce((s, l) => s.plus(l.lineGross), new import_library30.Decimal(0));
-        rowDiscount = matchingLines.reduce((s, l) => s.plus(l.discountAmount), new import_library30.Decimal(0));
-        rowNet = matchingLines.reduce((s, l) => s.plus(l.lineNet), new import_library30.Decimal(0));
-        rowPaid = r.total.greaterThan(0) ? r.paidTotal.times(rowNet).dividedBy(r.total) : new import_library30.Decimal(0);
+        rowGross = matchingLines.reduce((s, l) => s.plus(l.lineGross), new import_library31.Decimal(0));
+        rowDiscount = matchingLines.reduce((s, l) => s.plus(l.discountAmount), new import_library31.Decimal(0));
+        rowNet = matchingLines.reduce((s, l) => s.plus(l.lineNet), new import_library31.Decimal(0));
       }
       gross = gross.plus(rowGross);
       discount = discount.plus(rowDiscount);
@@ -55871,14 +55864,14 @@ var frontdeskReportsService = {
         discount: rowDiscount,
         net: rowNet,
         paid: rowPaid,
-        balance: rowNet.minus(rowPaid),
+        balance: rowBalance,
         createdBy: r.createdByUser?.displayName || r.createdByUser?.username || null,
         status: r.status
       };
     });
     return {
       period: { label, start: start.toISOString(), end: end.toISOString() },
-      summary: { grossBilled: gross, discount, netBilled: net, paid, outstanding: net.minus(paid), invoiceCount: rows.length },
+      summary: { grossBilled: gross, discount, netBilled: net, paid, outstanding: mappedRows.reduce((sum, r) => sum.plus(r.balance), new import_library31.Decimal(0)), invoiceCount: mappedRows.length },
       rows: mappedRows
     };
   },
@@ -55902,11 +55895,10 @@ var frontdeskReportsService = {
         hospitalInvoice: { select: { invoiceNumber: true, ...patientNameSelect } },
         admissionRecord: { select: { admissionNumber: true, ...patientNameSelect } }
       },
-      orderBy: { collectedAt: "desc" },
-      take: 500
+      orderBy: { collectedAt: "desc" }
     });
-    const byMethod = { CASH: new import_library30.Decimal(0), CARD: new import_library30.Decimal(0), BANK: new import_library30.Decimal(0), ONLINE: new import_library30.Decimal(0) };
-    let total = new import_library30.Decimal(0);
+    const byMethod = { CASH: new import_library31.Decimal(0), CARD: new import_library31.Decimal(0), BANK: new import_library31.Decimal(0), ONLINE: new import_library31.Decimal(0) };
+    let total = new import_library31.Decimal(0);
     for (const r of rows) {
       byMethod[r.method] = byMethod[r.method].plus(r.amount);
       total = total.plus(r.amount);
@@ -55920,6 +55912,7 @@ var frontdeskReportsService = {
         patient: r.hospitalInvoice ? patientDisplayName(r.hospitalInvoice) : r.admissionRecord ? patientDisplayName(r.admissionRecord) : "\u2014",
         amount: r.amount,
         method: r.method,
+        paymentAccount: r.paymentAccount,
         occurredAt: r.collectedAt,
         collectedBy: r.collectedBy.displayName || r.collectedBy.username,
         status: r.isReversed ? "REVERSED" : "ACTIVE"
@@ -55930,96 +55923,45 @@ var frontdeskReportsService = {
   async getOutstandingInvoices(query) {
     const { start, end, label } = resolveDateRange(query);
     const deptId = query.departmentId;
-    const where = {
-      createdAt: { gte: start, lte: end },
-      status: query.status ? query.status : { in: ["UNPAID", "PARTIALLY_PAID"] },
-      ...deptId ? {
-        OR: [
-          { departmentId: deptId },
-          { lines: { some: { serviceRate: { departmentId: deptId } } } }
-        ]
-      } : {},
-      ...query.payerType === "PANEL" ? { corporatePanelId: { not: null } } : {},
-      ...query.payerType === "SELF_PAY" ? { corporatePanelId: null } : {}
-    };
-    const rows = await prisma.hospitalInvoice.findMany({
-      where,
+    const invoices = await prisma.hospitalInvoice.findMany({
+      where: {
+        createdAt: { lte: end },
+        status: { not: "VOID" },
+        ...deptId ? { OR: [{ departmentId: deptId }, { lines: { some: { serviceRate: { departmentId: deptId } } } }] } : {},
+        ...query.payerType === "PANEL" ? { corporatePanelId: { not: null } } : {},
+        ...query.payerType === "SELF_PAY" ? { corporatePanelId: null } : {}
+      },
       include: {
         ...patientNameSelect,
         department: { select: { id: true, name: true } },
-        lines: {
-          select: {
-            lineNet: true,
-            serviceRate: { select: { departmentId: true, department: { select: { name: true } } } }
-          }
-        },
+        lines: collectionInvoiceSelect.lines,
         createdByUser: { select: userSummarySelect3 },
-        paymentReceipts: { where: { isReversed: false }, select: { collectedAt: true }, orderBy: { collectedAt: "desc" }, take: 1 }
+        paymentReceipts: receiptsThrough(end),
+        panelRemittanceAllocations: remittancesThrough(end)
       },
-      orderBy: { createdAt: "desc" },
-      take: 500
+      orderBy: { createdAt: "asc" }
     });
-    const filtered = rows.filter((r) => {
-      let net = r.total;
-      let paid = r.paidTotal;
-      if (deptId && r.lines && r.lines.length > 0) {
-        const matchingLines = r.lines.filter(
-          (l) => l.serviceRate?.departmentId === deptId || !l.serviceRate?.departmentId && r.departmentId === deptId
-        );
-        net = matchingLines.reduce((s, l) => s.plus(l.lineNet), new import_library30.Decimal(0));
-        paid = r.total.greaterThan(0) ? r.paidTotal.times(net).dividedBy(r.total) : new import_library30.Decimal(0);
-      }
-      const diff = net.minus(paid);
-      if (query.minOutstanding != null) return diff.toNumber() >= query.minOutstanding;
-      return diff.greaterThan(0);
-    });
-    const totalOutstanding = filtered.reduce((s, r) => {
-      let net = r.total;
-      let paid = r.paidTotal;
-      if (deptId && r.lines && r.lines.length > 0) {
-        const matchingLines = r.lines.filter(
-          (l) => l.serviceRate?.departmentId === deptId || !l.serviceRate?.departmentId && r.departmentId === deptId
-        );
-        net = matchingLines.reduce((s2, l) => s2.plus(l.lineNet), new import_library30.Decimal(0));
-        paid = r.total.greaterThan(0) ? r.paidTotal.times(net).dividedBy(r.total) : new import_library30.Decimal(0);
-      }
-      const diff = net.minus(paid);
-      return diff.greaterThan(0) ? s.plus(diff) : s;
-    }, new import_library30.Decimal(0));
+    const rows = invoices.map(invoiceAsOf).map((r) => {
+      const scoped = (amount, basis) => !deptId ? amount : allocateInvoiceAmount(amount, r, basis).filter((a) => a.departmentId === deptId).reduce((s, a) => s.plus(a.amount), new import_library31.Decimal(0));
+      return {
+        id: r.id,
+        invoiceNumber: r.invoiceNumber,
+        createdAt: r.createdAt,
+        patient: patientDisplayName(r),
+        department: (deptId ? r.lines.find((l) => l.serviceRate?.department?.id === deptId)?.serviceRate?.department?.name : void 0) ?? r.department?.name ?? "Hospital Department",
+        net: scoped(r.total, "lineNet"),
+        paid: scoped(r.paidTotal, "patientShare").plus(scoped(r.balance.panelPaid, "panelReceivable")),
+        outstanding: scoped(r.balance.patientDue, "patientShare").plus(scoped(r.balance.panelDue, "panelReceivable")),
+        lastPaymentAt: r.paymentReceipts.reduce((latest, p) => !latest || p.collectedAt > latest ? p.collectedAt : latest, null),
+        payer: r.corporatePanelId ? "Panel" : "Self-Pay",
+        createdBy: r.createdByUser?.displayName || r.createdByUser?.username || null,
+        status: r.status
+      };
+    }).filter((r) => r.outstanding.gt(0) && (!query.status || r.status === query.status) && (query.minOutstanding == null || r.outstanding.gte(query.minOutstanding)));
     return {
       period: { label, start: start.toISOString(), end: end.toISOString() },
-      summary: { totalOutstanding, invoiceCount: filtered.length },
-      rows: filtered.map((r) => {
-        let net = r.total;
-        let paid = r.paidTotal;
-        if (deptId && r.lines && r.lines.length > 0) {
-          const matchingLines = r.lines.filter(
-            (l) => l.serviceRate?.departmentId === deptId || !l.serviceRate?.departmentId && r.departmentId === deptId
-          );
-          net = matchingLines.reduce((s, l) => s.plus(l.lineNet), new import_library30.Decimal(0));
-          paid = r.total.greaterThan(0) ? r.paidTotal.times(net).dividedBy(r.total) : new import_library30.Decimal(0);
-        }
-        const diff = net.minus(paid);
-        const depts = Array.from(
-          new Set(
-            [r.department?.name, ...r.lines.map((l) => l.serviceRate?.department?.name)].filter(
-              (name) => Boolean(name)
-            )
-          )
-        );
-        return {
-          invoiceNumber: r.invoiceNumber,
-          patient: patientDisplayName(r),
-          department: deptId ? depts.find((d) => d.toLowerCase().includes("lab")) || depts[0] || "Hospital Department" : depts.length > 0 ? depts.join(", ") : "Hospital Department",
-          net,
-          paid,
-          outstanding: diff.greaterThan(0) ? diff : new import_library30.Decimal(0),
-          lastPaymentAt: r.paymentReceipts[0]?.collectedAt ?? null,
-          payer: r.corporatePanelId ? "Panel" : "Self-Pay",
-          createdBy: r.createdByUser?.displayName || r.createdByUser?.username || null,
-          status: r.status
-        };
-      })
+      summary: { totalOutstanding: rows.reduce((sum, r) => sum.plus(r.outstanding), new import_library31.Decimal(0)), invoiceCount: rows.length },
+      rows
     };
   },
   /** Guide §4.2 — manual + panel discounts with approval trail. */
@@ -56051,8 +55993,8 @@ var frontdeskReportsService = {
       orderBy: { createdAt: "desc" },
       take: 500
     });
-    const totalStandard = rows.reduce((s, r) => s.plus(r.lineGross), new import_library30.Decimal(0));
-    const totalDiscount = rows.reduce((s, r) => s.plus(r.discountAmount), new import_library30.Decimal(0));
+    const totalStandard = rows.reduce((s, r) => s.plus(r.lineGross), new import_library31.Decimal(0));
+    const totalDiscount = rows.reduce((s, r) => s.plus(r.discountAmount), new import_library31.Decimal(0));
     return {
       period: { label, start: start.toISOString(), end: end.toISOString() },
       summary: { grossBeforeDiscount: totalStandard, discountAmount: totalDiscount, netAfterDiscount: totalStandard.minus(totalDiscount) },
@@ -56084,7 +56026,7 @@ var frontdeskReportsService = {
       orderBy: { collectedAt: "desc" }
     });
     const distinctVoids = voids.filter((v) => !refundReceiptIds.has(v.id));
-    const totalRefund = refunds.reduce((s, r) => s.plus(r.amount), new import_library30.Decimal(0));
+    const totalRefund = refunds.reduce((s, r) => s.plus(r.amount), new import_library31.Decimal(0));
     return {
       period: { label, start: start.toISOString(), end: end.toISOString() },
       summary: { refundAmount: totalRefund, refundCount: refunds.length, voidCount: distinctVoids.length },
@@ -56159,7 +56101,7 @@ var frontdeskReportsService = {
       const key = `${dept}::${serviceName}`;
       let bucket = byKey.get(key);
       if (!bucket) {
-        bucket = { department: dept, service: serviceName, qty: new import_library30.Decimal(0), gross: new import_library30.Decimal(0), discount: new import_library30.Decimal(0), net: new import_library30.Decimal(0) };
+        bucket = { department: dept, service: serviceName, qty: new import_library31.Decimal(0), gross: new import_library31.Decimal(0), discount: new import_library31.Decimal(0), net: new import_library31.Decimal(0) };
         byKey.set(key, bucket);
       }
       bucket.qty = bucket.qty.plus(r.quantity);
@@ -56171,9 +56113,9 @@ var frontdeskReportsService = {
     return {
       period: { label, start: start.toISOString(), end: end.toISOString() },
       summary: {
-        gross: list.reduce((s, b) => s.plus(b.gross), new import_library30.Decimal(0)),
-        discount: list.reduce((s, b) => s.plus(b.discount), new import_library30.Decimal(0)),
-        net: list.reduce((s, b) => s.plus(b.net), new import_library30.Decimal(0))
+        gross: list.reduce((s, b) => s.plus(b.gross), new import_library31.Decimal(0)),
+        discount: list.reduce((s, b) => s.plus(b.discount), new import_library31.Decimal(0)),
+        net: list.reduce((s, b) => s.plus(b.net), new import_library31.Decimal(0))
       },
       rows: list
     };
@@ -56204,8 +56146,8 @@ var frontdeskReportsService = {
       orderBy: { requestedAt: "desc" },
       take: 500
     });
-    let requested = new import_library30.Decimal(0);
-    let collected = new import_library30.Decimal(0);
+    let requested = new import_library31.Decimal(0);
+    let collected = new import_library31.Decimal(0);
     for (const r of rows) {
       requested = requested.plus(r.requestedAmount);
       for (const p of r.paymentReceipts) collected = collected.plus(p.amount);
@@ -56220,11 +56162,11 @@ var frontdeskReportsService = {
           patient: patientDisplayName(r.admissionRecord),
           department: r.admissionRecord.department?.name ?? null,
           requestedAmount: r.requestedAmount,
-          remainingDue: import_library30.Decimal.max(r.requestedAmount.minus(r.paymentReceipts.reduce((s, p) => s.plus(p.amount), new import_library30.Decimal(0))), 0),
+          remainingDue: import_library31.Decimal.max(r.requestedAmount.minus(r.paymentReceipts.reduce((s, p) => s.plus(p.amount), new import_library31.Decimal(0))), 0),
           status: r.status
         };
         if (r.paymentReceipts.length === 0) {
-          return receiptFilterActive ? [] : [{ ...base, receiptNo: null, collectedAmount: new import_library30.Decimal(0), method: null, collectedBy: null }];
+          return receiptFilterActive ? [] : [{ ...base, receiptNo: null, collectedAmount: new import_library31.Decimal(0), method: null, collectedBy: null }];
         }
         return r.paymentReceipts.map((p) => ({
           ...base,
@@ -56249,21 +56191,21 @@ var frontdeskReportsService = {
     if (!invoice) return null;
     const entries = [];
     for (const l of invoice.lines) {
-      entries.push({ occurredAt: l.createdAt, reference: invoice.invoiceNumber, type: "CHARGE", description: l.descriptionSnapshot ?? l.serviceRate?.name ?? l.billingSource, debit: l.lineNet, credit: new import_library30.Decimal(0), performedBy: "\u2014" });
+      entries.push({ occurredAt: l.createdAt, reference: invoice.invoiceNumber, type: "CHARGE", description: l.descriptionSnapshot ?? l.serviceRate?.name ?? l.billingSource, debit: l.lineNet, credit: new import_library31.Decimal(0), performedBy: "\u2014" });
     }
     for (const p of invoice.paymentReceipts) {
       entries.push({
         occurredAt: p.collectedAt,
         reference: p.receiptNumber,
-        type: p.isReversed ? "VOID" : "PAYMENT",
+        type: p.amount.lt(0) ? "REFUND" : p.isReversed ? "VOID" : "PAYMENT",
         description: `${p.method} payment`,
-        debit: new import_library30.Decimal(0),
-        credit: p.isReversed ? new import_library30.Decimal(0) : p.amount,
+        debit: new import_library31.Decimal(0),
+        credit: p.isReversed && p.amount.gte(0) ? new import_library31.Decimal(0) : p.amount,
         performedBy: p.collectedBy.displayName || p.collectedBy.username
       });
     }
     entries.sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime());
-    let running = new import_library30.Decimal(0);
+    let running = new import_library31.Decimal(0);
     const withBalance = entries.map((e) => {
       running = running.plus(e.debit).minus(e.credit);
       return { ...e, runningBalance: running };
@@ -56287,7 +56229,7 @@ var frontdeskReportsService = {
       const payer = r.corporatePanel?.organizationName || "Self-Pay";
       let bucket = byPayer.get(payer);
       if (!bucket) {
-        bucket = { payer, invoiceCount: 0, gross: new import_library30.Decimal(0), discount: new import_library30.Decimal(0), net: new import_library30.Decimal(0), paid: new import_library30.Decimal(0), outstanding: new import_library30.Decimal(0) };
+        bucket = { payer, invoiceCount: 0, gross: new import_library31.Decimal(0), discount: new import_library31.Decimal(0), net: new import_library31.Decimal(0), paid: new import_library31.Decimal(0), outstanding: new import_library31.Decimal(0) };
         byPayer.set(payer, bucket);
       }
       bucket.invoiceCount += 1;
@@ -56346,7 +56288,7 @@ var frontdeskReportsService = {
       const key = r.collectedBy.displayName || r.collectedBy.username;
       let bucket = byCashier.get(key);
       if (!bucket) {
-        bucket = { cashier: key, receiptCount: 0, totalCollected: new import_library30.Decimal(0) };
+        bucket = { cashier: key, receiptCount: 0, totalCollected: new import_library31.Decimal(0) };
         byCashier.set(key, bucket);
       }
       bucket.receiptCount += 1;
@@ -56354,7 +56296,7 @@ var frontdeskReportsService = {
     }
     return {
       period: { label, start: start.toISOString(), end: end.toISOString() },
-      rows: Array.from(byCashier.values()).map((b) => ({ ...b, averageTransaction: b.receiptCount === 0 ? new import_library30.Decimal(0) : b.totalCollected.div(b.receiptCount) })).sort((a, b) => b.totalCollected.comparedTo(a.totalCollected))
+      rows: Array.from(byCashier.values()).map((b) => ({ ...b, averageTransaction: b.receiptCount === 0 ? new import_library31.Decimal(0) : b.totalCollected.div(b.receiptCount) })).sort((a, b) => b.totalCollected.comparedTo(a.totalCollected))
     };
   },
   /**
@@ -56402,7 +56344,7 @@ var frontdeskReportsService = {
           invoiceNumber: l.hospitalInvoice.invoiceNumber,
           invoiceId: invId,
           patient: l.hospitalInvoice.corporatePanel?.organizationName || patientDisplayName(l.hospitalInvoice),
-          amount: new import_library30.Decimal(l.discountAmount),
+          amount: new import_library31.Decimal(l.discountAmount),
           reasons: new Set(l.discountReason ? [l.discountReason] : []),
           performedBy: l.hospitalInvoice.createdByUser?.displayName || l.hospitalInvoice.createdByUser?.username || "\u2014",
           occurredAt: l.createdAt
@@ -56443,7 +56385,7 @@ var frontdeskReportsService = {
         occurredAt: r.occurredAt
       }))
     ].sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime());
-    const sumOf2 = (t) => rows.filter((r) => r.type === t).reduce((s, r) => s.plus(r.amount), new import_library30.Decimal(0));
+    const sumOf2 = (t) => rows.filter((r) => r.type === t).reduce((s, r) => s.plus(r.amount), new import_library31.Decimal(0));
     return {
       period: { label, start: start.toISOString(), end: end.toISOString() },
       summary: { discountAmount: sumOf2("DISCOUNT"), refundAmount: sumOf2("REFUND"), voidAmount: sumOf2("VOID"), count: rows.length },
@@ -56590,7 +56532,7 @@ var billingSummaryQuerySchema = dateRangeSchema3.extend({
 });
 
 // src/modules/reports/admissionReports.service.ts
-var import_library31 = require("@prisma/client/runtime/library");
+var import_library32 = require("@prisma/client/runtime/library");
 var patientNameSelect2 = {
   panelPatient: { select: { id: true, fullName: true, mrNumber: true } },
   selfPayEncounter: { select: { id: true, fullName: true, phone: true } }
@@ -56623,12 +56565,12 @@ var admissionReportsService = {
       prisma.admissionRecord.count({ where: { status: "DISCHARGE_PENDING", ...deptFilter } }),
       prisma.bed.findMany({ select: { status: true } }),
       prisma.hospitalInvoice.findMany({
-        where: { admissionRecordId: { not: null }, status: { in: ["UNPAID", "PARTIALLY_PAID"] }, ...query.departmentId ? { departmentId: query.departmentId } : {} },
-        select: { total: true, paidTotal: true }
+        where: { admissionRecordId: { not: null }, createdAt: { lte: end }, status: { not: "VOID" }, ...query.departmentId ? { departmentId: query.departmentId } : {} },
+        select: { total: true, status: true, panelReceivable: true, paymentReceipts: receiptsThrough(end), panelRemittanceAllocations: remittancesThrough(end) }
       })
     ]);
     const occupied = beds.filter((b) => b.status === "OCCUPIED").length;
-    const outstanding = outstandingInvoices.reduce((s, i) => s.plus(i.total.minus(i.paidTotal)), new import_library31.Decimal(0));
+    const outstanding = outstandingInvoices.map(invoiceAsOf).reduce((s, i) => s.plus(i.balance.due), new import_library32.Decimal(0));
     const dischargedWithStay = await prisma.admissionRecord.findMany({
       where: { dischargedAt: { not: null }, admittedAt: { not: null }, ...deptFilter },
       select: { admittedAt: true, dischargedAt: true },
@@ -56725,7 +56667,7 @@ var admissionReportsService = {
       asOf: asOf.toISOString(),
       activeCensus: rows.length,
       rows: rows.map((r) => {
-        const hospitalDue = r.hospitalInvoices.reduce((s, i) => s.plus(i.total.minus(i.paidTotal)), new import_library31.Decimal(0));
+        const hospitalDue = r.hospitalInvoices.reduce((s, i) => s.plus(i.total.minus(i.paidTotal)), new import_library32.Decimal(0));
         return {
           admissionNumber: r.admissionNumber,
           patient: patientDisplayName2(r),
@@ -56855,7 +56797,7 @@ var admissionReportsService = {
       }
     });
     if (!admission) return null;
-    let running = new import_library31.Decimal(0);
+    let running = new import_library32.Decimal(0);
     const rows = [];
     for (const inv of admission.hospitalInvoices) {
       for (const l of inv.lines) {
@@ -56863,10 +56805,10 @@ var admissionReportsService = {
         rows.push({ occurredAt: l.createdAt, chargeRef: inv.invoiceNumber, category: l.billingSource, service: l.descriptionSnapshot ?? l.serviceRate?.name ?? l.billingSource, qty: l.quantity, rate: l.rateSnapshot, gross: l.lineGross, discount: l.discountAmount, net: l.lineNet, runningBalance: running });
       }
     }
-    const hospitalPaid = admission.hospitalInvoices.reduce((s, inv) => s.plus(inv.paidTotal), new import_library31.Decimal(0));
-    const hospitalSubtotal = admission.hospitalInvoices.reduce((s, inv) => s.plus(inv.subtotal), new import_library31.Decimal(0));
-    const hospitalDiscount = admission.hospitalInvoices.reduce((s, inv) => s.plus(inv.discountTotal), new import_library31.Decimal(0));
-    const hospitalNet = admission.hospitalInvoices.reduce((s, inv) => s.plus(inv.total), new import_library31.Decimal(0));
+    const hospitalPaid = admission.hospitalInvoices.reduce((s, inv) => s.plus(inv.paidTotal), new import_library32.Decimal(0));
+    const hospitalSubtotal = admission.hospitalInvoices.reduce((s, inv) => s.plus(inv.subtotal), new import_library32.Decimal(0));
+    const hospitalDiscount = admission.hospitalInvoices.reduce((s, inv) => s.plus(inv.discountTotal), new import_library32.Decimal(0));
+    const hospitalNet = admission.hospitalInvoices.reduce((s, inv) => s.plus(inv.total), new import_library32.Decimal(0));
     return {
       admissionNumber: admission.admissionNumber,
       patient: patientDisplayName2(admission),
@@ -56891,7 +56833,7 @@ var admissionReportsService = {
       const key = `${dept}::${l.descriptionSnapshot ?? l.serviceRate?.name ?? l.billingSource}`;
       let bucket = byKey.get(key);
       if (!bucket) {
-        bucket = { department: dept, service: l.descriptionSnapshot ?? l.serviceRate?.name ?? l.billingSource, qty: new import_library31.Decimal(0), gross: new import_library31.Decimal(0), discount: new import_library31.Decimal(0), net: new import_library31.Decimal(0), admissions: /* @__PURE__ */ new Set() };
+        bucket = { department: dept, service: l.descriptionSnapshot ?? l.serviceRate?.name ?? l.billingSource, qty: new import_library32.Decimal(0), gross: new import_library32.Decimal(0), discount: new import_library32.Decimal(0), net: new import_library32.Decimal(0), admissions: /* @__PURE__ */ new Set() };
         byKey.set(key, bucket);
       }
       bucket.qty = bucket.qty.plus(l.quantity);
@@ -56908,39 +56850,39 @@ var admissionReportsService = {
   /** Guide §5.15 — active/discharged admissions with Hospital balances still outstanding (never includes standalone Pharmacy due). */
   async getInpatientOutstandingBalance(query) {
     const { start, end, label } = resolveDateRange(query);
-    const rows = await prisma.hospitalInvoice.findMany({
+    const invoices = await prisma.hospitalInvoice.findMany({
       where: {
         admissionRecordId: { not: null },
-        createdAt: { gte: start, lte: end },
-        status: { in: ["UNPAID", "PARTIALLY_PAID"] },
+        createdAt: { lte: end },
+        status: { not: "VOID" },
         ...query.departmentId ? { departmentId: query.departmentId } : {},
         ...query.payerType === "PANEL" ? { corporatePanelId: { not: null } } : {},
         ...query.payerType === "SELF_PAY" ? { corporatePanelId: null } : {},
         ...query.status ? { admissionRecord: { status: query.status } } : {}
       },
-      include: { ...patientNameSelect2, admissionRecord: { select: { admissionNumber: true, status: true } } },
-      orderBy: { createdAt: "desc" },
-      take: 500
+      include: { paymentReceipts: receiptsThrough(end), panelRemittanceAllocations: remittancesThrough(end), ...patientNameSelect2, admissionRecord: { select: { admissionNumber: true, status: true } } },
+      orderBy: { createdAt: "desc" }
     });
+    const rows = invoices.map(invoiceAsOf).filter((r) => r.balance.due.gt(0));
     const totalOutstanding = rows.reduce((s, r) => {
-      const diff = r.total.minus(r.paidTotal);
+      const diff = r.balance.due;
       return diff.greaterThan(0) ? s.plus(diff) : s;
-    }, new import_library31.Decimal(0));
+    }, new import_library32.Decimal(0));
     const activeOutstanding = rows.filter((r) => r.admissionRecord?.status !== "DISCHARGED").reduce((s, r) => {
-      const diff = r.total.minus(r.paidTotal);
+      const diff = r.balance.due;
       return diff.greaterThan(0) ? s.plus(diff) : s;
-    }, new import_library31.Decimal(0));
+    }, new import_library32.Decimal(0));
     return {
       period: { label, start: start.toISOString(), end: end.toISOString() },
       summary: { totalHospitalOutstanding: totalOutstanding, activeOutstanding, dischargedOutstanding: totalOutstanding.minus(activeOutstanding) },
       rows: rows.map((r) => {
-        const diff = r.total.minus(r.paidTotal);
+        const diff = r.balance.due;
         return {
           admissionNumber: r.admissionRecord.admissionNumber,
           patient: patientDisplayName2(r),
           hospitalNet: r.total,
-          hospitalPaid: r.paidTotal,
-          hospitalOutstanding: diff.greaterThan(0) ? diff : new import_library31.Decimal(0),
+          hospitalPaid: r.balance.collected,
+          hospitalOutstanding: diff.greaterThan(0) ? diff : new import_library32.Decimal(0),
           admissionStatus: r.admissionRecord.status,
           invoiceStatus: r.status
         };
@@ -56973,7 +56915,7 @@ var admissionReportsService = {
       const clinical = r.dischargeClearances.find((c) => c.clearanceType === "CLINICAL")?.status ?? (r.dischargeSummary ? "CLEARED" : "PENDING");
       const hospital = r.dischargeClearances.find((c) => c.clearanceType === "HOSPITAL_BILLING")?.status ?? "PENDING";
       const pharmacy = r.dischargeClearances.find((c) => c.clearanceType === "PHARMACY")?.status ?? "PENDING";
-      const hospitalDue = r.hospitalInvoices.reduce((s, i) => s.plus(i.total.minus(i.paidTotal)), new import_library31.Decimal(0));
+      const hospitalDue = r.hospitalInvoices.reduce((s, i) => s.plus(i.total.minus(i.paidTotal)), new import_library32.Decimal(0));
       return {
         admissionNumber: r.admissionNumber,
         patient: patientDisplayName2(r),
@@ -57008,7 +56950,7 @@ var admissionReportsService = {
 };
 
 // src/modules/reports/admissionSimpleReports.service.ts
-var import_library32 = require("@prisma/client/runtime/library");
+var import_library33 = require("@prisma/client/runtime/library");
 var patientNameSelect3 = {
   panelPatient: { select: { id: true, fullName: true, mrNumber: true } },
   selfPayEncounter: { select: { id: true, fullName: true, phone: true } }
@@ -57073,7 +57015,7 @@ var admissionSimpleReportsService = {
     const bucketFor = (dept) => {
       let b = byDept.get(dept);
       if (!b) {
-        b = { department: dept, admissions: 0, discharges: 0, active: 0, pendingDischarge: 0, occupiedBeds: 0, availableBeds: 0, hospitalOutstanding: new import_library32.Decimal(0) };
+        b = { department: dept, admissions: 0, discharges: 0, active: 0, pendingDischarge: 0, occupiedBeds: 0, availableBeds: 0, hospitalOutstanding: new import_library33.Decimal(0) };
         byDept.set(dept, b);
       }
       return b;
@@ -57089,7 +57031,7 @@ var admissionSimpleReportsService = {
       if (a.dischargedAt && a.dischargedAt >= start && a.dischargedAt <= end) b.discharges += 1;
       if (a.status === "ACTIVE") b.active += 1;
       if (a.status === "DISCHARGE_PENDING") b.pendingDischarge += 1;
-      const due = a.hospitalInvoices.reduce((s, i) => s.plus(i.total.minus(i.paidTotal)), new import_library32.Decimal(0));
+      const due = a.hospitalInvoices.reduce((s, i) => s.plus(i.total.minus(i.paidTotal)), new import_library33.Decimal(0));
       if (due.greaterThan(0)) b.hospitalOutstanding = b.hospitalOutstanding.plus(due);
     }
     const rows = Array.from(byDept.values()).sort((x, y) => x.department.localeCompare(y.department));
@@ -57105,7 +57047,7 @@ var admissionSimpleReportsService = {
         occupiedBeds: occupied,
         availableBeds: beds.filter((b) => b.status === "AVAILABLE").length,
         totalBeds: beds.length,
-        hospitalOutstanding: rows.reduce((s, r) => s.plus(r.hospitalOutstanding), new import_library32.Decimal(0))
+        hospitalOutstanding: rows.reduce((s, r) => s.plus(r.hospitalOutstanding), new import_library33.Decimal(0))
       },
       rows
     };
@@ -57159,7 +57101,7 @@ var admissionSimpleReportsService = {
         department: a?.department.name ?? null,
         doctor: a?.doctor?.fullName ?? null,
         admittedAt: a?.admittedAt ?? null,
-        hospitalDue: a ? a.hospitalInvoices.reduce((s, i) => s.plus(i.total.minus(i.paidTotal)), new import_library32.Decimal(0)) : new import_library32.Decimal(0)
+        hospitalDue: a ? a.hospitalInvoices.reduce((s, i) => s.plus(i.total.minus(i.paidTotal)), new import_library33.Decimal(0)) : new import_library33.Decimal(0)
       };
     }).filter((r) => !query.bedStatus || r.bedStatus === query.bedStatus).sort((x, y) => x.ward.localeCompare(y.ward) || (x.room ?? "").localeCompare(y.room ?? "") || x.bed.localeCompare(y.bed, void 0, { numeric: true }));
     return {
@@ -57272,8 +57214,8 @@ var admissionSimpleReportsService = {
       if (!latestInvoiceReceipt.has(id)) latestInvoiceReceipt.set(id, r);
     }
     const rows = admissions.map((a) => {
-      const charges = a.hospitalInvoices.reduce((s, i) => s.plus(i.total), new import_library32.Decimal(0));
-      const paid = a.hospitalInvoices.reduce((s, i) => s.plus(i.paidTotal), new import_library32.Decimal(0));
+      const charges = a.hospitalInvoices.reduce((s, i) => s.plus(i.total), new import_library33.Decimal(0));
+      const paid = a.hospitalInvoices.reduce((s, i) => s.plus(i.paidTotal), new import_library33.Decimal(0));
       const outstanding = charges.minus(paid);
       const paymentStatus = charges.isZero() ? "NO_CHARGES" : outstanding.lessThanOrEqualTo(0) ? "PAID" : paid.isZero() ? "UNPAID" : "PARTIALLY_PAID";
       const direct = a.paymentReceipts[0];
@@ -57524,7 +57466,7 @@ var pharmacyRequestFulfillmentQuerySchema = dateRangeSchema4.extend({
 });
 
 // src/modules/reports/admissionPharmacyReports.service.ts
-var import_library33 = require("@prisma/client/runtime/library");
+var import_library34 = require("@prisma/client/runtime/library");
 var patientNameSelect4 = {
   panelPatient: { select: { id: true, fullName: true, mrNumber: true } },
   selfPayEncounter: { select: { id: true, fullName: true, phone: true } }
@@ -57553,8 +57495,8 @@ var admissionPharmacyReportsService = {
       orderBy: { requestedAt: "desc" },
       take: 500
     });
-    let requestedQty = new import_library33.Decimal(0);
-    let dispensedQty = new import_library33.Decimal(0);
+    let requestedQty = new import_library34.Decimal(0);
+    let dispensedQty = new import_library34.Decimal(0);
     const statusCounts = {};
     for (const r of rows) {
       statusCounts[r.status] = (statusCounts[r.status] ?? 0) + 1;
@@ -57607,8 +57549,8 @@ var admissionPharmacyReportsService = {
       orderBy: { id: "desc" },
       take: 1e3
     });
-    const totalRequested = lines.reduce((s, l) => s.plus(l.requestedQuantity), new import_library33.Decimal(0));
-    const totalDispensed = lines.reduce((s, l) => s.plus(l.dispensedQuantity), new import_library33.Decimal(0));
+    const totalRequested = lines.reduce((s, l) => s.plus(l.requestedQuantity), new import_library34.Decimal(0));
+    const totalDispensed = lines.reduce((s, l) => s.plus(l.dispensedQuantity), new import_library34.Decimal(0));
     return {
       period: { label, start: start.toISOString(), end: end.toISOString() },
       summary: {
@@ -57653,7 +57595,7 @@ var admissionPharmacyReportsService = {
         pending: rows.filter((r) => r.status === "PENDING").length,
         approved: rows.filter((r) => r.status === "AUTHORIZED").length,
         rejected: rows.filter((r) => r.status === "REJECTED").length,
-        highValueRequestedAmount: rows.reduce((s, r) => s.plus(r.lineTotal), new import_library33.Decimal(0))
+        highValueRequestedAmount: rows.reduce((s, r) => s.plus(r.lineTotal), new import_library34.Decimal(0))
       },
       rows: rows.map((r) => ({
         requestRef: r.pharmacyClearance.medicineRequestNumber,
@@ -57744,7 +57686,7 @@ var pharmacyClearanceStatusQuerySchema = dateRangeSchema5.extend({
 });
 
 // src/modules/reports/managementReports.service.ts
-var import_library35 = require("@prisma/client/runtime/library");
+var import_library36 = require("@prisma/client/runtime/library");
 
 // src/modules/expenses/expenses.service.ts
 var import_client48 = require("@prisma/client");
@@ -57863,9 +57805,9 @@ var expensesService = {
 };
 
 // src/modules/reports/staffFinanceSummary.ts
-var import_library34 = require("@prisma/client/runtime/library");
+var import_library35 = require("@prisma/client/runtime/library");
 var approvedStatuses = ["APPROVED", "PARTIALLY_PAID", "PAID"];
-var zero2 = () => new import_library34.Decimal(0);
+var zero2 = () => new import_library35.Decimal(0);
 async function staffFinanceSummary(start, end, departmentId, portalUserId, method) {
   const salaryDepartment = departmentId ? { OR: [
     { payrollRun: { departmentId } },
@@ -57915,7 +57857,7 @@ async function staffFinanceSummary(start, end, departmentId, portalUserId, metho
 }
 
 // src/modules/reports/managementReports.service.ts
-var ZERO = () => new import_library35.Decimal(0);
+var ZERO = () => new import_library36.Decimal(0);
 var sumOf = (rows, pick) => rows.reduce((s, r) => s.plus(pick(r)), ZERO());
 var patientSelect = {
   panelPatient: { select: { fullName: true } },
@@ -57930,7 +57872,6 @@ var periodOf = (start, end, label) => ({
   start: start.toISOString(),
   end: end.toISOString()
 });
-var dueOf = (i) => invoiceBalance(i).due;
 var ACCEPTED_SETTLEMENT = ["ACCEPTED", "PARTIALLY_ACCEPTED"];
 var CASH_ROLES = [
   "FRONT_DESK_BILLING",
@@ -58167,74 +58108,48 @@ var managementReportsService = {
   /** #2 Billing & Collection — one row per invoice with how it was paid and who collected it. */
   async getBillingCollection(query) {
     const { start, end, label } = resolveDateRange(query);
-    const receiptFilter = {
-      isReversed: false,
-      ...query.method ? { method: query.method } : {},
-      ...query.collectedById ? { collectedById: query.collectedById } : {}
-    };
     const invoices = await prisma.hospitalInvoice.findMany({
       where: {
-        createdAt: { gte: start, lte: end },
-        ...query.departmentId ? {
-          OR: [
-            { departmentId: query.departmentId },
-            { lines: { some: { serviceRate: { departmentId: query.departmentId } } } }
-          ]
-        } : {},
-        ...query.status ? { status: query.status } : {},
-        ...query.corporatePanelId ? { corporatePanelId: query.corporatePanelId } : {},
-        ...query.method || query.collectedById ? { AND: [{ OR: [
-          { paymentReceipts: { some: receiptFilter } },
-          { panelRemittanceAllocations: { some: { panelRemittance: panelPaymentFilter(query.method, query.collectedById) } } }
-        ] }] } : {}
+        createdAt: { lte: end },
+        status: query.status === "VOID" ? "VOID" : { not: "VOID" },
+        ...query.departmentId ? { OR: [{ departmentId: query.departmentId }, { lines: { some: { serviceRate: { departmentId: query.departmentId } } } }] } : {},
+        ...query.corporatePanelId ? { corporatePanelId: query.corporatePanelId } : {}
       },
       include: {
         ...patientSelect,
-        panelRemittanceAllocations: { include: { panelRemittance: { include: { receivedByUser: userSelect2 } } } },
-        department: { select: { name: true } },
-        lines: {
-          select: {
-            serviceRate: {
-              select: {
-                department: { select: { name: true } }
-              }
-            }
-          }
-        },
+        department: { select: { id: true, name: true } },
+        lines: collectionInvoiceSelect.lines,
         corporatePanel: { select: { organizationName: true } },
-        paymentReceipts: {
-          where: { isReversed: false },
-          select: { method: true, collectedBy: userSelect2 }
-        }
+        paymentReceipts: { where: { ...signedReceiptWhere, collectedAt: { lte: end } }, include: { collectedBy: userSelect2 } },
+        panelRemittanceAllocations: { where: { panelRemittance: { receivedAt: { lte: end } } }, include: { panelRemittance: { include: { receivedByUser: userSelect2 } } } }
       },
       orderBy: { createdAt: "desc" }
-      // Reports and exports include the entire selected period; never silently truncate.
     });
-    return {
-      period: periodOf(start, end, label),
-      rows: invoices.map((i) => {
-        const deptNames = unique([
-          i.department?.name,
-          ...i.lines.map((l) => l.serviceRate?.department?.name)
-        ]);
-        return {
-          id: i.id,
-          invoiceNumber: i.invoiceNumber,
-          createdAt: i.createdAt,
-          patient: patientName(i),
-          payer: i.corporatePanel?.organizationName ?? "Self-Pay",
-          department: deptNames.length > 0 ? deptNames.join(", ") : null,
-          gross: i.subtotal,
-          discount: i.discountTotal,
-          net: i.total,
-          collected: invoiceBalance(i).collected,
-          outstanding: dueOf(i),
-          methods: unique([...i.paymentReceipts.map((p) => p.method), ...i.panelRemittanceAllocations.map((a) => a.panelRemittance.method)]).join(", "),
-          collectedBy: unique([...i.paymentReceipts.map((p) => userName2(p.collectedBy)), ...i.panelRemittanceAllocations.map((a) => userName2(a.panelRemittance.receivedByUser))]).join(", "),
-          status: i.status
-        };
-      })
-    };
+    const rows = invoices.map(invoiceAsOf).flatMap((i) => {
+      if (query.status && i.status !== query.status) return [];
+      const receipts = i.paymentReceipts.filter((p) => p.collectedAt >= start && (!query.method || p.method === query.method) && (!query.collectedById || p.collectedById === query.collectedById));
+      const panels = i.panelRemittanceAllocations.filter((a) => a.panelRemittance.receivedAt >= start && (!query.method || (query.method === "BANK" ? ["BANK", "BANK_TRANSFER", "BANK TRANSFER"] : [query.method]).includes(a.panelRemittance.method.toUpperCase())) && (!query.collectedById || a.panelRemittance.receivedById === query.collectedById));
+      if (!receipts.length && !panels.length && (i.createdAt < start || query.method || query.collectedById)) return [];
+      const scoped = (amount, basis) => !query.departmentId ? amount : allocateInvoiceAmount(amount, i, basis).filter((a) => a.departmentId === query.departmentId).reduce((sum, a) => sum.plus(a.amount), ZERO());
+      return [{
+        id: i.id,
+        invoiceNumber: i.invoiceNumber,
+        createdAt: i.createdAt,
+        patient: patientName(i),
+        payer: i.corporatePanel?.organizationName ?? "Self-Pay",
+        department: unique([i.department?.name, ...i.lines.map((l) => l.serviceRate?.department?.name)]).join(", "),
+        gross: scoped(i.subtotal, "lineNet"),
+        discount: scoped(i.discountTotal, "lineNet"),
+        net: scoped(i.total, "lineNet"),
+        periodBilled: i.createdAt >= start ? scoped(i.total, "lineNet") : ZERO(),
+        collected: scoped(sumOf(receipts, (p) => p.amount), "patientShare").plus(scoped(sumOf(panels, (a) => a.allocatedAmount), "panelReceivable")),
+        outstanding: scoped(i.balance.patientDue, "patientShare").plus(scoped(i.balance.panelDue, "panelReceivable")),
+        methods: unique([...receipts.map((p) => p.method), ...panels.map((a) => a.panelRemittance.method)]).join(", "),
+        collectedBy: unique([...receipts.map((p) => userName2(p.collectedBy)), ...panels.map((a) => userName2(a.panelRemittance.receivedByUser))]).join(", "),
+        status: i.status
+      }];
+    });
+    return { period: periodOf(start, end, label), rows };
   },
   /**
    * #3 Outstanding / Panel — every invoice with money still owed. A Panel invoice
@@ -58246,7 +58161,7 @@ var managementReportsService = {
     const invoices = await prisma.hospitalInvoice.findMany({
       where: {
         createdAt: { lte: end },
-        status: query.status ?? { not: "VOID" },
+        status: { not: "VOID" },
         ...query.departmentId ? { OR: [
           { departmentId: query.departmentId },
           { lines: { some: { serviceRate: { departmentId: query.departmentId } } } }
@@ -58268,7 +58183,7 @@ var managementReportsService = {
     });
     return {
       period: periodOf(start, end, label),
-      rows: invoices.map((i) => {
+      rows: invoices.map(invoiceAsOf).map((i) => {
         const paidAtCutoff = sumOf(i.paymentReceipts, (r) => r.amount);
         const balance = invoiceBalance({ ...i, paidTotal: paidAtCutoff });
         const scoped = (amount, basis) => !query.departmentId ? amount : allocateInvoiceAmount(amount, i, basis).filter((r) => r.departmentId === query.departmentId).reduce((sum, r) => sum.plus(r.amount), ZERO());
@@ -58292,7 +58207,7 @@ var managementReportsService = {
           due,
           status: i.status
         };
-      }).filter((row) => row.due.gt(0))
+      }).filter((row) => row.due.gt(0) && (!query.status || row.status === query.status))
     };
   },
   /**
@@ -58304,12 +58219,13 @@ var managementReportsService = {
     const { start, end, label } = resolveDateRange(query);
     const scope = query.portal ? { moduleScope: query.portal } : {};
     const owner = query.portalUserId ? { portalUserId: query.portalUserId } : {};
-    const [ledger, settlements, openings] = await Promise.all([
+    const [ledger, settlements] = await Promise.all([
       prisma.userCashBalance.findMany({
-        where: { occurredAt: { gte: start, lte: end }, ...scope, ...owner },
+        where: { occurredAt: { lte: end }, ...scope, ...owner },
         select: {
           portalUserId: true,
           moduleScope: true,
+          occurredAt: true,
           direction: true,
           category: true,
           amount: true,
@@ -58318,7 +58234,7 @@ var managementReportsService = {
         }
       }),
       prisma.accountSettlement.findMany({
-        where: { submittedAt: { gte: start, lte: end }, ...scope, ...owner },
+        where: { submittedAt: { lte: end }, ...scope, ...owner },
         select: {
           portalUserId: true,
           moduleScope: true,
@@ -58327,24 +58243,11 @@ var managementReportsService = {
           variance: true,
           status: true,
           submittedAt: true,
+          reviewedAt: true,
+          reversedAt: true,
           submittedByUser: userSelect2
         },
         orderBy: { submittedAt: "asc" }
-      }),
-      prisma.accountSettlement.findMany({
-        where: {
-          submittedAt: { lt: start },
-          status: { in: [...ACCEPTED_SETTLEMENT] },
-          ...scope,
-          ...owner
-        },
-        select: {
-          portalUserId: true,
-          moduleScope: true,
-          carryForwardAmount: true,
-          submittedByUser: userSelect2
-        },
-        orderBy: { submittedAt: "desc" }
       })
     ]);
     const rows = /* @__PURE__ */ new Map();
@@ -58372,16 +58275,12 @@ var managementReportsService = {
       }
       return r;
     };
-    const seenOpening = /* @__PURE__ */ new Set();
-    for (const o of openings) {
-      const key = `${o.portalUserId}:${o.moduleScope}`;
-      if (seenOpening.has(key)) continue;
-      seenOpening.add(key);
-      if (!o.carryForwardAmount.isZero())
-        rowFor(o.portalUserId, o.moduleScope, o.submittedByUser).opening = o.carryForwardAmount;
-    }
     for (const e of ledger) {
       const r = rowFor(e.portalUserId, e.moduleScope, e.portalUser);
+      if (e.occurredAt < start) {
+        if (e.isPhysicalCash) r.opening = r.opening.plus(e.direction === "IN" ? e.amount : e.amount.negated());
+        continue;
+      }
       if (!e.isPhysicalCash) {
         r.nonCash = r.nonCash.plus(e.direction === "IN" ? e.amount : e.amount.negated());
         continue;
@@ -58402,12 +58301,22 @@ var managementReportsService = {
     }
     for (const s of settlements) {
       const r = rowFor(s.portalUserId, s.moduleScope, s.submittedByUser);
+      const acceptedAt = s.reviewedAt ?? s.submittedAt;
+      const wasAccepted = ACCEPTED_SETTLEMENT.includes(s.status) || s.status === "REVERSED" && !!s.reversedAt && !!s.reviewedAt;
+      if (wasAccepted && acceptedAt && acceptedAt <= end) {
+        const amount = s.handoverAmount ?? s.physicalCash;
+        if (acceptedAt < start) r.opening = r.opening.minus(amount);
+        else r.accepted = r.accepted.plus(amount);
+        if (s.reversedAt && s.reversedAt <= end) {
+          if (s.reversedAt < start) r.opening = r.opening.plus(amount);
+          else r.accepted = r.accepted.minus(amount);
+        }
+      }
+      if (!s.submittedAt || s.submittedAt < start) continue;
       r.settlementStatus = s.status;
       if (s.status === "REJECTED" || s.status === "REVERSED" || s.status === "RETURNED") continue;
       r.submitted = r.submitted.plus(s.physicalCash);
       r.variance = r.variance.plus(s.variance);
-      if (ACCEPTED_SETTLEMENT.includes(s.status))
-        r.accepted = r.accepted.plus(s.handoverAmount ?? s.physicalCash);
     }
     const result = Array.from(rows.values()).filter((r) => !query.settlementStatus || r.settlementStatus === query.settlementStatus).map(({ physicalOut, ...r }) => {
       const expectedCash = r.opening.plus(r.pettyCash).plus(r.cashCollections).minus(physicalOut);
@@ -58831,7 +58740,7 @@ var inventoryPharmacyQuerySchema = dateRangeSchema6.extend({
 });
 
 // src/modules/reports/inventoryReports.service.ts
-var import_library36 = require("@prisma/client/runtime/library");
+var import_library37 = require("@prisma/client/runtime/library");
 var userSummarySelect5 = { id: true, displayName: true, username: true };
 function resolveRangeOrAll(query) {
   if (query.preset === "all") return null;
@@ -58859,12 +58768,12 @@ var inventoryReportsService = {
       prisma.supplierLedger.findMany({ select: { entryType: true, amount: true } }).catch(() => []),
       getPositiveBatchBalances(nearExpiryThreshold)
     ]);
-    let totalStockValue = new import_library36.Decimal(0);
+    let totalStockValue = new import_library37.Decimal(0);
     let lowStockCount = 0;
     let outOfStockCount = 0;
     for (const item of items) {
-      const currentStock = item.stockLedgerEntries.reduce((sum, e) => sum.plus(e.quantityDelta), new import_library36.Decimal(0));
-      const lastRate = item.purchaseOrderLines[0]?.rate ?? new import_library36.Decimal(0);
+      const currentStock = item.stockLedgerEntries.reduce((sum, e) => sum.plus(e.quantityDelta), new import_library37.Decimal(0));
+      const lastRate = item.purchaseOrderLines[0]?.rate ?? new import_library37.Decimal(0);
       totalStockValue = totalStockValue.plus(currentStock.mul(lastRate));
       if (currentStock.lessThanOrEqualTo(0)) outOfStockCount += 1;
       else if (currentStock.lessThanOrEqualTo(item.reorderLevel)) lowStockCount += 1;
@@ -58880,7 +58789,7 @@ var inventoryReportsService = {
         if (e.entryType === "ADJUSTMENT") return acc.plus(e.amount);
         return acc.minus(e.amount);
       },
-      new import_library36.Decimal(0)
+      new import_library37.Decimal(0)
     );
     return {
       period: range ? { label: range.label, start: range.start.toISOString(), end: range.end.toISOString() } : ALL_TIME_PERIOD,
@@ -58892,7 +58801,7 @@ var inventoryReportsService = {
       outOfStockCount,
       nearExpiryCount: nearExpiryBatches.length,
       purchasesInRangeCount: purchasesInRange.length,
-      purchasesInRangeAmount: purchasesInRange.reduce((s, p) => s.plus(p.totalAmount), new import_library36.Decimal(0)),
+      purchasesInRangeAmount: purchasesInRange.reduce((s, p) => s.plus(p.totalAmount), new import_library37.Decimal(0)),
       stockInCountInRange: stockInCount,
       issuesInRangeCount: issuesInRange,
       returnsInRangeCount: returnsInRange,
@@ -58949,8 +58858,8 @@ var inventoryReportsService = {
       orderBy: { createdAt: "desc" },
       take: 500
     });
-    const totalAmount = rows.reduce((s, r) => s.plus(r.totalAmount), new import_library36.Decimal(0));
-    const totalDue = rows.reduce((s, r) => r.paymentMethod === "CREDIT" ? s.plus(r.totalAmount) : s, new import_library36.Decimal(0));
+    const totalAmount = rows.reduce((s, r) => s.plus(r.totalAmount), new import_library37.Decimal(0));
+    const totalDue = rows.reduce((s, r) => r.paymentMethod === "CREDIT" ? s.plus(r.totalAmount) : s, new import_library37.Decimal(0));
     return {
       period: range ? { label: range.label, start: range.start.toISOString(), end: range.end.toISOString() } : ALL_TIME_PERIOD,
       totalPurchases: rows.length,
@@ -59018,10 +58927,10 @@ var inventoryReportsService = {
       orderBy: { createdAt: "desc" },
       take: 1e3
     });
-    const totalPurchaseCredit = rows.reduce((s, r) => r.entryType === "PURCHASE_CREDIT" ? s.plus(r.amount) : s, new import_library36.Decimal(0));
+    const totalPurchaseCredit = rows.reduce((s, r) => r.entryType === "PURCHASE_CREDIT" ? s.plus(r.amount) : s, new import_library37.Decimal(0));
     const totalPaymentsAndReturns = rows.reduce(
       (s, r) => r.entryType !== "PURCHASE_CREDIT" ? s.plus(r.amount) : s,
-      new import_library36.Decimal(0)
+      new import_library37.Decimal(0)
     );
     return {
       period: range ? { label: range.label, start: range.start.toISOString(), end: range.end.toISOString() } : ALL_TIME_PERIOD,
@@ -59050,7 +58959,7 @@ var inventoryReportsService = {
     return {
       period: range ? { label: range.label, start: range.start.toISOString(), end: range.end.toISOString() } : ALL_TIME_PERIOD,
       totalExpenses: rows.length,
-      totalAmount: rows.reduce((s, r) => s.plus(r.amount), new import_library36.Decimal(0)),
+      totalAmount: rows.reduce((s, r) => s.plus(r.amount), new import_library37.Decimal(0)),
       rows
     };
   },
@@ -59074,7 +58983,7 @@ var inventoryReportsService = {
       batchesByItem.set(b.stockItemId, list);
     }
     const rows = items.map((item) => {
-      const currentStock = item.stockLedgerEntries.reduce((sum, e) => sum.plus(e.quantityDelta), new import_library36.Decimal(0));
+      const currentStock = item.stockLedgerEntries.reduce((sum, e) => sum.plus(e.quantityDelta), new import_library37.Decimal(0));
       const status = currentStock.lessThanOrEqualTo(0) ? "OUT" : currentStock.lessThanOrEqualTo(item.reorderLevel) ? "LOW" : "NORMAL";
       return {
         id: item.id,

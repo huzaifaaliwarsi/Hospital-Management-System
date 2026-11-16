@@ -1,4 +1,5 @@
-import { allocateCollection, allocateInvoiceAmount, collectionSelect, collectionInvoiceSelect, invoiceBalance, panelCollectionLedger, panelPaymentFilter, signedReceiptWhere } from '@/shared/departmentCollections';
+import { invoiceAsOf } from '@/shared/invoiceAsOf';
+import { allocateCollection, allocateInvoiceAmount, collectionSelect, collectionInvoiceSelect, invoiceBalance, panelCollectionLedger, signedReceiptWhere } from '@/shared/departmentCollections';
 import { Decimal } from '@prisma/client/runtime/library';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
@@ -48,7 +49,6 @@ const periodOf = (start: Date, end: Date, label: string) => ({
   end: end.toISOString(),
 });
 /** Amount still owed on an invoice; an overpaid invoice is a credit, not negative debt. */
-const dueOf = (i: Parameters<typeof invoiceBalance>[0]) => invoiceBalance(i).due;
 
 /** Settlements that actually moved cash off a user's custody. */
 const ACCEPTED_SETTLEMENT = ['ACCEPTED', 'PARTIALLY_ACCEPTED'] as const;
@@ -320,80 +320,32 @@ export const managementReportsService = {
   /** #2 Billing & Collection — one row per invoice with how it was paid and who collected it. */
   async getBillingCollection(query: BillingCollectionQuery) {
     const { start, end, label } = resolveDateRange(query);
-    const receiptFilter: Prisma.PaymentReceiptWhereInput = {
-      isReversed: false,
-      ...(query.method ? { method: query.method } : {}),
-      ...(query.collectedById ? { collectedById: query.collectedById } : {}),
-    };
-
     const invoices = await prisma.hospitalInvoice.findMany({
-      where: {
-        createdAt: { gte: start, lte: end },
-        ...(query.departmentId
-          ? {
-              OR: [
-                { departmentId: query.departmentId },
-                { lines: { some: { serviceRate: { departmentId: query.departmentId } } } },
-              ],
-            }
-          : {}),
-        ...(query.status ? { status: query.status } : {}),
-        ...(query.corporatePanelId ? { corporatePanelId: query.corporatePanelId } : {}),
-        ...(query.method || query.collectedById
-          ? { AND: [{ OR: [
-              { paymentReceipts: { some: receiptFilter } },
-              { panelRemittanceAllocations: { some: { panelRemittance: panelPaymentFilter(query.method, query.collectedById) } } },
-            ] }] }
-          : {}),
-      },
-      include: {
-        ...patientSelect,
-        panelRemittanceAllocations: { include: { panelRemittance: { include: { receivedByUser: userSelect } } } },
-        department: { select: { name: true } },
-        lines: {
-          select: {
-            serviceRate: {
-              select: {
-                department: { select: { name: true } },
-              },
-            },
-          },
-        },
+      where: { createdAt: { lte: end }, status: query.status === 'VOID' ? 'VOID' : { not: 'VOID' },
+        ...(query.departmentId ? { OR: [{ departmentId: query.departmentId }, { lines: { some: { serviceRate: { departmentId: query.departmentId } } } }] } : {}),
+        ...(query.corporatePanelId ? { corporatePanelId: query.corporatePanelId } : {}) },
+      include: { ...patientSelect, department: { select: { id: true, name: true } }, lines: collectionInvoiceSelect.lines,
         corporatePanel: { select: { organizationName: true } },
-        paymentReceipts: {
-          where: { isReversed: false },
-          select: { method: true, collectedBy: userSelect },
-        },
-      },
+        paymentReceipts: { where: { ...signedReceiptWhere, collectedAt: { lte: end } }, include: { collectedBy: userSelect } },
+        panelRemittanceAllocations: { where: { panelRemittance: { receivedAt: { lte: end } } }, include: { panelRemittance: { include: { receivedByUser: userSelect } } } } },
       orderBy: { createdAt: 'desc' },
-      // Reports and exports include the entire selected period; never silently truncate.
     });
-
-    return {
-      period: periodOf(start, end, label),
-      rows: invoices.map((i) => {
-        const deptNames = unique([
-          i.department?.name,
-          ...i.lines.map((l) => l.serviceRate?.department?.name),
-        ]);
-        return {
-          id: i.id,
-          invoiceNumber: i.invoiceNumber,
-          createdAt: i.createdAt,
-          patient: patientName(i),
-          payer: i.corporatePanel?.organizationName ?? 'Self-Pay',
-          department: deptNames.length > 0 ? deptNames.join(', ') : null,
-          gross: i.subtotal,
-          discount: i.discountTotal,
-          net: i.total,
-          collected: invoiceBalance(i).collected,
-          outstanding: dueOf(i),
-          methods: unique([...i.paymentReceipts.map((p) => p.method), ...i.panelRemittanceAllocations.map(a => a.panelRemittance.method)]).join(', '),
-          collectedBy: unique([...i.paymentReceipts.map((p) => userName(p.collectedBy)), ...i.panelRemittanceAllocations.map(a => userName(a.panelRemittance.receivedByUser))]).join(', '),
-          status: i.status,
-        };
-      }),
-    };
+    const rows = invoices.map(invoiceAsOf).flatMap(i => {
+      if (query.status && i.status !== query.status) return [];
+      const receipts = i.paymentReceipts.filter(p => p.collectedAt >= start && (!query.method || p.method === query.method) && (!query.collectedById || p.collectedById === query.collectedById));
+      const panels = i.panelRemittanceAllocations.filter(a => a.panelRemittance.receivedAt >= start && (!query.method || (query.method === 'BANK' ? ['BANK', 'BANK_TRANSFER', 'BANK TRANSFER'] : [query.method]).includes(a.panelRemittance.method.toUpperCase())) && (!query.collectedById || a.panelRemittance.receivedById === query.collectedById));
+      if (!receipts.length && !panels.length && (i.createdAt < start || query.method || query.collectedById)) return [];
+      const scoped = (amount: Decimal, basis: 'lineNet' | 'patientShare' | 'panelReceivable') => !query.departmentId ? amount : allocateInvoiceAmount(amount, i, basis).filter(a => a.departmentId === query.departmentId).reduce((sum, a) => sum.plus(a.amount), ZERO());
+      return [{ id: i.id, invoiceNumber: i.invoiceNumber, createdAt: i.createdAt, patient: patientName(i), payer: i.corporatePanel?.organizationName ?? 'Self-Pay',
+        department: unique([i.department?.name, ...i.lines.map(l => l.serviceRate?.department?.name)]).join(', '),
+        gross: scoped(i.subtotal, 'lineNet'), discount: scoped(i.discountTotal, 'lineNet'), net: scoped(i.total, 'lineNet'),
+        periodBilled: i.createdAt >= start ? scoped(i.total, 'lineNet') : ZERO(),
+        collected: scoped(sumOf(receipts, p => p.amount), 'patientShare').plus(scoped(sumOf(panels, a => a.allocatedAmount), 'panelReceivable')),
+        outstanding: scoped(i.balance.patientDue, 'patientShare').plus(scoped(i.balance.panelDue, 'panelReceivable')),
+        methods: unique([...receipts.map(p => p.method), ...panels.map(a => a.panelRemittance.method)]).join(', '),
+        collectedBy: unique([...receipts.map(p => userName(p.collectedBy)), ...panels.map(a => userName(a.panelRemittance.receivedByUser))]).join(', '), status: i.status }];
+    });
+    return { period: periodOf(start, end, label), rows };
   },
 
   /**
@@ -406,7 +358,7 @@ export const managementReportsService = {
     const invoices = await prisma.hospitalInvoice.findMany({
       where: {
         createdAt: { lte: end },
-        status: query.status ?? { not: 'VOID' },
+        status: { not: 'VOID' },
         ...(query.departmentId ? { OR: [
           { departmentId: query.departmentId },
           { lines: { some: { serviceRate: { departmentId: query.departmentId } } } },
@@ -429,7 +381,7 @@ export const managementReportsService = {
 
     return {
       period: periodOf(start, end, label),
-      rows: invoices.map((i) => {
+      rows: invoices.map(invoiceAsOf).map((i) => {
           const paidAtCutoff = sumOf(i.paymentReceipts, r => r.amount);
           const balance = invoiceBalance({ ...i, paidTotal: paidAtCutoff });
           const scoped = (amount: Decimal, basis: 'lineNet' | 'patientShare' | 'panelReceivable') => !query.departmentId ? amount :
@@ -457,7 +409,7 @@ export const managementReportsService = {
             due,
             status: i.status,
           };
-        }).filter(row => row.due.gt(0)),
+        }).filter(row => row.due.gt(0) && (!query.status || row.status === query.status)),
     };
   },
 
@@ -471,12 +423,13 @@ export const managementReportsService = {
     const scope = query.portal ? { moduleScope: query.portal } : {};
     const owner = query.portalUserId ? { portalUserId: query.portalUserId } : {};
 
-    const [ledger, settlements, openings] = await Promise.all([
+    const [ledger, settlements] = await Promise.all([
       prisma.userCashBalance.findMany({
-        where: { occurredAt: { gte: start, lte: end }, ...scope, ...owner },
+        where: { occurredAt: { lte: end }, ...scope, ...owner },
         select: {
           portalUserId: true,
           moduleScope: true,
+          occurredAt: true,
           direction: true,
           category: true,
           amount: true,
@@ -485,7 +438,7 @@ export const managementReportsService = {
         },
       }),
       prisma.accountSettlement.findMany({
-        where: { submittedAt: { gte: start, lte: end }, ...scope, ...owner },
+        where: { submittedAt: { lte: end }, ...scope, ...owner },
         select: {
           portalUserId: true,
           moduleScope: true,
@@ -494,24 +447,11 @@ export const managementReportsService = {
           variance: true,
           status: true,
           submittedAt: true,
+          reviewedAt: true,
+          reversedAt: true,
           submittedByUser: userSelect,
         },
         orderBy: { submittedAt: 'asc' },
-      }),
-      prisma.accountSettlement.findMany({
-        where: {
-          submittedAt: { lt: start },
-          status: { in: [...ACCEPTED_SETTLEMENT] },
-          ...scope,
-          ...owner,
-        },
-        select: {
-          portalUserId: true,
-          moduleScope: true,
-          carryForwardAmount: true,
-          submittedByUser: userSelect,
-        },
-        orderBy: { submittedAt: 'desc' },
       }),
     ]);
 
@@ -561,18 +501,12 @@ export const managementReportsService = {
       return r;
     };
 
-    // Latest accepted settlement before the period = the opening carry-forward.
-    const seenOpening = new Set<string>();
-    for (const o of openings) {
-      const key = `${o.portalUserId}:${o.moduleScope}`;
-      if (seenOpening.has(key)) continue;
-      seenOpening.add(key);
-      if (!o.carryForwardAmount.isZero())
-        rowFor(o.portalUserId, o.moduleScope, o.submittedByUser).opening = o.carryForwardAmount;
-    }
-
     for (const e of ledger) {
       const r = rowFor(e.portalUserId, e.moduleScope, e.portalUser);
+      if (e.occurredAt < start) {
+        if (e.isPhysicalCash) r.opening = r.opening.plus(e.direction === 'IN' ? e.amount : e.amount.negated());
+        continue;
+      }
       if (!e.isPhysicalCash) {
         r.nonCash = r.nonCash.plus(e.direction === 'IN' ? e.amount : e.amount.negated());
         continue;
@@ -594,12 +528,22 @@ export const managementReportsService = {
 
     for (const s of settlements) {
       const r = rowFor(s.portalUserId, s.moduleScope, s.submittedByUser);
-      r.settlementStatus = s.status; // ordered by submittedAt, so the last one wins
+      const acceptedAt = s.reviewedAt ?? s.submittedAt;
+      const wasAccepted = (ACCEPTED_SETTLEMENT as readonly string[]).includes(s.status) || (s.status === 'REVERSED' && !!s.reversedAt && !!s.reviewedAt);
+      if (wasAccepted && acceptedAt && acceptedAt <= end) {
+        const amount = s.handoverAmount ?? s.physicalCash;
+        if (acceptedAt < start) r.opening = r.opening.minus(amount);
+        else r.accepted = r.accepted.plus(amount);
+        if (s.reversedAt && s.reversedAt <= end) {
+          if (s.reversedAt < start) r.opening = r.opening.plus(amount);
+          else r.accepted = r.accepted.minus(amount);
+        }
+      }
+      if (!s.submittedAt || s.submittedAt < start) continue;
+      r.settlementStatus = s.status;
       if (s.status === 'REJECTED' || s.status === 'REVERSED' || s.status === 'RETURNED') continue;
       r.submitted = r.submitted.plus(s.physicalCash);
       r.variance = r.variance.plus(s.variance);
-      if ((ACCEPTED_SETTLEMENT as readonly string[]).includes(s.status))
-        r.accepted = r.accepted.plus(s.handoverAmount ?? s.physicalCash);
     }
 
     const result = Array.from(rows.values())
