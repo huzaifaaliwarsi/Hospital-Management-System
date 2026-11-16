@@ -68,6 +68,8 @@ const STATUS_STYLES: Record<string, string> = {
   PAID_LEAVE: 'bg-blue-50 text-blue-700 border-blue-200',
   UNPAID_LEAVE: 'bg-slate-100 text-slate-700 border-slate-200',
   MISSING_PUNCH: 'bg-purple-50 text-purple-700 border-purple-200',
+  WEEKLY_OFF: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  HOLIDAY: 'bg-teal-50 text-teal-800 border-teal-200',
   '': 'bg-slate-50 text-slate-500 border-dashed border-slate-300',
 };
 
@@ -223,6 +225,7 @@ const MarkAttendanceTab: React.FC<{ departments: Department[]; toast: ReturnType
     const absentCount = Object.values(drafts).filter((d) => d.status === 'ABSENT').length;
     const halfDayCount = Object.values(drafts).filter((d) => d.status === 'HALF_DAY').length;
     const leaveCount = Object.values(drafts).filter((d) => d.status === 'PAID_LEAVE' || d.status === 'UNPAID_LEAVE').length;
+    const offCount = Object.values(drafts).filter((d) => d.status === 'WEEKLY_OFF' || d.status === 'HOLIDAY').length;
     const unmarkedCount = Object.values(drafts).filter((d) => !d.status).length;
     const recordedInDb = roster.filter((r) => !!r.attendance).length;
 
@@ -248,7 +251,7 @@ const MarkAttendanceTab: React.FC<{ departments: Department[]; toast: ReturnType
         title: 'Absent / On Leave',
         value: absentCount + halfDayCount + leaveCount,
         icon: UserX,
-        subtitle: `${absentCount} absent · ${halfDayCount} half · ${leaveCount} leave`,
+        subtitle: `${absentCount} absent · ${halfDayCount} half · ${leaveCount} leave${offCount > 0 ? ` · ${offCount} off/holiday` : ''}`,
         tone: absentCount > 0 ? 'danger' : 'default',
       },
       {
@@ -570,6 +573,16 @@ const MarkAttendanceTab: React.FC<{ departments: Department[]; toast: ReturnType
                           {draft?.status === 'PAID_LEAVE' && (
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200 whitespace-nowrap">
                               Paid Leave
+                            </span>
+                          )}
+                          {draft?.status === 'WEEKLY_OFF' && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 whitespace-nowrap">
+                              Weekly Off (Paid)
+                            </span>
+                          )}
+                          {draft?.status === 'HOLIDAY' && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800 border border-teal-200 whitespace-nowrap">
+                              Holiday (Paid)
                             </span>
                           )}
                         </div>

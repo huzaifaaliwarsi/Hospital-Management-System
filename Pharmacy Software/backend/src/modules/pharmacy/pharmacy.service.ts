@@ -398,6 +398,104 @@ export const pharmacyService = {
     });
   },
 
+  async deleteMedicine(id: string, actorId: string) {
+    const existing = await prisma.medicineMaster.findUnique({
+      where: { id },
+      include: {
+        batches: {
+          include: {
+            stockEntries: { select: { quantityDelta: true } },
+          },
+        },
+        stockEntries: { select: { quantityDelta: true } },
+        _count: {
+          select: {
+            invoiceLines: true,
+            requestLines: true,
+            purchaseLines: true,
+            purchaseOrderLines: true,
+          },
+        },
+      },
+    });
+
+    if (!existing) throw new NotFoundError('Medicine not found');
+
+    const adjustmentsCount = await prisma.stockAdjustment.count({ where: { medicineId: id } });
+    const hasHistory =
+      existing._count.invoiceLines > 0 ||
+      existing._count.requestLines > 0 ||
+      existing._count.purchaseLines > 0 ||
+      existing._count.purchaseOrderLines > 0 ||
+      adjustmentsCount > 0;
+
+    return prisma.$transaction(async (tx) => {
+      // 1. Calculate and deduct any remaining stock so inventory balances reach 0
+      if (existing.batchManaged) {
+        for (const batch of existing.batches) {
+          const batchStock = batch.stockEntries.reduce((sum, e) => sum.plus(e.quantityDelta), new Decimal(0));
+          if (batchStock.greaterThan(0)) {
+            await tx.stockLedgerEntry.create({
+              data: {
+                medicineId: id,
+                batchId: batch.id,
+                movementType: 'NEGATIVE_ADJUSTMENT',
+                quantityDelta: batchStock.negated(),
+                referenceTable: 'medicine_deletion',
+                referenceId: id,
+                note: `Stock written off on medicine removal (${batchStock} ${existing.unit})`,
+                actorId,
+              },
+            });
+          }
+        }
+      } else {
+        const totalStock = existing.stockEntries.reduce((sum, e) => sum.plus(e.quantityDelta), new Decimal(0));
+        if (totalStock.greaterThan(0)) {
+          await tx.stockLedgerEntry.create({
+            data: {
+              medicineId: id,
+              batchId: null,
+              movementType: 'NEGATIVE_ADJUSTMENT',
+              quantityDelta: totalStock.negated(),
+              referenceTable: 'medicine_deletion',
+              referenceId: id,
+              note: `Stock written off on medicine removal (${totalStock} ${existing.unit})`,
+              actorId,
+            },
+          });
+        }
+      }
+
+      // 2. If medicine has historical transactional records, soft-delete to preserve data integrity
+      if (hasHistory) {
+        await tx.medicinePackagingLevel.updateMany({
+          where: { medicineId: id },
+          data: { isActive: false },
+        });
+
+        const timestamp = Date.now();
+        const updated = await tx.medicineMaster.update({
+          where: { id },
+          data: {
+            isActive: false,
+            code: `${existing.code}_del_${timestamp}`,
+            barcode: existing.barcode ? `${existing.barcode}_del_${timestamp}` : null,
+          },
+        });
+        return { id: updated.id, success: true, mode: 'deactivated' };
+      }
+
+      // 3. Otherwise, if no transactional history exists, hard-delete completely
+      await tx.stockLedgerEntry.deleteMany({ where: { medicineId: id } });
+      await tx.medicinePackagingLevel.deleteMany({ where: { medicineId: id } });
+      await tx.medicineBatch.deleteMany({ where: { medicineId: id } });
+      await tx.medicineMaster.delete({ where: { id } });
+
+      return { id, success: true, mode: 'deleted' };
+    });
+  },
+
   /** Ordered packaging chain for Purchase/POS unit selectors (medicine-packaging-plan). */
   async getPackaging(medicineId: string) {
     const medicine = await prisma.medicineMaster.findUnique({ where: { id: medicineId } });
@@ -413,9 +511,18 @@ export const pharmacyService = {
   async listMedicines(query: ListMedicinesQuery) {
     const [medicines, settings] = await Promise.all([
       prisma.medicineMaster.findMany({
-        where: query.search
-          ? { OR: [{ name: { contains: query.search, mode: 'insensitive' } }, { code: { contains: query.search, mode: 'insensitive' } }, { barcode: { contains: query.search, mode: 'insensitive' } }] }
-          : undefined,
+        where: {
+          isActive: true,
+          ...(query.search
+            ? {
+                OR: [
+                  { name: { contains: query.search, mode: 'insensitive' } },
+                  { code: { contains: query.search, mode: 'insensitive' } },
+                  { barcode: { contains: query.search, mode: 'insensitive' } },
+                ],
+              }
+            : {}),
+        },
         include: {
           batches: {
             include: { stockEntries: { select: { quantityDelta: true } } },

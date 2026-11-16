@@ -20,6 +20,7 @@ import {
   ArrowUp,
   ArrowDown,
   Pencil,
+  Trash2,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
@@ -111,6 +112,8 @@ export const MedicinesPage: React.FC<{ canEdit: boolean; onNavigate?: (page: str
   const [selectedMedicine, setSelectedMedicine] = useState<MedicineRow | null>(null);
   const [medicineBatches, setMedicineBatches] = useState<any[]>([]);
   const [loadingBatches, setLoadingBatches] = useState(false);
+  const [medicineToDelete, setMedicineToDelete] = useState<MedicineRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const [form, setForm] = useState(emptyForm);
   const [packaging, setPackaging] = useState(emptyPackaging);
@@ -426,6 +429,21 @@ export const MedicinesPage: React.FC<{ canEdit: boolean; onNavigate?: (page: str
       toast.error(err?.response?.data?.error?.message || 'Failed to update medicine.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!medicineToDelete) return;
+    setDeleting(true);
+    try {
+      await pharmacyApi.deleteMedicine(medicineToDelete.id);
+      toast.success(`Medicine "${medicineToDelete.name}" deleted successfully.`);
+      setMedicineToDelete(null);
+      load();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error?.message || err?.message || 'Failed to delete medicine.');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -981,6 +999,16 @@ export const MedicinesPage: React.FC<{ canEdit: boolean; onNavigate?: (page: str
                               <Pencil className="h-4 w-4" />
                             </button>
                           )}
+                          {canEdit && (
+                            <button
+                              type="button"
+                              onClick={() => setMedicineToDelete(m)}
+                              className="p-1.5 rounded-md text-slate-500 hover:text-rose-700 hover:bg-rose-50 transition-colors cursor-pointer"
+                              title="Delete Medicine"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1400,6 +1428,74 @@ export const MedicinesPage: React.FC<{ canEdit: boolean; onNavigate?: (page: str
             load();
           }}
         />
+      )}
+
+      {/* ── Delete Medicine Confirmation Modal ── */}
+      {medicineToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl border border-slate-200 overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-white">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center">
+                  <Trash2 className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Delete Medicine</h3>
+                  <p className="text-[11px] text-slate-400">{medicineToDelete.code}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => !deleting && setMedicineToDelete(null)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-slate-700">
+                Are you sure you want to delete <span className="font-semibold text-slate-900">{medicineToDelete.name}</span>?
+              </p>
+
+              {Number(medicineToDelete.currentStock) > 0 ? (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 space-y-1">
+                  <p className="font-semibold flex items-center gap-1.5">
+                    <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" /> Remaining Stock Warning
+                  </p>
+                  <p>
+                    This medicine currently has <span className="font-bold">{formatNumber(Number(medicineToDelete.currentStock))} {medicineToDelete.unit}</span> in stock.
+                    Deleting it will write off the remaining inventory to zero and remove the medicine from the formulary.
+                  </p>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500">
+                  This item will be removed from your active formulary register and will no longer appear in POS or purchases.
+                </p>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  disabled={deleting}
+                  onClick={() => setMedicineToDelete(null)}
+                  className="px-4 py-2 font-semibold text-slate-600 border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors cursor-pointer text-xs"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={deleting}
+                  onClick={handleConfirmDelete}
+                  className="px-4 py-2 font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-xs disabled:opacity-60 transition-colors flex items-center gap-1.5 cursor-pointer text-xs"
+                >
+                  {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                  Delete Medicine
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

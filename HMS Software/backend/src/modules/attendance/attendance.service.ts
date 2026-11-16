@@ -19,6 +19,8 @@ export const PAYABLE_EQUIVALENT: Record<string, number> = {
   PAID_LEAVE: 1,
   UNPAID_LEAVE: 0,
   MISSING_PUNCH: 0,
+  WEEKLY_OFF: 1,
+  HOLIDAY: 1,
 };
 
 function workedMinutesOf(actualIn?: Date, actualOut?: Date): number {

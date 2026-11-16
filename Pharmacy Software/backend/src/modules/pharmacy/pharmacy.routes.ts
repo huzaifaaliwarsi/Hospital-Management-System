@@ -24,6 +24,7 @@ router.post('/medicines', edit, validate({ body: s.createMedicineBodySchema }), 
 router.get('/medicines', viewOrBridge, validate({ query: s.listMedicinesQuerySchema }), asyncHandler(c.listMedicines));
 router.get('/medicines/next-code', edit, asyncHandler(c.nextMedicineCode));
 router.patch('/medicines/:id', edit, validate({ params: s.idParamsSchema, body: s.updateMedicineBodySchema }), asyncHandler(c.updateMedicine));
+router.delete('/medicines/:id', edit, validate({ params: s.idParamsSchema }), asyncHandler(c.deleteMedicine));
 
 // Batches & Stock
 router.post('/medicines/:id/batches', edit, validate({ params: s.idParamsSchema, body: s.createBatchBodySchema }), asyncHandler(c.createBatch));

@@ -35613,6 +35613,88 @@ var pharmacyService = {
       return tx.medicineMaster.update({ where: { id }, data: { ...rest, ...unitPatch, ...categoryPatch } });
     });
   },
+  async deleteMedicine(id, actorId) {
+    const existing = await prisma.medicineMaster.findUnique({
+      where: { id },
+      include: {
+        batches: {
+          include: {
+            stockEntries: { select: { quantityDelta: true } }
+          }
+        },
+        stockEntries: { select: { quantityDelta: true } },
+        _count: {
+          select: {
+            invoiceLines: true,
+            requestLines: true,
+            purchaseLines: true,
+            purchaseOrderLines: true
+          }
+        }
+      }
+    });
+    if (!existing) throw new NotFoundError("Medicine not found");
+    const adjustmentsCount = await prisma.stockAdjustment.count({ where: { medicineId: id } });
+    const hasHistory = existing._count.invoiceLines > 0 || existing._count.requestLines > 0 || existing._count.purchaseLines > 0 || existing._count.purchaseOrderLines > 0 || adjustmentsCount > 0;
+    return prisma.$transaction(async (tx) => {
+      if (existing.batchManaged) {
+        for (const batch of existing.batches) {
+          const batchStock = batch.stockEntries.reduce((sum, e) => sum.plus(e.quantityDelta), new import_library.Decimal(0));
+          if (batchStock.greaterThan(0)) {
+            await tx.stockLedgerEntry.create({
+              data: {
+                medicineId: id,
+                batchId: batch.id,
+                movementType: "NEGATIVE_ADJUSTMENT",
+                quantityDelta: batchStock.negated(),
+                referenceTable: "medicine_deletion",
+                referenceId: id,
+                note: `Stock written off on medicine removal (${batchStock} ${existing.unit})`,
+                actorId
+              }
+            });
+          }
+        }
+      } else {
+        const totalStock = existing.stockEntries.reduce((sum, e) => sum.plus(e.quantityDelta), new import_library.Decimal(0));
+        if (totalStock.greaterThan(0)) {
+          await tx.stockLedgerEntry.create({
+            data: {
+              medicineId: id,
+              batchId: null,
+              movementType: "NEGATIVE_ADJUSTMENT",
+              quantityDelta: totalStock.negated(),
+              referenceTable: "medicine_deletion",
+              referenceId: id,
+              note: `Stock written off on medicine removal (${totalStock} ${existing.unit})`,
+              actorId
+            }
+          });
+        }
+      }
+      if (hasHistory) {
+        await tx.medicinePackagingLevel.updateMany({
+          where: { medicineId: id },
+          data: { isActive: false }
+        });
+        const timestamp = Date.now();
+        const updated = await tx.medicineMaster.update({
+          where: { id },
+          data: {
+            isActive: false,
+            code: `${existing.code}_del_${timestamp}`,
+            barcode: existing.barcode ? `${existing.barcode}_del_${timestamp}` : null
+          }
+        });
+        return { id: updated.id, success: true, mode: "deactivated" };
+      }
+      await tx.stockLedgerEntry.deleteMany({ where: { medicineId: id } });
+      await tx.medicinePackagingLevel.deleteMany({ where: { medicineId: id } });
+      await tx.medicineBatch.deleteMany({ where: { medicineId: id } });
+      await tx.medicineMaster.delete({ where: { id } });
+      return { id, success: true, mode: "deleted" };
+    });
+  },
   /** Ordered packaging chain for Purchase/POS unit selectors (medicine-packaging-plan). */
   async getPackaging(medicineId) {
     const medicine = await prisma.medicineMaster.findUnique({ where: { id: medicineId } });
@@ -35627,7 +35709,16 @@ var pharmacyService = {
   async listMedicines(query) {
     const [medicines, settings] = await Promise.all([
       prisma.medicineMaster.findMany({
-        where: query.search ? { OR: [{ name: { contains: query.search, mode: "insensitive" } }, { code: { contains: query.search, mode: "insensitive" } }, { barcode: { contains: query.search, mode: "insensitive" } }] } : void 0,
+        where: {
+          isActive: true,
+          ...query.search ? {
+            OR: [
+              { name: { contains: query.search, mode: "insensitive" } },
+              { code: { contains: query.search, mode: "insensitive" } },
+              { barcode: { contains: query.search, mode: "insensitive" } }
+            ]
+          } : {}
+        },
         include: {
           batches: {
             include: { stockEntries: { select: { quantityDelta: true } } },
@@ -36339,6 +36430,11 @@ var pharmacyController = {
     const data = await pharmacyService.updateMedicine(req.params.id, req.body);
     res.json({ data });
   },
+  async deleteMedicine(req, res) {
+    if (!req.user) throw new AuthenticationError();
+    const data = await pharmacyService.deleteMedicine(req.params.id, req.user.sub);
+    res.json({ data });
+  },
   async listMedicines(req, res) {
     const data = await pharmacyService.listMedicines(req.query);
     res.json({ data });
@@ -36536,6 +36632,7 @@ router4.post("/medicines", edit2, validate({ body: createMedicineBodySchema }), 
 router4.get("/medicines", viewOrBridge, validate({ query: listMedicinesQuerySchema }), asyncHandler(pharmacyController.listMedicines));
 router4.get("/medicines/next-code", edit2, asyncHandler(pharmacyController.nextMedicineCode));
 router4.patch("/medicines/:id", edit2, validate({ params: idParamsSchema, body: updateMedicineBodySchema }), asyncHandler(pharmacyController.updateMedicine));
+router4.delete("/medicines/:id", edit2, validate({ params: idParamsSchema }), asyncHandler(pharmacyController.deleteMedicine));
 router4.post("/medicines/:id/batches", edit2, validate({ params: idParamsSchema, body: createBatchBodySchema }), asyncHandler(pharmacyController.createBatch));
 router4.get("/medicines/:id/batches", view2, validate({ params: idParamsSchema }), asyncHandler(pharmacyController.getMedicineBatches));
 router4.get("/medicines/:id/packaging", view2, validate({ params: idParamsSchema }), asyncHandler(pharmacyController.getPackaging));

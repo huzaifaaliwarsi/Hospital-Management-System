@@ -34,6 +34,11 @@ export const pharmacyController = {
     const data = await pharmacyService.updateMedicine(req.params.id as string, req.body as UpdateMedicineBody);
     res.json({ data });
   },
+  async deleteMedicine(req: Request, res: Response) {
+    if (!req.user) throw new AuthenticationError();
+    const data = await pharmacyService.deleteMedicine(req.params.id as string, req.user.sub);
+    res.json({ data });
+  },
   async listMedicines(req: Request, res: Response) {
     const data = await pharmacyService.listMedicines(req.query as unknown as ListMedicinesQuery);
     res.json({ data });

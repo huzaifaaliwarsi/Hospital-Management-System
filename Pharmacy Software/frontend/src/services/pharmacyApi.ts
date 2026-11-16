@@ -83,6 +83,7 @@ export interface BulkImportItem {
   purchaseCostRate?: number | null;
 }
 
+
 export interface BulkImportResponse {
   total: number;
   createdCount: number;
@@ -244,6 +245,7 @@ export const pharmacyApi = {
   getNextMedicineCode: () => apiClient.get<{ data: { code: string } }>('/pharmacy/medicines/next-code').then((r) => r.data.data.code),
   createMedicine: (body: Record<string, unknown>) => apiClient.post('/pharmacy/medicines', body).then((r) => r.data.data),
   updateMedicine: (id: string, body: Record<string, unknown>) => apiClient.patch(`/pharmacy/medicines/${id}`, body).then((r) => r.data.data),
+  deleteMedicine: (id: string) => apiClient.delete(`/pharmacy/medicines/${id}`).then((r) => r.data.data),
   getMedicineBatches: (id: string) => apiClient.get<{ data: any[] }>(`/pharmacy/medicines/${id}/batches`).then((r) => r.data.data),
   getMedicinePackaging: (id: string) => apiClient.get<{ data: { medicineId: string; baseUnitId: string; levels: PackagingLevel[] } }>(`/pharmacy/medicines/${id}/packaging`).then((r) => r.data.data),
 

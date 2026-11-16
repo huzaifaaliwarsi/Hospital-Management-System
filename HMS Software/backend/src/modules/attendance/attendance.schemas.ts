@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { paginationQuerySchema } from '@/shared/pagination';
 
-export const ATTENDANCE_STATUSES = ['PRESENT', 'HALF_DAY', 'ABSENT', 'PAID_LEAVE', 'UNPAID_LEAVE'] as const;
+export const ATTENDANCE_STATUSES = ['PRESENT', 'HALF_DAY', 'ABSENT', 'PAID_LEAVE', 'UNPAID_LEAVE', 'WEEKLY_OFF', 'HOLIDAY'] as const;
 
 const timeOfDay = z.coerce.date().optional();
 

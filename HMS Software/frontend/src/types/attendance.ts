@@ -1,6 +1,6 @@
-export type AttendanceStatus = 'PRESENT' | 'HALF_DAY' | 'ABSENT' | 'PAID_LEAVE' | 'UNPAID_LEAVE' | 'MISSING_PUNCH';
+export type AttendanceStatus = 'PRESENT' | 'HALF_DAY' | 'ABSENT' | 'PAID_LEAVE' | 'UNPAID_LEAVE' | 'MISSING_PUNCH' | 'WEEKLY_OFF' | 'HOLIDAY';
 
-export const ATTENDANCE_STATUSES: AttendanceStatus[] = ['PRESENT', 'HALF_DAY', 'ABSENT', 'PAID_LEAVE', 'UNPAID_LEAVE'];
+export const ATTENDANCE_STATUSES: AttendanceStatus[] = ['PRESENT', 'HALF_DAY', 'ABSENT', 'PAID_LEAVE', 'UNPAID_LEAVE', 'WEEKLY_OFF', 'HOLIDAY'];
 
 export const ATTENDANCE_STATUS_LABELS: Record<AttendanceStatus, string> = {
   PRESENT: 'Present',
@@ -9,6 +9,8 @@ export const ATTENDANCE_STATUS_LABELS: Record<AttendanceStatus, string> = {
   PAID_LEAVE: 'Paid Leave',
   UNPAID_LEAVE: 'Unpaid Leave',
   MISSING_PUNCH: 'Missing Punch',
+  WEEKLY_OFF: 'Weekly Off',
+  HOLIDAY: 'Holiday',
 };
 
 // staff.md §11 — payable-equivalent-day weight per status, mirrors the backend exactly.
@@ -19,6 +21,8 @@ export const PAYABLE_EQUIVALENT: Record<AttendanceStatus, number> = {
   PAID_LEAVE: 1,
   UNPAID_LEAVE: 0,
   MISSING_PUNCH: 0,
+  WEEKLY_OFF: 1,
+  HOLIDAY: 1,
 };
 
 export interface AttendanceStaffSummary {

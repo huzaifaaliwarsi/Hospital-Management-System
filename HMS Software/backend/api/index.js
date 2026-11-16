@@ -50504,7 +50504,9 @@ var PAYABLE_EQUIVALENT = {
   ABSENT: 0,
   PAID_LEAVE: 1,
   UNPAID_LEAVE: 0,
-  MISSING_PUNCH: 0
+  MISSING_PUNCH: 0,
+  WEEKLY_OFF: 1,
+  HOLIDAY: 1
 };
 function workedMinutesOf(actualIn, actualOut) {
   if (!actualIn || !actualOut) return 0;
@@ -50870,7 +50872,7 @@ var attendanceController = {
 };
 
 // src/modules/attendance/attendance.schemas.ts
-var ATTENDANCE_STATUSES = ["PRESENT", "HALF_DAY", "ABSENT", "PAID_LEAVE", "UNPAID_LEAVE"];
+var ATTENDANCE_STATUSES = ["PRESENT", "HALF_DAY", "ABSENT", "PAID_LEAVE", "UNPAID_LEAVE", "WEEKLY_OFF", "HOLIDAY"];
 var timeOfDay2 = external_exports.coerce.date().optional();
 var markAttendanceBodySchema = external_exports.object({
   staffId: external_exports.string().uuid(),

@@ -339,6 +339,8 @@ enum AttendanceStatus {
   PAID_LEAVE
   UNPAID_LEAVE
   MISSING_PUNCH
+  WEEKLY_OFF
+  HOLIDAY
 }
 
 /// How this row was created — kept distinct from day one so tomorrow's
