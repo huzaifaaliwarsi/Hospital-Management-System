@@ -14,6 +14,9 @@ function actorId(req: Request): string {
 }
 
 export const commissionController = {
+  payDoctorTotal: async (req: Request, res: Response) => {
+    res.status(201).json({ data: await commissionService.payDoctorTotal(req.body, actorId(req)) });
+  },
   adjustAccrual: async (req: Request, res: Response) => {
     res.status(201).json({ data: await commissionService.adjustAccrual(req.params.id as string, req.body, actorId(req)) });
   },

@@ -206,3 +206,7 @@ export async function payCommissionAccrual(id: string, body: { amount: number; m
   const res = await apiClient.post<{ data: Record<string, any> }>(`/commission/accruals/${id}/pay`, body);
   return toAccrual(res.data.data);
 }
+
+export async function payDoctorCommissionTotal(body: { staffId: string; accrualIds: string[]; amount: number; method: string; reference?: string; requestKey: string }): Promise<void> {
+  await apiClient.post('/commission/pay-total', body);
+}

@@ -38983,7 +38983,22 @@ async function loadFinancialData(db = prisma) {
         isPhysicalCash: true
       }
     }),
-    db.expense.findMany({ select: { date: true, amount: true } })
+    db.expense.findMany({
+      select: {
+        id: true,
+        expenseNumber: true,
+        date: true,
+        category: true,
+        amount: true,
+        paymentMethod: true,
+        payeeOrVendor: true,
+        description: true,
+        enteredByUser: { select: { fullName: true } },
+        approvedByUser: { select: { fullName: true } },
+        createdAt: true
+      },
+      orderBy: { date: "desc" }
+    })
   ]);
   return { invoices, refunds, expenses };
 }
@@ -39425,6 +39440,186 @@ async function incomeExpenseReport(db, range = {}) {
   };
 }
 
+// src/modules/reports/operatingProfit.ts
+var import_client17 = require("@prisma/client");
+async function operatingProfitReport(db, range = {}) {
+  const [data, ledger] = await Promise.all([
+    loadFinancialData(db),
+    db.vendorLedgerEntry.findMany({
+      where: {
+        createdAt: { lte: range.lte }
+      }
+    })
+  ]);
+  const { rows, totals } = financialReport(data, range);
+  let totalVendorPayments = new import_client17.Prisma.Decimal(0);
+  let supplierRefundsReceived = new import_client17.Prisma.Decimal(0);
+  const balances = /* @__PURE__ */ new Map();
+  for (const entry of ledger) {
+    balances.set(
+      entry.vendorId,
+      (balances.get(entry.vendorId) ?? new import_client17.Prisma.Decimal(0)).plus(entry.amount)
+    );
+    if (entry.entryType === "PAYMENT" && (!range.gte || entry.createdAt >= range.gte)) {
+      if (entry.amount.isNegative()) {
+        totalVendorPayments = totalVendorPayments.minus(entry.amount);
+      } else {
+        supplierRefundsReceived = supplierRefundsReceived.plus(entry.amount);
+      }
+    }
+  }
+  let vendorOutstanding = new import_client17.Prisma.Decimal(0);
+  let supplierAdvances = new import_client17.Prisma.Decimal(0);
+  for (const balance of balances.values()) {
+    if (balance.isPositive()) {
+      vendorOutstanding = vendorOutstanding.plus(balance);
+    } else {
+      supplierAdvances = supplierAdvances.minus(balance);
+    }
+  }
+  const grossSales = totals.grossSales;
+  const discounts = totals.grossSales.minus(totals.netBilling);
+  const netBilling = totals.netBilling;
+  const taxBilled = totals.taxBilled;
+  const totalInvoiced = totals.total;
+  const actualCollections = totals.collections;
+  const totalRefunded = totals.totalRefunded;
+  const outstanding = totals.outstanding;
+  const recognizedRevenue = totals.recognizedRevenue;
+  const medicineCogs = totals.recognizedCogs;
+  const grossProfit = recognizedRevenue.minus(medicineCogs);
+  const operatingExpenses = totals.operatingExpenses;
+  const operatingProfit = grossProfit.minus(operatingExpenses);
+  const grossMarginPercent = recognizedRevenue.gt(0) ? Number(grossProfit.div(recognizedRevenue).mul(100).toFixed(2)) : 0;
+  const operatingMarginPercent = recognizedRevenue.gt(0) ? Number(operatingProfit.div(recognizedRevenue).mul(100).toFixed(2)) : 0;
+  const collectionsRatioPercent = totalInvoiced.gt(0) ? Number(actualCollections.div(totalInvoiced).mul(100).toFixed(2)) : 0;
+  const invoicesList = rows.filter((r) => {
+    if (r.grossSales.gt(0) || r.collections.gt(0) || r.recognizedRevenue.gt(0)) return true;
+    if (range.gte && r.createdAt < range.gte) return false;
+    if (range.lte && r.createdAt > range.lte) return false;
+    return true;
+  }).map((r) => ({
+    invoiceNumber: r.invoiceNumber,
+    channel: r.channel,
+    customerName: r.customerName || "Walk-In Customer",
+    createdAt: r.createdAt,
+    status: r.status,
+    clearanceStatus: r.clearanceStatus,
+    grossSales: r.grossSales,
+    discount: r.grossSales.minus(r.netBilling),
+    netBilling: r.netBilling,
+    taxBilled: r.taxBilled,
+    total: r.total,
+    collections: r.collections,
+    outstanding: r.outstanding,
+    recognizedRevenue: r.recognizedRevenue,
+    recognizedCogs: r.recognizedCogs,
+    grossProfit: r.grossProfit ?? r.recognizedRevenue.minus(r.recognizedCogs),
+    recognizedAt: r.recognizedAt,
+    soldBy: r.soldBy,
+    collectedBy: r.collectedBy,
+    recognitionComplete: r.recognitionComplete,
+    recognitionIssues: r.recognitionIssues
+  }));
+  const inRange2 = (at) => (!range.gte || at >= range.gte) && (!range.lte || at <= range.lte);
+  const expensesList = data.expenses.filter((e) => inRange2(e.date)).map((e) => ({
+    id: e.id,
+    expenseNumber: e.expenseNumber,
+    date: e.date,
+    category: e.category,
+    amount: e.amount,
+    paymentMethod: e.paymentMethod,
+    payeeOrVendor: e.payeeOrVendor || "\u2014",
+    description: e.description,
+    enteredBy: e.enteredByUser?.fullName || "Pharmacy Staff",
+    approvedBy: e.approvedByUser?.fullName || "Pending Approval",
+    createdAt: e.createdAt
+  }));
+  const dailyMap = /* @__PURE__ */ new Map();
+  const getOrCreateDay = (d) => {
+    const key = d.toISOString().slice(0, 10);
+    let entry = dailyMap.get(key);
+    if (!entry) {
+      const label = d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+      entry = {
+        date: key,
+        label,
+        grossSales: new import_client17.Prisma.Decimal(0),
+        recognizedRevenue: new import_client17.Prisma.Decimal(0),
+        medicineCogs: new import_client17.Prisma.Decimal(0),
+        grossProfit: new import_client17.Prisma.Decimal(0),
+        operatingExpenses: new import_client17.Prisma.Decimal(0),
+        operatingProfit: new import_client17.Prisma.Decimal(0),
+        collections: new import_client17.Prisma.Decimal(0),
+        invoiceCount: 0
+      };
+      dailyMap.set(key, entry);
+    }
+    return entry;
+  };
+  for (const inv of invoicesList) {
+    const targetDate = inv.recognizedAt ?? inv.createdAt;
+    if (inRange2(targetDate)) {
+      const day = getOrCreateDay(targetDate);
+      day.grossSales = day.grossSales.plus(inv.grossSales);
+      day.recognizedRevenue = day.recognizedRevenue.plus(inv.recognizedRevenue);
+      day.medicineCogs = day.medicineCogs.plus(inv.recognizedCogs);
+      day.collections = day.collections.plus(inv.collections);
+      day.invoiceCount += 1;
+    }
+  }
+  for (const exp of expensesList) {
+    const expDate = new Date(exp.date);
+    if (inRange2(expDate)) {
+      const day = getOrCreateDay(expDate);
+      day.operatingExpenses = day.operatingExpenses.plus(exp.amount);
+    }
+  }
+  const trend = Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date)).map((day) => {
+    const gp = day.recognizedRevenue.minus(day.medicineCogs);
+    const op = gp.minus(day.operatingExpenses);
+    return {
+      ...day,
+      grossProfit: gp,
+      operatingProfit: op
+    };
+  });
+  return {
+    breakdown: {
+      grossSales,
+      discounts,
+      netBilling,
+      taxBilled,
+      totalInvoiced,
+      actualCollections,
+      totalRefunded,
+      outstanding,
+      recognizedRevenue,
+      medicineCogs,
+      grossProfit,
+      operatingExpenses,
+      operatingProfit,
+      grossMarginPercent,
+      operatingMarginPercent,
+      collectionsRatioPercent,
+      incompleteInvoices: totals.incompleteInvoices
+    },
+    vendorSummary: {
+      totalVendorPayments,
+      supplierRefundsReceived,
+      vendorOutstanding,
+      supplierAdvances
+    },
+    trend,
+    invoices: invoicesList,
+    expenses: expensesList,
+    reportPeriod: {
+      from: range.gte ? range.gte.toISOString() : null,
+      to: range.lte ? range.lte.toISOString() : null
+    }
+  };
+}
+
 // src/modules/reports/reports.service.ts
 var ROW_LIMIT = 500;
 function endOfDayIfDateOnly(to) {
@@ -39447,6 +39642,8 @@ var reportsService = {
     switch (query.type) {
       case "INCOME_EXPENSE":
         return incomeExpenseReport(prisma, range);
+      case "OPERATING_PROFIT":
+        return operatingProfitReport(prisma, range);
       case "SALES_COLLECTION":
         return financialReport(await loadFinancialData(), range, query);
       case "HMS_DISPENSE":
@@ -39676,6 +39873,7 @@ var reportsController = {
 // src/modules/reports/reports.schemas.ts
 var REPORT_TYPES = [
   "INCOME_EXPENSE",
+  "OPERATING_PROFIT",
   "SALES_COLLECTION",
   "HMS_DISPENSE",
   "PURCHASE",

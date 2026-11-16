@@ -7,6 +7,7 @@ import type {
   ListCommissionRulesQuery,
   ListAccrualsQuery,
   PayAccrualBody,
+  PayDoctorCommissionBody,
 } from './commission.schemas';
 import { isCommissionBasis } from '@/modules/identity/staff.schemas';
 import { commissionBalance } from './commission.calc';
@@ -272,6 +273,40 @@ export const commissionService = {
       data: { status: 'APPROVED', approvedById: actorId, approvedAt: new Date() },
     });
     return { count: updated.count };
+  },
+
+  async payDoctorTotal(body: PayDoctorCommissionBody, actorId: string) {
+    return prisma.$transaction(async tx => {
+      // Serialize retries even when a caller changes the selected entries.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${body.requestKey}))`;
+      const ids = [...body.accrualIds].sort();
+      for (const id of ids) {
+        await tx.$queryRaw`SELECT id FROM doctor_commission_accruals WHERE id = ${id} FOR UPDATE`;
+      }
+      const rows = await tx.doctorCommissionAccrual.findMany({ where: { id: { in: ids } }, include: commissionInclude, orderBy: { id: 'asc' } });
+      if (rows.length !== ids.length || rows.some(row => row.staffId !== body.staffId)) throw new ValidationError('Commission entries must belong to the selected doctor.');
+      const previous = await tx.commissionPayout.findMany({ where: { requestKey: { startsWith: `${body.requestKey}:` } } });
+      if (previous.length) {
+        const total = previous.reduce((sum, p) => sum.plus(p.amount), new Decimal(0));
+        if (previous.length !== ids.length || !total.equals(body.amount) || previous.some(p => !ids.includes(p.doctorCommissionAccrualId) || p.paidById !== actorId || p.method !== body.method || (p.reference ?? '') !== (body.reference ?? ''))) {
+          throw new ConflictError('Payment request key was already used for different payment details.');
+        }
+        return { amount: total, count: previous.length };
+      }
+      const balances = rows.map(row => commissionBalance(row));
+      if (rows.some((row, i) => !['APPROVED', 'PARTIALLY_PAID'].includes(row.status) || balances[i].remaining.lte(0))) throw new ConflictError('Commission balances changed. Refresh and review the total before paying.');
+      const total = balances.reduce((sum, balance) => sum.plus(balance.remaining), new Decimal(0));
+      if (!total.equals(body.amount)) throw new ConflictError('Commission balances changed. Refresh and review the total before paying.');
+      // Keep allocations linked to each sale for statements and payment reversals.
+      // All allocations and cash deductions commit together or roll back together.
+      for (const [i, row] of rows.entries()) {
+        const amount = balances[i].remaining;
+        const cashEntryId = await postStaffPaymentCash(tx, actorId, amount, body.method, 'COMMISSION_PAYMENT', `Combined commission payment ${body.requestKey}, accrual ${row.id}`);
+        await tx.commissionPayout.create({ data: { doctorCommissionAccrualId: row.id, amount, method: body.method, reference: body.reference, requestKey: `${body.requestKey}:${row.id}`, paidById: actorId, cashEntryId } });
+        await tx.doctorCommissionAccrual.update({ where: { id: row.id }, data: { status: 'PAID' } });
+      }
+      return { amount: total, count: rows.length };
+    }, { timeout: 30000 });
   },
 
   async payAccrual(id: string, body: PayAccrualBody, actorId: string) {

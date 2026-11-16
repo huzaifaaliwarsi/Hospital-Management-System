@@ -21,6 +21,7 @@ import { UsersPage } from './pages/UsersPage';
 import { StockMovementsPage } from './pages/StockMovementsPage';
 import { HmsRequestQueuePage } from './pages/HmsRequestQueuePage';
 import { ReportView } from './components/ReportView';
+import { OperatingProfitPage } from './pages/OperatingProfitPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ComingSoonPage } from './pages/ComingSoonPage';
 import { useHmsNotifications } from './context/HmsNotificationContext';
@@ -49,7 +50,7 @@ const REPORT_PAGES: { page: string; type: import('./components/ReportView').Repo
 const VALID_PAGES = [
   'dashboard', 'medicines', 'pos', 'invoices', 'hms-requests', 'stock-movements',
   'vendors', 'purchases', 'stock-in', 'balance-sheet', 'settlements', 'hms-receivables', 'expenses',
-  'users', 'settings', 'reports', ...REPORT_PAGES.map((r) => r.page),
+  'users', 'settings', 'reports', 'reports-operating-profit', ...REPORT_PAGES.map((r) => r.page),
 ];
 
 function pageFromPath(): string {
@@ -59,6 +60,7 @@ function pageFromPath(): string {
 
 function findLabel(groups: NavGroup[], id: string): string {
   if (id === 'reports') return 'Reports & Analytics';
+  if (id === 'reports-operating-profit') return 'Operating Profit Report';
   const reportPage = REPORT_PAGES.find((r) => r.page === id);
   if (reportPage) return reportPage.title;
   for (const g of groups) {
@@ -140,6 +142,8 @@ const App: React.FC = () => {
         return <UsersPage />;
       case 'settings':
         return <SettingsPage />;
+      case 'reports-operating-profit':
+        return <OperatingProfitPage onNavigate={navigate} />;
       case 'reports':
         return (
           <ReportView

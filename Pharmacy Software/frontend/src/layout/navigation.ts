@@ -18,6 +18,7 @@ import {
   Settings,
   Undo2,
   Landmark,
+  TrendingUp,
 } from 'lucide-react';
 
 export interface NavItem {
@@ -64,6 +65,7 @@ export const MANAGEMENT_NAV: NavGroup[] = [
     id: 'reports',
     title: 'REPORTS',
     items: [
+      { id: 'reports-operating-profit', label: 'Operating Profit', icon: TrendingUp },
       { id: 'reports-income-expense', label: 'Income & Expense', icon: Receipt },
       { id: 'reports-sales', label: 'Detailed Income', icon: Receipt },
       { id: 'reports-hms', label: 'HMS Request / Dispense', icon: ClipboardList },

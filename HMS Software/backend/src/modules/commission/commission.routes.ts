@@ -11,6 +11,7 @@ const router = Router();
 const view = authorize('commission', 'view');
 const create = authorize('commission', 'create');
 const approve = authorize('commission', 'approve');
+router.post('/pay-total', create, validate({ body: s.payDoctorCommissionBodySchema }), asyncHandler(c.payDoctorTotal));
 router.post('/payouts/:id/reverse', approve, validate({ params: s.accrualIdParamsSchema, body: s.paymentReversalSchema }), asyncHandler(async (req, res) => {
   res.json({ data: await reverseStaffPayment('COMMISSION', req.params.id as string, req.body.reason, req.user!.sub) });
 }));

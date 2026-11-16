@@ -150,6 +150,7 @@ interface Props {
 }
 
 export const ALL_REPORTS_LIST = [
+  { page: 'reports-operating-profit', type: 'INCOME_EXPENSE' as ReportType, label: 'Operating Profit' },
   { page: 'reports-income-expense', type: 'INCOME_EXPENSE' as ReportType, label: 'Income & Expense' },
   { page: 'reports-sales', type: 'SALES_COLLECTION' as ReportType, label: 'Detailed Income' },
   { page: 'reports-hms', type: 'HMS_DISPENSE' as ReportType, label: 'HMS Dispense' },

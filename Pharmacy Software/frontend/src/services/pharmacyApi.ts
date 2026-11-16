@@ -234,6 +234,96 @@ export interface MedicineCategory {
   updatedAt: string;
 }
 
+export interface OperatingProfitBreakdown {
+  grossSales: number | string;
+  discounts: number | string;
+  netBilling: number | string;
+  taxBilled: number | string;
+  totalInvoiced: number | string;
+  actualCollections: number | string;
+  totalRefunded: number | string;
+  outstanding: number | string;
+  recognizedRevenue: number | string;
+  medicineCogs: number | string;
+  grossProfit: number | string;
+  operatingExpenses: number | string;
+  operatingProfit: number | string;
+  grossMarginPercent: number;
+  operatingMarginPercent: number;
+  collectionsRatioPercent: number;
+  incompleteInvoices: number;
+}
+
+export interface OperatingProfitVendorSummary {
+  totalVendorPayments: number | string;
+  supplierRefundsReceived: number | string;
+  vendorOutstanding: number | string;
+  supplierAdvances: number | string;
+}
+
+export interface OperatingProfitTrendPoint {
+  date: string;
+  label: string;
+  grossSales: number | string;
+  recognizedRevenue: number | string;
+  medicineCogs: number | string;
+  grossProfit: number | string;
+  operatingExpenses: number | string;
+  operatingProfit: number | string;
+  collections: number | string;
+  invoiceCount: number;
+}
+
+export interface OperatingProfitInvoiceRow {
+  invoiceNumber: string;
+  channel: string;
+  customerName: string;
+  createdAt: string;
+  status: string;
+  clearanceStatus: string | null;
+  grossSales: number | string;
+  discount: number | string;
+  netBilling: number | string;
+  taxBilled: number | string;
+  total: number | string;
+  collections: number | string;
+  outstanding: number | string;
+  recognizedRevenue: number | string;
+  recognizedCogs: number | string;
+  grossProfit: number | string;
+  recognizedAt: string | null;
+  soldBy: string;
+  collectedBy: string;
+  recognitionComplete: boolean;
+  recognitionIssues: string[];
+}
+
+export interface OperatingProfitExpenseRow {
+  id: string;
+  expenseNumber: string;
+  date: string;
+  category: string;
+  amount: number | string;
+  paymentMethod: string;
+  payeeOrVendor: string;
+  description: string;
+  enteredBy: string;
+  approvedBy: string;
+  createdAt: string;
+}
+
+export interface OperatingProfitReportData {
+  breakdown: OperatingProfitBreakdown;
+  vendorSummary: OperatingProfitVendorSummary;
+  trend: OperatingProfitTrendPoint[];
+  invoices: OperatingProfitInvoiceRow[];
+  expenses: OperatingProfitExpenseRow[];
+  reportPeriod: {
+    from: string | null;
+    to: string | null;
+  };
+}
+
 export const pharmacyApi = {
   getManagementDashboard: () => apiClient.get<{ data: ManagementDashboard }>('/dashboard/management').then((r) => r.data.data),
   getSalesDashboard: () => apiClient.get<{ data: SalesDashboard }>('/dashboard/sales').then((r) => r.data.data),
@@ -326,6 +416,12 @@ export const pharmacyApi = {
   postDraftPurchase: (id: string) => apiClient.post(`/vendors/purchases/${id}/post`).then((r) => r.data.data),
 
   // Testing Reset
+  getOperatingProfitReport: (from?: string, to?: string) =>
+    apiClient
+      .get<{ data: OperatingProfitReportData }>('/reports', {
+        params: { type: 'OPERATING_PROFIT', from, to },
+      })
+      .then((r) => r.data.data),
   resetTestingData: (body: { scope: 'transactions_only' | 'complete'; confirmPhrase: 'RESET' }) =>
     apiClient.post<{ data: { scope: string; cleared: Record<string, number> } }>('/settings/reset-data', body).then((r) => r.data.data),
 };

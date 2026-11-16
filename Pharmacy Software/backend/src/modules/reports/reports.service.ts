@@ -1,4 +1,5 @@
 import { incomeExpenseReport } from './incomeExpense';
+import { operatingProfitReport } from './operatingProfit';
 import { financialReport, loadFinancialData } from './financialRecognition';
 import { prisma } from '@/db/client';
 import { ValidationError } from '@/shared/errors/AppError';
@@ -30,6 +31,8 @@ export const reportsService = {
     switch (query.type) {
       case 'INCOME_EXPENSE':
         return incomeExpenseReport(prisma, range);
+      case 'OPERATING_PROFIT':
+        return operatingProfitReport(prisma, range);
       case 'SALES_COLLECTION':
         return financialReport(await loadFinancialData(), range, query);
       case 'HMS_DISPENSE':

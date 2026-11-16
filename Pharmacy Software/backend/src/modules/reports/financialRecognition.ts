@@ -1,4 +1,4 @@
-﻿import { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
 import { prisma } from "@/db/client";
 
@@ -274,7 +274,22 @@ export async function loadFinancialData(
         isPhysicalCash: true,
       },
     }),
-    db.expense.findMany({ select: { date: true, amount: true } }),
+    db.expense.findMany({
+      select: {
+        id: true,
+        expenseNumber: true,
+        date: true,
+        category: true,
+        amount: true,
+        paymentMethod: true,
+        payeeOrVendor: true,
+        description: true,
+        enteredByUser: { select: { fullName: true } },
+        approvedByUser: { select: { fullName: true } },
+        createdAt: true,
+      },
+      orderBy: { date: 'desc' },
+    }),
   ]);
   return { invoices, refunds, expenses };
 }

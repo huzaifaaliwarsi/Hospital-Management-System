@@ -55,6 +55,11 @@ export const payAccrualBodySchema = z.object({
   reference: z.string().max(200).optional(),
 });
 export type PayAccrualBody = z.infer<typeof payAccrualBodySchema>;
+export const payDoctorCommissionBodySchema = payAccrualBodySchema.extend({
+  staffId: z.string().uuid(),
+  accrualIds: z.array(z.string().uuid()).min(1).refine(ids => new Set(ids).size === ids.length, 'Duplicate commission entries'),
+});
+export type PayDoctorCommissionBody = z.infer<typeof payDoctorCommissionBodySchema>;
 
 export const financialAdjustmentSchema = z.object({
   amount: z.coerce.number().refine(v => v !== 0 && Number.isFinite(v) && Math.abs(v * 100 - Math.round(v * 100)) < 0.000001, 'Use a nonzero amount with at most two decimal places'),
