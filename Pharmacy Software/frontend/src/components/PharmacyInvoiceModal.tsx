@@ -1,3 +1,4 @@
+import { CollectionAccountSelect } from './CollectionAccountSelect';
 import React, { useState, useRef } from 'react';
 import {
   X,
@@ -52,8 +53,11 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
   const [payAmount, setPayAmount] = useState(
     Number(invoice.outstanding) > 0 ? String(invoice.outstanding) : ''
   );
-  const [payMethod, setPayMethod] = useState<'CASH' | 'CARD' | 'ONLINE'>('CASH');
+  const [payMethod, setPayMethod] = useState<'CASH' | 'CARD' | 'ONLINE' | 'BANK'>('CASH');
   const [paying, setPaying] = useState(false);
+  const [paymentAccountId, setPaymentAccountId] = useState('');
+  const paymentAttempt = useRef<{ fingerprint: string; key: string } | null>(null);
+  const paymentInFlight = useRef(false);
 
   // Return states
   const [showReturn, setShowReturn] = useState(initialAction === 'return');
@@ -61,6 +65,7 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
   const returnRequest = useRef<{ fingerprint:string; key:string } | null>(null);
   const [refundMethod, setRefundMethod] = useState<'CASH' | 'CARD' | 'ONLINE'>('CASH');
   const [returnReason, setReturnReason] = useState('');
+  const [refundAccountId, setRefundAccountId] = useState('');
   const [returning, setReturning] = useState(false);
   const [hospitalLogo, setHospitalLogo] = useState<string | null>(null);
   const [hospitalProfile, setHospitalProfile] = useState<any>(null);
@@ -110,25 +115,34 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
   };
 
   const handleAddPayment = async () => {
+    if (paymentInFlight.current) return;
     const amount = Number(payAmount);
-    if (!amount || amount <= 0) {
-      toast.error('Enter a valid payment amount.');
+    if (!Number.isFinite(amount) || amount <= 0 || amount > Number(invoice.outstanding) || (payMethod !== 'CASH' && !paymentAccountId)) {
+      toast.error('Enter an amount within outstanding and select an account for online/bank payments.');
       return;
     }
+    const fingerprint = JSON.stringify([invoice.id, amount, payMethod, paymentAccountId]);
+    if (paymentAttempt.current?.fingerprint !== fingerprint) paymentAttempt.current = { fingerprint, key: crypto.randomUUID() };
+    paymentInFlight.current = true;
     setPaying(true);
     try {
       const res = await apiClient.post(`/pharmacy/invoices/${invoice.id}/payments`, {
         amount,
         method: payMethod,
+        requestKey: paymentAttempt.current.key,
+        paymentAccountId: payMethod === 'CASH' ? undefined : paymentAccountId,
       });
       toast.success('Payment recorded successfully.');
-      setInvoice(res.data.data);
-      if (onUpdated) onUpdated(res.data.data);
+      const fresh = await pharmacyApi.getInvoiceById(invoice.id).catch(() => res.data.data);
+      setInvoice(fresh);
+      if (onUpdated) onUpdated(fresh);
       setShowAddPayment(false);
-      setPayAmount('');
+      setPayAmount(String(res.data.data.outstanding));
+      paymentAttempt.current = null;
     } catch (err: any) {
       toast.error(err?.response?.data?.error?.message || 'Failed to record payment.');
     } finally {
+      paymentInFlight.current = false;
       setPaying(false);
     }
   };
@@ -151,7 +165,7 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
     }
     setReturning(true);
     try {
-      const fingerprint = JSON.stringify({invoiceId:invoice.id,lines,returnReason,refundMethod});
+      const fingerprint = JSON.stringify({invoiceId:invoice.id,lines,returnReason,refundMethod,refundAccountId});
       if (returnRequest.current?.fingerprint !== fingerprint) returnRequest.current = {fingerprint,key:crypto.randomUUID()};
       const res = await pharmacyApi.salesReturn({
         requestKey:returnRequest.current.key,
@@ -159,6 +173,7 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
         lines,
         reason: returnReason,
         refundMethod,
+        paymentAccountId: refundMethod === 'CASH' ? undefined : refundAccountId,
       });
       toast.success(`Return processed — Refund of ${formatPKR(res.refundTotal)} issued.`);
       returnRequest.current = null;
@@ -307,6 +322,7 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
               <button
                 type="button"
                 onClick={() => {
+                  setPayAmount(String(invoice.outstanding));
                   setShowAddPayment((prev) => !prev);
                   setShowReturn(false);
                 }}
@@ -316,7 +332,7 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
                     : 'bg-[#08775A] text-white border-[#08775A] hover:bg-[#065f46]'
                 }`}
               >
-                <CreditCard className="h-3.5 w-3.5" /> {showAddPayment ? 'Close' : 'Record Payment'}
+                <CreditCard className="h-3.5 w-3.5" /> {showAddPayment ? 'Close' : 'Collect Remaining Payment'}
               </button>
             )}
           </div>
@@ -798,28 +814,52 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
           )}
         </div>
 
+        <section className="p-4 border-t max-h-48 overflow-auto text-xs" aria-label="Payment history">
+          <h3 className="font-semibold">Payment History</h3>
+          <p>Total: {formatPKR(invoice.total)} | Paid: {formatPKR(invoice.paidTotal)} | Current outstanding: {formatPKR(invoice.outstanding)}</p>
+          {(invoice.payments || []).map((p: any) => {
+            const payRef = p.reference && !p.reference.includes('-') && p.reference.length <= 16
+              ? p.reference
+              : `PAY-${(p.id || '').slice(0, 8).toUpperCase()}`;
+            return (
+              <div key={p.id} className="py-1 border-b">
+                <span className="font-mono font-medium text-slate-800">{payRef}</span> | {formatDateTime(p.paidAt)} | {formatPKR(p.amount)} | {p.method} {p.paymentAccount?.name || ''} | {p.collectedByUser?.fullName || p.collectedByUser?.username || ''}
+              </div>
+            );
+          })}
+          {(invoice.financialEvents || []).map((e: any) => {
+            const eventRef = e.reference || (e.id ? `EVT-${e.id.slice(0, 8).toUpperCase()}` : 'EVT');
+            return (
+              <div key={e.id} className="py-1 border-b">
+                <span className="font-mono font-medium text-slate-800">{eventRef}</span> | {e.occurredAt ? formatDateTime(e.occurredAt) : 'Date unavailable'} | {e.kind} | {formatPKR(e.collectionDelta)} | {e.method} | {e.actorId || 'HMS Front Desk'}
+              </div>
+            );
+          })}
+        </section>
         {/* In-Modal Add Payment Section */}
-        {showAddPayment && (
+        {showAddPayment && invoice.channel === 'RETAIL' && (
           <div className="p-4 bg-emerald-50 border-t border-emerald-200 shrink-0 print:hidden space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
                 <CreditCard className="h-4 w-4 text-emerald-700" />
-                Record Settlement / Payment for {invoice.invoiceNumber}
+                Collect Remaining Payment for {invoice.invoiceNumber}
               </span>
               <span className="text-xs text-emerald-800">
                 Outstanding: <strong>{formatPKR(invoice.outstanding)}</strong>
               </span>
             </div>
 
+            {payMethod !== 'CASH' && <CollectionAccountSelect value={paymentAccountId} onChange={setPaymentAccountId} />}
             <div className="flex items-center gap-2">
-              <select
+              <select aria-label="Payment method"
                 value={payMethod}
                 onChange={(e) => setPayMethod(e.target.value as any)}
                 className="h-9 px-3 text-xs bg-white border border-emerald-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium text-slate-800"
               >
                 <option value="CASH">Cash Payment</option>
                 <option value="CARD">Debit / Credit Card</option>
-                <option value="ONLINE">Bank Transfer / Online</option>
+                <option value="ONLINE">Online</option>
+                <option value="BANK">Bank Transfer</option>
               </select>
 
               <input
@@ -845,6 +885,7 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
           </div>
         )}
 
+        {showReturn && refundMethod !== 'CASH' && <CollectionAccountSelect value={refundAccountId} onChange={setRefundAccountId} />}
         {/* In-Modal Sales Return Section */}
         {showReturn && (
           <div className="p-4 bg-rose-50 border-t border-rose-200 shrink-0 print:hidden space-y-3 max-h-60 overflow-y-auto">

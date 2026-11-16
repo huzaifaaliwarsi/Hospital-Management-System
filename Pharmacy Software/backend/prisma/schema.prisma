@@ -705,6 +705,10 @@ model PharmacyInvoiceLine {
 /// One row per payment against an invoice — supports split and partial
 /// payment (pharmacy.md §6.1/§8, entirely absent in hms-backend today).
 model PharmacyPayment {
+  requestKey String? @unique @map("request_key")
+  isInitial Boolean? @map("is_initial")
+  paymentAccountId String? @map("payment_account_id")
+  paymentAccount PaymentAccount? @relation(fields: [paymentAccountId], references: [id])
   id              String          @id @default(uuid())
   invoiceId       String          @map("invoice_id")
   invoice         PharmacyInvoice @relation(fields: [invoiceId], references: [id])
@@ -730,6 +734,7 @@ model PaymentAccount {
   name String @unique
   isActive Boolean @default(true) @map("is_active")
   entries CashLedgerEntry[]
+  payments PharmacyPayment[]
   @@map("payment_accounts")
 }
 

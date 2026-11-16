@@ -35610,6 +35610,12 @@ var pharmacyService = {
         );
         unitPatch = { unit: baseUnitName, baseUnitId: effectiveBaseUnitId };
       }
+      if (rest.saleRate !== void 0) {
+        await tx.medicineBatch.updateMany({
+          where: { medicineId: id },
+          data: { saleRate: rest.saleRate }
+        });
+      }
       return tx.medicineMaster.update({ where: { id }, data: { ...rest, ...unitPatch, ...categoryPatch } });
     });
   },
@@ -35709,16 +35715,7 @@ var pharmacyService = {
   async listMedicines(query) {
     const [medicines, settings] = await Promise.all([
       prisma.medicineMaster.findMany({
-        where: {
-          isActive: true,
-          ...query.search ? {
-            OR: [
-              { name: { contains: query.search, mode: "insensitive" } },
-              { code: { contains: query.search, mode: "insensitive" } },
-              { barcode: { contains: query.search, mode: "insensitive" } }
-            ]
-          } : {}
-        },
+        where: query.search ? { OR: [{ name: { contains: query.search, mode: "insensitive" } }, { code: { contains: query.search, mode: "insensitive" } }, { barcode: { contains: query.search, mode: "insensitive" } }] } : void 0,
         include: {
           batches: {
             include: { stockEntries: { select: { quantityDelta: true } } },
@@ -36104,21 +36101,23 @@ var pharmacyService = {
           note: `${referenceNo}: ${body.reason}`
         }
       });
-      await tx.pharmacyFinancialEvent.create({ data: {
-        invoiceId: invoice.id,
-        eventKey: body.requestKey ? "return:" + body.requestKey : referenceNo,
-        kind: "RETURN",
-        occurredAt: refund.occurredAt,
-        collectionDelta: cashRefund.negated(),
-        saleDelta: refundTotal.negated(),
-        taxDelta: taxRefundTotal.negated(),
-        grossDelta: grossRefundTotal.negated(),
-        discountDelta: discountRefundTotal.negated(),
-        costDelta: returnedCost.negated(),
-        method: body.refundMethod,
-        actorId,
-        reference: refund.id
-      } });
+      await tx.pharmacyFinancialEvent.create({
+        data: {
+          invoiceId: invoice.id,
+          eventKey: body.requestKey ? "return:" + body.requestKey : referenceNo,
+          kind: "RETURN",
+          occurredAt: refund.occurredAt,
+          collectionDelta: cashRefund.negated(),
+          saleDelta: refundTotal.negated(),
+          taxDelta: taxRefundTotal.negated(),
+          grossDelta: grossRefundTotal.negated(),
+          discountDelta: discountRefundTotal.negated(),
+          costDelta: returnedCost.negated(),
+          method: body.refundMethod,
+          actorId,
+          reference: refund.id
+        }
+      });
       const newSubtotal = import_library.Decimal.max(0, invoice.subtotal.minus(grossRefundTotal));
       const newDiscountTotal = import_library.Decimal.max(0, invoice.discountTotal.minus(discountRefundTotal));
       const newTaxTotal = import_library.Decimal.max(0, invoice.taxTotal.minus(taxRefundTotal));
@@ -36398,6 +36397,7 @@ var pharmacyService = {
         });
       }
     }
+    ;
     return {
       total: body.items.length,
       createdCount,
@@ -36555,8 +36555,9 @@ var dispenseLineSchema = external_exports.object({
   discountAmount: external_exports.coerce.number().nonnegative().default(0)
 });
 var paymentInputSchema = external_exports.object({
-  method: external_exports.enum(["CASH", "CARD", "ONLINE"]),
-  amount: external_exports.coerce.number().positive(),
+  method: external_exports.enum(["CASH", "CARD", "ONLINE", "BANK"]),
+  paymentAccountId: external_exports.string().uuid().optional(),
+  amount: external_exports.coerce.number().finite().positive().multipleOf(0.01),
   reference: external_exports.string().max(100).optional()
 });
 var dispenseRetailBodySchema = external_exports.object({
@@ -36565,8 +36566,9 @@ var dispenseRetailBodySchema = external_exports.object({
   invoiceDiscount: external_exports.coerce.number().nonnegative().default(0),
   payments: external_exports.array(paymentInputSchema).default([])
 });
-var addPaymentBodySchema = paymentInputSchema;
+var addPaymentBodySchema = paymentInputSchema.extend({ requestKey: external_exports.string().uuid() });
 var listInvoicesQuerySchema = external_exports.object({
+  transactions: external_exports.enum(["true", "false"]).optional(),
   channel: external_exports.enum(["RETAIL", "HMS_LINKED"]).optional(),
   status: external_exports.enum(["UNPAID", "PARTIALLY_PAID", "PAID"]).optional()
 });
@@ -36582,7 +36584,8 @@ var salesReturnBodySchema = external_exports.object({
   invoiceId: external_exports.string().uuid(),
   lines: external_exports.array(external_exports.object({ invoiceLineId: external_exports.string().uuid(), quantity: external_exports.coerce.number().positive(), restock: external_exports.boolean().default(true) })).min(1),
   reason: external_exports.string().min(1).max(500),
-  refundMethod: external_exports.enum(["CASH", "CARD", "ONLINE"])
+  refundMethod: external_exports.enum(["CASH", "CARD", "ONLINE", "BANK"]),
+  paymentAccountId: external_exports.string().uuid().optional()
 });
 var stockMovementsQuerySchema = external_exports.object({
   medicineId: external_exports.string().uuid().optional(),
@@ -36640,6 +36643,9 @@ router4.post("/medicines/:id/opening-stock", edit2, validate({ params: idParamsS
 router4.post("/medicines/:id/batches/:batchId/opening-stock", edit2, validate({ params: batchIdParamsSchema, body: openingStockBodySchema }), asyncHandler(pharmacyController.receiveOpeningStock));
 router4.get("/stock-movements", view2, validate({ query: stockMovementsQuerySchema }), asyncHandler(pharmacyController.stockMovements));
 router4.post("/stock-adjustments", edit2, validate({ body: stockAdjustmentBodySchema }), asyncHandler(pharmacyController.createStockAdjustment));
+router4.get("/collection-accounts", create2, asyncHandler(async (_req, res) => {
+  res.json({ data: await prisma.paymentAccount.findMany({ where: { isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }) });
+}));
 router4.post("/dispense", create2, validate({ body: dispenseRetailBodySchema }), asyncHandler(pharmacyController.dispenseRetail));
 router4.post("/sales-returns", create2, validate({ body: salesReturnBodySchema }), asyncHandler(pharmacyController.salesReturn));
 router4.get("/invoices", view2, validate({ query: listInvoicesQuerySchema }), asyncHandler(pharmacyController.listInvoices));
@@ -37453,6 +37459,7 @@ async function recordHmsCollection(invoiceNumber, amount, authoritative, receipt
     if (delta.isZero()) return invoice;
     const collected = invoice.hmsCollectedAmount.plus(delta);
     if (collected.lt(0)) throw new ValidationError2("HMS collection reversal exceeds collected amount");
+    if (!authoritative && collected.gt(invoice.total)) throw new ValidationError2("HMS collection exceeds invoice outstanding");
     await tx.pharmacyFinancialEvent.create({ data: {
       invoiceId: invoice.id,
       eventKey: key ?? "hms-reconcile:" + invoice.id + ":" + (0, import_node_crypto4.randomUUID)(),
@@ -37656,7 +37663,7 @@ var import_express6 = __toESM(require_express2());
 var import_node_crypto5 = require("node:crypto");
 
 // src/modules/vendors/vendorPayments.ts
-var import_client8 = require("@prisma/client");
+var import_client9 = require("@prisma/client");
 async function validatePaymentAccount(tx, method, accountId) {
   if (!method) throw new ValidationError2("A payment method is required for a paid purchase");
   if (method === "CASH") {
@@ -37683,13 +37690,13 @@ async function postVendorPayment(tx, vendorId, body, actorId) {
     if (!source || source.vendorId !== vendorId || !source.amount.isNegative() || !["PAYMENT", "RETURN_CREDIT"].includes(source.entryType)) throw new ValidationError2("Select the supplier payment or return credit being refunded");
     const balance = await tx.vendorLedgerEntry.aggregate({ where: { vendorId }, _sum: { amount: true } });
     const refunded = await tx.vendorLedgerEntry.aggregate({ where: { referenceTable: "vendor_refunds", referenceId: body.refundOf }, _sum: { amount: true } });
-    if (new import_client8.Prisma.Decimal(body.amount).greaterThan((balance._sum.amount ?? new import_client8.Prisma.Decimal(0)).negated()) || new import_client8.Prisma.Decimal(body.amount).plus(refunded._sum.amount ?? 0).greaterThan(source.amount.negated())) throw new ValidationError2("Refund exceeds available supplier advance / credit");
+    if (new import_client9.Prisma.Decimal(body.amount).greaterThan((balance._sum.amount ?? new import_client9.Prisma.Decimal(0)).negated()) || new import_client9.Prisma.Decimal(body.amount).plus(refunded._sum.amount ?? 0).greaterThan(source.amount.negated())) throw new ValidationError2("Refund exceeds available supplier advance / credit");
   }
   const referenceNo = await nextCode(tx, SEQUENCE.VENDOR_PAYMENT);
   const entry = await tx.vendorLedgerEntry.create({ data: {
     vendorId,
     entryType: "PAYMENT",
-    amount: new import_client8.Prisma.Decimal(signedAmount),
+    amount: new import_client9.Prisma.Decimal(signedAmount),
     referenceNo,
     requestKey: body.requestKey,
     description: `Vendor ${body.refundOf ? "refund" : "payment"} (${body.method})${body.reference ? ": " + body.reference : ""}`,
@@ -39398,23 +39405,23 @@ var dashboard_routes_default = router10;
 var import_express11 = __toESM(require_express2());
 
 // src/modules/reports/incomeExpense.ts
-var import_client16 = require("@prisma/client");
+var import_client17 = require("@prisma/client");
 async function incomeExpenseReport(db, range = {}) {
   const [data, ledger] = await Promise.all([
     loadFinancialData(db),
     db.vendorLedgerEntry.findMany({ where: { createdAt: { lte: range.lte } } })
   ]);
   const { totals } = financialReport(data, range);
-  let vendorPayments = new import_client16.Prisma.Decimal(0), vendorRefunds = new import_client16.Prisma.Decimal(0);
+  let vendorPayments = new import_client17.Prisma.Decimal(0), vendorRefunds = new import_client17.Prisma.Decimal(0);
   const balances = /* @__PURE__ */ new Map();
   for (const entry of ledger) {
-    balances.set(entry.vendorId, (balances.get(entry.vendorId) ?? new import_client16.Prisma.Decimal(0)).plus(entry.amount));
+    balances.set(entry.vendorId, (balances.get(entry.vendorId) ?? new import_client17.Prisma.Decimal(0)).plus(entry.amount));
     if (entry.entryType === "PAYMENT" && (!range.gte || entry.createdAt >= range.gte)) {
       if (entry.amount.isNegative()) vendorPayments = vendorPayments.minus(entry.amount);
       else vendorRefunds = vendorRefunds.plus(entry.amount);
     }
   }
-  let vendorOutstanding = new import_client16.Prisma.Decimal(0), supplierAdvances = new import_client16.Prisma.Decimal(0);
+  let vendorOutstanding = new import_client17.Prisma.Decimal(0), supplierAdvances = new import_client17.Prisma.Decimal(0);
   for (const balance of balances.values()) {
     if (balance.isPositive()) vendorOutstanding = vendorOutstanding.plus(balance);
     else supplierAdvances = supplierAdvances.minus(balance);
@@ -39441,7 +39448,7 @@ async function incomeExpenseReport(db, range = {}) {
 }
 
 // src/modules/reports/operatingProfit.ts
-var import_client17 = require("@prisma/client");
+var import_client18 = require("@prisma/client");
 async function operatingProfitReport(db, range = {}) {
   const [data, ledger] = await Promise.all([
     loadFinancialData(db),
@@ -39452,13 +39459,13 @@ async function operatingProfitReport(db, range = {}) {
     })
   ]);
   const { rows, totals } = financialReport(data, range);
-  let totalVendorPayments = new import_client17.Prisma.Decimal(0);
-  let supplierRefundsReceived = new import_client17.Prisma.Decimal(0);
+  let totalVendorPayments = new import_client18.Prisma.Decimal(0);
+  let supplierRefundsReceived = new import_client18.Prisma.Decimal(0);
   const balances = /* @__PURE__ */ new Map();
   for (const entry of ledger) {
     balances.set(
       entry.vendorId,
-      (balances.get(entry.vendorId) ?? new import_client17.Prisma.Decimal(0)).plus(entry.amount)
+      (balances.get(entry.vendorId) ?? new import_client18.Prisma.Decimal(0)).plus(entry.amount)
     );
     if (entry.entryType === "PAYMENT" && (!range.gte || entry.createdAt >= range.gte)) {
       if (entry.amount.isNegative()) {
@@ -39468,8 +39475,8 @@ async function operatingProfitReport(db, range = {}) {
       }
     }
   }
-  let vendorOutstanding = new import_client17.Prisma.Decimal(0);
-  let supplierAdvances = new import_client17.Prisma.Decimal(0);
+  let vendorOutstanding = new import_client18.Prisma.Decimal(0);
+  let supplierAdvances = new import_client18.Prisma.Decimal(0);
   for (const balance of balances.values()) {
     if (balance.isPositive()) {
       vendorOutstanding = vendorOutstanding.plus(balance);
@@ -39544,13 +39551,13 @@ async function operatingProfitReport(db, range = {}) {
       entry = {
         date: key,
         label,
-        grossSales: new import_client17.Prisma.Decimal(0),
-        recognizedRevenue: new import_client17.Prisma.Decimal(0),
-        medicineCogs: new import_client17.Prisma.Decimal(0),
-        grossProfit: new import_client17.Prisma.Decimal(0),
-        operatingExpenses: new import_client17.Prisma.Decimal(0),
-        operatingProfit: new import_client17.Prisma.Decimal(0),
-        collections: new import_client17.Prisma.Decimal(0),
+        grossSales: new import_client18.Prisma.Decimal(0),
+        recognizedRevenue: new import_client18.Prisma.Decimal(0),
+        medicineCogs: new import_client18.Prisma.Decimal(0),
+        grossProfit: new import_client18.Prisma.Decimal(0),
+        operatingExpenses: new import_client18.Prisma.Decimal(0),
+        operatingProfit: new import_client18.Prisma.Decimal(0),
+        collections: new import_client18.Prisma.Decimal(0),
         invoiceCount: 0
       };
       dailyMap.set(key, entry);

@@ -1,3 +1,4 @@
+import { prisma } from '@/db/client';
 import { Router } from 'express';
 import { authorize } from '@/middleware/authorize';
 import { validate } from '@/middleware/validate';
@@ -36,6 +37,10 @@ router.post('/medicines/:id/batches/:batchId/opening-stock', edit, validate({ pa
 // Stock Movement Center (pharmacy.md §9.1)
 router.get('/stock-movements', view, validate({ query: s.stockMovementsQuerySchema }), asyncHandler(c.stockMovements));
 router.post('/stock-adjustments', edit, validate({ body: s.stockAdjustmentBodySchema }), asyncHandler(c.createStockAdjustment));
+
+router.get('/collection-accounts', create, asyncHandler(async (_req, res) => {
+  res.json({ data: await prisma.paymentAccount.findMany({ where: { isActive: true }, select: { id: true, name: true }, orderBy: { name: 'asc' } }) });
+}));
 
 // POS (pharmacy.md §6) — Sales CAN dispense/create sales (`create` granted to all three roles).
 router.post('/dispense', create, validate({ body: s.dispenseRetailBodySchema }), asyncHandler(c.dispenseRetail));

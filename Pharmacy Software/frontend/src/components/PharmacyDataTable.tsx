@@ -1,3 +1,4 @@
+import { tableExportHtml } from '../utils/transactionExport';
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Search,
@@ -28,6 +29,7 @@ export interface Column<T> {
 }
 
 interface PharmacyDataTableProps<T> {
+  printAllRows?: boolean;
   columns: Column<T>[];
   data: T[];
   loading?: boolean;
@@ -49,6 +51,7 @@ interface PharmacyDataTableProps<T> {
 }
 
 export function PharmacyDataTable<T extends { id?: string | number }>({
+  printAllRows = false,
   columns,
   data,
   loading = false,
@@ -214,6 +217,16 @@ export function PharmacyDataTable<T extends { id?: string | number }>({
     document.body.removeChild(link);
   };
 
+  const handlePrint = () => {
+    if (!printAllRows) { window.print(); return; }
+    const popup = window.open('', '_blank');
+    if (!popup) return;
+    popup.document.write(tableExportHtml(columns, filteredData as Record<string, unknown>[], title));
+    popup.document.close();
+    popup.focus();
+    popup.print();
+  };
+
   // Export to Excel
   const handleExportExcel = () => {
     if (filteredData.length === 0) return;
@@ -229,7 +242,7 @@ export function PharmacyDataTable<T extends { id?: string | number }>({
       )
       .join('');
 
-    const html = `
+    const html = printAllRows ? tableExportHtml(columns, filteredData as Record<string, unknown>[], title) : `
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
       <head><meta charset="utf-8"/></head>
       <body>
@@ -337,7 +350,7 @@ export function PharmacyDataTable<T extends { id?: string | number }>({
             </button>
             <button
               type="button"
-              onClick={() => window.print()}
+              onClick={handlePrint}
               className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#dc2626] hover:bg-[#b91c1c] text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer whitespace-nowrap"
               title="Export as PDF via Print"
             >
@@ -345,7 +358,7 @@ export function PharmacyDataTable<T extends { id?: string | number }>({
             </button>
             <button
               type="button"
-              onClick={() => window.print()}
+              onClick={handlePrint}
               className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer whitespace-nowrap"
               title="Print Table"
             >

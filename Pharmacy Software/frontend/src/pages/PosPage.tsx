@@ -1,3 +1,4 @@
+import { CollectionAccountSelect } from '../components/CollectionAccountSelect';
 import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   Search,
@@ -38,7 +39,8 @@ interface CartLine {
 }
 
 interface PaymentRow {
-  method: 'CASH' | 'CARD' | 'ONLINE';
+  method: 'CASH' | 'CARD' | 'ONLINE' | 'BANK';
+  paymentAccountId?: string;
   amount: string;
 }
 
@@ -136,6 +138,7 @@ const PAYMENT_METHODS: { value: PaymentRow['method']; label: string }[] = [
   { value: 'CASH', label: 'Cash' },
   { value: 'CARD', label: 'Card' },
   { value: 'ONLINE', label: 'Online' },
+  { value: 'BANK', label: 'Bank Transfer' },
 ];
 
 export const PosPage: React.FC = () => {
@@ -377,7 +380,7 @@ export const PosPage: React.FC = () => {
           discountAmount: l.discountAmount,
         })),
         invoiceDiscount: totals.invDiscount,
-        payments: validPayments.map((p) => ({ method: p.method, amount: Number(p.amount) })),
+        payments: validPayments.map((p) => ({ method: p.method, amount: Number(p.amount), paymentAccountId: p.method === 'CASH' ? undefined : p.paymentAccountId })),
       });
       // Fetch full invoice with complete batch and relation data
       const fullInvoice = await pharmacyApi.getInvoiceById(invoice.id).catch(() => invoice);
@@ -1127,6 +1130,7 @@ export const PosPage: React.FC = () => {
                     className="flex-1 h-7.5 px-2 text-xs border border-slate-200 rounded-lg text-right font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0e7d5a]"
                   />
 
+                  {p.method !== 'CASH' && <CollectionAccountSelect value={p.paymentAccountId || ''} onChange={id => setPayments(prev => prev.map((row, i) => i === idx ? { ...row, paymentAccountId: id } : row))} />}
                   {payments.length > 1 && (
                     <button
                       type="button"

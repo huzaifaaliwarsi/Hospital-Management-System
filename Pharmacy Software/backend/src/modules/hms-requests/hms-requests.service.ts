@@ -781,6 +781,7 @@ export async function recordHmsCollection(invoiceNumber: string, amount: Decimal
     if(delta.isZero()) return invoice;
     const collected=invoice.hmsCollectedAmount.plus(delta);
     if(collected.lt(0)) throw new ValidationError('HMS collection reversal exceeds collected amount');
+    if(!authoritative && collected.gt(invoice.total)) throw new ValidationError('HMS collection exceeds invoice outstanding');
     await tx.pharmacyFinancialEvent.create({data:{invoiceId:invoice.id,
       eventKey:key??'hms-reconcile:'+invoice.id+':'+randomUUID(),kind:'HMS_COLLECTION',occurredAt:occurredAt??null,
       collectionDelta:delta,method,actorId,reference:receipt}});

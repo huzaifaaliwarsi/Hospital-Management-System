@@ -84,8 +84,9 @@ const dispenseLineSchema = z.object({
 });
 
 const paymentInputSchema = z.object({
-  method: z.enum(['CASH', 'CARD', 'ONLINE']),
-  amount: z.coerce.number().positive(),
+  method: z.enum(['CASH', 'CARD', 'ONLINE', 'BANK']),
+  paymentAccountId: z.string().uuid().optional(),
+  amount: z.coerce.number().finite().positive().multipleOf(0.01),
   reference: z.string().max(100).optional(),
 });
 
@@ -98,10 +99,11 @@ export const dispenseRetailBodySchema = z.object({
 });
 export type DispenseRetailBody = z.infer<typeof dispenseRetailBodySchema>;
 
-export const addPaymentBodySchema = paymentInputSchema;
+export const addPaymentBodySchema = paymentInputSchema.extend({ requestKey: z.string().uuid() });
 export type AddPaymentBody = z.infer<typeof addPaymentBodySchema>;
 
 export const listInvoicesQuerySchema = z.object({
+  transactions: z.enum(['true', 'false']).optional(),
   channel: z.enum(['RETAIL', 'HMS_LINKED']).optional(),
   status: z.enum(['UNPAID', 'PARTIALLY_PAID', 'PAID']).optional(),
 });
@@ -122,7 +124,8 @@ export const salesReturnBodySchema = z.object({
   invoiceId: z.string().uuid(),
   lines: z.array(z.object({ invoiceLineId: z.string().uuid(), quantity: z.coerce.number().positive(), restock: z.boolean().default(true) })).min(1),
   reason: z.string().min(1).max(500),
-  refundMethod: z.enum(['CASH', 'CARD', 'ONLINE']),
+  refundMethod: z.enum(['CASH', 'CARD', 'ONLINE', 'BANK']),
+  paymentAccountId: z.string().uuid().optional(),
 });
 export type SalesReturnBody = z.infer<typeof salesReturnBodySchema>;
 

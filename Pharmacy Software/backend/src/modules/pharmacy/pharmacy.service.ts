@@ -394,6 +394,12 @@ export const pharmacyService = {
         );
         unitPatch = { unit: baseUnitName, baseUnitId: effectiveBaseUnitId };
       }
+      if (rest.saleRate !== undefined) {
+        await tx.medicineBatch.updateMany({
+          where: { medicineId: id },
+          data: { saleRate: rest.saleRate },
+        });
+      }
       return tx.medicineMaster.update({ where: { id }, data: { ...rest, ...unitPatch, ...categoryPatch } });
     });
   },
@@ -511,18 +517,9 @@ export const pharmacyService = {
   async listMedicines(query: ListMedicinesQuery) {
     const [medicines, settings] = await Promise.all([
       prisma.medicineMaster.findMany({
-        where: {
-          isActive: true,
-          ...(query.search
-            ? {
-                OR: [
-                  { name: { contains: query.search, mode: 'insensitive' } },
-                  { code: { contains: query.search, mode: 'insensitive' } },
-                  { barcode: { contains: query.search, mode: 'insensitive' } },
-                ],
-              }
-            : {}),
-        },
+        where: query.search
+          ? { OR: [{ name: { contains: query.search, mode: 'insensitive' } }, { code: { contains: query.search, mode: 'insensitive' } }, { barcode: { contains: query.search, mode: 'insensitive' } }] }
+          : undefined,
         include: {
           batches: {
             include: { stockEntries: { select: { quantityDelta: true } } },
@@ -880,9 +877,9 @@ export const pharmacyService = {
       const invoice = await tx.pharmacyInvoice.findUnique({ where: { id: body.invoiceId }, include: { lines: { include: { batch: true } } } });
       if (!invoice) throw new NotFoundError('Invoice not found');
       if (invoice.channel === 'HMS_LINKED') throw new ValidationError('HMS-linked returns require the HMS billing/refund workflow; no pharmacy drawer refund is permitted.');
-      if (new Set(body.lines.map(l=>l.invoiceLineId)).size !== body.lines.length) throw new ValidationError('Duplicate return line');
+      if (new Set(body.lines.map(l => l.invoiceLineId)).size !== body.lines.length) throw new ValidationError('Duplicate return line');
       if (body.requestKey) {
-        const previous = await tx.pharmacyFinancialEvent.findUnique({ where: { eventKey: 'return:'+body.requestKey } });
+        const previous = await tx.pharmacyFinancialEvent.findUnique({ where: { eventKey: 'return:' + body.requestKey } });
         if (previous) throw new ConflictError('This return request has already been posted');
       }
       let returnedCost = new Decimal(0);
@@ -908,11 +905,11 @@ export const pharmacyService = {
         const lineGrossRefund = line.rateSnapshot.mul(qty);
         const lineTaxRefund = line.taxAmount.mul(proportion);
         const lineDiscountRefund = line.discountAmount.mul(proportion);
-        const originalTotal = invoice.total.plus(invoice.lines.reduce((sum,l)=>sum.plus(l.returnedValue),new Decimal(0)));
-        const originalLinesNet = invoice.lines.reduce((sum,l)=>sum.plus(l.lineNet),new Decimal(0));
-        const invoiceDiscountShare = originalLinesNet.gt(0) ? Decimal.max(0,originalLinesNet.minus(originalTotal)).mul(line.lineNet).div(originalLinesNet).mul(proportion) : new Decimal(0);
+        const originalTotal = invoice.total.plus(invoice.lines.reduce((sum, l) => sum.plus(l.returnedValue), new Decimal(0)));
+        const originalLinesNet = invoice.lines.reduce((sum, l) => sum.plus(l.lineNet), new Decimal(0));
+        const invoiceDiscountShare = originalLinesNet.gt(0) ? Decimal.max(0, originalLinesNet.minus(originalTotal)).mul(line.lineNet).div(originalLinesNet).mul(proportion) : new Decimal(0);
         const refundAmount = line.lineNet.mul(proportion).minus(invoiceDiscountShare).toDecimalPlaces(2);
-        if(returnLine.restock) returnedCost = returnedCost.plus(qty.mul(line.costRateSnapshot ?? line.batch?.costRate ?? 0));
+        if (returnLine.restock) returnedCost = returnedCost.plus(qty.mul(line.costRateSnapshot ?? line.batch?.costRate ?? 0));
 
         grossRefundTotal = grossRefundTotal.plus(lineGrossRefund);
         taxRefundTotal = taxRefundTotal.plus(lineTaxRefund);
@@ -961,12 +958,14 @@ export const pharmacyService = {
         },
       });
 
-      await tx.pharmacyFinancialEvent.create({ data: {
-        invoiceId:invoice.id,eventKey:body.requestKey?'return:'+body.requestKey:referenceNo,kind:'RETURN',occurredAt:refund.occurredAt,
-        collectionDelta:cashRefund.negated(),saleDelta:refundTotal.negated(),taxDelta:taxRefundTotal.negated(),
-        grossDelta:grossRefundTotal.negated(),discountDelta:discountRefundTotal.negated(),costDelta:returnedCost.negated(),
-        method:body.refundMethod,actorId,reference:refund.id,
-      } });
+      await tx.pharmacyFinancialEvent.create({
+        data: {
+          invoiceId: invoice.id, eventKey: body.requestKey ? 'return:' + body.requestKey : referenceNo, kind: 'RETURN', occurredAt: refund.occurredAt,
+          collectionDelta: cashRefund.negated(), saleDelta: refundTotal.negated(), taxDelta: taxRefundTotal.negated(),
+          grossDelta: grossRefundTotal.negated(), discountDelta: discountRefundTotal.negated(), costDelta: returnedCost.negated(),
+          method: body.refundMethod, actorId, reference: refund.id,
+        }
+      });
       // Update invoice totals reflecting the reversal
       const newSubtotal = Decimal.max(0, invoice.subtotal.minus(grossRefundTotal));
       const newDiscountTotal = Decimal.max(0, invoice.discountTotal.minus(discountRefundTotal));
@@ -977,10 +976,10 @@ export const pharmacyService = {
       const newStatus = newTotal.isZero()
         ? 'PAID'
         : newOutstanding.isZero()
-        ? 'PAID'
-        : newPaidTotal.greaterThan(0)
-        ? 'PARTIALLY_PAID'
-        : 'UNPAID';
+          ? 'PAID'
+          : newPaidTotal.greaterThan(0)
+            ? 'PARTIALLY_PAID'
+            : 'UNPAID';
 
       await tx.pharmacyInvoice.update({
         where: { id: invoice.id },
@@ -1252,8 +1251,8 @@ export const pharmacyService = {
 
               let batch = batchNumber
                 ? await tx.medicineBatch.findFirst({
-                    where: { medicineId, batchNumber },
-                  })
+                  where: { medicineId, batchNumber },
+                })
                 : null;
               if (!batch) {
                 batch = await tx.medicineBatch.create({
@@ -1305,7 +1304,7 @@ export const pharmacyService = {
           error: err.message || 'Unknown import error',
         });
       }
-    }
+    };
 
     return {
       total: body.items.length,

@@ -1,3 +1,4 @@
+import { summarizeInvoiceTransactions, originalInvoiceForAction } from '../utils/transactionExport';
 import React, { useEffect, useState, useMemo } from 'react';
 import {
   Loader2,
@@ -34,11 +35,13 @@ export const InvoicesPage: React.FC = () => {
   // Filters
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [channelFilter, setChannelFilter] = useState<string>('ALL');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
 
   const load = () => {
     setLoading(true);
     pharmacyApi
-      .listInvoices()
+      .listInvoices(true)
       .then(setRows)
       .catch(() => toast.error('Failed to load pharmacy invoices.'))
       .finally(() => setLoading(false));
@@ -46,18 +49,28 @@ export const InvoicesPage: React.FC = () => {
 
   useEffect(load, []);
 
+  // Filtered dataset
+  const filteredInvoices = useMemo(() => {
+    return rows.filter((inv) => {
+      if (statusFilter !== 'ALL' && inv.status !== statusFilter) return false;
+      if (channelFilter !== 'ALL' && inv.channel !== channelFilter) return false;
+      const date = inv.transactionAt ? new Date(new Date(inv.transactionAt).getTime() + 18000000).toISOString().slice(0, 10) : '';
+      if ((fromDate || toDate) && !date) return false;
+      if (fromDate && date < fromDate) return false;
+      if (toDate && date > toDate) return false;
+      return true;
+    });
+  }, [rows, statusFilter, channelFilter, fromDate, toDate]);
+
   // Top KPI calculations
-  const totalSales = rows.reduce((s, r) => s + Number(r.total || 0), 0);
-  const totalPaid = rows.reduce((s, r) => s + Number(r.paidTotal || 0), 0);
-  const totalOutstanding = rows.reduce((s, r) => s + Number(r.outstanding || 0), 0);
-  const totalInvoices = rows.length;
+  const { billing: totalSales, collected: totalPaid, outstanding: totalOutstanding, invoices: totalInvoices } = summarizeInvoiceTransactions(filteredInvoices);
 
   const kpis: KpiItem[] = [
     {
-      label: 'Gross Pharmacy Sales',
+      label: 'Net Billing',
       value: formatPKR(totalSales),
       icon: TrendingUp,
-      subtitle: `${totalInvoices} total transactions`,
+      subtitle: `${totalInvoices} original invoices in selected period`,
       tone: 'default',
     },
     {
@@ -68,7 +81,7 @@ export const InvoicesPage: React.FC = () => {
       tone: 'success',
     },
     {
-      label: 'Total Receivables',
+      label: 'Current Receivables',
       value: formatPKR(totalOutstanding),
       icon: AlertCircle,
       subtitle: 'Pending customer settlement',
@@ -83,16 +96,12 @@ export const InvoicesPage: React.FC = () => {
     },
   ];
 
-  // Filtered dataset
-  const filteredInvoices = useMemo(() => {
-    return rows.filter((inv) => {
-      if (statusFilter !== 'ALL' && inv.status !== statusFilter) return false;
-      if (channelFilter !== 'ALL' && inv.channel !== channelFilter) return false;
-      return true;
-    });
-  }, [rows, statusFilter, channelFilter]);
-
   const columns: Column<any>[] = [
+    { key: 'transactionType', header: 'Transaction' },
+    { key: 'receiptNumber', header: 'Receipt Reference', render: inv => <span className="text-xs break-all">{inv.receiptNumber || '-'}</span> },
+    { key: 'paymentMethod', header: 'Method' },
+    { key: 'paymentAccountName', header: 'Payment Account' },
+    { key: 'collectedByName', header: 'Collected By' },
     {
       key: 'invoiceNumber',
       header: 'Invoice #',
@@ -104,12 +113,12 @@ export const InvoicesPage: React.FC = () => {
       ),
     },
     {
-      key: 'createdAt',
-      header: 'Date & Time',
+      key: 'transactionAt',
+      header: 'Transaction Date',
       width: '160px',
       render: (inv) => (
         <span className="text-xs text-slate-700 whitespace-nowrap">
-          {formatDateTime(inv.createdAt)}
+          {inv.transactionAt ? formatDateTime(inv.transactionAt) : 'Date unavailable'}
         </span>
       ),
     },
@@ -143,28 +152,28 @@ export const InvoicesPage: React.FC = () => {
       ),
     },
     {
-      key: 'total',
-      header: 'Net Total (PKR)',
+      key: 'billingAmount',
+      header: 'Billing (PKR)',
       align: 'right',
       render: (inv) => (
         <span className="font-bold text-xs text-slate-900 whitespace-nowrap">
-          {formatPKR(inv.total)}
+          {formatPKR(inv.billingAmount)}
         </span>
       ),
     },
     {
-      key: 'paidTotal',
-      header: 'Paid (PKR)',
+      key: 'collectedAmount',
+      header: 'Collection (PKR)',
       align: 'right',
       render: (inv) => (
         <span className="font-bold text-xs text-slate-900 whitespace-nowrap">
-          {formatPKR(inv.paidTotal)}
+          {formatPKR(inv.collectedAmount)}
         </span>
       ),
     },
     {
       key: 'outstanding',
-      header: 'Outstanding',
+      header: 'Current Outstanding',
       align: 'right',
       render: (inv) => {
         const out = Number(inv.outstanding || 0);
@@ -220,7 +229,7 @@ export const InvoicesPage: React.FC = () => {
             type="button"
             onClick={() => {
               setModalInitialAction(undefined);
-              setSelectedInvoice(inv);
+              setSelectedInvoice(originalInvoiceForAction(inv));
             }}
             title="View & Print Pharmacy Invoice"
             className="px-2 py-1 text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
@@ -228,12 +237,13 @@ export const InvoicesPage: React.FC = () => {
             <Printer className="h-3 w-3" /> Print
           </button>
 
+          {inv.channel === 'RETAIL' && Number(inv.outstanding) > 0 && <button type="button" className="px-2 py-1 text-xs border rounded text-emerald-800" onClick={() => { setModalInitialAction('payment'); setSelectedInvoice(originalInvoiceForAction(inv)); }}>Collect Remaining Payment</button>}
           {inv.channel === 'RETAIL' && Number(inv.paidTotal || 0) > 0 && (
             <button
               type="button"
               onClick={() => {
                 setModalInitialAction('return');
-                setSelectedInvoice(inv);
+                setSelectedInvoice(originalInvoiceForAction(inv));
               }}
               title="Return items & issue refund"
               className="px-2 py-1 text-[11px] font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
@@ -268,14 +278,16 @@ export const InvoicesPage: React.FC = () => {
 
       {/* Main Table */}
       <PharmacyDataTable
+        printAllRows
         columns={columns}
         data={filteredInvoices}
         loading={loading}
         title="Sales Invoices Register"
-        badge="Active Invoices"
+        badge="Transactions"
         exportFileName="pharmacy_sales_invoices"
         searchPlaceholder="Search by invoice #, patient/customer name, or pharmacist…"
         searchFilter={(inv, q) =>
+          [inv.transactionType, inv.receiptNumber, inv.paymentMethod, inv.paymentAccountName, inv.collectedByName].some(v => String(v || '').toLowerCase().includes(q)) ||
           inv.invoiceNumber.toLowerCase().includes(q) ||
           (inv.customerName && inv.customerName.toLowerCase().includes(q)) ||
           (inv.dispensedByUser?.fullName && inv.dispensedByUser.fullName.toLowerCase().includes(q)) ||
@@ -286,10 +298,13 @@ export const InvoicesPage: React.FC = () => {
         onResetFilters={() => {
           setChannelFilter('ALL');
           setStatusFilter('ALL');
+          setFromDate(''); setToDate('');
           load();
         }}
         filterControls={
           <>
+            <label className="text-xs">From <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className="border rounded p-1" /></label>
+            <label className="text-xs">To <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="border rounded p-1" /></label>
             <div className="w-36">
               <select
                 value={channelFilter}

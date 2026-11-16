@@ -362,7 +362,7 @@ export const pharmacyApi = {
   cancelPurchaseOrder: (id: string) => apiClient.post(`/purchase-orders/${id}/cancel`).then((r) => r.data.data),
   markPurchaseOrderConverted: (id: string) => apiClient.post(`/purchase-orders/${id}/mark-converted`).then((r) => r.data.data),
 
-  listInvoices: () => apiClient.get('/pharmacy/invoices').then((r) => r.data.data),
+  listInvoices: (transactions = false) => apiClient.get('/pharmacy/invoices', { params: { transactions } }).then((r) => r.data.data),
   getInvoiceById: (id: string) => apiClient.get(`/pharmacy/invoices/${id}`).then((r) => r.data.data),
   dispenseRetail: (body: Record<string, unknown>) => apiClient.post('/pharmacy/dispense', body).then((r) => r.data.data),
   salesReturn: (body: Record<string, unknown>) => apiClient.post('/pharmacy/sales-returns', body).then((r) => r.data.data),
