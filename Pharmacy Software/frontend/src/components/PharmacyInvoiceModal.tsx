@@ -815,12 +815,15 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
         </div>
 
         <section className="p-4 border-t max-h-48 overflow-auto text-xs" aria-label="Payment history">
-          <h3 className="font-semibold">Payment History</h3>
-          <p>Total: {formatPKR(invoice.total)} | Paid: {formatPKR(invoice.paidTotal)} | Current outstanding: {formatPKR(invoice.outstanding)}</p>
+          <h3 className="font-semibold text-slate-800 mb-1">Payment History</h3>
+          <p className="text-slate-600 mb-2">Total: {formatPKR(invoice.total)} | Paid: {formatPKR(invoice.paidTotal)} | Current outstanding: {formatPKR(invoice.outstanding)}</p>
           {(invoice.payments || []).map((p: any) => {
-            const payRef = p.reference && !p.reference.includes('-') && p.reference.length <= 16
-              ? p.reference
-              : `PAY-${(p.id || '').slice(0, 8).toUpperCase()}`;
+            // Guarantee short clean voucher ID even if stored as full UUID in DB or reference
+            const rawRef = p.reference || '';
+            const isLongUuid = /[0-9a-f]{8}-[0-9a-f]{4}/i.test(rawRef) || rawRef.length > 20;
+            const payRef = rawRef && !isLongUuid
+              ? rawRef
+              : `PAY-${(p.id || rawRef.replace(/^PAY-/i, '') || '').slice(0, 8).toUpperCase()}`;
             return (
               <div key={p.id} className="py-1 border-b">
                 <span className="font-mono font-medium text-slate-800">{payRef}</span> | {formatDateTime(p.paidAt)} | {formatPKR(p.amount)} | {p.method} {p.paymentAccount?.name || ''} | {p.collectedByUser?.fullName || p.collectedByUser?.username || ''}
@@ -828,7 +831,11 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
             );
           })}
           {(invoice.financialEvents || []).map((e: any) => {
-            const eventRef = e.reference || (e.id ? `EVT-${e.id.slice(0, 8).toUpperCase()}` : 'EVT');
+            const rawRef = e.reference || '';
+            const isLongUuid = /[0-9a-f]{8}-[0-9a-f]{4}/i.test(rawRef) || rawRef.length > 20;
+            const eventRef = rawRef && !isLongUuid
+              ? rawRef
+              : `EVT-${(e.id || rawRef.replace(/^EVT-/i, '') || '').slice(0, 8).toUpperCase()}`;
             return (
               <div key={e.id} className="py-1 border-b">
                 <span className="font-mono font-medium text-slate-800">{eventRef}</span> | {e.occurredAt ? formatDateTime(e.occurredAt) : 'Date unavailable'} | {e.kind} | {formatPKR(e.collectionDelta)} | {e.method} | {e.actorId || 'HMS Front Desk'}
