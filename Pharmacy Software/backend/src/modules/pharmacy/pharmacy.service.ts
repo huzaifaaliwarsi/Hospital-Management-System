@@ -3,6 +3,7 @@ import { prisma } from '@/db/client';
 import { NotFoundError, ValidationError, ConflictError } from '@/shared/errors/AppError';
 import { nextCode, peekNextCode, SEQUENCE } from '@/shared/sequence';
 import type { Prisma } from '@prisma/client';
+import { invoiceTransactions } from './invoiceTransactions';
 import type {
   CreateMedicineBody,
   UpdateMedicineBody,
@@ -783,7 +784,7 @@ export const pharmacyService = {
           status,
           dispensedById: actorId,
           lines: { create: linesToCreate },
-          payments: body.payments.length ? { create: body.payments.map((p) => ({ amount: new Decimal(p.amount), method: p.method, reference: p.reference, collectedById: actorId })) } : undefined,
+          payments: body.payments.length ? { create: body.payments.map((p) => ({ amount: new Decimal(p.amount), method: p.method, reference: p.reference, paymentAccountId: p.paymentAccountId, isInitial: true, collectedById: actorId })) } : undefined,
         },
         include: {
           lines: { include: { medicine: true, batch: true, saleUnit: true } },
@@ -837,7 +838,23 @@ export const pharmacyService = {
       const amount = new Decimal(body.amount);
       if (amount.greaterThan(invoice.outstanding)) throw new ValidationError(`Payment exceeds outstanding balance of ${invoice.outstanding}`);
 
-      await tx.pharmacyPayment.create({ data: { invoiceId, amount, method: body.method, reference: body.reference, collectedById: actorId } });
+      if (body.requestKey) {
+        const existing = await tx.pharmacyPayment.findUnique({ where: { requestKey: body.requestKey } });
+        if (existing) return invoice;
+      }
+
+      await tx.pharmacyPayment.create({
+        data: {
+          invoiceId,
+          amount,
+          method: body.method,
+          reference: body.reference,
+          paymentAccountId: body.paymentAccountId,
+          isInitial: false,
+          requestKey: body.requestKey,
+          collectedById: actorId,
+        },
+      });
       const newPaid = invoice.paidTotal.plus(amount);
       const newOutstanding = invoice.outstanding.minus(amount);
       const newStatus = newOutstanding.lessThanOrEqualTo(0) ? 'PAID' : 'PARTIALLY_PAID';
@@ -849,7 +866,16 @@ export const pharmacyService = {
       });
 
       await tx.cashLedgerEntry.create({
-        data: { portalUserId: actorId, direction: 'IN', amount, category: 'POS_COLLECTION', isPhysicalCash: body.method === 'CASH', referenceTable: 'pharmacy_invoices', referenceId: invoiceId },
+        data: {
+          portalUserId: actorId,
+          direction: 'IN',
+          amount,
+          category: 'POS_COLLECTION',
+          isPhysicalCash: body.method === 'CASH',
+          paymentAccountId: body.paymentAccountId,
+          referenceTable: 'pharmacy_invoices',
+          referenceId: invoiceId,
+        },
       });
 
       return updated;
@@ -857,17 +883,40 @@ export const pharmacyService = {
   },
 
   async listInvoices(query: ListInvoicesQuery) {
-    return prisma.pharmacyInvoice.findMany({
+    const invoices = await prisma.pharmacyInvoice.findMany({
       where: { channel: query.channel, status: query.status },
       include: {
         lines: { include: { medicine: true, batch: true, saleUnit: true } },
-        payments: { include: { collectedByUser: { select: { id: true, fullName: true, username: true } } } },
+        payments: {
+          include: {
+            collectedByUser: { select: { id: true, fullName: true, username: true } },
+            paymentAccount: { select: { id: true, name: true } },
+          },
+        },
         dispensedByUser: { select: { id: true, fullName: true, username: true } },
         medicineRequests: { include: { lines: true } },
+        financialEvents: true,
       },
       orderBy: { createdAt: 'desc' },
       take: 200,
     });
+
+    if (query.transactions !== 'true') return invoices;
+
+    const invoiceIds = invoices.map((i) => i.id);
+    const refunds = await prisma.cashLedgerEntry.findMany({
+      where: {
+        category: 'REFUND',
+        referenceTable: 'pharmacy_invoices',
+        referenceId: { in: invoiceIds },
+      },
+      include: {
+        portalUser: { select: { fullName: true } },
+        paymentAccount: { select: { name: true } },
+      },
+    });
+
+    return invoiceTransactions(invoices as any, refunds as any);
   },
 
   // ── Sales Return (pharmacy.md §9.1 SALES_RETURN_IN) ─────────────────────

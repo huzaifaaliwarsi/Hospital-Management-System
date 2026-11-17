@@ -40,7 +40,7 @@ export const InvoicesPage: React.FC = () => {
   const load = () => {
     setLoading(true);
     pharmacyApi
-      .listInvoices()
+      .listInvoices(true)
       .then(setRows)
       .catch(() => toast.error('Failed to load pharmacy invoices.'))
       .finally(() => setLoading(false));
@@ -48,12 +48,24 @@ export const InvoicesPage: React.FC = () => {
 
   useEffect(load, []);
 
+  const openInvoiceModal = async (inv: any, action?: 'return' | 'payment') => {
+    setModalInitialAction(action);
+    const invoiceId = inv.invoiceId || inv.id;
+    try {
+      const fresh = await pharmacyApi.getInvoiceById(invoiceId);
+      setSelectedInvoice(fresh);
+    } catch {
+      setSelectedInvoice(inv);
+    }
+  };
+
   // Filtered dataset
   const filteredInvoices = useMemo(() => {
     return rows.filter((inv) => {
       if (statusFilter !== 'ALL' && inv.status !== statusFilter) return false;
       if (channelFilter !== 'ALL' && inv.channel !== channelFilter) return false;
-      const date = inv.createdAt ? new Date(new Date(inv.createdAt).getTime() + 18000000).toISOString().slice(0, 10) : '';
+      const tAt = inv.transactionAt || inv.createdAt;
+      const date = tAt ? new Date(new Date(tAt).getTime() + 18000000).toISOString().slice(0, 10) : '';
       if ((fromDate || toDate) && !date) return false;
       if (fromDate && date < fromDate) return false;
       if (toDate && date > toDate) return false;
@@ -61,25 +73,45 @@ export const InvoicesPage: React.FC = () => {
     });
   }, [rows, statusFilter, channelFilter, fromDate, toDate]);
 
-  // Top KPI calculations
-  const totalSales = filteredInvoices.reduce((s, r) => s + Number(r.total || 0), 0);
-  const totalPaid = filteredInvoices.reduce((s, r) => s + Number(r.paidTotal || 0), 0);
-  const totalOutstanding = filteredInvoices.reduce((s, r) => s + Number(r.outstanding || 0), 0);
-  const totalInvoices = filteredInvoices.length;
+  // Top KPI calculations (HMS transaction projection standard)
+  const totalSales = useMemo(() => {
+    return filteredInvoices
+      .filter((r) => r.transactionType === 'Original Sale' || !r.transactionType)
+      .reduce((s, r) => s + Number(r.billingAmount != null ? r.billingAmount : r.total || 0), 0);
+  }, [filteredInvoices]);
+
+  const totalPaid = useMemo(() => {
+    return filteredInvoices.reduce((s, r) => s + Number(r.collectedAmount != null ? r.collectedAmount : r.paidTotal || 0), 0);
+  }, [filteredInvoices]);
+
+  const uniqueInvoices = useMemo(() => {
+    const map = new Map<string, any>();
+    filteredInvoices.forEach((r) => {
+      const id = r.invoiceId || r.id;
+      if (!map.has(id)) map.set(id, r);
+    });
+    return Array.from(map.values());
+  }, [filteredInvoices]);
+
+  const totalOutstanding = useMemo(() => {
+    return uniqueInvoices.reduce((s, r) => s + Number(r.outstanding || 0), 0);
+  }, [uniqueInvoices]);
+
+  const totalInvoices = uniqueInvoices.length;
 
   const kpis: KpiItem[] = [
     {
       label: 'Gross Pharmacy Sales',
       value: formatPKR(totalSales),
       icon: TrendingUp,
-      subtitle: `${totalInvoices} total invoices in selected period`,
+      subtitle: `${totalInvoices} distinct invoices in selected period`,
       tone: 'default',
     },
     {
       label: 'Total Collected',
       value: formatPKR(totalPaid),
       icon: CheckCircle2,
-      subtitle: 'Settled via cash / card / bank',
+      subtitle: 'Settled via cash / card / bank (including installments)',
       tone: 'success',
     },
     {
@@ -102,20 +134,45 @@ export const InvoicesPage: React.FC = () => {
     {
       key: 'invoiceNumber',
       header: 'Invoice #',
-      width: '160px',
-      render: (inv) => (
-        <span className="font-bold text-slate-900 text-xs tracking-wider whitespace-nowrap">
-          {inv.invoiceNumber}
-        </span>
-      ),
+      width: '180px',
+      render: (inv) => {
+        const type = inv.transactionType || 'Original Sale';
+        const isRemaining = type === 'Remaining Collection';
+        const isReturn = type.includes('Return') || type.includes('Refund');
+        return (
+          <div className="space-y-1">
+            <div className="font-mono font-bold text-slate-900 text-xs tracking-wider whitespace-nowrap">
+              {inv.invoiceNumber}
+            </div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span
+                className={`inline-block text-[10px] font-bold px-1.5 py-0.5 rounded border uppercase tracking-wider ${
+                  isRemaining
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                    : isReturn
+                    ? 'bg-rose-50 text-rose-700 border-rose-200'
+                    : 'bg-slate-100 text-slate-700 border-slate-200'
+                }`}
+              >
+                {type}
+              </span>
+              {inv.receiptNumber && (
+                <span className="text-[10px] font-mono text-slate-500">
+                  {inv.receiptNumber}
+                </span>
+              )}
+            </div>
+          </div>
+        );
+      },
     },
     {
-      key: 'createdAt',
+      key: 'transactionAt',
       header: 'Date & Time',
       width: '160px',
       render: (inv) => (
         <span className="text-xs text-slate-700 whitespace-nowrap">
-          {inv.createdAt ? formatDateTime(inv.createdAt) : 'Date unavailable'}
+          {formatDateTime(inv.transactionAt || inv.createdAt)}
         </span>
       ),
     },
@@ -139,34 +196,40 @@ export const InvoicesPage: React.FC = () => {
       ),
     },
     {
-      key: 'dispensedBy',
-      header: 'Dispensed By',
+      key: 'collectedByName',
+      header: 'Staff / Collector',
       render: (inv) => (
         <div className="text-xs text-slate-700 flex items-center gap-1.5 whitespace-nowrap">
           <User className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-          <span>{inv.dispensedByUser?.fullName || inv.dispensedByUser?.username || 'Staff'}</span>
+          <span>{inv.collectedByName || inv.dispensedByUser?.fullName || inv.dispensedByUser?.username || 'Staff'}</span>
         </div>
       ),
     },
     {
-      key: 'total',
-      header: 'Net Total (PKR)',
+      key: 'billingAmount',
+      header: 'Billing (PKR)',
       align: 'right',
-      render: (inv) => (
-        <span className="font-bold text-xs text-slate-900 whitespace-nowrap">
-          {formatPKR(inv.total)}
-        </span>
-      ),
+      render: (inv) => {
+        const val = Number(inv.billingAmount != null ? inv.billingAmount : inv.total || 0);
+        return (
+          <span className="font-bold text-xs text-slate-900 whitespace-nowrap font-mono">
+            {val !== 0 ? formatPKR(val) : <span className="text-slate-400 font-normal">Rs 0</span>}
+          </span>
+        );
+      },
     },
     {
-      key: 'paidTotal',
-      header: 'Paid (PKR)',
+      key: 'collectedAmount',
+      header: 'Collected (PKR)',
       align: 'right',
-      render: (inv) => (
-        <span className="font-bold text-xs text-slate-900 whitespace-nowrap">
-          {formatPKR(inv.paidTotal)}
-        </span>
-      ),
+      render: (inv) => {
+        const val = Number(inv.collectedAmount != null ? inv.collectedAmount : inv.paidTotal || 0);
+        return (
+          <span className={`font-bold text-xs whitespace-nowrap font-mono ${val < 0 ? 'text-rose-600' : 'text-emerald-800'}`}>
+            {val !== 0 ? formatPKR(val) : <span className="text-slate-400 font-normal">Rs 0</span>}
+          </span>
+        );
+      },
     },
     {
       key: 'outstanding',
@@ -176,7 +239,7 @@ export const InvoicesPage: React.FC = () => {
         const out = Number(inv.outstanding || 0);
         return (
           <span
-            className={`font-bold text-xs whitespace-nowrap ${
+            className={`font-bold text-xs whitespace-nowrap font-mono ${
               out > 0 ? 'text-rose-600' : 'text-slate-400 font-normal'
             }`}
           >
@@ -210,7 +273,7 @@ export const InvoicesPage: React.FC = () => {
                 : 'text-rose-700'
             }
           >
-            {inv.status.replace('_', ' ')}
+            {inv.status?.replace('_', ' ')}
           </span>
         </span>
       ),
@@ -224,37 +287,28 @@ export const InvoicesPage: React.FC = () => {
         <div className="flex items-center justify-center gap-1.5 whitespace-nowrap">
           <button
             type="button"
-            onClick={() => {
-              setModalInitialAction(undefined);
-              setSelectedInvoice(inv);
-            }}
-            title="View & Print Pharmacy Invoice"
+            onClick={() => openInvoiceModal(inv)}
+            title="View & Print Pharmacy Thermal Slip"
             className="px-2 py-1 text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
           >
-            <Printer className="h-3 w-3" /> Print
+            <Printer className="h-3 w-3" /> Slip
           </button>
 
           {inv.channel === 'RETAIL' && Number(inv.outstanding) > 0 && (
             <button
               type="button"
               className="px-2 py-1 text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
-              onClick={() => {
-                setModalInitialAction('payment');
-                setSelectedInvoice(inv);
-              }}
+              onClick={() => openInvoiceModal(inv, 'payment')}
               title="Collect Remaining Payment"
             >
               <CreditCard className="h-3 w-3" /> Collect
             </button>
           )}
 
-          {inv.channel === 'RETAIL' && Number(inv.paidTotal || 0) > 0 && (
+          {inv.channel === 'RETAIL' && Number(inv.paidTotal || inv.collectedAmount || 0) > 0 && (
             <button
               type="button"
-              onClick={() => {
-                setModalInitialAction('return');
-                setSelectedInvoice(inv);
-              }}
+              onClick={() => openInvoiceModal(inv, 'return')}
               title="Return items & issue refund"
               className="px-2 py-1 text-[11px] font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
             >
@@ -298,6 +352,9 @@ export const InvoicesPage: React.FC = () => {
         searchFilter={(inv, q) =>
           inv.invoiceNumber.toLowerCase().includes(q) ||
           (inv.customerName && inv.customerName.toLowerCase().includes(q)) ||
+          (inv.receiptNumber && inv.receiptNumber.toLowerCase().includes(q)) ||
+          (inv.transactionType && inv.transactionType.toLowerCase().includes(q)) ||
+          (inv.collectedByName && inv.collectedByName.toLowerCase().includes(q)) ||
           (inv.dispensedByUser?.fullName && inv.dispensedByUser.fullName.toLowerCase().includes(q)) ||
           (inv.dispensedByUser?.username && inv.dispensedByUser.username.toLowerCase().includes(q))
         }
