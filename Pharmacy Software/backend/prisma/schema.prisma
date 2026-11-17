@@ -278,6 +278,10 @@ model MedicineMaster {
   createdAt     DateTime    @default(now()) @map("created_at")
   updatedAt     DateTime    @updatedAt @map("updated_at")
 
+  @@index([name])
+  @@index([isActive])
+  @@index([categoryId])
+  @@index([createdAt])
   @@map("medicine_masters")
 }
 
@@ -368,6 +372,7 @@ model MedicineBatch {
 
   @@index([medicineId, batchNumber])
   @@index([medicineId, expiryDate])
+  @@index([expiryDate])
   @@map("medicine_batches")
 }
 
@@ -389,6 +394,8 @@ model StockLedgerEntry {
   createdAt      DateTime          @default(now()) @map("created_at")
 
   @@index([medicineId, batchId, createdAt])
+  @@index([medicineId])
+  @@index([batchId])
   @@map("stock_ledger_entries")
 }
 
@@ -488,6 +495,9 @@ model Purchase {
   createdByUser PortalUser @relation("PurchaseCreatedBy", fields: [createdById], references: [id])
   createdAt     DateTime   @default(now()) @map("created_at")
 
+  @@index([createdAt])
+  @@index([vendorId])
+  @@index([status])
   @@map("purchases")
 }
 
@@ -664,6 +674,9 @@ model PharmacyInvoice {
   createdAt       DateTime   @default(now()) @map("created_at")
 
   @@index([channel, externalAdmissionRef])
+  @@index([createdAt])
+  @@index([status])
+  @@index([dispensedById])
   @@map("pharmacy_invoices")
 }
 
@@ -699,6 +712,8 @@ model PharmacyInvoiceLine {
   saleUnitQuantity Decimal? @map("sale_unit_quantity") @db.Decimal(14, 3)
 
   @@index([invoiceId, dispenseEventId])
+  @@index([medicineId])
+  @@index([batchId])
   @@map("pharmacy_invoice_lines")
 }
 
@@ -719,6 +734,8 @@ model PharmacyPayment {
   collectedByUser PortalUser      @relation("PaymentCollectedBy", fields: [collectedById], references: [id])
   paidAt          DateTime        @default(now()) @map("paid_at")
 
+  @@index([invoiceId])
+  @@index([paidAt])
   @@map("pharmacy_payments")
 }
 
@@ -760,6 +777,8 @@ model CashLedgerEntry {
   occurredAt     DateTime      @default(now()) @map("occurred_at")
 
   @@index([portalUserId, occurredAt])
+  @@index([referenceTable, referenceId])
+  @@index([category])
   @@map("cash_ledger_entries")
 }
 

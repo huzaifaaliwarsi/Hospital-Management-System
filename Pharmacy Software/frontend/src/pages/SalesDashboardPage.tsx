@@ -1,4 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { queryKeys } from '../queryClient';
 import {
   TrendingUp,
   Banknote,
@@ -24,31 +26,25 @@ interface Props {
 
 export const SalesDashboardPage: React.FC<Props> = ({ onNavigate }) => {
   const { currentUser } = useAuth();
-  const [data, setData] = useState<SalesDashboard | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
-  const fetchDashboard = () => {
-    setLoading(true);
-    pharmacyApi
-      .getSalesDashboard()
-      .then((res) => {
-        setData(res);
-        setError(null);
-      })
-      .catch(() => setError('Failed to load sales dashboard.'))
-      .finally(() => setLoading(false));
-  };
+  const {
+    data = null,
+    isLoading: loading,
+    error: queryError,
+    refetch: fetchDashboard,
+  } = useQuery({
+    queryKey: queryKeys.dashboard.sales(),
+    queryFn: () => pharmacyApi.getSalesDashboard(),
+    staleTime: 30 * 1000,
+  });
 
-  useEffect(() => {
-    fetchDashboard();
-  }, []);
+  const error = queryError ? 'Failed to load sales dashboard.' : null;
 
   if (loading) {
     return (
       <div className="min-h-[75vh] flex flex-col items-center justify-center text-slate-500 gap-3">
         <Loader2 className="h-8 w-8 animate-spin text-[#0e7d5a]" />
-        <p className="text-sm font-medium">Loading sales terminal data…</p>
+        <p className="text-sm font-medium">Loading sales terminal dataï¿½</p>
       </div>
     );
   }
@@ -63,7 +59,7 @@ export const SalesDashboardPage: React.FC<Props> = ({ onNavigate }) => {
         <p className="text-xs text-slate-500 max-w-md mx-auto">{error || 'Unable to retrieve real-time sales metrics.'}</p>
         <button
           type="button"
-          onClick={fetchDashboard}
+          onClick={() => fetchDashboard()}
           className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#0e7d5a] text-white text-xs font-semibold hover:bg-[#0c6b50] transition-colors cursor-pointer"
         >
           <RefreshCw className="h-3.5 w-3.5" /> Try Again

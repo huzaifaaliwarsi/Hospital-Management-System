@@ -1,4 +1,4 @@
-import { financialReport, loadFinancialData } from '../reports/financialRecognition';
+import { summarizeFinancialTimeline, loadFinancialData, TimelineInterval } from '../reports/financialRecognition';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '@/db/client';
 import { cashService } from '../cash/cash.service';
@@ -9,28 +9,80 @@ async function getNearExpiryWindowDays() {
 }
 
 function startOfDay(d = new Date()) {
-  return new Date(new Date(d.getTime() + 5 * 3600000).toISOString().slice(0,10) + 'T00:00:00+05:00');
+  return new Date(new Date(d.getTime() + 5 * 3600000).toISOString().slice(0, 10) + 'T00:00:00+05:00');
 }
 
-/** pharmacy.md §5 — every KPI here is a real Prisma query. No hardcoded numbers. */
+/** pharmacy.md §5 — every KPI here is a real Prisma/SQL query. No hardcoded numbers. */
 export const dashboardService = {
   async getManagementSummary(userId: string) {
     const today = startOfDay();
     const tomorrow = new Date(today.getTime() + 86_400_000);
-
-    const financialData = await loadFinancialData();
-    const todayFinancial = financialReport(financialData,{gte:today,lte:new Date(tomorrow.getTime()-1)}).totals;
-    const lifetimeFinancial = financialReport(financialData,{lte:new Date()}).totals;
+    const now = new Date();
 
     const sixMonthsAgo = new Date();
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5);
     sixMonthsAgo.setDate(1);
     sixMonthsAgo.setHours(0, 0, 0, 0);
 
+    // Build timeline intervals for single-pass timeline summarizer
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const intervals: TimelineInterval[] = [
+      { id: 'today', gte: today, lte: new Date(tomorrow.getTime() - 1) },
+      { id: 'lifetime', lte: now },
+    ];
+
+    const monthDefs: Array<{ id: string; monthLabel: string; mStart: Date; mEnd: Date }> = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date();
+      d.setMonth(d.getMonth() - i);
+      const mIdx = d.getMonth();
+      const y = d.getFullYear();
+      const mStart = new Date(Date.UTC(y, mIdx, 1));
+      const mEnd = new Date(Date.UTC(y, mIdx + 1, 1));
+      const id = `m-${i}`;
+      monthDefs.push({
+        id,
+        monthLabel: `${monthNames[mIdx]} ${String(y).slice(-2)}`,
+        mStart,
+        mEnd,
+      });
+      intervals.push({
+        id,
+        gte: mStart,
+        lte: new Date(Math.min(mEnd.getTime() - 1, now.getTime())),
+      });
+    }
+
+    const dayDefs: Array<{ id: string; dateLabel: string; fullDateLabel: string; dayStart: Date; dayEnd: Date }> = [];
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const y = d.getFullYear();
+      const m = d.getMonth();
+      const dayNum = d.getDate();
+      const dayStart = new Date(Date.UTC(y, m, dayNum, 0, 0, 0));
+      const dayEnd = new Date(Date.UTC(y, m, dayNum + 1, 0, 0, 0));
+      const id = `d-${i}`;
+      dayDefs.push({
+        id,
+        dateLabel: i === 0 ? 'Today' : `${dayNum} ${monthNames[m]}`,
+        fullDateLabel: d.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }),
+        dayStart,
+        dayEnd,
+      });
+      intervals.push({
+        id,
+        gte: dayStart,
+        lte: new Date(Math.min(dayEnd.getTime() - 1, now.getTime())),
+      });
+    }
+
     const [
+      financialData,
       salesToday,
       purchasesToday,
-      medicines,
+      activeMedicines,
+      positiveBatches,
       vendorLedger,
       pendingSettlements,
       pendingHmsRequests,
@@ -42,19 +94,65 @@ export const dashboardService = {
       vendorsList,
       openPurchaseOrdersCount,
     ] = await Promise.all([
+      loadFinancialData(),
       prisma.pharmacyInvoice.aggregate({ where: { createdAt: { gte: today, lt: tomorrow } }, _sum: { total: true }, _count: true }),
       prisma.purchase.aggregate({ where: { createdAt: { gte: today, lt: tomorrow } }, _sum: { total: true }, _count: true }),
-      prisma.medicineMaster.findMany({
-        where: { isActive: true },
-        include: {
-          batches: {
-            include: { stockEntries: { select: { quantityDelta: true } } },
-          },
-          stockEntries: { select: { quantityDelta: true } },
-          baseUnit: { select: { name: true, shortCode: true } },
-        },
-        orderBy: { name: 'asc' },
-      }),
+      prisma.$queryRaw<Array<{
+        id: string;
+        code: string;
+        name: string;
+        categoryLabel: string;
+        reorderLevel: number;
+        rate: number;
+        unitCode: string;
+        currentStock: number;
+      }>>`
+        SELECT 
+          m.id,
+          m.code,
+          m.name,
+          COALESCE(NULLIF(TRIM(m.category), ''), 'General') AS "categoryLabel",
+          m.reorder_level::numeric AS "reorderLevel",
+          COALESCE(m.purchase_rate, m.sale_rate, 0)::numeric AS "rate",
+          COALESCE(u.short_code, u.name, m.unit, 'units') AS "unitCode",
+          COALESCE(s.stock, 0)::numeric AS "currentStock"
+        FROM medicine_masters m
+        LEFT JOIN units u ON m.base_unit_id = u.id
+        LEFT JOIN (
+          SELECT medicine_id, SUM(quantity_delta) AS stock
+          FROM stock_ledger_entries
+          GROUP BY medicine_id
+        ) s ON s.medicine_id = m.id
+        WHERE m.is_active = true
+        ORDER BY m.name ASC
+      `,
+      prisma.$queryRaw<Array<{
+        id: string;
+        medicineId: string;
+        name: string;
+        batchNumber: string;
+        expiryDate: Date;
+        batchStock: number;
+      }>>`
+        SELECT 
+          b.id,
+          b.medicine_id AS "medicineId",
+          m.name,
+          b.batch_number AS "batchNumber",
+          b.expiry_date AS "expiryDate",
+          bs.stock::numeric AS "batchStock"
+        FROM medicine_batches b
+        JOIN medicine_masters m ON b.medicine_id = m.id
+        JOIN (
+          SELECT batch_id, SUM(quantity_delta) AS stock
+          FROM stock_ledger_entries
+          WHERE batch_id IS NOT NULL
+          GROUP BY batch_id
+          HAVING SUM(quantity_delta) > 0
+        ) bs ON bs.batch_id = b.id
+        WHERE m.is_active = true
+        ORDER BY b.expiry_date ASC
+      `,
       prisma.vendorLedgerEntry.aggregate({ _sum: { amount: true } }),
       prisma.accountSettlement.count({ where: { status: 'SUBMITTED' } }),
       prisma.medicineRequest.count({ where: { status: { in: ['REQUESTED', 'PARTIALLY_ACCEPTED'] } } }),
@@ -80,7 +178,12 @@ export const dashboardService = {
       prisma.purchaseOrder.count({ where: { status: 'OPEN' } }),
     ]);
 
-    const now = new Date();
+    // Single-pass timeline summarizer across all 38 intervals
+    const timelineResults = summarizeFinancialTimeline(financialData, intervals);
+    const todayFinancial = timelineResults.get('today')!;
+    const lifetimeFinancial = timelineResults.get('lifetime')!;
+
+    // Expiry and inventory calculations from SQL aggregated records
     const nearExpiryCutoff = new Date(now.getTime() + nearExpiryWindowDays * 86_400_000);
     let stockValue = new Decimal(0);
     let totalStockUnits = new Decimal(0);
@@ -88,6 +191,39 @@ export const dashboardService = {
     let outOfStock = 0;
     let nearExpiry = 0;
     let expired = 0;
+
+    const batchesByMedicine = new Map<string, typeof positiveBatches>();
+    const nearExpiryList: Array<{
+      id: string;
+      medicineId: string;
+      name: string;
+      batchNumber: string;
+      expiryDate: string;
+      daysLeft: number;
+      quantityRemaining: number;
+    }> = [];
+
+    for (const b of positiveBatches) {
+      const list = batchesByMedicine.get(b.medicineId) || [];
+      list.push(b);
+      batchesByMedicine.set(b.medicineId, list);
+
+      const exp = new Date(b.expiryDate);
+      if (exp <= now) {
+        expired += 1;
+      } else if (exp <= nearExpiryCutoff) {
+        nearExpiry += 1;
+        nearExpiryList.push({
+          id: b.id,
+          medicineId: b.medicineId,
+          name: b.name,
+          batchNumber: b.batchNumber,
+          expiryDate: exp.toISOString(),
+          daysLeft: Math.max(0, Math.ceil((exp.getTime() - now.getTime()) / 86_400_000)),
+          quantityRemaining: Number(b.batchStock),
+        });
+      }
+    }
 
     const categoryMap: Record<string, { count: number; stock: Decimal }> = {};
     const inventoryOverview: Array<{
@@ -110,31 +246,19 @@ export const dashboardService = {
       unit: string;
       isOutOfStock: boolean;
     }> = [];
-    const nearExpiryList: Array<{
-      id: string;
-      medicineId: string;
-      name: string;
-      batchNumber: string;
-      expiryDate: string;
-      daysLeft: number;
-      quantityRemaining: number;
-    }> = [];
 
-    for (const m of medicines) {
-      const stock = m.stockEntries.reduce((s, e) => s.plus(e.quantityDelta), new Decimal(0));
+    for (const m of activeMedicines) {
+      const stock = new Decimal(m.currentStock);
       totalStockUnits = totalStockUnits.plus(stock);
-      stockValue = stockValue.plus(stock.mul(m.purchaseRate ?? m.saleRate));
+      stockValue = stockValue.plus(stock.mul(m.rate));
 
-      const catName = (m.categoryLabel && m.categoryLabel.trim()) || 'General';
-      if (!categoryMap[catName]) {
-        categoryMap[catName] = { count: 0, stock: new Decimal(0) };
-      }
+      const catName = m.categoryLabel || 'General';
+      if (!categoryMap[catName]) categoryMap[catName] = { count: 0, stock: new Decimal(0) };
       categoryMap[catName].count += 1;
       categoryMap[catName].stock = categoryMap[catName].stock.plus(stock);
 
       const isOut = stock.lessThanOrEqualTo(0);
       const isLow = !isOut && stock.lessThanOrEqualTo(m.reorderLevel);
-      const unitCode = m.baseUnit?.shortCode || m.baseUnit?.name || m.unit || 'units';
 
       if (isOut) {
         outOfStock += 1;
@@ -143,7 +267,7 @@ export const dashboardService = {
           name: m.name,
           currentStock: 0,
           reorderLevel: Number(m.reorderLevel),
-          unit: unitCode,
+          unit: m.unitCode,
           isOutOfStock: true,
         });
       } else if (isLow) {
@@ -153,42 +277,20 @@ export const dashboardService = {
           name: m.name,
           currentStock: stock.toNumber(),
           reorderLevel: Number(m.reorderLevel),
-          unit: unitCode,
+          unit: m.unitCode,
           isOutOfStock: false,
         });
       }
 
-      // Sort batches by earliest expiry
-      const sortedBatches = [...m.batches].sort((a, b) => a.expiryDate.getTime() - b.expiryDate.getTime());
-      const earliestBatch = sortedBatches[0];
-
-      let hasExpired = false;
-      let hasNearExpiry = false;
-
-      for (const b of m.batches) {
-        const batchStock = b.stockEntries.reduce((s, e) => s.plus(e.quantityDelta), new Decimal(0)).toNumber();
-        if (batchStock <= 0) continue;
-
-        if (b.expiryDate <= now) {
-          expired += 1;
-          hasExpired = true;
-        } else if (b.expiryDate <= nearExpiryCutoff) {
-          nearExpiry += 1;
-          hasNearExpiry = true;
-          nearExpiryList.push({
-            id: b.id,
-            medicineId: m.id,
-            name: m.name,
-            batchNumber: b.batchNumber,
-            expiryDate: b.expiryDate.toISOString(),
-            daysLeft: Math.max(0, Math.ceil((b.expiryDate.getTime() - now.getTime()) / 86_400_000)),
-            quantityRemaining: batchStock,
-          });
-        }
-      }
+      const medBatches = batchesByMedicine.get(m.id) || [];
+      const earliestBatch = medBatches[0];
+      const hasExpired = medBatches.some((b) => new Date(b.expiryDate) <= now);
+      const hasNearExpiry = medBatches.some((b) => {
+        const exp = new Date(b.expiryDate);
+        return exp > now && exp <= nearExpiryCutoff;
+      });
 
       const itemStatus: 'Healthy' | 'Low Stock' | 'Critical' = isOut || hasExpired ? 'Critical' : isLow || hasNearExpiry ? 'Low Stock' : 'Healthy';
-
       inventoryOverview.push({
         id: m.id,
         code: m.code,
@@ -196,7 +298,7 @@ export const dashboardService = {
         category: catName,
         currentStock: stock.toNumber(),
         reorderLevel: Number(m.reorderLevel),
-        expiryDate: earliestBatch ? earliestBatch.expiryDate.toISOString() : null,
+        expiryDate: earliestBatch ? new Date(earliestBatch.expiryDate).toISOString() : null,
         status: itemStatus,
         batchNumber: earliestBatch ? earliestBatch.batchNumber : null,
       });
@@ -212,68 +314,54 @@ export const dashboardService = {
     // Sort nearExpiryList: expiring earliest first
     nearExpiryList.sort((a, b) => a.daysLeft - b.daysLeft);
 
-    // Build monthly performance for last 6 months
-    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const monthlyTrend = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date();
-      d.setMonth(d.getMonth() - i);
-      const mIdx = d.getMonth();
-      const y = d.getFullYear();
-      const mStart = new Date(Date.UTC(y, mIdx, 1));
-      const mEnd = new Date(Date.UTC(y, mIdx + 1, 1));
-
-      const mInvoices = recentInvoices.filter((inv) => inv.createdAt >= mStart && inv.createdAt < mEnd);
-      const mPurchases = recentPurchases.filter((p) => p.createdAt >= mStart && p.createdAt < mEnd);
-      const financial = financialReport(financialData,{gte:mStart,lte:new Date(Math.min(mEnd.getTime()-1,now.getTime()))}).totals;
-
-      const rev = Number(financial.recognizedRevenue);
+    // Build monthly performance for last 6 months from pre-computed timeline map
+    const monthlyTrend = monthDefs.map((def) => {
+      const financial = timelineResults.get(def.id)!;
+      const mInvoices = recentInvoices.filter((inv) => inv.createdAt >= def.mStart && inv.createdAt < def.mEnd);
+      const mPurchases = recentPurchases.filter((p) => p.createdAt >= def.mStart && p.createdAt < def.mEnd);
       const pur = mPurchases.reduce((s, p) => s.plus(p.total), new Decimal(0)).toNumber();
       const exp = Number(financial.operatingExpenses);
       const profit = financial.operatingProfit === null ? null : Number(financial.operatingProfit);
 
-      monthlyTrend.push({
-        month: `${monthNames[mIdx]} ${String(y).slice(-2)}`,
-        revenue: rev,
-        grossSales:Number(financial.grossSales), netBilling:Number(financial.netBilling), collections:Number(financial.collections), outstanding:Number(financial.outstanding), cogs:Number(financial.recognizedCogs),
+      return {
+        month: def.monthLabel,
+        revenue: Number(financial.recognizedRevenue),
+        grossSales: Number(financial.grossSales),
+        netBilling: Number(financial.netBilling),
+        collections: Number(financial.collections),
+        outstanding: Number(financial.outstanding),
+        cogs: Number(financial.recognizedCogs),
         purchases: pur,
         expenses: exp,
         profit,
         orders: mInvoices.length,
-      });
-    }
+      };
+    });
 
-    // Build rolling daily performance for the last 30 days (seamless across month boundaries)
-    const dailyTrend = [];
-    for (let i = 29; i >= 0; i--) {
-      const d = new Date(now);
-      d.setDate(d.getDate() - i);
-      const y = d.getFullYear();
-      const m = d.getMonth();
-      const dayNum = d.getDate();
-      const dayStart = new Date(Date.UTC(y, m, dayNum, 0, 0, 0));
-      const dayEnd = new Date(Date.UTC(y, m, dayNum + 1, 0, 0, 0));
-
-      const dInvoices = recentInvoices.filter((inv) => inv.createdAt >= dayStart && inv.createdAt < dayEnd);
-      const dPurchases = recentPurchases.filter((p) => p.createdAt >= dayStart && p.createdAt < dayEnd);
-      const financial = financialReport(financialData,{gte:dayStart,lte:new Date(Math.min(dayEnd.getTime()-1,now.getTime()))}).totals;
-
-      const rev = Number(financial.recognizedRevenue);
+    // Build rolling daily performance for the last 30 days from pre-computed timeline map
+    const dailyTrend = dayDefs.map((def) => {
+      const financial = timelineResults.get(def.id)!;
+      const dInvoices = recentInvoices.filter((inv) => inv.createdAt >= def.dayStart && inv.createdAt < def.dayEnd);
+      const dPurchases = recentPurchases.filter((p) => p.createdAt >= def.dayStart && p.createdAt < def.dayEnd);
       const pur = dPurchases.reduce((s, p) => s.plus(p.total), new Decimal(0)).toNumber();
       const exp = Number(financial.operatingExpenses);
       const profit = financial.operatingProfit === null ? null : Number(financial.operatingProfit);
 
-      dailyTrend.push({
-        date: i === 0 ? 'Today' : `${dayNum} ${monthNames[m]}`,
-        fullDate: d.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }),
-        revenue: rev,
-        grossSales:Number(financial.grossSales), netBilling:Number(financial.netBilling), collections:Number(financial.collections), outstanding:Number(financial.outstanding), cogs:Number(financial.recognizedCogs),
+      return {
+        date: def.dateLabel,
+        fullDate: def.fullDateLabel,
+        revenue: Number(financial.recognizedRevenue),
+        grossSales: Number(financial.grossSales),
+        netBilling: Number(financial.netBilling),
+        collections: Number(financial.collections),
+        outstanding: Number(financial.outstanding),
+        cogs: Number(financial.recognizedCogs),
         purchases: pur,
         expenses: exp,
         profit,
         orders: dInvoices.length,
-      });
-    }
+      };
+    });
 
     // Category distribution array
     const totalStockNum = Math.max(1, totalStockUnits.toNumber());
@@ -350,7 +438,7 @@ export const dashboardService = {
       operatingProfitToday: todayFinancial.operatingProfit,
       incompleteInvoices: lifetimeFinancial.incompleteInvoices,
       totalSalesCountAllTime: totalSalesAllTime._count,
-      totalMedicines: medicines.length,
+      totalMedicines: activeMedicines.length,
       totalStockUnits: totalStockUnits.toNumber(),
       currentStockValue: stockValue,
       lowStockCount: lowStock + outOfStock,
@@ -377,23 +465,50 @@ export const dashboardService = {
     const today = startOfDay();
     const tomorrow = new Date(today.getTime() + 86_400_000);
 
-    const [mySales, pendingHmsRequests, expected] = await Promise.all([
-      prisma.pharmacyInvoice.aggregate({ where: { dispensedById: userId, createdAt: { gte: today, lt: tomorrow } }, _sum: { total: true, paidTotal: true }, _count: true }),
+    const [mySales, pendingHmsRequests, expected, paymentAggregates, refundAggregates] = await Promise.all([
+      prisma.pharmacyInvoice.aggregate({
+        where: { dispensedById: userId, createdAt: { gte: today, lt: tomorrow } },
+        _sum: { total: true, paidTotal: true },
+        _count: true,
+      }),
       prisma.medicineRequest.count({ where: { status: { in: ['REQUESTED', 'PARTIALLY_ACCEPTED'] } } }),
       cashService.expectedCash(userId),
+      prisma.pharmacyPayment.groupBy({
+        by: ['method'],
+        where: {
+          collectedById: userId,
+          paidAt: { gte: today, lt: tomorrow },
+          invoice: { channel: 'RETAIL' },
+        },
+        _sum: { amount: true },
+      }),
+      prisma.cashLedgerEntry.groupBy({
+        by: ['isPhysicalCash'],
+        where: {
+          portalUserId: userId,
+          occurredAt: { gte: today, lt: tomorrow },
+          category: 'REFUND',
+          referenceTable: 'pharmacy_invoices',
+        },
+        _sum: { amount: true },
+      }),
     ]);
 
-    const data=await loadFinancialData();
-    const retailData={...data,invoices:data.invoices.filter(i=>i.channel==='RETAIL')};
-    const period={gte:today,lte:new Date(tomorrow.getTime()-1)};
-    const cash=financialReport(retailData,period,{cashierId:userId,method:'CASH'}).totals.collections;
-    const nonCash=financialReport(retailData,period,{cashierId:userId}).totals.collections.minus(cash);
+    const cashPayments = paymentAggregates.find((p) => p.method === 'CASH')?._sum.amount ?? new Decimal(0);
+    const nonCashPayments = paymentAggregates
+      .filter((p) => p.method !== 'CASH')
+      .reduce((sum, p) => sum.plus(p._sum.amount ?? 0), new Decimal(0));
+    const cashRefunds = refundAggregates.find((r) => r.isPhysicalCash)?._sum.amount ?? new Decimal(0);
+    const nonCashRefunds = refundAggregates.find((r) => !r.isPhysicalCash)?._sum.amount ?? new Decimal(0);
+
+    const cashCollectionToday = cashPayments.minus(cashRefunds);
+    const cardOnlineCollectionToday = nonCashPayments.minus(nonCashRefunds);
 
     return {
       mySalesToday: mySales._sum.total ?? new Decimal(0),
       mySalesCountToday: mySales._count,
-      cashCollectionToday: cash,
-      cardOnlineCollectionToday: nonCash,
+      cashCollectionToday,
+      cardOnlineCollectionToday,
       pendingHmsRequests,
       expectedCash: expected,
     };

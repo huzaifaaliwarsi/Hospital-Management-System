@@ -324,11 +324,78 @@ export interface OperatingProfitReportData {
   };
 }
 
+export interface PaginatedMedicinesResponse {
+  items: MedicineRow[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  summary?: {
+    totalItems: number;
+    outOfStockCount: number;
+    lowStockCount: number;
+    normalStockCount: number;
+    categoriesCount: number;
+  };
+}
+
+export interface UpdatedStockItem {
+  medicineId: string;
+  currentStock: string | number;
+  isLowStock: boolean;
+  isOutOfStock: boolean;
+  activeBatches: Array<{
+    id: string;
+    batchNumber: string;
+    expiryDate: string;
+    saleRate: string | number;
+    costRate: string | number;
+    available: string | number;
+  }>;
+}
+
+export interface DispenseRetailResponse {
+  id: string;
+  invoiceNumber: string;
+  channel: string;
+  customerName?: string | null;
+  subtotal: string | number;
+  discountTotal: string | number;
+  taxTotal: string | number;
+  total: string | number;
+  paidTotal: string | number;
+  outstanding: string | number;
+  status: string;
+  lines: any[];
+  payments: any[];
+  dispensedByUser?: any;
+  updatedStock?: UpdatedStockItem[];
+  [key: string]: any;
+}
+
+export interface ListMedicinesParams {
+  search?: string;
+  stockStatus?: 'LOW' | 'OUT' | 'NEAR_EXPIRY' | 'EXPIRED' | 'OK';
+  category?: string;
+  categoryId?: string;
+  unit?: string;
+  page?: number;
+  limit?: number;
+  paginated?: 'true' | 'false';
+  sortBy?: string;
+  sortOrder?: 'asc' | 'desc';
+}
+
 export const pharmacyApi = {
   getManagementDashboard: () => apiClient.get<{ data: ManagementDashboard }>('/dashboard/management').then((r) => r.data.data),
   getSalesDashboard: () => apiClient.get<{ data: SalesDashboard }>('/dashboard/sales').then((r) => r.data.data),
 
-  listMedicines: (search?: string) => apiClient.get<{ data: MedicineRow[] }>('/pharmacy/medicines', { params: { search } }).then((r) => r.data.data),
+  listMedicines: (paramsOrSearch?: string | ListMedicinesParams) => {
+    const params = typeof paramsOrSearch === 'string' ? { search: paramsOrSearch } : paramsOrSearch;
+    return apiClient.get<{ data: MedicineRow[] }>('/pharmacy/medicines', { params }).then((r) => r.data.data);
+  },
+  listMedicinesPaginated: (params: ListMedicinesParams) =>
+    apiClient.get<{ data: PaginatedMedicinesResponse }>('/pharmacy/medicines', { params: { ...params, paginated: 'true' } }).then((r) => r.data.data),
   bulkImportMedicines: (items: BulkImportItem[]) =>
     apiClient.post<{ data: BulkImportResponse }>('/pharmacy/medicines/bulk-import', { items }).then((r) => r.data.data),
   /** Preview only (not reserved) — the actual code is decided server-side at create time. */
@@ -363,8 +430,47 @@ export const pharmacyApi = {
   markPurchaseOrderConverted: (id: string) => apiClient.post(`/purchase-orders/${id}/mark-converted`).then((r) => r.data.data),
 
   listInvoices: (transactions = false) => apiClient.get('/pharmacy/invoices', { params: { transactions } }).then((r) => r.data.data),
+  listInvoicesPaginated: (params: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    channel?: string;
+    status?: string;
+    fromDate?: string;
+    toDate?: string;
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
+    transactions?: boolean;
+  }) =>
+    apiClient
+      .get<{
+        data: {
+          items: any[];
+          page: number;
+          limit: number;
+          total: number;
+          totalPages: number;
+          summary: {
+            totalBilling: number;
+            totalCollected: number;
+            totalOutstanding: number;
+            totalInvoices: number;
+          };
+        };
+      }>('/pharmacy/invoices', {
+        params: {
+          ...params,
+          transactions: params.transactions !== false ? 'true' : 'false',
+        },
+      })
+      .then((r) => r.data.data),
   getInvoiceById: (id: string) => apiClient.get(`/pharmacy/invoices/${id}`).then((r) => r.data.data),
-  dispenseRetail: (body: Record<string, unknown>) => apiClient.post('/pharmacy/dispense', body).then((r) => r.data.data),
+  getPosCatalog: (params?: { search?: string; category?: string; categoryId?: string }) =>
+    apiClient.get<{ data: MedicineRow[] }>('/pharmacy/pos/catalog', { params }).then((r) => r.data.data),
+  getPosStockCheck: (medicineIds: string[]) =>
+    apiClient.post<{ data: UpdatedStockItem[] }>('/pharmacy/pos/stock-check', { medicineIds }).then((r) => r.data.data),
+  dispenseRetail: (body: Record<string, unknown>) =>
+    apiClient.post<{ data: DispenseRetailResponse }>('/pharmacy/dispense', body).then((r) => r.data.data),
   salesReturn: (body: Record<string, unknown>) => apiClient.post('/pharmacy/sales-returns', body).then((r) => r.data.data),
 
   getBalanceSheet: () => apiClient.get('/cash/balance-sheet').then((r) => r.data.data),

@@ -20,6 +20,8 @@ import {
   Receipt,
   FileSpreadsheet,
 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { queryClient, queryKeys } from '../queryClient';
 import apiClient from '../services/apiClient';
 import { pharmacyApi, MedicineRow } from '../services/pharmacyApi';
 import { formatPKR, formatNumber, formatDateTime, formatDate } from '../utils/format';
@@ -30,8 +32,6 @@ import { AddVendorModal } from '../components/AddVendorModal';
 
 export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
   const toast = useToast();
-  const [rows, setRows] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
 
   // Ledger state
@@ -66,16 +66,20 @@ export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
   // Filter state for main list
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'DUE' | 'SETTLED'>('ALL');
 
-  const load = () => {
-    setLoading(true);
-    apiClient
-      .get('/vendors')
-      .then((r) => setRows(r.data.data))
-      .catch(() => toast.error('Failed to load vendors directory.'))
-      .finally(() => setLoading(false));
-  };
+  // TanStack Query for Vendors (60s stale time, background SWR, instant revisit from cache)
+  const {
+    data: rows = [],
+    isLoading: loading,
+    refetch: reloadVendors,
+  } = useQuery({
+    queryKey: queryKeys.vendors.list(),
+    queryFn: () => apiClient.get('/vendors').then((r) => r.data.data),
+    staleTime: 60 * 1000,
+  });
 
-  useEffect(load, []);
+  const load = () => {
+    reloadVendors();
+  };
 
   // Top KPI calculations
   const totalVendors = rows.length;
@@ -161,6 +165,9 @@ export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
       toast.success(`Payment of ${formatPKR(amount)} recorded for ${payVendor.name}.`);
       setPayVendor(null);
       setPayAmount('');
+      queryClient.invalidateQueries({ queryKey: queryKeys.vendors.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.financial.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
       load();
       // If ledger is open for this vendor, refresh it
       if (ledgerVendor && ledgerVendor.vendor.id === payVendor.id) {
@@ -221,6 +228,11 @@ export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
       });
       toast.success(`Return of ${formatPKR(Math.abs(returnValue))} posted against batch "${selectedReturnBatch.batchNumber}".`);
       setReturnVendor(null);
+      queryClient.invalidateQueries({ queryKey: queryKeys.vendors.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.medicines.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.pos.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.financial.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
       load();
       if (ledgerVendor && ledgerVendor.vendor.id === returnVendor.id) openLedger(returnVendor);
     } catch (err: any) {
@@ -808,7 +820,10 @@ export const VendorsPage: React.FC<{ canEdit: boolean }> = ({ canEdit }) => {
       <AddVendorModal
         open={showAdd}
         onClose={() => setShowAdd(false)}
-        onCreated={() => load()}
+        onCreated={() => {
+          queryClient.invalidateQueries({ queryKey: queryKeys.vendors.all });
+          load();
+        }}
       />
 
       {/* ═════════════════════════════════════════════════════════════

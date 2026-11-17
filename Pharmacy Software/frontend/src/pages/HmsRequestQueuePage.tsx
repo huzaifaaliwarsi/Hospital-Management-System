@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { queryClient, queryKeys } from '../queryClient';
 import { Loader2, Plus, X, Check, Ban, ShieldAlert, Eye, Settings2, RefreshCw } from 'lucide-react';
 import { pharmacyApi, MedicineRow } from '../services/pharmacyApi';
 import { formatPKR, formatNumber } from '../utils/format';
@@ -42,57 +44,48 @@ function estimatedValue(req: RequestRow): number {
 }
 
 export const HmsRequestQueuePage: React.FC<{ canApprove: boolean }> = ({ canApprove }) => {
-  const [rows, setRows] = useState<RequestRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
-  const [settings, setSettings] = useState<any | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [detail, setDetail] = useState<RequestRow | null>(null);
   const toast = useToast();
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const data = await pharmacyApi.listHmsRequests(statusFilter || undefined);
-      setRows(data);
-    } catch {
-      toast.error('Failed to load requests.');
-    } finally {
-      setLoading(false);
-    }
-  };
-  useEffect(() => {
-    load();
-  }, [statusFilter]);
+  // TanStack Query for HMS request queue with built-in leak-free 15s polling and instant revisit
+  const {
+    data: rows = [],
+    isLoading: loading,
+    refetch: reloadQueue,
+  } = useQuery({
+    queryKey: queryKeys.hms.requests(statusFilter),
+    queryFn: () => pharmacyApi.listHmsRequests(statusFilter || undefined),
+    staleTime: 10 * 1000,
+    refetchInterval: 15_000, // automatic background poll that stops when unmounted
+  });
 
-  useEffect(() => {
-    pharmacyApi.getHmsSettings().then(setSettings);
-  }, []);
+  const { data: settings = null } = useQuery({
+    queryKey: queryKeys.hms.settings(),
+    queryFn: () => pharmacyApi.getHmsSettings(),
+    staleTime: 15 * 60 * 1000,
+  });
+
+  const load = () => {
+    reloadQueue();
+  };
 
   // Real-time automatic queue refresh when HMS submits a new requisition
   useEffect(() => {
     const handleNewRequest = () => {
-      load();
+      reloadQueue();
     };
     window.addEventListener('hms-request-received', handleNewRequest);
     return () => window.removeEventListener('hms-request-received', handleNewRequest);
-  }, []);
-
-  // Periodic background poll every 15s to keep queue synchronized if system was offline
-  useEffect(() => {
-    const interval = setInterval(() => {
-      pharmacyApi.listHmsRequests(statusFilter || undefined).then(setRows).catch(() => null);
-    }, 15_000);
-    return () => clearInterval(interval);
-  }, [statusFilter]);
+  }, [reloadQueue]);
 
   const handleManualSync = async () => {
     setSyncing(true);
     try {
-      const data = await pharmacyApi.listHmsRequests(statusFilter || undefined);
-      setRows(data);
+      await reloadQueue();
       toast.success('Queue synchronized with HMS.');
     } catch {
       toast.error('Sync failed. Please check HMS connectivity.');
@@ -388,7 +381,7 @@ export const HmsRequestQueuePage: React.FC<{ canApprove: boolean }> = ({ canAppr
       />
 
       {showSettings && settings && (
-        <SettingsModal settings={settings} onClose={() => setShowSettings(false)} onSaved={(s) => { setSettings(s); setShowSettings(false); }} />
+        <SettingsModal settings={settings} onClose={() => setShowSettings(false)} onSaved={() => { queryClient.invalidateQueries({ queryKey: queryKeys.hms.settings() }); setShowSettings(false); }} />
       )}
       {showCreate && <CreateRequestModal onClose={() => setShowCreate(false)} onCreated={() => { setShowCreate(false); load(); }} />}
       {detail && (
@@ -566,6 +559,11 @@ const DetailModal: React.FC<{
     try {
       await pharmacyApi.fulfillHmsRequest(request.id, lines);
       toast.success('Dispensed — Pharmacy invoice created/updated.');
+      queryClient.invalidateQueries({ queryKey: queryKeys.hms.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.pos.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.medicines.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.invoices.all });
       onFulfilled();
     } catch (err: any) {
       toast.error(err?.response?.data?.error?.message || 'Failed to dispense.');

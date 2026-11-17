@@ -13,6 +13,8 @@ import type {
   StockAdjustmentBody,
   StockMovementsQuery,
   SalesReturnBody,
+  PosCatalogQuery,
+  PosStockCheckBody,
 } from './pharmacy.schemas';
 
 export const pharmacyController = {
@@ -91,6 +93,15 @@ export const pharmacyController = {
   },
   async getInvoiceById(req: Request, res: Response) {
     const data = await pharmacyService.getInvoiceById(req.params.id as string);
+    res.json({ data });
+  },
+  async getPosCatalog(req: Request, res: Response) {
+    const data = await pharmacyService.getPosCatalog(req.query as unknown as PosCatalogQuery);
+    res.json({ data });
+  },
+  async getPosStockCheck(req: Request, res: Response) {
+    const { medicineIds } = req.body as PosStockCheckBody;
+    const data = await pharmacyService.getMedicinesStock(medicineIds);
     res.json({ data });
   },
 };

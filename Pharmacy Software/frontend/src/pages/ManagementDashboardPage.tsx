@@ -28,6 +28,9 @@ import {
   RefreshCw,
   CheckCircle2,
 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { queryKeys } from '../queryClient';
+import { usePharmacyUIStore } from '../store/usePharmacyUIStore';
 import { pharmacyApi, ManagementDashboard } from '../services/pharmacyApi';
 import { useAuth } from '../context/AuthContext';
 import { formatPKR } from '../utils/format';
@@ -76,28 +79,30 @@ const Sparkline: React.FC<{ stroke: string; fill: string; trendUp?: boolean }> =
 
 export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
   const { currentUser } = useAuth();
-  const [data, setData] = useState<ManagementDashboard | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [tableSearch, setTableSearch] = useState('');
-  const [timeframe, setTimeframe] = useState<'7d' | '14d' | '30d' | '6m'>('7d');
+  const dashboardUI = usePharmacyUIStore((s) => s.dashboard);
+  const setDashboardUI = usePharmacyUIStore((s) => s.setDashboardState);
+
+  const [tableSearch, setTableSearch] = useState(dashboardUI.tableSearch);
+  const [timeframe, setTimeframe] = useState<'7d' | '14d' | '30d' | '6m'>(dashboardUI.timeframe);
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
 
-  const fetchDashboard = () => {
-    setLoading(true);
-    pharmacyApi
-      .getManagementDashboard()
-      .then((res) => {
-        setData(res);
-        setError(null);
-      })
-      .catch(() => setError('Failed to load dashboard data.'))
-      .finally(() => setLoading(false));
-  };
-
   useEffect(() => {
-    fetchDashboard();
-  }, []);
+    setDashboardUI({ tableSearch, timeframe });
+  }, [tableSearch, timeframe, setDashboardUI]);
+
+  // TanStack Query (30s stale time, background SWR, instant revisit from cache)
+  const {
+    data = null,
+    isLoading: loading,
+    error: queryError,
+    refetch: fetchDashboard,
+  } = useQuery({
+    queryKey: queryKeys.dashboard.management(),
+    queryFn: () => pharmacyApi.getManagementDashboard(),
+    staleTime: 30 * 1000,
+  });
+
+  const error = queryError ? 'Failed to load dashboard data.' : null;
 
   // Filter inventory overview rows
   const filteredInventory = useMemo(() => {
@@ -162,7 +167,7 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
         <p className="text-xs text-slate-500 max-w-md mx-auto">{error || 'Unable to retrieve real-time data from database.'}</p>
         <button
           type="button"
-          onClick={fetchDashboard}
+          onClick={() => fetchDashboard()}
           className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#0e7d5a] text-white text-xs font-semibold hover:bg-[#0c6b50] transition-colors cursor-pointer"
         >
           <RefreshCw className="h-3.5 w-3.5" /> Try Again
@@ -176,7 +181,7 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
   const periodPurchases = activeTrendItems.reduce((s, p) => s + p.purchases, 0);
   const periodExpenses = activeTrendItems.reduce((s, p) => s + p.expenses, 0);
   const periodOrders = activeTrendItems.reduce((s, p) => s + p.orders, 0);
-  const periodProfit = activeTrendItems.some(p => p.profit == null) ? null : activeTrendItems.reduce((sum,p)=>sum+(p.profit ?? 0),0);
+  const periodProfit = activeTrendItems.some(p => p.profit == null) ? null : activeTrendItems.reduce((sum, p) => sum + (p.profit ?? 0), 0);
 
   // Month-over-month / period growth rate
   const lastPt = activeTrendItems[activeTrendItems.length - 1];
@@ -190,12 +195,12 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
   const categories = data.categoryDistribution && data.categoryDistribution.length > 0
     ? data.categoryDistribution
     : [
-        { category: 'Tablets', count: 12, stock: 1200, percentage: 40 },
-        { category: 'Capsules', count: 8, stock: 750, percentage: 25 },
-        { category: 'Syrups', count: 6, stock: 450, percentage: 15 },
-        { category: 'Injections', count: 4, stock: 300, percentage: 10 },
-        { category: 'Supplies', count: 3, stock: 300, percentage: 10 },
-      ];
+      { category: 'Tablets', count: 12, stock: 1200, percentage: 40 },
+      { category: 'Capsules', count: 8, stock: 750, percentage: 25 },
+      { category: 'Syrups', count: 6, stock: 450, percentage: 15 },
+      { category: 'Injections', count: 4, stock: 300, percentage: 10 },
+      { category: 'Supplies', count: 3, stock: 300, percentage: 10 },
+    ];
 
   // SVG Donut calculation
   const totalUnits = data.totalStockUnits || categories.reduce((s, c) => s + c.stock, 0);
@@ -215,17 +220,17 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
             {/* Outer dotted orbital rings */}
             <circle cx="120" cy="120" r="110" strokeWidth="1.5" strokeDasharray="6 6" opacity="0.35" />
             <circle cx="120" cy="120" r="92" strokeWidth="1" strokeDasharray="3 3" opacity="0.2" />
-            
+
             {/* Large proportionate capsule shell */}
             <rect x="85" y="30" width="70" height="180" rx="35" strokeWidth="3.5" />
-            
+
             {/* Center separation line */}
             <line x1="85" y1="120" x2="155" y2="120" strokeWidth="2.5" />
-            
+
             {/* Sleek medical cross accent in top chamber */}
             <line x1="120" y1="65" x2="120" y2="85" strokeWidth="3" strokeLinecap="round" opacity="0.75" />
             <line x1="110" y1="75" x2="130" y2="75" strokeWidth="3" strokeLinecap="round" opacity="0.75" />
-            
+
             {/* Bottom chamber accent dots */}
             <circle cx="120" cy="155" r="4.5" fill="currentColor" opacity="0.6" />
             <circle cx="120" cy="172" r="3" fill="currentColor" opacity="0.35" />
@@ -301,9 +306,8 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
               <div className="h-9 w-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
                 <TrendingUp className="h-4.5 w-4.5" />
               </div>
-              <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full flex items-center gap-0.5 ${
-                momGrowth >= 0 ? 'text-emerald-700 bg-emerald-50' : 'text-rose-700 bg-rose-50'
-              }`}>
+              <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full flex items-center gap-0.5 ${momGrowth >= 0 ? 'text-emerald-700 bg-emerald-50' : 'text-rose-700 bg-rose-50'
+                }`}>
                 {momGrowth >= 0 ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
                 {momGrowth > 0 ? `+${momGrowth}%` : `${momGrowth}%`}
               </span>
@@ -377,9 +381,8 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
               <div className="h-9 w-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
                 <AlertTriangle className="h-4.5 w-4.5" />
               </div>
-              <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full flex items-center gap-1 ${
-                data.lowStockCount > 0 ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'
-              }`}>
+              <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full flex items-center gap-1 ${data.lowStockCount > 0 ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'
+                }`}>
                 <AlertCircle className="h-3.5 w-3.5" />
                 {data.lowStockCount > 0 ? 'Needs attention' : 'Healthy'}
               </span>
@@ -825,21 +828,20 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
                         <td className="py-3.5 text-center">
                           <span className="inline-flex items-center gap-1.5 text-xs font-semibold whitespace-nowrap">
                             <span
-                              className={`h-2 w-2 rounded-full shrink-0 ${
-                                item.status === 'Healthy'
+                              className={`h-2 w-2 rounded-full shrink-0 ${item.status === 'Healthy'
                                   ? 'bg-[#0e7d5a]'
                                   : item.status === 'Low Stock'
-                                  ? 'bg-amber-500'
-                                  : 'bg-rose-500'
-                              }`}
+                                    ? 'bg-amber-500'
+                                    : 'bg-rose-500'
+                                }`}
                             />
                             <span
                               className={
                                 item.status === 'Healthy'
                                   ? 'text-[#0e7d5a]'
                                   : item.status === 'Low Stock'
-                                  ? 'text-amber-700'
-                                  : 'text-rose-700'
+                                    ? 'text-amber-700'
+                                    : 'text-rose-700'
                               }
                             >
                               {item.status}
@@ -889,10 +891,10 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
                   ins.type === 'revenue'
                     ? 'reports-sales'
                     : ins.type === 'warning'
-                    ? 'medicines'
-                    : ins.type === 'alert'
-                    ? 'stock-movements'
-                    : 'hms-requests';
+                      ? 'medicines'
+                      : ins.type === 'alert'
+                        ? 'stock-movements'
+                        : 'hms-requests';
                 return (
                   <div
                     key={ins.id}
@@ -962,11 +964,10 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
                       </span>
                     </div>
                     <span
-                      className={`font-semibold px-2 py-0.5 rounded-md shrink-0 text-[11px] ${
-                        m.currentStock <= 0 || m.isOutOfStock
+                      className={`font-semibold px-2 py-0.5 rounded-md shrink-0 text-[11px] ${m.currentStock <= 0 || m.isOutOfStock
                           ? 'text-rose-700 bg-rose-50 border border-rose-100'
                           : 'text-amber-700 bg-amber-50 border border-amber-100'
-                      }`}
+                        }`}
                     >
                       {m.currentStock <= 0 || m.isOutOfStock ? 'Out of stock' : `${m.currentStock} left`}
                     </span>
@@ -1019,11 +1020,10 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
                 {Array.from({ length: 12 }).map((_, i) => (
                   <span
                     key={i}
-                    className={`h-3.5 flex-1 rounded-xs transition-colors ${
-                      i < Math.min(12, data.nearExpiryCount || 0)
+                    className={`h-3.5 flex-1 rounded-xs transition-colors ${i < Math.min(12, data.nearExpiryCount || 0)
                         ? 'bg-rose-500'
                         : 'bg-slate-100'
-                    }`}
+                      }`}
                   />
                 ))}
               </div>
@@ -1092,13 +1092,12 @@ export const ManagementDashboardPage: React.FC<Props> = ({ onNavigate }) => {
                       </span>
                     </div>
                     <span
-                      className={`font-semibold px-2 py-0.5 rounded-md shrink-0 text-[11px] ${
-                        sup.openOrdersCount && sup.openOrdersCount > 0
+                      className={`font-semibold px-2 py-0.5 rounded-md shrink-0 text-[11px] ${sup.openOrdersCount && sup.openOrdersCount > 0
                           ? 'text-blue-700 bg-blue-50 border border-blue-100'
                           : sup.balance && sup.balance > 0
-                          ? 'text-amber-700 bg-amber-50 border border-amber-100'
-                          : 'text-slate-600 bg-slate-50 border border-slate-200'
-                      }`}
+                            ? 'text-amber-700 bg-amber-50 border border-amber-100'
+                            : 'text-slate-600 bg-slate-50 border border-slate-200'
+                        }`}
                     >
                       {sup.status}
                     </span>

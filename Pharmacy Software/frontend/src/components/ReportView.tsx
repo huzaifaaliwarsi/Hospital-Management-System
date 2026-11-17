@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Loader2, FileBarChart, Filter, RotateCcw, FileSpreadsheet, Download, FileText, Printer } from 'lucide-react';
 import apiClient from '../services/apiClient';
 import { formatPKR, formatNumber } from '../utils/format';
@@ -176,12 +177,60 @@ export const ReportView: React.FC<Props> = ({ type, title, subtitle, onNavigate,
   const isStatement = type === 'INCOME_EXPENSE' || type === 'OPERATING_PROFIT';
   const [from, setFrom] = useState(isStatement ? today : '');
   const [to, setTo] = useState(isStatement ? today : '');
-  const [rows, setRows] = useState<any[]>([]);
-  const [totals, setTotals] = useState<Record<string, number | null> | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [reportPeriod, setReportPeriod] = useState('');
-  const requestId = useRef(0);
-  const [error, setError] = useState<string | null>(null);
+
+  // TanStack Query for reporting with AbortSignal cancellation & 30s cache
+  const {
+    data: reportResult,
+    isLoading: loading,
+    error: queryError,
+    refetch: reloadReport,
+  } = useQuery({
+    queryKey: ['reports', type, from, to],
+    queryFn: async ({ signal }) => {
+      const r = await apiClient.get('/reports', {
+        signal,
+        params: {
+          type,
+          from: from ? `${from}T00:00:00+05:00` : undefined,
+          to: to ? `${to}T23:59:59.999+05:00` : undefined,
+        },
+      });
+      return {
+        rows: r.data.data.rows || [],
+        totals: r.data.data.totals || null,
+        totalCount: r.data.data.totalCount ?? (r.data.data.rows ? r.data.data.rows.length : 0),
+        period: `${from || 'Beginning'} to ${to || 'Present'} (Pakistan time)`,
+      };
+    },
+    staleTime: 30 * 1000,
+  });
+
+  const rows = reportResult?.rows || [];
+  const totals = reportResult?.totals || null;
+  const totalCount = reportResult?.totalCount ?? rows.length;
+  const reportPeriod = reportResult?.period || `${from || 'Beginning'} to ${to || 'Present'} (Pakistan time)`;
+  const error = queryError ? 'Failed to load report data.' : null;
+  const [exporting, setExporting] = useState(false);
+
+  const fetchFullExportRows = async () => {
+    if (!totalCount || totalCount <= rows.length) return rows;
+    setExporting(true);
+    try {
+      const r = await apiClient.get('/reports', {
+        params: {
+          type,
+          from: from ? `${from}T00:00:00+05:00` : undefined,
+          to: to ? `${to}T23:59:59.999+05:00` : undefined,
+          limit: Math.min(totalCount, 50000),
+        },
+      });
+      return r.data.data.rows || rows;
+    } catch {
+      return rows;
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const topScrollRef = useRef<HTMLDivElement>(null);
   const bottomScrollRef = useRef<HTMLDivElement>(null);
@@ -209,32 +258,17 @@ export const ReportView: React.FC<Props> = ({ type, title, subtitle, onNavigate,
     });
   };
 
-  const load = (start = from, end = to) => {
-    if (start && end && start > end) { setError('Start date must not follow end date.'); return; }
-    const request = ++requestId.current;
-    setLoading(true);
-    setError(null);
-    apiClient
-      .get('/reports', { params: { type, from: start ? `${start}T00:00:00+05:00` : undefined, to: end ? `${end}T23:59:59.999+05:00` : undefined } })
-      .then((r) => {
-        if (request !== requestId.current) return;
-        setReportPeriod(`${start || "Beginning"} to ${end || "Present"} (Pakistan time)`);
-        setRows(r.data.data.rows || []);
-        setTotals(r.data.data.totals || null);
-      })
-      .catch(() => { if (request === requestId.current) setError('Failed to load report data.'); })
-      .finally(() => { if (request === requestId.current) setLoading(false); });
+  const load = () => {
+    reloadReport();
   };
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { load(); }, [type]);
 
   const columns = REPORT_COLUMNS[type];
 
-  const handleExportCsv = () => {
-    if (loading || error || rows.length === 0) return;
+  const handleExportCsv = async () => {
+    if (loading || error || rows.length === 0 || exporting) return;
+    const dataset = await fetchFullExportRows();
     const headerRow = columns.map((c) => `"${c.label}"`).join(',');
-    const dataRows = rows.map((r) => columns.map((c) => `"${fmtCell(r[c.key], c).replace(/"/g, '""')}"`).join(','));
+    const dataRows = dataset.map((r: any) => columns.map((c) => `"${fmtCell(r[c.key], c).replace(/"/g, '""')}"`).join(','));
     const summaryRows = type === 'SALES_COLLECTION' && totals ? Object.entries(totals).map(([key,value]) => `"Summary: ${key}","${value ?? 'Unavailable'}"`) : [];
     const csvContent = [headerRow, ...dataRows, ...summaryRows].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -247,26 +281,30 @@ export const ReportView: React.FC<Props> = ({ type, title, subtitle, onNavigate,
     document.body.removeChild(link);
   };
 
-  const exportRows = () => [
+  const buildExportRows = (dataset: any[]) => [
     [title], [reportPeriod], [], columns.map(c => c.label),
-    ...rows.map(row => columns.map(c => c.money && row[c.key] != null ? Number(row[c.key]) : fmtCell(row[c.key],c))),
+    ...dataset.map(row => columns.map(c => c.money && row[c.key] != null ? Number(row[c.key]) : fmtCell(row[c.key],c))),
     ...(type === 'SALES_COLLECTION' && totals ? [[], ...Object.entries(totals).map(([key,value]) => [key, value ?? 'Unavailable'])] : []),
   ];
+
   const handleExportExcel = async () => {
-    if (loading || error || !rows.length) return;
+    if (loading || error || !rows.length || exporting) return;
+    const dataset = await fetchFullExportRows();
     const XLSX = await import('xlsx');
     const workbook = XLSX.utils.book_new();
-    const sheet = XLSX.utils.aoa_to_sheet(exportRows());
+    const sheet = XLSX.utils.aoa_to_sheet(buildExportRows(dataset));
     sheet['!cols'] = columns.map(c => ({ wch: c.key === 'metric' ? 50 : 26 }));
     XLSX.utils.book_append_sheet(workbook,sheet,'Report');
     XLSX.writeFile(workbook,type.toLowerCase() + '.xlsx');
   };
-  const handlePrint = () => {
-    if (loading || error || !rows.length) return;
+
+  const handlePrint = async () => {
+    if (loading || error || !rows.length || exporting) return;
+    const dataset = await fetchFullExportRows();
     const popup = window.open('', '_blank', 'width=1100,height=800');
-    if (!popup) { setError('Allow pop-ups to print or save PDF.'); return; }
+    if (!popup) { console.warn('Allow pop-ups to print or save PDF.'); return; }
     const escape = (v: unknown) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
-    popup.document.write('<html><head><title>' + escape(title) + '</title><style>body{font:12px Arial;padding:24px;color:#172033}table{border-collapse:collapse;width:100%}td{border:1px solid #cbd5e1;padding:8px}tr{break-inside:avoid}@media print{body{padding:0}}</style></head><body><table>' + exportRows().map(row => '<tr>'+ row.map(cell => '<td>'+escape(cell)+'</td>').join('')+'</tr>').join('')+'</table></body></html>');
+    popup.document.write('<html><head><title>' + escape(title) + '</title><style>body{font:12px Arial;padding:24px;color:#172033}table{border-collapse:collapse;width:100%}td{border:1px solid #cbd5e1;padding:8px}tr{break-inside:avoid}@media print{body{padding:0}}</style></head><body><table>' + buildExportRows(dataset).map(row => '<tr>'+ row.map(cell => '<td>'+escape(cell)+'</td>').join('')+'</tr>').join('')+'</table></body></html>');
     popup.document.close(); popup.focus(); popup.print();
   };
 
@@ -319,7 +357,7 @@ export const ReportView: React.FC<Props> = ({ type, title, subtitle, onNavigate,
             if (e.target.value === 'yesterday') date.setUTCDate(date.getUTCDate() - 1);
             const end = date.toISOString().slice(0,10);
             const start = e.target.value === 'this_month' ? today.slice(0,7) + '-01' : end;
-            setFrom(start); setTo(end); load(start,end);
+            setFrom(start); setTo(end);
           }}><option value="today">Today</option><option value="yesterday">Yesterday</option><option value="this_month">This Month</option><option value="custom">Custom Date Range</option></select>}
           <div className="w-36">
             <input
@@ -350,7 +388,6 @@ export const ReportView: React.FC<Props> = ({ type, title, subtitle, onNavigate,
               onClick={() => {
                 setFrom('');
                 setTo('');
-                load('', '');
               }}
               className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap"
               title="Reset Date Range"
@@ -363,8 +400,23 @@ export const ReportView: React.FC<Props> = ({ type, title, subtitle, onNavigate,
         <div className="text-xs text-slate-500 font-medium flex items-center gap-1.5">
           <FileBarChart className="h-3.5 w-3.5 text-emerald-600" />
           <span>
-            <strong className="text-slate-800">{rows.length}</strong> records generated
+            {totalCount > rows.length ? (
+              <>
+                Showing <strong className="text-slate-800">{rows.length}</strong> of{' '}
+                <strong className="text-slate-800">{totalCount.toLocaleString()}</strong> records
+                <span className="text-emerald-700 ml-1 font-semibold text-[11px]">(Exports include all {totalCount.toLocaleString()})</span>
+              </>
+            ) : (
+              <>
+                <strong className="text-slate-800">{rows.length}</strong> records generated
+              </>
+            )}
           </span>
+          {exporting && (
+            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 ml-2">
+              <Loader2 className="h-3 w-3 animate-spin text-emerald-600" /> Fetching full export dataset...
+            </span>
+          )}
         </div>
       </div>
 

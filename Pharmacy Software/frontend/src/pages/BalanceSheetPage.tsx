@@ -1,4 +1,6 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { queryClient, queryKeys } from '../queryClient';
 import { Loader2, AlertTriangle, Banknote, RotateCcw, RefreshCw, ArrowRight, CheckCircle2 } from 'lucide-react';
 import apiClient from '../services/apiClient';
 import { formatPKR } from '../utils/format';
@@ -68,44 +70,50 @@ const CATEGORY_LABEL: Record<string, string> = {
 
 export const BalanceSheetPage: React.FC<{ onNavigate: (page: string) => void }> = ({ onNavigate }) => {
   const { currentUser } = useAuth();
-  const [data, setData] = useState<BalanceSheetData | null>(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const today = new Date(Date.now() + 5 * 3600000).toISOString().slice(0, 10);
   const [period, setPeriod] = useState<SheetPeriod>('shift');
   const [fromDate, setFromDate] = useState(today);
   const [toDate, setToDate] = useState(today);
-  const requestId = useRef(0);
-  const load = useCallback(async () => {
-    const id = ++requestId.current;
-    if (period === 'custom' && (!fromDate || !toDate || fromDate > toDate)) {
-      setLoadError('Choose a valid From / To date range.');
-      setIsRefreshing(false);
-      return;
-    }
-    setIsRefreshing(true);
-    setLoadError(null);
-    try {
-      const { data: response } = await apiClient.get('/cash/balance-sheet', { params: {
-        preset: period, ...(period === 'custom' ? { fromDate, toDate } : {}),
-      } });
-      if (id !== requestId.current) return;
+
+  // TanStack Query with AbortSignal cancellation support (20s stale time, background SWR)
+  const {
+    data = null,
+    isLoading,
+    isFetching: isRefreshing,
+    error: queryError,
+    refetch: reloadSheet,
+  } = useQuery({
+    queryKey: ['financial', 'balanceSheet', period, period === 'custom' ? `${fromDate}:${toDate}` : ''],
+    queryFn: async ({ signal }) => {
+      const { data: response } = await apiClient.get('/cash/balance-sheet', {
+        signal,
+        params: {
+          preset: period,
+          ...(period === 'custom' ? { fromDate, toDate } : {}),
+        },
+      });
       const raw = response.data;
-      const summary = Object.fromEntries(Object.entries(raw.summary).map(([key, value]) => [key, Number(value ?? 0)])) as BalanceSheetData['summary'];
-      setData({ period: raw.period, summary, pendingSettlement: raw.pendingSettlement,
+      const summary = Object.fromEntries(
+        Object.entries(raw.summary).map(([key, value]) => [key, Number(value ?? 0)])
+      ) as BalanceSheetData['summary'];
+      return {
+        period: raw.period,
+        summary,
+        pendingSettlement: raw.pendingSettlement,
         transactions: raw.entries.map((entry: any) => ({
-          ...entry, amount: Number(entry.amount), receiptNumber: entry.documentReference,
+          ...entry,
+          amount: Number(entry.amount),
+          receiptNumber: entry.documentReference,
           invoiceNumber: null,
           paymentMethod: entry.paymentMethod || (entry.isPhysicalCash ? 'CASH' : 'NON-CASH'),
         })),
-      });
-    } catch (error: any) {
-      if (id === requestId.current) setLoadError(error?.response?.data?.error?.message || 'Unable to load balance sheet. Please retry.');
-    } finally {
-      if (id === requestId.current) setIsRefreshing(false);
-    }
-  }, [period, fromDate, toDate]);
-  useEffect(() => { void load(); return () => { requestId.current++; }; }, [load]);
+      } as BalanceSheetData;
+    },
+    staleTime: 20 * 1000,
+  });
+
+  const loadError = queryError ? (queryError as any)?.response?.data?.error?.message || 'Unable to load balance sheet. Please retry.' : null;
+  const load = () => reloadSheet();
 
   if (!data) return <div className="p-12 flex flex-col items-center gap-3 text-sm text-slate-500">
     {loadError ? <><AlertTriangle className="text-rose-600" /><p role="alert">{loadError}</p><button onClick={() => load()} className="px-4 py-2 bg-emerald-700 text-white rounded-lg">Retry</button></>
@@ -117,7 +125,7 @@ export const BalanceSheetPage: React.FC<{ onNavigate: (page: string) => void }> 
   const inTransactions = transactions.filter(t => t.direction === 'IN');
   const outTransactions = transactions.filter(t => t.direction === 'OUT');
   const exportReport = (kind: 'Excel' | 'CSV' | 'PDF' | 'Print') => {
-    void exportBalanceSheet(kind, data, currentUser?.fullName || '', CATEGORY_LABEL).catch(error => setLoadError(error.message));
+    void exportBalanceSheet(kind, data, currentUser?.fullName || '', CATEGORY_LABEL).catch(error => console.error(error.message));
   };
   return (
     <div className="p-6 sm:p-8 max-w-[1700px] mx-auto space-y-4 animate-in fade-in duration-150">

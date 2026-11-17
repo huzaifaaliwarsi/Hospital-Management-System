@@ -28,6 +28,20 @@ export interface Column<T> {
   sortable?: boolean;
 }
 
+export interface ServerPaginationConfig {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
+  onSearchChange?: (query: string) => void;
+  searchValue?: string;
+  sortBy?: string;
+  sortOrder?: 'asc' | 'desc';
+  onSortChange?: (field: string, order: 'asc' | 'desc') => void;
+}
+
 interface PharmacyDataTableProps<T> {
   printAllRows?: boolean;
   columns: Column<T>[];
@@ -48,6 +62,7 @@ interface PharmacyDataTableProps<T> {
   badge?: string;
   exportFileName?: string;
   minTableWidth?: string;
+  serverPagination?: ServerPaginationConfig;
 }
 
 export function PharmacyDataTable<T extends { id?: string | number }>({
@@ -70,6 +85,7 @@ export function PharmacyDataTable<T extends { id?: string | number }>({
   badge = 'Active Records',
   exportFileName = 'hospital_records',
   minTableWidth = '1300px',
+  serverPagination,
 }: PharmacyDataTableProps<T>) {
   const [search, setSearch] = useState('');
   const [inResultSearch, setInResultSearch] = useState('');
@@ -77,6 +93,12 @@ export function PharmacyDataTable<T extends { id?: string | number }>({
   const [currentPage, setCurrentPage] = useState(1);
   const [sortField, setSortField] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+
+  const isServer = Boolean(serverPagination);
+  const activePageSize = isServer ? serverPagination!.pageSize : pageSize;
+  const activePage = isServer ? serverPagination!.page : currentPage;
+  const activeSortField = isServer ? serverPagination?.sortBy : sortField;
+  const activeSortOrder = isServer ? (serverPagination?.sortOrder || 'desc') : sortOrder;
 
   // Dual Synchronized Scrollbars
   const topScrollRef = useRef<HTMLDivElement>(null);
@@ -106,8 +128,9 @@ export function PharmacyDataTable<T extends { id?: string | number }>({
     });
   };
 
-  // Filtered dataset
+  // Filtered dataset (client-side mode)
   const filteredData = useMemo(() => {
+    if (isServer) return data;
     let result = data;
 
     // Main search filter
@@ -150,26 +173,35 @@ export function PharmacyDataTable<T extends { id?: string | number }>({
     }
 
     return result;
-  }, [data, search, inResultSearch, searchFilter, sortField, sortOrder]);
+  }, [isServer, data, search, inResultSearch, searchFilter, sortField, sortOrder]);
 
   // Update dynamic scrollWidth
   useEffect(() => {
     if (bottomScrollRef.current) {
       setTableScrollWidth(bottomScrollRef.current.scrollWidth);
     }
-  }, [filteredData, pageSize, currentPage]);
+  }, [filteredData, activePageSize, activePage]);
 
-  // Pagination
-  const totalPages = Math.max(1, Math.ceil(filteredData.length / pageSize));
-  const validPage = Math.min(currentPage, totalPages);
+  // Pagination metrics
+  const totalEntries = isServer ? serverPagination!.total : filteredData.length;
+  const activeTotalPages = isServer ? serverPagination!.totalPages : Math.max(1, Math.ceil(filteredData.length / activePageSize));
+  const validPage = isServer ? activePage : Math.min(currentPage, activeTotalPages);
 
   const paginatedData = useMemo(() => {
-    const start = (validPage - 1) * pageSize;
-    return filteredData.slice(start, start + pageSize);
-  }, [filteredData, validPage, pageSize]);
+    if (isServer) return data;
+    const start = (validPage - 1) * activePageSize;
+    return filteredData.slice(start, start + activePageSize);
+  }, [isServer, data, filteredData, validPage, activePageSize]);
 
   // Handle Sort
   const handleSort = (field: string) => {
+    if (isServer && serverPagination?.onSortChange) {
+      const currentSort = serverPagination.sortBy;
+      const currentOrder = serverPagination.sortOrder || 'desc';
+      const newOrder = currentSort === field && currentOrder === 'asc' ? 'desc' : 'asc';
+      serverPagination.onSortChange(field, newOrder);
+      return;
+    }
     if (sortField === field) {
       setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
     } else {
@@ -184,6 +216,12 @@ export function PharmacyDataTable<T extends { id?: string | number }>({
     setInResultSearch('');
     setCurrentPage(1);
     setSortField(null);
+    if (isServer && serverPagination?.onSearchChange) {
+      serverPagination.onSearchChange('');
+    }
+    if (isServer && serverPagination?.onPageChange) {
+      serverPagination.onPageChange(1);
+    }
     if (onResetFilters) {
       onResetFilters();
     }
@@ -278,10 +316,14 @@ export function PharmacyDataTable<T extends { id?: string | number }>({
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
             <input
               type="text"
-              value={search}
+              value={isServer && serverPagination?.searchValue !== undefined ? serverPagination.searchValue : search}
               onChange={(e) => {
-                setSearch(e.target.value);
-                setCurrentPage(1);
+                if (isServer && serverPagination?.onSearchChange) {
+                  serverPagination.onSearchChange(e.target.value);
+                } else {
+                  setSearch(e.target.value);
+                  setCurrentPage(1);
+                }
               }}
               onKeyDown={(e) => e.key === 'Enter' && onApplyFilters && onApplyFilters()}
               placeholder={searchPlaceholder}
@@ -386,20 +428,26 @@ export function PharmacyDataTable<T extends { id?: string | number }>({
           <div className="flex items-center gap-3 text-slate-500 font-medium text-xs">
             <span className="whitespace-nowrap">
               Showing <strong className="text-slate-800">{paginatedData.length}</strong> of{' '}
-              <strong className="text-slate-800">{filteredData.length}</strong> records
+              <strong className="text-slate-800">{totalEntries}</strong> records
             </span>
             <div className="flex items-center gap-1.5 whitespace-nowrap">
               <span>Per page:</span>
               <select
-                value={pageSize}
+                value={activePageSize}
                 onChange={(e) => {
-                  setPageSize(Number(e.target.value));
-                  setCurrentPage(1);
+                  const newSize = Number(e.target.value);
+                  if (isServer) {
+                    serverPagination!.onPageSizeChange(newSize);
+                  } else {
+                    setPageSize(newSize);
+                    setCurrentPage(1);
+                  }
                 }}
                 className="bg-white border border-slate-200 rounded-md px-2 py-0.5 text-xs text-slate-700 focus:outline-none"
               >
                 <option value={10}>10</option>
                 <option value={15}>15</option>
+                <option value={20}>20</option>
                 <option value={25}>25</option>
                 <option value={50}>50</option>
                 <option value={100}>100</option>
@@ -457,8 +505,8 @@ export function PharmacyDataTable<T extends { id?: string | number }>({
                       }`}
                     >
                       <span>{col.header}</span>
-                      {sortField === col.key ? (
-                        sortOrder === 'asc' ? (
+                      {activeSortField === col.key ? (
+                        activeSortOrder === 'asc' ? (
                           <ArrowUp className="h-3 w-3 text-[#0e7d5a]" />
                         ) : (
                           <ArrowDown className="h-3 w-3 text-[#0e7d5a]" />
@@ -502,7 +550,7 @@ export function PharmacyDataTable<T extends { id?: string | number }>({
                 </tr>
               ) : (
                 paginatedData.map((row, idx) => {
-                  const globalIdx = (validPage - 1) * pageSize + idx + 1;
+                  const globalIdx = (validPage - 1) * activePageSize + idx + 1;
                   return (
                     <tr
                       key={row.id || idx}
@@ -542,20 +590,20 @@ export function PharmacyDataTable<T extends { id?: string | number }>({
           <div className="whitespace-nowrap">
             Showing{' '}
             <strong className="text-slate-800">
-              {filteredData.length === 0 ? 0 : (validPage - 1) * pageSize + 1}
+              {totalEntries === 0 ? 0 : (validPage - 1) * activePageSize + 1}
             </strong>{' '}
             to{' '}
             <strong className="text-slate-800">
-              {Math.min(validPage * pageSize, filteredData.length)}
+              {Math.min(validPage * activePageSize, totalEntries)}
             </strong>{' '}
-            of <strong className="text-slate-800">{filteredData.length}</strong> entries
+            of <strong className="text-slate-800">{totalEntries}</strong> entries
           </div>
 
           <div className="flex items-center gap-1.5 whitespace-nowrap">
             <button
               type="button"
               disabled={validPage <= 1}
-              onClick={() => setCurrentPage(1)}
+              onClick={() => (isServer ? serverPagination!.onPageChange(1) : setCurrentPage(1))}
               className="p-1 rounded-md border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer"
               title="First Page"
             >
@@ -564,7 +612,7 @@ export function PharmacyDataTable<T extends { id?: string | number }>({
             <button
               type="button"
               disabled={validPage <= 1}
-              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              onClick={() => (isServer ? serverPagination!.onPageChange(Math.max(1, validPage - 1)) : setCurrentPage((p) => Math.max(1, p - 1)))}
               className="p-1 rounded-md border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer"
               title="Previous Page"
             >
@@ -572,13 +620,13 @@ export function PharmacyDataTable<T extends { id?: string | number }>({
             </button>
 
             <span className="px-2.5 py-0.5 text-xs font-semibold bg-emerald-50 text-[#0e7d5a] rounded-md border border-emerald-200/80">
-              Page {validPage} of {totalPages}
+              Page {validPage} of {activeTotalPages}
             </span>
 
             <button
               type="button"
-              disabled={validPage >= totalPages}
-              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              disabled={validPage >= activeTotalPages}
+              onClick={() => (isServer ? serverPagination!.onPageChange(Math.min(activeTotalPages, validPage + 1)) : setCurrentPage((p) => Math.min(activeTotalPages, p + 1)))}
               className="p-1 rounded-md border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer"
               title="Next Page"
             >
@@ -586,8 +634,8 @@ export function PharmacyDataTable<T extends { id?: string | number }>({
             </button>
             <button
               type="button"
-              disabled={validPage >= totalPages}
-              onClick={() => setCurrentPage(totalPages)}
+              disabled={validPage >= activeTotalPages}
+              onClick={() => (isServer ? serverPagination!.onPageChange(activeTotalPages) : setCurrentPage(activeTotalPages))}
               className="p-1 rounded-md border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer"
               title="Last Page"
             >

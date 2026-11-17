@@ -17,6 +17,7 @@ import {
   Hash,
 } from 'lucide-react';
 import apiClient from '../services/apiClient';
+import { queryClient, queryKeys } from '../queryClient';
 import { pharmacyApi, MedicineRow, MarkupRule, Unit } from '../services/pharmacyApi';
 import { formatPKR, formatNumber } from '../utils/format';
 import { useToast } from '../context/ToastContext';
@@ -248,6 +249,11 @@ export const StockInPage: React.FC<Props> = ({ prefill, onConsumedPrefill }) => 
         setTimeout(() => window.print(), 50);
       }
       resetForm();
+      queryClient.invalidateQueries({ queryKey: queryKeys.pos.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.medicines.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.vendors.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.financial.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
       pharmacyApi.listMedicines().then((meds) => setMedicines(meds || []));
       refreshPurchaseRef();
     } catch (err: any) {

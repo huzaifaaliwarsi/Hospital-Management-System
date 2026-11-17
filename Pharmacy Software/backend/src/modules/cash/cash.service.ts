@@ -110,15 +110,15 @@ export const cashService = {
   },
 
   /** pharmacy.md §11.2 — Expected Cash is read-only/system-calculated; user only supplies Physical Cash. */
-  async submitSettlement(userId: string, body: SubmitSettlementBody) {
-    const expected = await expectedCash(userId);
-    const physical = new Decimal(body.physicalCash);
-    const variance = physical.minus(expected);
-    if (!variance.equals(0) && !body.varianceReason) {
-      throw new ValidationError('A non-zero variance requires a reason');
-    }
+  async submitSettlement(userId: string, body: SubmitSettlementBody, transaction?: Prisma.TransactionClient) {
+    const runInTx = async (tx: Prisma.TransactionClient) => {
+      const expected = await expectedCash(userId, tx);
+      const physical = new Decimal(body.physicalCash);
+      const variance = physical.minus(expected);
+      if (!variance.equals(0) && !body.varianceReason) {
+        throw new ValidationError('A non-zero variance requires a reason');
+      }
 
-    return prisma.$transaction(async (tx) => {
       const settlementNumber = await nextCode(tx, SEQUENCE.SETTLEMENT);
       return tx.accountSettlement.create({
         data: {
@@ -133,15 +133,17 @@ export const cashService = {
           status: 'SUBMITTED',
         },
       });
-    });
+    };
+
+    return transaction ? runInTx(transaction) : prisma.$transaction(runInTx);
   },
 
-  async reviewSettlement(id: string, body: ReviewSettlementBody, reviewerId: string) {
-    const settlement = await prisma.accountSettlement.findUnique({ where: { id } });
-    if (!settlement) throw new NotFoundError('Settlement not found');
-    if (settlement.status !== 'SUBMITTED') throw new ConflictError('This settlement has already been reviewed');
+  async reviewSettlement(id: string, body: ReviewSettlementBody, reviewerId: string, transaction?: Prisma.TransactionClient) {
+    const runInTx = async (tx: Prisma.TransactionClient) => {
+      const settlement = await tx.accountSettlement.findUnique({ where: { id } });
+      if (!settlement) throw new NotFoundError('Settlement not found');
+      if (settlement.status !== 'SUBMITTED') throw new ConflictError('This settlement has already been reviewed');
 
-    return prisma.$transaction(async (tx) => {
       if (body.decision === 'ACCEPTED') {
         // Fold every physical-cash entry that existed as of submission into it — Expected Cash resets to 0 going
         // forward. Must use `submittedAt` (a precise timestamp), not `periodTo` (a date-only audit-period label):
@@ -160,7 +162,9 @@ export const cashService = {
         where: { id },
         data: { status: body.decision, reviewedById: reviewerId, reviewedAt: new Date(), settlementAmount: body.decision === 'ACCEPTED' ? settlement.physicalCash : 0 },
       });
-    });
+    };
+
+    return transaction ? runInTx(transaction) : prisma.$transaction(runInTx);
   },
 
   async listSettlements(query: ListSettlementsQuery) {

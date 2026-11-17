@@ -1,4 +1,6 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { queryClient, queryKeys } from '../queryClient';
 import { Loader2, Check, X as XIcon, DollarSign, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
 import apiClient from '../services/apiClient';
 import { formatPKR } from '../utils/format';
@@ -13,9 +15,22 @@ const STATUS_STYLE: Record<string, string> = {
 };
 
 export const SettlementsPage: React.FC<{ canReview: boolean }> = ({ canReview }) => {
-  const [rows, setRows] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [expected, setExpected] = useState<number | null>(null);
+  const {
+    data: rows = [],
+    isLoading: loading,
+    refetch: reloadSettlements,
+  } = useQuery({
+    queryKey: queryKeys.financial.settlements(),
+    queryFn: () => apiClient.get('/cash/settlements').then((r) => r.data.data),
+    staleTime: 20 * 1000,
+  });
+
+  const { data: expected = null } = useQuery({
+    queryKey: queryKeys.financial.balanceSheet(),
+    queryFn: () => apiClient.get('/cash/balance-sheet').then((r) => Number(r.data.data.expectedCash)),
+    staleTime: 20 * 1000,
+  });
+
   const [physicalCash, setPhysicalCash] = useState('');
   const [periodFrom, setPeriodFrom] = useState(new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10));
   const [periodTo, setPeriodTo] = useState(new Date().toISOString().slice(0, 10));
@@ -24,18 +39,8 @@ export const SettlementsPage: React.FC<{ canReview: boolean }> = ({ canReview })
   const toast = useToast();
 
   const load = () => {
-    setLoading(true);
-    apiClient
-      .get('/cash/settlements')
-      .then((r) => setRows(r.data.data))
-      .catch(() => toast.error('Failed to load settlements.'))
-      .finally(() => setLoading(false));
+    reloadSettlements();
   };
-
-  useEffect(() => {
-    load();
-    apiClient.get('/cash/balance-sheet').then((r) => setExpected(Number(r.data.data.expectedCash)));
-  }, []);
 
   const handleSubmit = async () => {
     if (physicalCash === '') return toast.error('Enter your counted physical cash.');
@@ -50,6 +55,8 @@ export const SettlementsPage: React.FC<{ canReview: boolean }> = ({ canReview })
       toast.success('Settlement submitted for review.');
       setPhysicalCash('');
       setVarianceReason('');
+      queryClient.invalidateQueries({ queryKey: queryKeys.financial.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
       load();
     } catch (err: any) {
       toast.error(err?.response?.data?.error?.message || 'Failed to submit settlement.');
@@ -62,6 +69,8 @@ export const SettlementsPage: React.FC<{ canReview: boolean }> = ({ canReview })
     try {
       await apiClient.post(`/cash/settlements/${id}/review`, { decision });
       toast.success(`Settlement ${decision.toLowerCase()}.`);
+      queryClient.invalidateQueries({ queryKey: queryKeys.financial.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
       load();
     } catch (err: any) {
       toast.error(err?.response?.data?.error?.message || 'Failed to review settlement.');

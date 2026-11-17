@@ -18,6 +18,8 @@ import { formatNumber, formatDateTime } from '../utils/format';
 import { useToast } from '../context/ToastContext';
 import { PharmacyKpiHeader, KpiItem } from '../components/PharmacyKpiHeader';
 import { PharmacyDataTable, Column } from '../components/PharmacyDataTable';
+import { useQuery } from '@tanstack/react-query';
+import { queryClient, queryKeys } from '../queryClient';
 
 const TYPE_CONFIG: Record<string, { label: string; style: string }> = {
   PURCHASE_IN: { label: 'Purchase In', style: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
@@ -41,9 +43,23 @@ const ADJUSTMENT_TYPES = [
 
 export const StockMovementsPage: React.FC<{ canAdjust: boolean }> = ({ canAdjust }) => {
   const toast = useToast();
-  const [rows, setRows] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [medicines, setMedicines] = useState<MedicineRow[]>([]);
+
+  const {
+    data: rows = [],
+    isLoading: loading,
+    refetch: reloadMovements,
+  } = useQuery({
+    queryKey: ['pharmacy', 'stock-movements'],
+    queryFn: () => apiClient.get('/pharmacy/stock-movements').then((r) => r.data.data),
+    staleTime: 30 * 1000,
+  });
+
+  const { data: medicines = [] } = useQuery({
+    queryKey: queryKeys.medicines.paginated({}),
+    queryFn: () => pharmacyApi.listMedicines(),
+    staleTime: 60 * 1000,
+  });
+
   const [showAdjust, setShowAdjust] = useState(false);
   const [form, setForm] = useState({ medicineId: '', type: 'DAMAGE', quantity: '', reason: '' });
   const [saving, setSaving] = useState(false);
@@ -52,19 +68,8 @@ export const StockMovementsPage: React.FC<{ canAdjust: boolean }> = ({ canAdjust
   const [typeFilter, setTypeFilter] = useState('ALL');
 
   const load = () => {
-    setLoading(true);
-    apiClient
-      .get('/pharmacy/stock-movements')
-      .then((r) => setRows(r.data.data))
-      .catch(() => toast.error('Failed to load stock movements.'))
-      .finally(() => setLoading(false));
+    reloadMovements();
   };
-
-  useEffect(() => {
-    load();
-    pharmacyApi.listMedicines().then(setMedicines);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Top KPI calculations
   const totalMovements = rows.length;
@@ -126,6 +131,10 @@ export const StockMovementsPage: React.FC<{ canAdjust: boolean }> = ({ canAdjust
       toast.success('Stock adjustment posted successfully.');
       setShowAdjust(false);
       setForm({ medicineId: '', type: 'DAMAGE', quantity: '', reason: '' });
+      queryClient.invalidateQueries({ queryKey: ['pharmacy', 'stock-movements'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.medicines.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.pos.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
       load();
     } catch (err: any) {
       toast.error(err?.response?.data?.error?.message || 'Failed to post adjustment.');

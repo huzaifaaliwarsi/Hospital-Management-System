@@ -1,5 +1,8 @@
 import { CollectionAccountSelect } from '../components/CollectionAccountSelect';
 import React, { useEffect, useMemo, useState, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { queryClient, queryKeys } from '../queryClient';
+import { usePharmacyUIStore } from '../store/usePharmacyUIStore';
 import {
   Search,
   Plus,
@@ -143,27 +146,66 @@ const PAYMENT_METHODS: { value: PaymentRow['method']; label: string }[] = [
 
 export const PosPage: React.FC = () => {
   const toast = useToast();
+  const posUI = usePharmacyUIStore((s) => s.pos);
+  const setPosUI = usePharmacyUIStore((s) => s.setPosState);
+  const resetPosCart = usePharmacyUIStore((s) => s.resetPosCart);
 
-  // All catalog medicines & units
-  const [allMedicines, setAllMedicines] = useState<MedicineRow[]>([]);
-  const [unitCatalog, setUnitCatalog] = useState<Unit[]>([]);
-  const [loadingMedicines, setLoadingMedicines] = useState(true);
+  // TanStack Query for lightweight POS catalog (30s staleTime, 15s SWR background poll, instant revisit)
+  const {
+    data: allMedicines = [],
+    isLoading: loadingMedicines,
+    refetch: reloadMedicines,
+  } = useQuery({
+    queryKey: queryKeys.pos.catalog(),
+    queryFn: () => pharmacyApi.getPosCatalog().then((rows) => rows.filter((r) => r.isActive)),
+    staleTime: 30 * 1000,
+    refetchInterval: 15 * 1000,
+    refetchOnWindowFocus: true,
+  });
 
-  // Search & category filters
-  const [search, setSearch] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('ALL');
+  const { data: unitCatalog = [] } = useQuery({
+    queryKey: queryKeys.medicines.units(),
+    queryFn: () => pharmacyApi.listUnits(),
+    staleTime: 15 * 60 * 1000,
+  });
 
-  // Cart & checkout
-  const [cart, setCart] = useState<CartLine[]>([]);
-  const [customerName, setCustomerName] = useState('');
-  const [invoiceDiscount, setInvoiceDiscount] = useState('0');
-  const [invoiceDiscountType, setInvoiceDiscountType] = useState<'PKR' | 'PERCENT'>('PKR');
-  const [payments, setPayments] = useState<PaymentRow[]>([{ method: 'CASH', amount: '' }]);
+  const { data: pharmacySettings } = useQuery({
+    queryKey: queryKeys.settings(),
+    queryFn: () => pharmacyApi.getPharmacySettings(),
+    staleTime: 15 * 60 * 1000,
+  });
+
+  // Search & category filters - preserved in Zustand across navigation
+  const [search, setSearch] = useState(posUI.search);
+  const [selectedCategory, setSelectedCategory] = useState(posUI.selectedCategory);
+
+  // Cart & checkout - preserved in Zustand across same-user tab switches
+  const [cart, setCart] = useState<CartLine[]>(posUI.cart);
+  const [customerName, setCustomerName] = useState(posUI.customerName);
+  const [invoiceDiscount, setInvoiceDiscount] = useState(posUI.invoiceDiscount);
+  const [invoiceDiscountType, setInvoiceDiscountType] = useState<'PKR' | 'PERCENT'>(posUI.invoiceDiscountType);
+  const [payments, setPayments] = useState<PaymentRow[]>(posUI.payments);
   const [paymentManuallyEdited, setPaymentManuallyEdited] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [receipt, setReceipt] = useState<any | null>(null);
-  const [pharmacySettings, setPharmacySettings] = useState<any>(null);
   const [hospitalProfile, setHospitalProfile] = useState<any>(null);
+
+  // Synchronize state preservation to Zustand
+  useEffect(() => {
+    setPosUI({
+      cart,
+      customerName,
+      invoiceDiscount,
+      invoiceDiscountType,
+      payments,
+      search,
+      selectedCategory,
+    });
+  }, [cart, customerName, invoiceDiscount, invoiceDiscountType, payments, search, selectedCategory, setPosUI]);
+
+  const loadMedicines = () => {
+    reloadMedicines();
+  };
 
   // Quick Add Medicine Modal state
   const [showAddMedicineModal, setShowAddMedicineModal] = useState(false);
@@ -180,28 +222,24 @@ export const PosPage: React.FC = () => {
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Load medicines & units on mount
-  const loadMedicines = () => {
-    setLoadingMedicines(true);
-    pharmacyApi
-      .listMedicines()
-      .then((rows) => {
-        setAllMedicines(rows.filter((r) => r.isActive));
-      })
-      .catch(() => toast.error('Failed to load medicines for POS.'))
-      .finally(() => setLoadingMedicines(false));
-  };
-
   useEffect(() => {
-    loadMedicines();
-    pharmacyApi.listUnits().then(setUnitCatalog).catch(() => {});
-    pharmacyApi.getPharmacySettings().then(setPharmacySettings).catch(() => {});
-    fetch(`${HMS_BASE_URL}/public/hospital-profile`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (d?.data) setHospitalProfile(d.data);
-      })
-      .catch(() => {});
+    // Safe short-lived sessionStorage cache for hospital profile (avoid cross-port lag on every mount)
+    const cachedProfile = sessionStorage.getItem('hms_hospital_profile');
+    if (cachedProfile) {
+      try {
+        setHospitalProfile(JSON.parse(cachedProfile));
+      } catch {}
+    } else {
+      fetch(`${HMS_BASE_URL}/public/hospital-profile`)
+        .then((r) => r.json())
+        .then((d) => {
+          if (d?.data) {
+            setHospitalProfile(d.data);
+            try { sessionStorage.setItem('hms_hospital_profile', JSON.stringify(d.data)); } catch {}
+          }
+        })
+        .catch(() => {});
+    }
   }, []);
 
   // Keyboard shortcut: '/' to focus search, Ctrl+Enter to complete sale
@@ -231,7 +269,7 @@ export const PosPage: React.FC = () => {
     return Array.from(set).sort();
   }, [allMedicines]);
 
-  // Filtered medicines displayed in the POS product catalog
+  // Filtered medicines displayed in the POS product catalog (with Barcode & Generic search)
   const filteredMedicines = useMemo(() => {
     const q = search.trim().toLowerCase();
     return allMedicines.filter((m) => {
@@ -240,6 +278,8 @@ export const PosPage: React.FC = () => {
       return (
         m.name.toLowerCase().includes(q) ||
         m.code.toLowerCase().includes(q) ||
+        (m.barcode && m.barcode.toLowerCase().includes(q)) ||
+        (m.genericName && m.genericName.toLowerCase().includes(q)) ||
         (m.category && m.category.toLowerCase().includes(q))
       );
     });
@@ -286,6 +326,7 @@ export const PosPage: React.FC = () => {
     setInvoiceDiscountType('PKR');
     setPaymentManuallyEdited(false);
     setPayments([{ method: 'CASH', amount: '' }]);
+    resetPosCart();
   };
 
   // Financial totals
@@ -368,10 +409,11 @@ export const PosPage: React.FC = () => {
       toast.error('Your POS cart is empty. Click on medicines to add them.');
       return;
     }
+    if (submitting) return;
     const validPayments = payments.filter((p) => Number(p.amount) > 0);
     setSubmitting(true);
     try {
-      const invoice = await pharmacyApi.dispenseRetail({
+      const res = await pharmacyApi.dispenseRetail({
         customerName: customerName.trim() || undefined,
         lines: cart.map((l) => ({
           medicineId: l.medicine.id,
@@ -382,16 +424,43 @@ export const PosPage: React.FC = () => {
         invoiceDiscount: totals.invDiscount,
         payments: validPayments.map((p) => ({ method: p.method, amount: Number(p.amount), paymentAccountId: p.method === 'CASH' ? undefined : p.paymentAccountId })),
       });
-      // Fetch full invoice with complete batch and relation data
-      const fullInvoice = await pharmacyApi.getInvoiceById(invoice.id).catch(() => invoice);
-      toast.success(`Sale completed successfully — Invoice ${invoice.invoiceNumber}`);
+
+      toast.success(`Sale completed successfully — Invoice ${res.invoiceNumber}`);
       clearCart();
-      loadMedicines();
-      setReceipt(fullInvoice);
+
+      // Cancel any active in-flight pos catalog queries to prevent race conditions
+      await queryClient.cancelQueries({ queryKey: queryKeys.pos.catalog() });
+
+      // Batch 2 + Batch 3: Authoritative Targeted Stock Update without full catalog reload!
+      if (res.updatedStock && Array.isArray(res.updatedStock)) {
+        queryClient.setQueryData<MedicineRow[]>(queryKeys.pos.catalog(), (prevMeds) => {
+          if (!prevMeds) return prevMeds;
+          const updateMap = new Map(res.updatedStock!.map((u) => [u.medicineId, u]));
+          return prevMeds.map((med) => {
+            const update = updateMap.get(med.id);
+            if (!update) return med;
+            return {
+              ...med,
+              currentStock: update.currentStock,
+              isLowStock: update.isLowStock,
+              isOutOfStock: update.isOutOfStock,
+              activeBatches: update.activeBatches,
+            };
+          });
+        });
+      }
+
+      // Invalidate related inventory, dashboard, invoice, and financial queries
+      queryClient.invalidateQueries({ queryKey: queryKeys.medicines.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.invoices.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.financial.all });
+
+      setReceipt(res);
 
       // Auto-trigger authentic 80mm thermal receipt printing via isolated iframe
       try {
-        const receiptData = buildPharmacyThermalReceiptData(fullInvoice, pharmacySettings, hospitalProfile);
+        const receiptData = buildPharmacyThermalReceiptData(res, pharmacySettings, hospitalProfile);
         printPharmacyThermalReceipt(receiptData);
       } catch (printErr) {
         console.error('Thermal receipt print error:', printErr);
@@ -441,7 +510,9 @@ export const PosPage: React.FC = () => {
         reorderLevel: '10',
         taxPercent: '0',
       });
-      loadMedicines();
+      queryClient.invalidateQueries({ queryKey: queryKeys.pos.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.medicines.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
     } catch (err: any) {
       toast.error(err?.response?.data?.error?.message || 'Failed to add medicine.');
     } finally {
@@ -530,7 +601,21 @@ export const PosPage: React.FC = () => {
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search medicine name, code, category, or generic… (Press '/' to focus)"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && search.trim()) {
+                    e.preventDefault();
+                    const q = search.trim().toLowerCase();
+                    const exact = filteredMedicines.find(
+                      (m) => m.barcode?.toLowerCase() === q || m.code.toLowerCase() === q
+                    );
+                    const target = exact || (filteredMedicines.length === 1 ? filteredMedicines[0] : null);
+                    if (target) {
+                      handleProductClick(target);
+                      setSearch('');
+                    }
+                  }
+                }}
+                placeholder="Search medicine name, code, barcode, or generic… (Press '/' to focus)"
                 className="w-full h-9 pl-9 pr-8 text-xs font-medium bg-slate-50 hover:bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1.5 focus:ring-[#0e7d5a]/25 focus:border-[#0e7d5a] text-slate-900 transition-colors placeholder:text-slate-400"
               />
               {search && (

@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { queryClient, queryKeys } from '../queryClient';
 import {
   Plus,
   Loader2,
@@ -57,11 +59,34 @@ interface Props {
  */
 export const PurchaseOrdersPage: React.FC<Props> = ({ canEdit, onConvert }) => {
   const toast = useToast();
-  const [orders, setOrders] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [vendors, setVendors] = useState<any[]>([]);
-  const [medicines, setMedicines] = useState<MedicineRow[]>([]);
-  const [unitCatalog, setUnitCatalog] = useState<Unit[]>([]);
+  // TanStack Query for Purchase Orders & reference catalogs
+  const {
+    data: orders = [],
+    isLoading: loading,
+    refetch: reloadOrders,
+  } = useQuery({
+    queryKey: queryKeys.purchases.list(),
+    queryFn: () => pharmacyApi.listPurchaseOrders(),
+    staleTime: 60 * 1000,
+  });
+
+  const { data: vendors = [] } = useQuery({
+    queryKey: queryKeys.vendors.list(),
+    queryFn: () => pharmacyApi.listVendors(),
+    staleTime: 15 * 60 * 1000,
+  });
+
+  const { data: medicines = [] } = useQuery({
+    queryKey: queryKeys.medicines.paginated({}),
+    queryFn: () => pharmacyApi.listMedicines(),
+    staleTime: 60 * 1000,
+  });
+
+  const { data: unitCatalog = [] } = useQuery({
+    queryKey: queryKeys.medicines.units(),
+    queryFn: () => pharmacyApi.listUnits(),
+    staleTime: 15 * 60 * 1000,
+  });
 
   const [showCreate, setShowCreate] = useState(false);
   const [nextOrderCode, setNextOrderCode] = useState('');
@@ -77,21 +102,8 @@ export const PurchaseOrdersPage: React.FC<Props> = ({ canEdit, onConvert }) => {
   const [lines, setLines] = useState<OrderLineForm[]>([emptyLine()]);
 
   const load = () => {
-    setLoading(true);
-    pharmacyApi
-      .listPurchaseOrders()
-      .then(setOrders)
-      .catch(() => toast.error('Failed to load purchase orders.'))
-      .finally(() => setLoading(false));
+    reloadOrders();
   };
-
-  useEffect(() => {
-    load();
-    pharmacyApi.listVendors().then(setVendors).catch(() => {});
-    pharmacyApi.listMedicines().then((meds) => setMedicines(meds || [])).catch(() => {});
-    pharmacyApi.listUnits().then(setUnitCatalog).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const openCreate = () => {
     setVendorId('');
@@ -188,6 +200,7 @@ export const PurchaseOrdersPage: React.FC<Props> = ({ canEdit, onConvert }) => {
       });
       toast.success('Purchase order created.');
       setShowCreate(false);
+      queryClient.invalidateQueries({ queryKey: queryKeys.purchases.all });
       load();
     } catch (err: any) {
       toast.error(err?.response?.data?.error?.message || 'Failed to create purchase order.');
@@ -200,6 +213,7 @@ export const PurchaseOrdersPage: React.FC<Props> = ({ canEdit, onConvert }) => {
     try {
       await pharmacyApi.cancelPurchaseOrder(order.id);
       toast.success(`Purchase order ${order.orderNumber} cancelled.`);
+      queryClient.invalidateQueries({ queryKey: queryKeys.purchases.all });
       load();
     } catch (err: any) {
       toast.error(err?.response?.data?.error?.message || 'Failed to cancel purchase order.');
@@ -687,7 +701,7 @@ export const PurchaseOrdersPage: React.FC<Props> = ({ canEdit, onConvert }) => {
         open={showAddVendorModal}
         onClose={() => setShowAddVendorModal(false)}
         onCreated={(v) => {
-          setVendors((prev) => [...prev, v]);
+          queryClient.invalidateQueries({ queryKey: queryKeys.vendors.all });
           setVendorId(v.id);
         }}
       />
@@ -696,9 +710,9 @@ export const PurchaseOrdersPage: React.FC<Props> = ({ canEdit, onConvert }) => {
         open={addMedicineForLineIdx !== null}
         onClose={() => setAddMedicineForLineIdx(null)}
         units={unitCatalog}
-        onUnitCreated={(u) => setUnitCatalog((prev) => [...prev, u])}
+        onUnitCreated={() => queryClient.invalidateQueries({ queryKey: queryKeys.medicines.units() })}
         onCreated={(med) => {
-          setMedicines((prev) => [...prev, med]);
+          queryClient.invalidateQueries({ queryKey: queryKeys.medicines.all });
           if (addMedicineForLineIdx !== null) updateLine(addMedicineForLineIdx, { medicineId: med.id });
           setAddMedicineForLineIdx(null);
         }}

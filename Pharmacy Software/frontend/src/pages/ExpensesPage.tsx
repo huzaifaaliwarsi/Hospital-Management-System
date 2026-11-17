@@ -1,4 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { queryClient, queryKeys } from '../queryClient';
 import { Loader2, Plus, X, Check, DollarSign, CheckCircle2, Clock, Receipt } from 'lucide-react';
 import apiClient from '../services/apiClient';
 import { formatPKR } from '../utils/format';
@@ -16,8 +18,16 @@ const emptyForm = {
 };
 
 export const ExpensesPage: React.FC<{ canApprove: boolean }> = ({ canApprove }) => {
-  const [rows, setRows] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const {
+    data: rows = [],
+    isLoading: loading,
+    refetch: reloadExpenses,
+  } = useQuery({
+    queryKey: queryKeys.financial.expenses(),
+    queryFn: () => apiClient.get('/expenses').then((r) => r.data.data),
+    staleTime: 30 * 1000,
+  });
+
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
@@ -26,15 +36,8 @@ export const ExpensesPage: React.FC<{ canApprove: boolean }> = ({ canApprove }) 
   const toast = useToast();
 
   const load = () => {
-    setLoading(true);
-    apiClient
-      .get('/expenses')
-      .then((r) => setRows(r.data.data))
-      .catch(() => toast.error('Failed to load expenses.'))
-      .finally(() => setLoading(false));
+    reloadExpenses();
   };
-
-  useEffect(load, []);
 
   // Distinct categories
   const categories = useMemo(() => {
@@ -107,6 +110,8 @@ export const ExpensesPage: React.FC<{ canApprove: boolean }> = ({ canApprove }) 
       toast.success('Expense recorded.');
       setShowAdd(false);
       setForm(emptyForm);
+      queryClient.invalidateQueries({ queryKey: queryKeys.financial.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
       load();
     } catch (err: any) {
       toast.error(err?.response?.data?.error?.message || 'Failed to record expense.');
@@ -119,6 +124,8 @@ export const ExpensesPage: React.FC<{ canApprove: boolean }> = ({ canApprove }) 
     try {
       await apiClient.post(`/expenses/${id}/approve`);
       toast.success('Expense approved.');
+      queryClient.invalidateQueries({ queryKey: queryKeys.financial.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
       load();
     } catch (err: any) {
       toast.error(err?.response?.data?.error?.message || 'Failed to approve.');

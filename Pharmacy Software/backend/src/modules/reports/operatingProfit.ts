@@ -11,7 +11,7 @@ export async function operatingProfitReport(
   range: FinancialRange = {}
 ) {
   const [data, ledger] = await Promise.all([
-    loadFinancialData(db),
+    loadFinancialData(db, range),
     db.vendorLedgerEntry.findMany({
       where: {
         createdAt: { lte: range.lte },

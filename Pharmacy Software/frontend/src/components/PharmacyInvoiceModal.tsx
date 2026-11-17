@@ -20,6 +20,7 @@ import { formatPKR, formatNumber, formatDateTime } from '../utils/format';
 import { pharmacyApi } from '../services/pharmacyApi';
 import apiClient, { HMS_BASE_URL } from '../services/apiClient';
 import { useToast } from '../context/ToastContext';
+import { queryClient, queryKeys } from '../queryClient';
 
 import {
   PharmacyThermalReceipt,
@@ -132,6 +133,9 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
       toast.success('Payment recorded successfully.');
       const fresh = await pharmacyApi.getInvoiceById(invoice.id).catch(() => res.data.data);
       setInvoice(fresh);
+      queryClient.invalidateQueries({ queryKey: queryKeys.invoices.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.financial.all });
       if (onUpdated) onUpdated(fresh);
       setShowAddPayment(false);
       setPayAmount(String(res.data.data.outstanding));
@@ -180,6 +184,11 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
       // Reload fresh invoice details
       const fresh = await pharmacyApi.getInvoiceById(invoice.id);
       setInvoice(fresh);
+      queryClient.invalidateQueries({ queryKey: queryKeys.invoices.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.pos.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.medicines.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.financial.all });
       if (onUpdated) onUpdated(fresh);
     } catch (err: any) {
       toast.error(err?.response?.data?.error?.message || 'Failed to process sales return.');

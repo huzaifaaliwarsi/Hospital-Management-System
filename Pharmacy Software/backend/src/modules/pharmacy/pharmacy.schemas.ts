@@ -55,9 +55,29 @@ export type UpdateMedicineBody = z.infer<typeof updateMedicineBodySchema>;
 
 export const listMedicinesQuerySchema = z.object({
   search: z.string().optional(),
-  stockStatus: z.enum(['LOW', 'OUT', 'NEAR_EXPIRY', 'EXPIRED']).optional(),
+  stockStatus: z.enum(['LOW', 'OUT', 'NEAR_EXPIRY', 'EXPIRED', 'OK']).optional(),
+  category: z.string().optional(),
+  categoryId: z.string().optional(),
+  unit: z.string().optional(),
+  page: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().positive().optional(),
+  paginated: z.enum(['true', 'false']).optional(),
+  sortBy: z.enum(['code', 'name', 'category', 'unit', 'saleRate', 'currentStock', 'reorderLevel', 'stockValue', 'status', 'createdAt']).optional(),
+  sortOrder: z.enum(['asc', 'desc']).optional(),
 });
 export type ListMedicinesQuery = z.infer<typeof listMedicinesQuerySchema>;
+
+export const posCatalogQuerySchema = z.object({
+  search: z.string().optional(),
+  categoryId: z.string().optional(),
+  category: z.string().optional(),
+});
+export type PosCatalogQuery = z.infer<typeof posCatalogQuerySchema>;
+
+export const posStockCheckBodySchema = z.object({
+  medicineIds: z.array(z.string().uuid()).min(1).max(200),
+});
+export type PosStockCheckBody = z.infer<typeof posStockCheckBodySchema>;
 
 export const createBatchBodySchema = z.object({
   batchNumber: z.string().max(60).optional().default(''),
@@ -104,8 +124,15 @@ export type AddPaymentBody = z.infer<typeof addPaymentBodySchema>;
 
 export const listInvoicesQuerySchema = z.object({
   transactions: z.enum(['true', 'false']).optional(),
-  channel: z.enum(['RETAIL', 'HMS_LINKED']).optional(),
-  status: z.enum(['UNPAID', 'PARTIALLY_PAID', 'PAID']).optional(),
+  channel: z.enum(['ALL', 'RETAIL', 'HMS_LINKED']).optional(),
+  status: z.enum(['ALL', 'UNPAID', 'PARTIALLY_PAID', 'PAID']).optional(),
+  search: z.string().optional(),
+  fromDate: z.string().optional(),
+  toDate: z.string().optional(),
+  page: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().positive().optional(),
+  sortBy: z.enum(['date', 'invoiceNumber', 'billing', 'collected', 'outstanding']).optional(),
+  sortOrder: z.enum(['asc', 'desc']).optional(),
 });
 export type ListInvoicesQuery = z.infer<typeof listInvoicesQuerySchema>;
 

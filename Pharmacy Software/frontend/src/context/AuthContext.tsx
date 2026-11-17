@@ -2,6 +2,9 @@ import React, { createContext, useContext, useState, useCallback, useEffect } fr
 import apiClient, { getAccessToken, setAccessToken } from '../services/apiClient';
 import type { CurrentUser } from '../types';
 
+import { queryClient } from '../queryClient';
+import { usePharmacyUIStore } from '../store/usePharmacyUIStore';
+
 interface AuthContextType {
   currentUser: CurrentUser | null;
   isAuthenticated: boolean;
@@ -51,6 +54,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch {
       // ignore — clear local state regardless
     }
+    // Cancel any active in-flight requests immediately so late responses cannot repopulate cache
+    await queryClient.cancelQueries();
+    // Flush all cached data from TanStack Query
+    queryClient.clear();
+    // Reset all transient UI states (POS cart, search filters, pagination)
+    usePharmacyUIStore.getState().resetAllStores();
+
     setAccessToken(null);
     setCurrentUser(null);
   }, []);

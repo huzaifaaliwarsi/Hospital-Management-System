@@ -1,4 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { queryClient } from '../queryClient';
 import { Loader2, Plus, X, KeyRound, Ban, CheckCircle } from 'lucide-react';
 import apiClient from '../services/apiClient';
 import { useAuth } from '../context/AuthContext';
@@ -10,8 +12,16 @@ const emptyForm = { username: '', email: '', fullName: '', phone: '', password: 
 
 export const UsersPage: React.FC = () => {
   const { currentUser } = useAuth();
-  const [rows, setRows] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const {
+    data: rows = [],
+    isLoading: loading,
+    refetch: reloadUsers,
+  } = useQuery({
+    queryKey: ['users', 'list'],
+    queryFn: () => apiClient.get('/users').then((r) => r.data.data),
+    staleTime: 60 * 1000,
+  });
+
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
@@ -25,10 +35,8 @@ export const UsersPage: React.FC = () => {
   const targetLabel = targetRole === 'ADMIN' ? 'Admin' : 'Sales & Dispensing';
 
   const load = () => {
-    setLoading(true);
-    apiClient.get('/users').then((r) => setRows(r.data.data)).catch(() => toast.error('Failed to load accounts.')).finally(() => setLoading(false));
+    reloadUsers();
   };
-  useEffect(load, []);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -46,6 +54,7 @@ export const UsersPage: React.FC = () => {
       toast.success(`${targetLabel} account created.`);
       setShowAdd(false);
       setForm(emptyForm);
+      queryClient.invalidateQueries({ queryKey: ['users'] });
       load();
     } catch (err: any) {
       toast.error(err?.response?.data?.error?.message || 'Failed to create account.');
@@ -59,6 +68,7 @@ export const UsersPage: React.FC = () => {
     try {
       await apiClient.post(`/users/${u.id}/status`, { status: nextStatus });
       toast.success(`Account ${nextStatus === 'ACTIVE' ? 'reactivated' : 'suspended'}.`);
+      queryClient.invalidateQueries({ queryKey: ['users'] });
       load();
     } catch (err: any) {
       toast.error(err?.response?.data?.error?.message || 'Failed to update status.');

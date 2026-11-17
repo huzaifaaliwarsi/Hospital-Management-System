@@ -35312,6 +35312,9 @@ async function peekNextCode(seq) {
   return format(seq.prefix, nextVal);
 }
 
+// src/modules/pharmacy/pharmacy.service.ts
+var import_client7 = require("@prisma/client");
+
 // src/modules/pharmacy/invoiceTransactions.ts
 var import_library = require("@prisma/client/runtime/library");
 var day = (d) => new Date(d.getTime() + 18e6).toISOString().slice(0, 10);
@@ -35349,12 +35352,31 @@ function invoiceTransactions(invoices, refunds = []) {
     return entries.map((e) => ({ ...invoice, id: e.id, invoiceId: invoice.id, transactionId: e.id, transactionType: e.type, transactionAt: e.at, billingAmount: e.billing, collectedAmount: e.collected, receiptNumber: e.receipt, paymentMethod: e.method, paymentAccountName: e.account, collectedByName: e.collector, outstanding: Number(invoice.outstanding) }));
   }).sort((a, b) => (b.transactionAt?.getTime() ?? 0) - (a.transactionAt?.getTime() ?? 0) || a.id.localeCompare(b.id));
 }
+function summarizeInvoiceTransactions(rows) {
+  const seen = /* @__PURE__ */ new Set();
+  let billing = 0, collected = 0, outstanding = 0, invoices = 0;
+  for (const row of rows) {
+    billing += Math.round(Number(row.billingAmount || 0) * 100);
+    collected += Math.round(Number(row.collectedAmount || 0) * 100);
+    if (!seen.has(row.invoiceId)) {
+      outstanding += Math.round(Number(row.outstanding || 0) * 100);
+      seen.add(row.invoiceId);
+    }
+    if (row.transactionType === "Original Sale") invoices++;
+  }
+  return {
+    billing: billing / 100,
+    collected: collected / 100,
+    outstanding: outstanding / 100,
+    invoices: invoices > 0 ? invoices : seen.size
+  };
+}
 
 // src/modules/pharmacy/pharmacy.service.ts
-async function getSettings() {
-  const existing = await prisma.pharmacySettings.findFirst();
+async function getSettings(db = prisma) {
+  const existing = await db.pharmacySettings.findFirst();
   if (existing) return existing;
-  return prisma.pharmacySettings.create({ data: {} });
+  return db.pharmacySettings.create({ data: {} });
 }
 async function writePackagingLevels(tx, medicineId, baseUnitId, baseIsPurchaseUnit, baseIsSaleUnit, levels) {
   const baseUnit = await tx.unit.findUnique({ where: { id: baseUnitId } });
@@ -35750,43 +35772,209 @@ var pharmacyService = {
     });
     return { medicineId, baseUnitId: medicine.baseUnitId, levels };
   },
-  async listMedicines(query) {
-    const [medicines, settings] = await Promise.all([
-      prisma.medicineMaster.findMany({
-        where: query.search ? { OR: [{ name: { contains: query.search, mode: "insensitive" } }, { code: { contains: query.search, mode: "insensitive" } }, { barcode: { contains: query.search, mode: "insensitive" } }] } : void 0,
-        include: {
-          batches: {
-            include: { stockEntries: { select: { quantityDelta: true } } },
-            orderBy: [{ expiryDate: "asc" }, { createdAt: "asc" }]
-          },
-          stockEntries: { select: { quantityDelta: true } },
-          baseUnit: true,
-          category: true,
-          packagingLevels: { include: { unit: true }, orderBy: { level: "asc" } }
-        },
-        orderBy: { name: "asc" }
-      }),
-      getSettings()
-    ]);
+  async listMedicines(query, transaction) {
+    const db = transaction ?? prisma;
+    const isPaginated = query.paginated === "true" || query.page !== void 0;
+    const page = Math.max(1, query.page || 1);
+    const limit = Math.min(100, Math.max(1, query.limit || 20));
+    const skip = (page - 1) * limit;
+    const [settings] = await Promise.all([getSettings(db)]);
     const now = /* @__PURE__ */ new Date();
     const nearExpiryCutoff = new Date(now.getTime() + settings.nearExpiryWindowDays * 864e5);
+    const where = {};
+    if (query.search?.trim()) {
+      const q = query.search.trim();
+      where.OR = [
+        { name: { contains: q, mode: "insensitive" } },
+        { code: { contains: q, mode: "insensitive" } },
+        { barcode: { contains: q, mode: "insensitive" } },
+        { genericName: { contains: q, mode: "insensitive" } }
+      ];
+    }
+    if (query.category && query.category !== "ALL") {
+      where.OR = [
+        { category: { name: query.category } },
+        { categoryLabel: query.category },
+        { categoryId: query.category }
+      ];
+    } else if (query.categoryId && query.categoryId !== "ALL") {
+      where.categoryId = query.categoryId;
+    }
+    if (query.unit && query.unit !== "ALL") {
+      where.unit = query.unit;
+    }
+    if (query.stockStatus === "EXPIRED") {
+      where.batches = { some: { expiryDate: { lte: now } } };
+    } else if (query.stockStatus === "NEAR_EXPIRY") {
+      where.batches = { some: { expiryDate: { gt: now, lte: nearExpiryCutoff } } };
+    } else if (query.stockStatus === "OUT") {
+      const outMeds = await prisma.$queryRaw`
+        SELECT m.id AS medicine_id
+        FROM medicine_masters m
+        LEFT JOIN stock_ledger_entries sle ON sle.medicine_id = m.id
+        GROUP BY m.id
+        HAVING COALESCE(SUM(sle.quantity_delta), 0) <= 0
+      `;
+      where.id = { in: outMeds.map((r) => r.medicine_id) };
+    } else if (query.stockStatus === "LOW") {
+      const lowMeds = await prisma.$queryRaw`
+        SELECT m.id AS medicine_id
+        FROM medicine_masters m
+        JOIN stock_ledger_entries sle ON sle.medicine_id = m.id
+        GROUP BY m.id, m.reorder_level
+        HAVING SUM(sle.quantity_delta) > 0 AND SUM(sle.quantity_delta) <= m.reorder_level
+      `;
+      where.id = { in: lowMeds.map((r) => r.medicine_id) };
+    } else if (query.stockStatus === "OK") {
+      const okMeds = await prisma.$queryRaw`
+        SELECT m.id AS medicine_id
+        FROM medicine_masters m
+        JOIN stock_ledger_entries sle ON sle.medicine_id = m.id
+        GROUP BY m.id, m.reorder_level
+        HAVING SUM(sle.quantity_delta) > m.reorder_level
+      `;
+      where.id = { in: okMeds.map((r) => r.medicine_id) };
+    }
+    const sortOrder = query.sortOrder === "desc" ? "desc" : "asc";
+    const orderBy = [];
+    if (query.sortBy === "code") orderBy.push({ code: sortOrder });
+    else if (query.sortBy === "saleRate") orderBy.push({ saleRate: sortOrder });
+    else if (query.sortBy === "reorderLevel") orderBy.push({ reorderLevel: sortOrder });
+    else if (query.sortBy === "createdAt") orderBy.push({ createdAt: sortOrder });
+    else if (query.sortBy === "unit") orderBy.push({ unit: sortOrder });
+    else if (query.sortBy === "category") orderBy.push({ category: { name: sortOrder } });
+    else orderBy.push({ name: sortOrder });
+    let total = 0;
+    let summary = void 0;
+    if (isPaginated) {
+      const [countResult, totalCount, outRows, lowRows, categoriesCount] = await Promise.all([
+        db.medicineMaster.count({ where }),
+        db.medicineMaster.count(),
+        db.$queryRaw`
+          SELECT COUNT(*)::int AS count FROM (
+            SELECT m.id
+            FROM medicine_masters m
+            LEFT JOIN stock_ledger_entries sle ON sle.medicine_id = m.id
+            GROUP BY m.id
+            HAVING COALESCE(SUM(sle.quantity_delta), 0) <= 0
+          ) sub
+        `,
+        db.$queryRaw`
+          SELECT COUNT(*)::int AS count FROM (
+            SELECT m.id
+            FROM medicine_masters m
+            JOIN stock_ledger_entries sle ON sle.medicine_id = m.id
+            GROUP BY m.id, m.reorder_level
+            HAVING SUM(sle.quantity_delta) > 0 AND SUM(sle.quantity_delta) <= m.reorder_level
+          ) sub
+        `,
+        db.medicineCategory.count({ where: { isActive: true } })
+      ]);
+      total = countResult;
+      const outOfStockCount = Number(outRows[0]?.count || 0);
+      const lowStockCount = Number(lowRows[0]?.count || 0);
+      const normalStockCount = Math.max(0, totalCount - outOfStockCount - lowStockCount);
+      summary = {
+        totalItems: totalCount,
+        outOfStockCount,
+        lowStockCount,
+        normalStockCount,
+        categoriesCount
+      };
+    }
+    const medicines = await db.medicineMaster.findMany({
+      where,
+      include: {
+        baseUnit: true,
+        category: true,
+        packagingLevels: { include: { unit: true }, orderBy: { level: "asc" } }
+      },
+      orderBy,
+      ...isPaginated ? { skip, take: limit } : {}
+    });
+    if (medicines.length === 0) {
+      if (isPaginated) {
+        return {
+          items: [],
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit) || 1,
+          summary
+        };
+      }
+      return [];
+    }
+    const medIds = medicines.map((m) => m.id);
+    const [stockAgg, activeBatchesAgg, batchCountsAgg] = await Promise.all([
+      db.$queryRaw`
+        SELECT medicine_id, COALESCE(SUM(quantity_delta), 0) AS stock
+        FROM stock_ledger_entries
+        WHERE medicine_id IN (${import_client7.Prisma.join(medIds)})
+        GROUP BY medicine_id
+      `,
+      db.$queryRaw`
+        SELECT 
+          b.id,
+          b.medicine_id,
+          b.batch_number,
+          b.expiry_date,
+          b.sale_rate,
+          b.cost_rate,
+          COALESCE(SUM(sle.quantity_delta), 0) AS available
+        FROM medicine_batches b
+        LEFT JOIN stock_ledger_entries sle ON sle.batch_id = b.id
+        WHERE b.medicine_id IN (${import_client7.Prisma.join(medIds)}) AND b.expiry_date > ${now}
+        GROUP BY b.id, b.medicine_id, b.batch_number, b.expiry_date, b.sale_rate, b.cost_rate
+        HAVING COALESCE(SUM(sle.quantity_delta), 0) > 0
+        ORDER BY b.expiry_date ASC, b.created_at ASC
+      `,
+      db.$queryRaw`
+        SELECT 
+          medicine_id,
+          COUNT(id) AS batches_count,
+          COUNT(CASE WHEN expiry_date <= ${now} THEN 1 END) AS expired_count,
+          COUNT(CASE WHEN expiry_date > ${now} AND expiry_date <= ${nearExpiryCutoff} THEN 1 END) AS near_expiry_count
+        FROM medicine_batches
+        WHERE medicine_id IN (${import_client7.Prisma.join(medIds)})
+        GROUP BY medicine_id
+      `
+    ]);
+    const stockMap = /* @__PURE__ */ new Map();
+    stockAgg.forEach((r) => {
+      stockMap.set(r.medicine_id, new import_library2.Decimal(r.stock.toString()));
+    });
+    const activeBatchesMap = /* @__PURE__ */ new Map();
+    activeBatchesAgg.forEach((b) => {
+      const list = activeBatchesMap.get(b.medicine_id) || [];
+      list.push({
+        id: b.id,
+        batchNumber: b.batch_number,
+        expiryDate: b.expiry_date,
+        saleRate: b.sale_rate,
+        costRate: b.cost_rate,
+        available: new import_library2.Decimal(b.available.toString())
+      });
+      activeBatchesMap.set(b.medicine_id, list);
+    });
+    const batchCountsMap = /* @__PURE__ */ new Map();
+    batchCountsAgg.forEach((b) => {
+      batchCountsMap.set(b.medicine_id, {
+        total: Number(b.batches_count),
+        expired: Number(b.expired_count),
+        nearExpiry: Number(b.near_expiry_count)
+      });
+    });
     const rows = medicines.map((m) => {
-      const stock = m.stockEntries.reduce((s, e) => s.plus(e.quantityDelta), new import_library2.Decimal(0));
+      const stock = stockMap.get(m.id) || new import_library2.Decimal(0);
       const isLow = stock.lessThanOrEqualTo(m.reorderLevel);
       const isOut = stock.lessThanOrEqualTo(0);
-      const hasExpired = m.batches.some((b) => b.expiryDate <= now);
-      const hasNearExpiry = m.batches.some((b) => b.expiryDate > now && b.expiryDate <= nearExpiryCutoff);
-      const activeBatches = m.batches.filter((b) => b.expiryDate > now).map((b) => {
-        const avail = b.stockEntries.reduce((s, e) => s.plus(e.quantityDelta), new import_library2.Decimal(0));
-        return {
-          id: b.id,
-          batchNumber: b.batchNumber,
-          expiryDate: b.expiryDate,
-          saleRate: b.saleRate ?? m.saleRate,
-          costRate: b.costRate,
-          available: avail
-        };
-      }).filter((b) => b.available.greaterThan(0));
+      const bCounts = batchCountsMap.get(m.id) || { total: 0, expired: 0, nearExpiry: 0 };
+      const rawActiveBatches = activeBatchesMap.get(m.id) || [];
+      const activeBatches = rawActiveBatches.map((b) => ({
+        ...b,
+        saleRate: b.saleRate ?? m.saleRate
+      }));
       return {
         id: m.id,
         code: m.code,
@@ -35795,7 +35983,6 @@ var pharmacyService = {
         genericName: m.genericName,
         strength: m.strength,
         dosageForm: m.dosageForm,
-        /// Flat string for old consumers (filters, CSV, table cell) — sourced from the relation, falling back to the legacy label cache.
         category: m.category?.name ?? m.categoryLabel,
         categoryId: m.categoryId,
         categoryActive: m.category?.isActive ?? null,
@@ -35810,20 +35997,251 @@ var pharmacyService = {
         taxPercent: m.taxPercent,
         isActive: m.isActive,
         currentStock: stock,
-        batchesCount: m.batches.length,
+        batchesCount: bCounts.total,
         activeBatches,
         isLowStock: isLow && !isOut,
         isOutOfStock: isOut,
-        hasExpiredBatch: hasExpired,
-        hasNearExpiryBatch: hasNearExpiry
+        hasExpiredBatch: bCounts.expired > 0,
+        hasNearExpiryBatch: bCounts.nearExpiry > 0
       };
     });
-    if (!query.stockStatus) return rows;
-    return rows.filter((r) => {
-      if (query.stockStatus === "LOW") return r.isLowStock;
-      if (query.stockStatus === "OUT") return r.isOutOfStock;
-      if (query.stockStatus === "NEAR_EXPIRY") return r.hasNearExpiryBatch;
-      return r.hasExpiredBatch;
+    if (query.sortBy === "currentStock" || query.sortBy === "stockValue" || query.sortBy === "status") {
+      rows.sort((a, b) => {
+        let cmp = 0;
+        if (query.sortBy === "currentStock") {
+          cmp = a.currentStock.minus(b.currentStock).toNumber();
+        } else if (query.sortBy === "stockValue") {
+          const valA = a.currentStock.times(a.saleRate);
+          const valB = b.currentStock.times(b.saleRate);
+          cmp = valA.minus(valB).toNumber();
+        } else if (query.sortBy === "status") {
+          const rankA = a.isOutOfStock ? 2 : a.isLowStock ? 1 : 0;
+          const rankB = b.isOutOfStock ? 2 : b.isLowStock ? 1 : 0;
+          cmp = rankA - rankB;
+        }
+        return sortOrder === "asc" ? cmp : -cmp;
+      });
+    }
+    if (isPaginated) {
+      return {
+        items: rows,
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit) || 1,
+        summary
+      };
+    }
+    return rows;
+  },
+  // ── POS Fast Lightweight Catalog (pharmacy-performance-batch-2) ──────────
+  async getPosCatalog(query, transaction) {
+    const db = transaction ?? prisma;
+    const where = {
+      isActive: true
+    };
+    if (query?.search?.trim()) {
+      const q = query.search.trim();
+      where.OR = [
+        { name: { contains: q, mode: "insensitive" } },
+        { code: { contains: q, mode: "insensitive" } },
+        { barcode: { contains: q, mode: "insensitive" } },
+        { genericName: { contains: q, mode: "insensitive" } }
+      ];
+    }
+    if (query?.category && query.category !== "ALL") {
+      where.OR = [
+        { category: { name: query.category } },
+        { categoryLabel: query.category },
+        { categoryId: query.category }
+      ];
+    } else if (query?.categoryId && query.categoryId !== "ALL") {
+      where.categoryId = query.categoryId;
+    }
+    const medicines = await db.medicineMaster.findMany({
+      where,
+      select: {
+        id: true,
+        code: true,
+        barcode: true,
+        name: true,
+        genericName: true,
+        strength: true,
+        dosageForm: true,
+        category: { select: { id: true, name: true, isActive: true } },
+        categoryLabel: true,
+        categoryId: true,
+        unit: true,
+        baseUnitId: true,
+        baseUnit: { select: { id: true, name: true, shortCode: true } },
+        packagingLevels: {
+          where: { isActive: true },
+          select: {
+            id: true,
+            unitId: true,
+            level: true,
+            conversionToBase: true,
+            isPurchaseUnit: true,
+            isSaleUnit: true,
+            overrideSaleRate: true,
+            unit: { select: { id: true, name: true, shortCode: true } }
+          },
+          orderBy: { level: "asc" }
+        },
+        batchManaged: true,
+        reorderLevel: true,
+        saleRate: true,
+        taxPercent: true,
+        isActive: true
+      },
+      orderBy: { name: "asc" }
+    });
+    if (medicines.length === 0) return [];
+    const medIds = medicines.map((m) => m.id);
+    const now = /* @__PURE__ */ new Date();
+    const [stockAgg, activeBatchesAgg] = await Promise.all([
+      db.$queryRaw`
+        SELECT medicine_id, COALESCE(SUM(quantity_delta), 0) AS stock
+        FROM stock_ledger_entries
+        WHERE medicine_id IN (${import_client7.Prisma.join(medIds)})
+        GROUP BY medicine_id
+      `,
+      db.$queryRaw`
+        SELECT 
+          b.id,
+          b.medicine_id,
+          b.batch_number,
+          b.expiry_date,
+          b.sale_rate,
+          b.cost_rate,
+          COALESCE(SUM(sle.quantity_delta), 0) AS available
+        FROM medicine_batches b
+        LEFT JOIN stock_ledger_entries sle ON sle.batch_id = b.id
+        WHERE b.medicine_id IN (${import_client7.Prisma.join(medIds)}) AND b.expiry_date > ${now}
+        GROUP BY b.id, b.medicine_id, b.batch_number, b.expiry_date, b.sale_rate, b.cost_rate
+        HAVING COALESCE(SUM(sle.quantity_delta), 0) > 0
+        ORDER BY b.expiry_date ASC, b.created_at ASC
+      `
+    ]);
+    const stockMap = /* @__PURE__ */ new Map();
+    stockAgg.forEach((r) => {
+      stockMap.set(r.medicine_id, new import_library2.Decimal(r.stock.toString()));
+    });
+    const activeBatchesMap = /* @__PURE__ */ new Map();
+    activeBatchesAgg.forEach((b) => {
+      const list = activeBatchesMap.get(b.medicine_id) || [];
+      list.push({
+        id: b.id,
+        batchNumber: b.batch_number,
+        expiryDate: b.expiry_date,
+        saleRate: b.sale_rate,
+        costRate: b.cost_rate,
+        available: new import_library2.Decimal(b.available.toString())
+      });
+      activeBatchesMap.set(b.medicine_id, list);
+    });
+    return medicines.map((m) => {
+      const stock = stockMap.get(m.id) || new import_library2.Decimal(0);
+      const isLow = stock.lessThanOrEqualTo(m.reorderLevel);
+      const isOut = stock.lessThanOrEqualTo(0);
+      const rawActiveBatches = activeBatchesMap.get(m.id) || [];
+      const activeBatches = rawActiveBatches.map((b) => ({
+        ...b,
+        saleRate: b.saleRate ?? m.saleRate
+      }));
+      return {
+        id: m.id,
+        code: m.code,
+        barcode: m.barcode,
+        name: m.name,
+        genericName: m.genericName,
+        strength: m.strength,
+        dosageForm: m.dosageForm,
+        category: m.category?.name ?? m.categoryLabel,
+        categoryId: m.categoryId,
+        categoryActive: m.category?.isActive ?? null,
+        unit: m.unit,
+        baseUnitId: m.baseUnitId,
+        baseUnit: m.baseUnit,
+        packagingLevels: m.packagingLevels,
+        batchManaged: m.batchManaged,
+        reorderLevel: m.reorderLevel,
+        saleRate: m.saleRate,
+        taxPercent: m.taxPercent,
+        isActive: m.isActive,
+        currentStock: stock,
+        batchesCount: activeBatches.length,
+        activeBatches,
+        isLowStock: isLow && !isOut,
+        isOutOfStock: isOut,
+        hasExpiredBatch: false,
+        hasNearExpiryBatch: false
+      };
+    });
+  },
+  async getMedicinesStock(medicineIds, tx) {
+    if (medicineIds.length === 0) return [];
+    const client = tx ?? prisma;
+    const now = /* @__PURE__ */ new Date();
+    const [medicines, stockAgg, activeBatchesAgg] = await Promise.all([
+      client.medicineMaster.findMany({
+        where: { id: { in: medicineIds } },
+        select: { id: true, reorderLevel: true, saleRate: true }
+      }),
+      client.$queryRaw`
+        SELECT medicine_id, COALESCE(SUM(quantity_delta), 0) AS stock
+        FROM stock_ledger_entries
+        WHERE medicine_id IN (${import_client7.Prisma.join(medicineIds)})
+        GROUP BY medicine_id
+      `,
+      client.$queryRaw`
+        SELECT 
+          b.id,
+          b.medicine_id,
+          b.batch_number,
+          b.expiry_date,
+          b.sale_rate,
+          b.cost_rate,
+          COALESCE(SUM(sle.quantity_delta), 0) AS available
+        FROM medicine_batches b
+        LEFT JOIN stock_ledger_entries sle ON sle.batch_id = b.id
+        WHERE b.medicine_id IN (${import_client7.Prisma.join(medicineIds)}) AND b.expiry_date > ${now}
+        GROUP BY b.id, b.medicine_id, b.batch_number, b.expiry_date, b.sale_rate, b.cost_rate
+        HAVING COALESCE(SUM(sle.quantity_delta), 0) > 0
+        ORDER BY b.expiry_date ASC, b.created_at ASC
+      `
+    ]);
+    const stockMap = /* @__PURE__ */ new Map();
+    stockAgg.forEach((r) => stockMap.set(r.medicine_id, new import_library2.Decimal(r.stock.toString())));
+    const batchesMap = /* @__PURE__ */ new Map();
+    activeBatchesAgg.forEach((b) => {
+      const list = batchesMap.get(b.medicine_id) || [];
+      list.push({
+        id: b.id,
+        batchNumber: b.batch_number,
+        expiryDate: b.expiry_date,
+        saleRate: b.sale_rate,
+        costRate: b.cost_rate,
+        available: new import_library2.Decimal(b.available.toString())
+      });
+      batchesMap.set(b.medicine_id, list);
+    });
+    return medicines.map((m) => {
+      const stock = stockMap.get(m.id) || new import_library2.Decimal(0);
+      const isLow = stock.lessThanOrEqualTo(m.reorderLevel);
+      const isOut = stock.lessThanOrEqualTo(0);
+      const rawBatches = batchesMap.get(m.id) || [];
+      const activeBatches = rawBatches.map((b) => ({
+        ...b,
+        saleRate: b.saleRate ?? m.saleRate
+      }));
+      return {
+        medicineId: m.id,
+        currentStock: stock,
+        isLowStock: isLow && !isOut,
+        isOutOfStock: isOut,
+        activeBatches
+      };
     });
   },
   // ── Batches ──────────────────────────────────────────────────────────────
@@ -35913,8 +36331,8 @@ var pharmacyService = {
     });
   },
   // ── POS Retail Dispensing (pharmacy.md §6 — real tax/discount/split payment/outstanding, §19.2 fix) ──
-  async dispenseRetail(body, actorId) {
-    return prisma.$transaction(async (tx) => {
+  async dispenseRetail(body, actorId, transaction) {
+    const execute = async (tx) => {
       let subtotal = new import_library2.Decimal(0);
       let discountTotal = new import_library2.Decimal(0);
       let taxTotal = new import_library2.Decimal(0);
@@ -36016,26 +36434,37 @@ var pharmacyService = {
           });
         }
       }
-      return invoice;
-    });
+      const updatedStock = await pharmacyService.getMedicinesStock(uniqueMedIds, tx);
+      return {
+        ...invoice,
+        updatedStock
+      };
+    };
+    return transaction ? execute(transaction) : prisma.$transaction(execute);
   },
-  async addPayment(invoiceId, body, actorId) {
-    return prisma.$transaction(async (tx) => {
+  async addPayment(invoiceId, body, actorId, transaction) {
+    const execute = async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${invoiceId}))`;
       const invoice = await tx.pharmacyInvoice.findUnique({ where: { id: invoiceId } });
       if (!invoice) throw new NotFoundError("Invoice not found");
+      const amount = new import_library2.Decimal(body.amount);
+      if (body.requestKey) {
+        const existing = await tx.pharmacyPayment.findUnique({ where: { requestKey: body.requestKey } });
+        if (existing) {
+          if (!new import_library2.Decimal(existing.amount).equals(amount)) {
+            throw new ConflictError("A payment with this requestKey has already been recorded with a different amount");
+          }
+          return invoice;
+        }
+      }
       if (invoice.status === "PAID") throw new ConflictError("Invoice is already fully paid");
       if (invoice.channel === "HMS_LINKED") {
         throw new ValidationError2(
           'HMS-linked invoices are collected by the patient at the HMS Front Desk, not here. Use "Request Settlement" on this invoice to collect what HMS owes Pharmacy.'
         );
       }
-      const amount = new import_library2.Decimal(body.amount);
       if (amount.greaterThan(invoice.outstanding)) throw new ValidationError2(`Payment exceeds outstanding balance of ${invoice.outstanding}`);
-      if (body.requestKey) {
-        const existing = await tx.pharmacyPayment.findUnique({ where: { requestKey: body.requestKey } });
-        if (existing) return invoice;
-      }
+      if (body.method !== "CASH" && !body.paymentAccountId) throw new ValidationError2("Payment account is required for non-cash payments");
       await tx.pharmacyPayment.create({
         data: {
           invoiceId,
@@ -36069,13 +36498,360 @@ var pharmacyService = {
         }
       });
       return updated;
-    });
+    };
+    return transaction ? execute(transaction) : prisma.$transaction(execute);
   },
-  async listInvoices(query) {
-    const invoices = await prisma.pharmacyInvoice.findMany({
-      where: { channel: query.channel, status: query.status },
+  async listInvoiceTransactionsSql(query, client) {
+    const channelFilter = query.channel && query.channel !== "ALL" ? query.channel : void 0;
+    const statusFilter = query.status && query.status !== "ALL" ? query.status : void 0;
+    const searchTerm = query.search?.trim();
+    const fromDate = query.fromDate?.trim();
+    const toDate = query.toDate?.trim();
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = [20, 25, 50, 100].includes(Number(query.limit)) ? Number(query.limit) : 25;
+    const offset = (page - 1) * limit;
+    const sortBy = query.sortBy || "date";
+    const sortOrder = query.sortOrder || "desc";
+    let startUtc;
+    let endUtc;
+    if (fromDate) {
+      startUtc = /* @__PURE__ */ new Date(`${fromDate}T00:00:00+05:00`);
+    }
+    if (toDate) {
+      endUtc = /* @__PURE__ */ new Date(`${toDate}T23:59:59.999+05:00`);
+    }
+    const conditions = [];
+    if (channelFilter) {
+      conditions.push(import_client7.Prisma.sql`channel = ${channelFilter}`);
+    }
+    if (statusFilter) {
+      conditions.push(import_client7.Prisma.sql`status = ${statusFilter}`);
+    }
+    if (startUtc) {
+      conditions.push(import_client7.Prisma.sql`transaction_at >= ${startUtc}`);
+    }
+    if (endUtc) {
+      conditions.push(import_client7.Prisma.sql`transaction_at <= ${endUtc}`);
+    }
+    if (searchTerm) {
+      const q = `%${searchTerm}%`;
+      conditions.push(import_client7.Prisma.sql`(
+        invoice_number ILIKE ${q} OR
+        customer_name ILIKE ${q} OR
+        receipt_number ILIKE ${q} OR
+        transaction_type ILIKE ${q} OR
+        collected_by_name ILIKE ${q} OR
+        dispensed_by_full_name ILIKE ${q} OR
+        dispensed_by_username ILIKE ${q} OR
+        payment_method ILIKE ${q} OR
+        external_admission_ref ILIKE ${q}
+      )`);
+    }
+    const whereClause = conditions.length > 0 ? import_client7.Prisma.sql`WHERE ${import_client7.Prisma.join(conditions, " AND ")}` : import_client7.Prisma.empty;
+    const sortColumnMap = {
+      date: "transaction_at",
+      invoiceNumber: "invoice_number",
+      billing: "billing_amount",
+      collected: "collected_amount",
+      outstanding: "outstanding"
+    };
+    const col = sortColumnMap[sortBy] || "transaction_at";
+    const dir = sortOrder === "asc" ? "ASC" : "DESC";
+    const orderClause = import_client7.Prisma.raw(`ORDER BY ${col} ${dir}, id ASC`);
+    const ctes = import_client7.Prisma.sql`
+      WITH ranked_payments AS (
+        SELECT
+          p.id, p.invoice_id, p.amount, p.method, p.paid_at, p.payment_account_id, p.collected_by, p.is_initial,
+          ROW_NUMBER() OVER (PARTITION BY p.invoice_id ORDER BY p.paid_at ASC, p.id ASC) as pay_rank
+        FROM pharmacy_payments p
+        WHERE p.amount > 0
+      ),
+      classified_payments AS (
+        SELECT
+          p.id, p.invoice_id, p.amount, p.method, p.paid_at, p.payment_account_id, p.collected_by,
+          CASE
+            WHEN p.is_initial = true THEN true
+            WHEN p.is_initial = false THEN false
+            WHEN p.paid_at = i.created_at THEN true
+            WHEN (p.paid_at + INTERVAL '5 hours')::date = (i.created_at + INTERVAL '5 hours')::date AND rp.pay_rank = 1 THEN true
+            ELSE false
+          END as is_initial_effective
+        FROM pharmacy_payments p
+        JOIN pharmacy_invoices i ON i.id = p.invoice_id
+        LEFT JOIN ranked_payments rp ON rp.id = p.id
+      ),
+      first_hms_events AS (
+        SELECT DISTINCT ON (e.invoice_id)
+          e.id, e.invoice_id, e.collection_delta, e.occurred_at, e.reference, e.method, e.actor_id
+        FROM pharmacy_financial_events e
+        JOIN pharmacy_invoices i ON i.id = e.invoice_id
+        WHERE e.kind LIKE 'HMS_%' AND e.occurred_at IS NOT NULL AND e.collection_delta > 0
+          AND (e.occurred_at + INTERVAL '5 hours')::date = (i.created_at + INTERVAL '5 hours')::date
+        ORDER BY e.invoice_id, e.occurred_at ASC, e.id ASC
+      ),
+      invoice_returns AS (
+        SELECT invoice_id, COALESCE(SUM(sale_delta), 0) as total_return_sale
+        FROM pharmacy_financial_events WHERE kind = 'RETURN' GROUP BY invoice_id
+      ),
+      invoice_legacy_refunds AS (
+        SELECT r.reference_id as invoice_id, COALESCE(SUM(r.amount), 0) as total_refund_amount
+        FROM cash_ledger_entries r
+        WHERE r.category = 'REFUND' AND r.reference_table = 'pharmacy_invoices'
+          AND NOT EXISTS (SELECT 1 FROM pharmacy_financial_events e WHERE e.reference = r.id)
+        GROUP BY r.reference_id
+      ),
+      initial_payments_agg AS (
+        SELECT
+          cp.invoice_id,
+          COALESCE(SUM(cp.amount), 0) as initial_collected,
+          STRING_AGG('PAY-' || UPPER(SUBSTRING(cp.id, 1, 8)), ', ' ORDER BY cp.paid_at ASC, cp.id ASC) as initial_receipts,
+          STRING_AGG(cp.method::text, ', ' ORDER BY cp.paid_at ASC, cp.id ASC) as initial_methods,
+          STRING_AGG(COALESCE(pa.name, ''), ', ' ORDER BY cp.paid_at ASC, cp.id ASC) as initial_accounts,
+          STRING_AGG(COALESCE(pu.full_name, ''), ', ' ORDER BY cp.paid_at ASC, cp.id ASC) as initial_collectors
+        FROM classified_payments cp
+        LEFT JOIN payment_accounts pa ON pa.id = cp.payment_account_id
+        LEFT JOIN portal_users pu ON pu.id = cp.collected_by
+        WHERE cp.is_initial_effective = true
+        GROUP BY cp.invoice_id
+      ),
+      all_transactions AS (
+        -- 1. Original Sale
+        SELECT
+          'invoice:' || i.id as id, i.id as invoice_id, 'invoice:' || i.id as transaction_id,
+          'Original Sale' as transaction_type, i.created_at as transaction_at, i.created_at as invoice_created_at,
+          i.invoice_number, i.channel::text as channel, i.customer_name, i.external_admission_ref, i.status::text as status,
+          i.outstanding::numeric as outstanding, i.total::numeric as invoice_total, i.paid_total::numeric as invoice_paid_total,
+          i.subtotal::numeric as invoice_subtotal, i.discount_total::numeric as invoice_discount_total, i.tax_total::numeric as invoice_tax_total,
+          (i.total - COALESCE(ret.total_return_sale, 0) + COALESCE(ref.total_refund_amount, 0))::numeric as billing_amount,
+          (COALESCE(ipa.initial_collected, 0) + COALESCE(fhe.collection_delta, 0))::numeric as collected_amount,
+          NULLIF(TRIM(CONCAT_WS(', ', ipa.initial_receipts, fhe.reference)), '') as receipt_number,
+          NULLIF(TRIM(CONCAT_WS(', ', ipa.initial_methods, fhe.method)), '') as payment_method,
+          NULLIF(TRIM(ipa.initial_accounts), '') as payment_account_name,
+          COALESCE(NULLIF(TRIM(CONCAT_WS(', ', ipa.initial_collectors, CASE WHEN fhe.id IS NOT NULL THEN COALESCE(fhe.actor_id, 'HMS Front Desk') END)), ''), u.full_name, 'Staff') as collected_by_name,
+          u.id as dispensed_by_id, u.full_name as dispensed_by_full_name, u.username as dispensed_by_username
+        FROM pharmacy_invoices i
+        JOIN portal_users u ON u.id = i.dispensed_by
+        LEFT JOIN initial_payments_agg ipa ON ipa.invoice_id = i.id
+        LEFT JOIN first_hms_events fhe ON fhe.invoice_id = i.id
+        LEFT JOIN invoice_returns ret ON ret.invoice_id = i.id
+        LEFT JOIN invoice_legacy_refunds ref ON ref.invoice_id = i.id
+
+        UNION ALL
+
+        -- 2. Remaining Collections
+        SELECT
+          'payment:' || cp.id as id, i.id as invoice_id, 'payment:' || cp.id as transaction_id,
+          CASE WHEN cp.amount < 0 THEN 'Collection Reversal' ELSE 'Remaining Collection' END as transaction_type,
+          cp.paid_at as transaction_at, i.created_at as invoice_created_at,
+          i.invoice_number, i.channel::text as channel, i.customer_name, i.external_admission_ref, i.status::text as status,
+          i.outstanding::numeric as outstanding, i.total::numeric as invoice_total, i.paid_total::numeric as invoice_paid_total,
+          i.subtotal::numeric as invoice_subtotal, i.discount_total::numeric as invoice_discount_total, i.tax_total::numeric as invoice_tax_total,
+          0::numeric as billing_amount, cp.amount::numeric as collected_amount,
+          'PAY-' || UPPER(SUBSTRING(cp.id, 1, 8)) as receipt_number, cp.method::text as payment_method,
+          COALESCE(pa.name, '') as payment_account_name, COALESCE(pu.full_name, 'Staff') as collected_by_name,
+          u.id as dispensed_by_id, u.full_name as dispensed_by_full_name, u.username as dispensed_by_username
+        FROM classified_payments cp
+        JOIN pharmacy_invoices i ON i.id = cp.invoice_id
+        JOIN portal_users u ON u.id = i.dispensed_by
+        LEFT JOIN payment_accounts pa ON pa.id = cp.payment_account_id
+        LEFT JOIN portal_users pu ON pu.id = cp.collected_by
+        WHERE cp.is_initial_effective = false
+
+        UNION ALL
+
+        -- 3. Financial Events
+        SELECT
+          'event:' || e.id as id, i.id as invoice_id, 'event:' || e.id as transaction_id,
+          CASE WHEN e.kind = 'RETURN' THEN 'Return / Refund' WHEN e.collection_delta < 0 THEN 'Collection Reversal' ELSE 'Remaining Collection' END as transaction_type,
+          e.occurred_at as transaction_at, i.created_at as invoice_created_at,
+          i.invoice_number, i.channel::text as channel, i.customer_name, i.external_admission_ref, i.status::text as status,
+          i.outstanding::numeric as outstanding, i.total::numeric as invoice_total, i.paid_total::numeric as invoice_paid_total,
+          i.subtotal::numeric as invoice_subtotal, i.discount_total::numeric as invoice_discount_total, i.tax_total::numeric as invoice_tax_total,
+          e.sale_delta::numeric as billing_amount, e.collection_delta::numeric as collected_amount,
+          COALESCE(cle.reference_no, e.reference, 'EVT-' || UPPER(SUBSTRING(e.id, 1, 8))) as receipt_number,
+          COALESCE(e.method, '') as payment_method, COALESCE(pa.name, '') as payment_account_name,
+          COALESCE(cle_u.full_name, e.actor_id, 'HMS Front Desk') as collected_by_name,
+          u.id as dispensed_by_id, u.full_name as dispensed_by_full_name, u.username as dispensed_by_username
+        FROM pharmacy_financial_events e
+        JOIN pharmacy_invoices i ON i.id = e.invoice_id
+        JOIN portal_users u ON u.id = i.dispensed_by
+        LEFT JOIN first_hms_events fhe ON fhe.id = e.id
+        LEFT JOIN cash_ledger_entries cle ON cle.id = e.reference
+        LEFT JOIN payment_accounts pa ON pa.id = cle.payment_account_id
+        LEFT JOIN portal_users cle_u ON cle_u.id = cle.portal_user_id
+        WHERE fhe.id IS NULL
+
+        UNION ALL
+
+        -- 4. Legacy Refunds
+        SELECT
+          'refund:' || r.id as id, i.id as invoice_id, 'refund:' || r.id as transaction_id,
+          'Legacy Return / Refund' as transaction_type, r.occurred_at as transaction_at, i.created_at as invoice_created_at,
+          i.invoice_number, i.channel::text as channel, i.customer_name, i.external_admission_ref, i.status::text as status,
+          i.outstanding::numeric as outstanding, i.total::numeric as invoice_total, i.paid_total::numeric as invoice_paid_total,
+          i.subtotal::numeric as invoice_subtotal, i.discount_total::numeric as invoice_discount_total, i.tax_total::numeric as invoice_tax_total,
+          (-r.amount)::numeric as billing_amount, (-r.amount)::numeric as collected_amount,
+          COALESCE(r.reference_no, 'REF-' || UPPER(SUBSTRING(r.id, 1, 8))) as receipt_number,
+          COALESCE(r.payment_method::text, CASE WHEN r.is_physical_cash THEN 'CASH' ELSE 'UNKNOWN' END) as payment_method,
+          COALESCE(pa.name, '') as payment_account_name, COALESCE(pu.full_name, 'Staff') as collected_by_name,
+          u.id as dispensed_by_id, u.full_name as dispensed_by_full_name, u.username as dispensed_by_username
+        FROM cash_ledger_entries r
+        JOIN pharmacy_invoices i ON i.id = r.reference_id
+        JOIN portal_users u ON u.id = i.dispensed_by
+        LEFT JOIN payment_accounts pa ON pa.id = r.payment_account_id
+        LEFT JOIN portal_users pu ON pu.id = r.portal_user_id
+        WHERE r.category = 'REFUND' AND r.reference_table = 'pharmacy_invoices'
+          AND NOT EXISTS (SELECT 1 FROM pharmacy_financial_events e WHERE e.reference = r.id)
+      )
+    `;
+    const pagedQuery = import_client7.Prisma.sql`
+      ${ctes}
+      SELECT * FROM all_transactions
+      ${whereClause}
+      ${orderClause}
+      LIMIT ${limit} OFFSET ${offset};
+    `;
+    const summaryQuery = import_client7.Prisma.sql`
+      ${ctes},
+      filtered_tx AS (
+        SELECT * FROM all_transactions
+        ${whereClause}
+      ),
+      summary_m AS (
+        SELECT
+          COALESCE(SUM(billing_amount), 0)::numeric as total_billing,
+          COALESCE(SUM(collected_amount), 0)::numeric as total_collected,
+          COUNT(*)::int as total_count,
+          COUNT(DISTINCT invoice_id)::int as total_invoices
+        FROM filtered_tx
+      ),
+      distinct_inv AS (
+        SELECT DISTINCT ON (invoice_id) outstanding FROM filtered_tx
+      ),
+      out_m AS (
+        SELECT COALESCE(SUM(outstanding), 0)::numeric as total_outstanding FROM distinct_inv
+      )
+      SELECT s.*, o.total_outstanding FROM summary_m s, out_m o;
+    `;
+    const [itemsRaw, summaryRaw] = await Promise.all([
+      client.$queryRaw(pagedQuery),
+      client.$queryRaw(summaryQuery)
+    ]);
+    const summary = summaryRaw[0] || {
+      total_billing: 0,
+      total_collected: 0,
+      total_outstanding: 0,
+      total_invoices: 0,
+      total_count: 0
+    };
+    const items = itemsRaw.map((row) => ({
+      id: row.id,
+      invoiceId: row.invoice_id,
+      transactionId: row.transaction_id,
+      transactionType: row.transaction_type,
+      transactionAt: row.transaction_at,
+      billingAmount: Number(row.billing_amount),
+      collectedAmount: Number(row.collected_amount),
+      receiptNumber: row.receipt_number || "",
+      paymentMethod: row.payment_method || "",
+      paymentAccountName: row.payment_account_name || "",
+      collectedByName: row.collected_by_name || "Staff",
+      outstanding: Number(row.outstanding),
+      status: row.status,
+      channel: row.channel,
+      customerName: row.customer_name,
+      invoiceNumber: row.invoice_number,
+      total: Number(row.invoice_total),
+      paidTotal: Number(row.invoice_paid_total),
+      subtotal: Number(row.invoice_subtotal),
+      discountTotal: Number(row.invoice_discount_total),
+      taxTotal: Number(row.invoice_tax_total),
+      createdAt: row.invoice_created_at,
+      externalAdmissionRef: row.external_admission_ref,
+      dispensedById: row.dispensed_by_id,
+      dispensedByUser: {
+        id: row.dispensed_by_id,
+        fullName: row.dispensed_by_full_name,
+        username: row.dispensed_by_username
+      }
+    }));
+    const total = Number(summary.total_count);
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    return {
+      items,
+      page,
+      limit,
+      total,
+      totalPages,
+      summary: {
+        totalBilling: Number(summary.total_billing),
+        totalCollected: Number(summary.total_collected),
+        totalOutstanding: Number(summary.total_outstanding),
+        totalInvoices: Number(summary.total_invoices)
+      }
+    };
+  },
+  async listInvoices(query, tx) {
+    const client = tx || prisma;
+    const isPaginated = query.page != null || query.limit != null;
+    if (isPaginated && query.transactions === "true") {
+      return pharmacyService.listInvoiceTransactionsSql(query, client);
+    }
+    const channelFilter = query.channel && query.channel !== "ALL" ? query.channel : void 0;
+    const statusFilter = query.status && query.status !== "ALL" ? query.status : void 0;
+    const searchTerm = query.search?.trim();
+    const fromDate = query.fromDate?.trim();
+    const toDate = query.toDate?.trim();
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = [20, 25, 50, 100].includes(Number(query.limit)) ? Number(query.limit) : 25;
+    const sortBy = query.sortBy || "date";
+    const sortOrder = query.sortOrder || "desc";
+    let startUtc;
+    let endUtc;
+    if (fromDate) {
+      startUtc = /* @__PURE__ */ new Date(`${fromDate}T00:00:00+05:00`);
+    }
+    if (toDate) {
+      endUtc = /* @__PURE__ */ new Date(`${toDate}T23:59:59.999+05:00`);
+    }
+    const searchWhere = searchTerm ? {
+      OR: [
+        { invoiceNumber: { contains: searchTerm, mode: "insensitive" } },
+        { customerName: { contains: searchTerm, mode: "insensitive" } },
+        { externalAdmissionRef: { contains: searchTerm, mode: "insensitive" } },
+        { payments: { some: { collectedByUser: { fullName: { contains: searchTerm, mode: "insensitive" } } } } },
+        { dispensedByUser: { fullName: { contains: searchTerm, mode: "insensitive" } } }
+      ]
+    } : void 0;
+    const dateConditions = [];
+    if (startUtc && endUtc) {
+      dateConditions.push(
+        { createdAt: { gte: startUtc, lte: endUtc } },
+        { payments: { some: { paidAt: { gte: startUtc, lte: endUtc } } } },
+        { financialEvents: { some: { occurredAt: { gte: startUtc, lte: endUtc } } } }
+      );
+    } else if (startUtc) {
+      dateConditions.push(
+        { createdAt: { gte: startUtc } },
+        { payments: { some: { paidAt: { gte: startUtc } } } },
+        { financialEvents: { some: { occurredAt: { gte: startUtc } } } }
+      );
+    } else if (endUtc) {
+      dateConditions.push(
+        { createdAt: { lte: endUtc } },
+        { payments: { some: { paidAt: { lte: endUtc } } } },
+        { financialEvents: { some: { occurredAt: { lte: endUtc } } } }
+      );
+    }
+    const where = {
+      channel: channelFilter,
+      status: statusFilter,
+      ...searchWhere || {},
+      ...dateConditions.length > 0 ? { OR: dateConditions } : {}
+    };
+    const invoices = await client.pharmacyInvoice.findMany({
+      where,
       include: {
-        lines: { include: { medicine: true, batch: true, saleUnit: true } },
         payments: {
           include: {
             collectedByUser: { select: { id: true, fullName: true, username: true } },
@@ -36083,15 +36859,16 @@ var pharmacyService = {
           }
         },
         dispensedByUser: { select: { id: true, fullName: true, username: true } },
-        medicineRequests: { include: { lines: true } },
         financialEvents: true
       },
       orderBy: { createdAt: "desc" },
-      take: 200
+      ...isPaginated ? {} : { take: 200 }
     });
-    if (query.transactions !== "true") return invoices;
+    if (query.transactions !== "true" && !isPaginated) {
+      return invoices;
+    }
     const invoiceIds = invoices.map((i) => i.id);
-    const refunds = await prisma.cashLedgerEntry.findMany({
+    const refunds = invoiceIds.length > 0 ? await client.cashLedgerEntry.findMany({
       where: {
         category: "REFUND",
         referenceTable: "pharmacy_invoices",
@@ -36101,8 +36878,72 @@ var pharmacyService = {
         portalUser: { select: { fullName: true } },
         paymentAccount: { select: { name: true } }
       }
+    }) : [];
+    let rows = invoiceTransactions(invoices, refunds);
+    if (startUtc || endUtc) {
+      rows = rows.filter((r) => {
+        const tAt = r.transactionAt || r.createdAt;
+        if (!tAt) return false;
+        const d = new Date(tAt);
+        if (startUtc && d < startUtc) return false;
+        if (endUtc && d > endUtc) return false;
+        return true;
+      });
+    }
+    if (searchTerm) {
+      const q = searchTerm.toLowerCase();
+      rows = rows.filter((r) => {
+        return r.invoiceNumber && r.invoiceNumber.toLowerCase().includes(q) || r.customerName && r.customerName.toLowerCase().includes(q) || r.receiptNumber && r.receiptNumber.toLowerCase().includes(q) || r.transactionType && r.transactionType.toLowerCase().includes(q) || r.collectedByName && r.collectedByName.toLowerCase().includes(q) || r.dispensedByUser?.fullName && r.dispensedByUser.fullName.toLowerCase().includes(q) || r.dispensedByUser?.username && r.dispensedByUser.username.toLowerCase().includes(q) || r.paymentMethod && r.paymentMethod.toLowerCase().includes(q);
+      });
+    }
+    const summary = summarizeInvoiceTransactions(rows);
+    rows.sort((a, b) => {
+      let cmp = 0;
+      if (sortBy === "date") {
+        const timeA = (a.transactionAt ? new Date(a.transactionAt).getTime() : new Date(a.createdAt).getTime()) || 0;
+        const timeB = (b.transactionAt ? new Date(b.transactionAt).getTime() : new Date(b.createdAt).getTime()) || 0;
+        cmp = timeA - timeB;
+      } else if (sortBy === "invoiceNumber") {
+        cmp = (a.invoiceNumber || "").localeCompare(b.invoiceNumber || "");
+      } else if (sortBy === "billing") {
+        const valA = Number(a.billingAmount ?? a.total ?? 0);
+        const valB = Number(b.billingAmount ?? b.total ?? 0);
+        cmp = valA - valB;
+      } else if (sortBy === "collected") {
+        const valA = Number(a.collectedAmount ?? a.paidTotal ?? 0);
+        const valB = Number(b.collectedAmount ?? b.paidTotal ?? 0);
+        cmp = valA - valB;
+      } else if (sortBy === "outstanding") {
+        const valA = Number(a.outstanding ?? 0);
+        const valB = Number(b.outstanding ?? 0);
+        cmp = valA - valB;
+      }
+      if (cmp === 0) {
+        cmp = a.id.localeCompare(b.id);
+      }
+      return sortOrder === "desc" ? -cmp : cmp;
     });
-    return invoiceTransactions(invoices, refunds);
+    if (!isPaginated) {
+      return rows;
+    }
+    const total = rows.length;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const validPage = Math.min(page, totalPages);
+    const start = (validPage - 1) * limit;
+    const items = rows.slice(start, start + limit);
+    return {
+      items,
+      page: validPage,
+      limit,
+      total,
+      totalPages,
+      summary: {
+        totalBilling: summary.billing,
+        totalCollected: summary.collected,
+        totalOutstanding: summary.outstanding,
+        totalInvoices: summary.invoices
+      }
+    };
   },
   // ── Sales Return (pharmacy.md §9.1 SALES_RETURN_IN) ─────────────────────
   async salesReturn(body, actorId, transaction) {
@@ -36233,14 +37074,21 @@ var pharmacyService = {
     };
     return transaction ? execute(transaction) : prisma.$transaction(execute);
   },
-  async getInvoiceById(id) {
-    const invoice = await prisma.pharmacyInvoice.findUnique({
+  async getInvoiceById(id, tx) {
+    const client = tx || prisma;
+    const invoice = await client.pharmacyInvoice.findUnique({
       where: { id },
       include: {
         lines: { include: { medicine: true, batch: true, saleUnit: true } },
-        payments: { include: { collectedByUser: { select: { id: true, fullName: true } } } },
+        payments: {
+          include: {
+            collectedByUser: { select: { id: true, fullName: true, username: true } },
+            paymentAccount: { select: { id: true, name: true } }
+          }
+        },
         dispensedByUser: { select: { id: true, fullName: true, username: true } },
-        medicineRequests: { include: { lines: true } }
+        medicineRequests: { include: { lines: true } },
+        financialEvents: true
       }
     });
     if (!invoice) throw new NotFoundError("Invoice not found");
@@ -36570,6 +37418,15 @@ var pharmacyController = {
   async getInvoiceById(req, res) {
     const data = await pharmacyService.getInvoiceById(req.params.id);
     res.json({ data });
+  },
+  async getPosCatalog(req, res) {
+    const data = await pharmacyService.getPosCatalog(req.query);
+    res.json({ data });
+  },
+  async getPosStockCheck(req, res) {
+    const { medicineIds } = req.body;
+    const data = await pharmacyService.getMedicinesStock(medicineIds);
+    res.json({ data });
   }
 };
 
@@ -36616,7 +37473,23 @@ var updateMedicineBodySchema = createMedicineBodySchema.partial().extend({
 });
 var listMedicinesQuerySchema = external_exports.object({
   search: external_exports.string().optional(),
-  stockStatus: external_exports.enum(["LOW", "OUT", "NEAR_EXPIRY", "EXPIRED"]).optional()
+  stockStatus: external_exports.enum(["LOW", "OUT", "NEAR_EXPIRY", "EXPIRED", "OK"]).optional(),
+  category: external_exports.string().optional(),
+  categoryId: external_exports.string().optional(),
+  unit: external_exports.string().optional(),
+  page: external_exports.coerce.number().int().positive().optional(),
+  limit: external_exports.coerce.number().int().positive().optional(),
+  paginated: external_exports.enum(["true", "false"]).optional(),
+  sortBy: external_exports.enum(["code", "name", "category", "unit", "saleRate", "currentStock", "reorderLevel", "stockValue", "status", "createdAt"]).optional(),
+  sortOrder: external_exports.enum(["asc", "desc"]).optional()
+});
+var posCatalogQuerySchema = external_exports.object({
+  search: external_exports.string().optional(),
+  categoryId: external_exports.string().optional(),
+  category: external_exports.string().optional()
+});
+var posStockCheckBodySchema = external_exports.object({
+  medicineIds: external_exports.array(external_exports.string().uuid()).min(1).max(200)
 });
 var createBatchBodySchema = external_exports.object({
   batchNumber: external_exports.string().max(60).optional().default(""),
@@ -36651,8 +37524,15 @@ var dispenseRetailBodySchema = external_exports.object({
 var addPaymentBodySchema = paymentInputSchema.extend({ requestKey: external_exports.string().uuid() });
 var listInvoicesQuerySchema = external_exports.object({
   transactions: external_exports.enum(["true", "false"]).optional(),
-  channel: external_exports.enum(["RETAIL", "HMS_LINKED"]).optional(),
-  status: external_exports.enum(["UNPAID", "PARTIALLY_PAID", "PAID"]).optional()
+  channel: external_exports.enum(["ALL", "RETAIL", "HMS_LINKED"]).optional(),
+  status: external_exports.enum(["ALL", "UNPAID", "PARTIALLY_PAID", "PAID"]).optional(),
+  search: external_exports.string().optional(),
+  fromDate: external_exports.string().optional(),
+  toDate: external_exports.string().optional(),
+  page: external_exports.coerce.number().int().positive().optional(),
+  limit: external_exports.coerce.number().int().positive().optional(),
+  sortBy: external_exports.enum(["date", "invoiceNumber", "billing", "collected", "outstanding"]).optional(),
+  sortOrder: external_exports.enum(["asc", "desc"]).optional()
 });
 var stockAdjustmentBodySchema = external_exports.object({
   medicineId: external_exports.string().uuid(),
@@ -36728,6 +37608,8 @@ router4.post("/stock-adjustments", edit2, validate({ body: stockAdjustmentBodySc
 router4.get("/collection-accounts", create2, asyncHandler(async (_req, res) => {
   res.json({ data: await prisma.paymentAccount.findMany({ where: { isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }) });
 }));
+router4.get("/pos/catalog", view2, validate({ query: posCatalogQuerySchema }), asyncHandler(pharmacyController.getPosCatalog));
+router4.post("/pos/stock-check", view2, validate({ body: posStockCheckBodySchema }), asyncHandler(pharmacyController.getPosStockCheck));
 router4.post("/dispense", create2, validate({ body: dispenseRetailBodySchema }), asyncHandler(pharmacyController.dispenseRetail));
 router4.post("/sales-returns", create2, validate({ body: salesReturnBodySchema }), asyncHandler(pharmacyController.salesReturn));
 router4.get("/invoices", view2, validate({ query: listInvoicesQuerySchema }), asyncHandler(pharmacyController.listInvoices));
@@ -37745,7 +38627,7 @@ var import_express6 = __toESM(require_express2());
 var import_node_crypto5 = require("node:crypto");
 
 // src/modules/vendors/vendorPayments.ts
-var import_client9 = require("@prisma/client");
+var import_client10 = require("@prisma/client");
 async function validatePaymentAccount(tx, method, accountId) {
   if (!method) throw new ValidationError2("A payment method is required for a paid purchase");
   if (method === "CASH") {
@@ -37772,13 +38654,13 @@ async function postVendorPayment(tx, vendorId, body, actorId) {
     if (!source || source.vendorId !== vendorId || !source.amount.isNegative() || !["PAYMENT", "RETURN_CREDIT"].includes(source.entryType)) throw new ValidationError2("Select the supplier payment or return credit being refunded");
     const balance = await tx.vendorLedgerEntry.aggregate({ where: { vendorId }, _sum: { amount: true } });
     const refunded = await tx.vendorLedgerEntry.aggregate({ where: { referenceTable: "vendor_refunds", referenceId: body.refundOf }, _sum: { amount: true } });
-    if (new import_client9.Prisma.Decimal(body.amount).greaterThan((balance._sum.amount ?? new import_client9.Prisma.Decimal(0)).negated()) || new import_client9.Prisma.Decimal(body.amount).plus(refunded._sum.amount ?? 0).greaterThan(source.amount.negated())) throw new ValidationError2("Refund exceeds available supplier advance / credit");
+    if (new import_client10.Prisma.Decimal(body.amount).greaterThan((balance._sum.amount ?? new import_client10.Prisma.Decimal(0)).negated()) || new import_client10.Prisma.Decimal(body.amount).plus(refunded._sum.amount ?? 0).greaterThan(source.amount.negated())) throw new ValidationError2("Refund exceeds available supplier advance / credit");
   }
   const referenceNo = await nextCode(tx, SEQUENCE.VENDOR_PAYMENT);
   const entry = await tx.vendorLedgerEntry.create({ data: {
     vendorId,
     entryType: "PAYMENT",
-    amount: new import_client9.Prisma.Decimal(signedAmount),
+    amount: new import_client10.Prisma.Decimal(signedAmount),
     referenceNo,
     requestKey: body.requestKey,
     description: `Vendor ${body.refundOf ? "refund" : "payment"} (${body.method})${body.reference ? ": " + body.reference : ""}`,
@@ -38652,14 +39534,14 @@ var cashService = {
     };
   },
   /** pharmacy.md §11.2 — Expected Cash is read-only/system-calculated; user only supplies Physical Cash. */
-  async submitSettlement(userId, body) {
-    const expected = await expectedCash(userId);
-    const physical = new import_library6.Decimal(body.physicalCash);
-    const variance = physical.minus(expected);
-    if (!variance.equals(0) && !body.varianceReason) {
-      throw new ValidationError2("A non-zero variance requires a reason");
-    }
-    return prisma.$transaction(async (tx) => {
+  async submitSettlement(userId, body, transaction) {
+    const runInTx = async (tx) => {
+      const expected = await expectedCash(userId, tx);
+      const physical = new import_library6.Decimal(body.physicalCash);
+      const variance = physical.minus(expected);
+      if (!variance.equals(0) && !body.varianceReason) {
+        throw new ValidationError2("A non-zero variance requires a reason");
+      }
       const settlementNumber = await nextCode(tx, SEQUENCE.SETTLEMENT);
       return tx.accountSettlement.create({
         data: {
@@ -38674,13 +39556,14 @@ var cashService = {
           status: "SUBMITTED"
         }
       });
-    });
+    };
+    return transaction ? runInTx(transaction) : prisma.$transaction(runInTx);
   },
-  async reviewSettlement(id, body, reviewerId) {
-    const settlement = await prisma.accountSettlement.findUnique({ where: { id } });
-    if (!settlement) throw new NotFoundError("Settlement not found");
-    if (settlement.status !== "SUBMITTED") throw new ConflictError("This settlement has already been reviewed");
-    return prisma.$transaction(async (tx) => {
+  async reviewSettlement(id, body, reviewerId, transaction) {
+    const runInTx = async (tx) => {
+      const settlement = await tx.accountSettlement.findUnique({ where: { id } });
+      if (!settlement) throw new NotFoundError("Settlement not found");
+      if (settlement.status !== "SUBMITTED") throw new ConflictError("This settlement has already been reviewed");
       if (body.decision === "ACCEPTED") {
         await tx.cashLedgerEntry.updateMany({
           where: { portalUserId: settlement.portalUserId, isPhysicalCash: true, isSettled: false, occurredAt: { lte: settlement.submittedAt } },
@@ -38694,7 +39577,8 @@ var cashService = {
         where: { id },
         data: { status: body.decision, reviewedById: reviewerId, reviewedAt: /* @__PURE__ */ new Date(), settlementAmount: body.decision === "ACCEPTED" ? settlement.physicalCash : 0 }
       });
-    });
+    };
+    return transaction ? runInTx(transaction) : prisma.$transaction(runInTx);
   },
   async listSettlements(query) {
     return prisma.accountSettlement.findMany({
@@ -39058,11 +39942,32 @@ function projectInvoice(invoice, range = {}, filters = {}, legacyRefunds = []) {
     methods
   };
 }
-async function loadFinancialData(db = prisma) {
+async function loadFinancialData(db = prisma, range) {
+  const invoiceWhere = {};
+  if (range?.lte) {
+    invoiceWhere.createdAt = { lte: range.lte };
+  }
+  if (range?.gte) {
+    invoiceWhere.OR = [
+      { createdAt: { gte: range.gte } },
+      { payments: { some: { paidAt: { gte: range.gte, ...range.lte ? { lte: range.lte } : {} } } } },
+      { financialEvents: { some: { occurredAt: { gte: range.gte, ...range.lte ? { lte: range.lte } : {} } } } },
+      { lines: { some: { dispensedAt: { gte: range.gte, ...range.lte ? { lte: range.lte } : {} } } } },
+      { status: { not: "PAID" } }
+    ];
+  }
   const [invoices, refunds, expenses] = await Promise.all([
-    db.pharmacyInvoice.findMany({ include, orderBy: { createdAt: "desc" } }),
+    db.pharmacyInvoice.findMany({
+      where: Object.keys(invoiceWhere).length > 0 ? invoiceWhere : void 0,
+      include,
+      orderBy: { createdAt: "desc" }
+    }),
     db.cashLedgerEntry.findMany({
-      where: { category: "REFUND", referenceTable: "pharmacy_invoices" },
+      where: {
+        category: "REFUND",
+        referenceTable: "pharmacy_invoices",
+        ...range?.lte ? { occurredAt: { lte: range.lte } } : {}
+      },
       select: {
         id: true,
         referenceId: true,
@@ -39073,6 +39978,12 @@ async function loadFinancialData(db = prisma) {
       }
     }),
     db.expense.findMany({
+      where: range ? {
+        date: {
+          ...range.gte ? { gte: range.gte } : {},
+          ...range.lte ? { lte: range.lte } : {}
+        }
+      } : void 0,
       select: {
         id: true,
         expenseNumber: true,
@@ -39124,6 +40035,209 @@ function financialReport(data, range = {}, filters = {}) {
   };
   return { rows, totals };
 }
+function summarizeFinancialTimeline(data, intervals) {
+  const intervalMap = /* @__PURE__ */ new Map();
+  for (const inv of intervals) {
+    intervalMap.set(inv.id, {
+      grossSales: zero(),
+      netBilling: zero(),
+      taxBilled: zero(),
+      collections: zero(),
+      totalRefunded: zero(),
+      recognizedRevenue: zero(),
+      recognizedCogs: zero(),
+      operatingExpenses: zero(),
+      outstanding: zero(),
+      incompleteCount: 0
+    });
+  }
+  const refundMap = /* @__PURE__ */ new Map();
+  for (const r of data.refunds) {
+    if (r.referenceId) {
+      const list = refundMap.get(r.referenceId) || [];
+      list.push(r);
+      refundMap.set(r.referenceId, list);
+    }
+  }
+  for (const invoice of data.invoices) {
+    const legacyRefunds = refundMap.get(invoice.id) || [];
+    const returns = invoice.financialEvents.filter((e) => e.kind === "RETURN");
+    const issues = [];
+    if (invoice.financialEvents.some((e) => !e.occurredAt)) issues.push("Undated HMS collection reconciliation");
+    if (invoice.channel === "HMS_LINKED" && !add(
+      invoice.financialEvents.filter((e) => e.kind.startsWith("HMS_")),
+      (e) => e.collectionDelta
+    ).equals(invoice.hmsCollectedAmount))
+      issues.push("HMS collection history incomplete");
+    const unmatchedRefunds = legacyRefunds.filter((r) => !returns.some((e) => e.reference === r.id));
+    if (unmatchedRefunds.length) issues.push("Legacy return lacks dated line/tax detail");
+    const originalTotal = invoice.total.minus(add(returns, (e) => e.saleDelta)).plus(add(unmatchedRefunds, (r) => r.amount));
+    const originalTax = invoice.taxTotal.minus(add(returns, (e) => e.taxDelta));
+    const originalGross = invoice.subtotal.minus(add(returns, (e) => e.grossDelta));
+    const lineNet = add(invoice.lines, (l) => l.lineNet);
+    const discountDifference = lineNet.minus(originalTotal);
+    let missingCost = false;
+    const events = [];
+    invoice.lines.forEach((l, index) => {
+      const rate = l.costRateSnapshot ?? l.batch?.costRate;
+      if (rate == null && l.quantity.gt(0)) missingCost = true;
+      events.push({
+        id: "line:" + l.id,
+        at: invoice.channel === "RETAIL" ? invoice.createdAt : l.dispensedAt,
+        sale: l.lineNet.minus(index === 0 ? discountDifference : zero()),
+        tax: l.taxAmount,
+        gross: l.quantity.mul(l.rateSnapshot),
+        cost: l.quantity.mul(rate ?? 0),
+        collection: zero(),
+        kind: "SALE"
+      });
+    });
+    if (!invoice.lines.length) {
+      if (originalTotal.gt(0)) missingCost = true;
+      events.push({
+        id: "invoice:" + invoice.id,
+        at: invoice.createdAt,
+        sale: originalTotal,
+        tax: originalTax,
+        gross: originalGross,
+        cost: zero(),
+        collection: zero(),
+        kind: "SALE"
+      });
+    }
+    for (const p of invoice.payments) {
+      events.push({
+        id: "payment:" + p.id,
+        at: p.paidAt,
+        sale: zero(),
+        tax: zero(),
+        gross: zero(),
+        cost: zero(),
+        collection: p.amount,
+        kind: "PAYMENT"
+      });
+    }
+    for (const e of invoice.financialEvents) {
+      if (e.occurredAt) {
+        events.push({
+          id: e.eventKey,
+          at: e.occurredAt,
+          sale: e.saleDelta,
+          tax: e.taxDelta,
+          gross: e.grossDelta,
+          cost: e.costDelta,
+          collection: e.collectionDelta,
+          kind: e.kind
+        });
+      }
+    }
+    for (const r of unmatchedRefunds) {
+      events.push({
+        id: "legacy-refund:" + r.id,
+        at: r.occurredAt,
+        sale: r.amount.negated(),
+        tax: zero(),
+        gross: zero(),
+        cost: zero(),
+        collection: r.amount.negated(),
+        kind: "RETURN"
+      });
+    }
+    events.sort(
+      (a, b) => a.at.getTime() - b.at.getTime() || (a.kind === "SALE" ? -1 : b.kind === "SALE" ? 1 : a.id.localeCompare(b.id))
+    );
+    if (missingCost) issues.push("Historical sale cost snapshot unavailable");
+    const isIncomplete = missingCost || issues.length > 0;
+    let sale = zero();
+    let tax = zero();
+    let paid = zero();
+    let cost = zero();
+    let recognized = zero();
+    let recognizedCost = zero();
+    for (const e of events) {
+      sale = sale.plus(e.sale);
+      tax = tax.plus(e.tax);
+      paid = paid.plus(e.collection);
+      cost = cost.plus(e.cost);
+      const fullyPaid = sale.gt(0) && paid.gte(sale);
+      let target = recognized;
+      let targetCost = recognizedCost;
+      if (fullyPaid) {
+        target = import_library8.Decimal.max(0, sale.minus(tax));
+        targetCost = cost;
+      } else if (e.kind === "RETURN") {
+        target = import_library8.Decimal.min(recognized, import_library8.Decimal.max(0, sale.minus(tax)));
+        targetCost = recognizedCost.gt(0) ? import_library8.Decimal.max(0, recognizedCost.plus(e.cost)) : zero();
+      } else if (e.collection.lt(0)) {
+        target = zero();
+        targetCost = zero();
+      }
+      const delta = target.minus(recognized);
+      const costChange = targetCost.minus(recognizedCost);
+      recognized = target;
+      recognizedCost = targetCost;
+      for (const inv of intervals) {
+        if ((!inv.gte || e.at >= inv.gte) && (!inv.lte || e.at <= inv.lte)) {
+          const acc = intervalMap.get(inv.id);
+          if (e.kind === "SALE") acc.grossSales = acc.grossSales.plus(e.gross);
+          acc.netBilling = acc.netBilling.plus(e.sale.minus(e.tax));
+          acc.taxBilled = acc.taxBilled.plus(e.tax);
+          acc.collections = acc.collections.plus(e.collection);
+          if (e.collection.lt(0)) acc.totalRefunded = acc.totalRefunded.minus(e.collection);
+          if (!isIncomplete) {
+            acc.recognizedRevenue = acc.recognizedRevenue.plus(delta);
+            acc.recognizedCogs = acc.recognizedCogs.plus(costChange);
+          }
+        }
+      }
+    }
+    for (const inv of intervals) {
+      if (!inv.lte || invoice.createdAt <= inv.lte) {
+        const acc = intervalMap.get(inv.id);
+        if (isIncomplete) acc.incompleteCount += 1;
+        let s = zero();
+        let p = zero();
+        for (const e of events) {
+          if (inv.lte && e.at > inv.lte) continue;
+          s = s.plus(e.sale);
+          p = p.plus(e.collection);
+        }
+        const outstanding = import_library8.Decimal.max(0, s.minus(p));
+        acc.outstanding = acc.outstanding.plus(outstanding);
+      }
+    }
+  }
+  for (const exp of data.expenses) {
+    for (const inv of intervals) {
+      if ((!inv.gte || exp.date >= inv.gte) && (!inv.lte || exp.date <= inv.lte)) {
+        const acc = intervalMap.get(inv.id);
+        acc.operatingExpenses = acc.operatingExpenses.plus(exp.amount);
+      }
+    }
+  }
+  const resultMap = /* @__PURE__ */ new Map();
+  for (const inv of intervals) {
+    const acc = intervalMap.get(inv.id);
+    const opProfit = acc.incompleteCount > 0 ? null : acc.recognizedRevenue.minus(acc.recognizedCogs).minus(acc.operatingExpenses);
+    resultMap.set(inv.id, {
+      grossSales: acc.grossSales,
+      netBilling: acc.netBilling,
+      taxBilled: acc.taxBilled,
+      total: acc.netBilling.plus(acc.taxBilled),
+      collections: acc.collections,
+      paidTotal: acc.collections,
+      netCollected: acc.collections,
+      totalRefunded: acc.totalRefunded,
+      outstanding: acc.outstanding,
+      recognizedRevenue: acc.recognizedRevenue,
+      recognizedCogs: acc.recognizedCogs,
+      operatingExpenses: acc.operatingExpenses,
+      operatingProfit: opProfit,
+      incompleteInvoices: acc.incompleteCount
+    });
+  }
+  return resultMap;
+}
 
 // src/modules/dashboard/dashboard.service.ts
 var import_library9 = require("@prisma/client/runtime/library");
@@ -39138,17 +40252,66 @@ var dashboardService = {
   async getManagementSummary(userId) {
     const today = startOfDay();
     const tomorrow = new Date(today.getTime() + 864e5);
-    const financialData = await loadFinancialData();
-    const todayFinancial = financialReport(financialData, { gte: today, lte: new Date(tomorrow.getTime() - 1) }).totals;
-    const lifetimeFinancial = financialReport(financialData, { lte: /* @__PURE__ */ new Date() }).totals;
+    const now = /* @__PURE__ */ new Date();
     const sixMonthsAgo = /* @__PURE__ */ new Date();
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5);
     sixMonthsAgo.setDate(1);
     sixMonthsAgo.setHours(0, 0, 0, 0);
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const intervals = [
+      { id: "today", gte: today, lte: new Date(tomorrow.getTime() - 1) },
+      { id: "lifetime", lte: now }
+    ];
+    const monthDefs = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = /* @__PURE__ */ new Date();
+      d.setMonth(d.getMonth() - i);
+      const mIdx = d.getMonth();
+      const y = d.getFullYear();
+      const mStart = new Date(Date.UTC(y, mIdx, 1));
+      const mEnd = new Date(Date.UTC(y, mIdx + 1, 1));
+      const id = `m-${i}`;
+      monthDefs.push({
+        id,
+        monthLabel: `${monthNames[mIdx]} ${String(y).slice(-2)}`,
+        mStart,
+        mEnd
+      });
+      intervals.push({
+        id,
+        gte: mStart,
+        lte: new Date(Math.min(mEnd.getTime() - 1, now.getTime()))
+      });
+    }
+    const dayDefs = [];
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const y = d.getFullYear();
+      const m = d.getMonth();
+      const dayNum = d.getDate();
+      const dayStart = new Date(Date.UTC(y, m, dayNum, 0, 0, 0));
+      const dayEnd = new Date(Date.UTC(y, m, dayNum + 1, 0, 0, 0));
+      const id = `d-${i}`;
+      dayDefs.push({
+        id,
+        dateLabel: i === 0 ? "Today" : `${dayNum} ${monthNames[m]}`,
+        fullDateLabel: d.toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "short", year: "numeric" }),
+        dayStart,
+        dayEnd
+      });
+      intervals.push({
+        id,
+        gte: dayStart,
+        lte: new Date(Math.min(dayEnd.getTime() - 1, now.getTime()))
+      });
+    }
     const [
+      financialData,
       salesToday,
       purchasesToday,
-      medicines,
+      activeMedicines,
+      positiveBatches,
       vendorLedger2,
       pendingSettlements,
       pendingHmsRequests,
@@ -39160,19 +40323,49 @@ var dashboardService = {
       vendorsList,
       openPurchaseOrdersCount
     ] = await Promise.all([
+      loadFinancialData(),
       prisma.pharmacyInvoice.aggregate({ where: { createdAt: { gte: today, lt: tomorrow } }, _sum: { total: true }, _count: true }),
       prisma.purchase.aggregate({ where: { createdAt: { gte: today, lt: tomorrow } }, _sum: { total: true }, _count: true }),
-      prisma.medicineMaster.findMany({
-        where: { isActive: true },
-        include: {
-          batches: {
-            include: { stockEntries: { select: { quantityDelta: true } } }
-          },
-          stockEntries: { select: { quantityDelta: true } },
-          baseUnit: { select: { name: true, shortCode: true } }
-        },
-        orderBy: { name: "asc" }
-      }),
+      prisma.$queryRaw`
+        SELECT 
+          m.id,
+          m.code,
+          m.name,
+          COALESCE(NULLIF(TRIM(m.category), ''), 'General') AS "categoryLabel",
+          m.reorder_level::numeric AS "reorderLevel",
+          COALESCE(m.purchase_rate, m.sale_rate, 0)::numeric AS "rate",
+          COALESCE(u.short_code, u.name, m.unit, 'units') AS "unitCode",
+          COALESCE(s.stock, 0)::numeric AS "currentStock"
+        FROM medicine_masters m
+        LEFT JOIN units u ON m.base_unit_id = u.id
+        LEFT JOIN (
+          SELECT medicine_id, SUM(quantity_delta) AS stock
+          FROM stock_ledger_entries
+          GROUP BY medicine_id
+        ) s ON s.medicine_id = m.id
+        WHERE m.is_active = true
+        ORDER BY m.name ASC
+      `,
+      prisma.$queryRaw`
+        SELECT 
+          b.id,
+          b.medicine_id AS "medicineId",
+          m.name,
+          b.batch_number AS "batchNumber",
+          b.expiry_date AS "expiryDate",
+          bs.stock::numeric AS "batchStock"
+        FROM medicine_batches b
+        JOIN medicine_masters m ON b.medicine_id = m.id
+        JOIN (
+          SELECT batch_id, SUM(quantity_delta) AS stock
+          FROM stock_ledger_entries
+          WHERE batch_id IS NOT NULL
+          GROUP BY batch_id
+          HAVING SUM(quantity_delta) > 0
+        ) bs ON bs.batch_id = b.id
+        WHERE m.is_active = true
+        ORDER BY b.expiry_date ASC
+      `,
       prisma.vendorLedgerEntry.aggregate({ _sum: { amount: true } }),
       prisma.accountSettlement.count({ where: { status: "SUBMITTED" } }),
       prisma.medicineRequest.count({ where: { status: { in: ["REQUESTED", "PARTIALLY_ACCEPTED"] } } }),
@@ -39197,7 +40390,9 @@ var dashboardService = {
       }),
       prisma.purchaseOrder.count({ where: { status: "OPEN" } })
     ]);
-    const now = /* @__PURE__ */ new Date();
+    const timelineResults = summarizeFinancialTimeline(financialData, intervals);
+    const todayFinancial = timelineResults.get("today");
+    const lifetimeFinancial = timelineResults.get("lifetime");
     const nearExpiryCutoff = new Date(now.getTime() + nearExpiryWindowDays * 864e5);
     let stockValue = new import_library9.Decimal(0);
     let totalStockUnits = new import_library9.Decimal(0);
@@ -39205,23 +40400,41 @@ var dashboardService = {
     let outOfStock = 0;
     let nearExpiry = 0;
     let expired = 0;
+    const batchesByMedicine = /* @__PURE__ */ new Map();
+    const nearExpiryList = [];
+    for (const b of positiveBatches) {
+      const list = batchesByMedicine.get(b.medicineId) || [];
+      list.push(b);
+      batchesByMedicine.set(b.medicineId, list);
+      const exp = new Date(b.expiryDate);
+      if (exp <= now) {
+        expired += 1;
+      } else if (exp <= nearExpiryCutoff) {
+        nearExpiry += 1;
+        nearExpiryList.push({
+          id: b.id,
+          medicineId: b.medicineId,
+          name: b.name,
+          batchNumber: b.batchNumber,
+          expiryDate: exp.toISOString(),
+          daysLeft: Math.max(0, Math.ceil((exp.getTime() - now.getTime()) / 864e5)),
+          quantityRemaining: Number(b.batchStock)
+        });
+      }
+    }
     const categoryMap = {};
     const inventoryOverview = [];
     const lowStockList = [];
-    const nearExpiryList = [];
-    for (const m of medicines) {
-      const stock = m.stockEntries.reduce((s, e) => s.plus(e.quantityDelta), new import_library9.Decimal(0));
+    for (const m of activeMedicines) {
+      const stock = new import_library9.Decimal(m.currentStock);
       totalStockUnits = totalStockUnits.plus(stock);
-      stockValue = stockValue.plus(stock.mul(m.purchaseRate ?? m.saleRate));
-      const catName = m.categoryLabel && m.categoryLabel.trim() || "General";
-      if (!categoryMap[catName]) {
-        categoryMap[catName] = { count: 0, stock: new import_library9.Decimal(0) };
-      }
+      stockValue = stockValue.plus(stock.mul(m.rate));
+      const catName = m.categoryLabel || "General";
+      if (!categoryMap[catName]) categoryMap[catName] = { count: 0, stock: new import_library9.Decimal(0) };
       categoryMap[catName].count += 1;
       categoryMap[catName].stock = categoryMap[catName].stock.plus(stock);
       const isOut = stock.lessThanOrEqualTo(0);
       const isLow = !isOut && stock.lessThanOrEqualTo(m.reorderLevel);
-      const unitCode = m.baseUnit?.shortCode || m.baseUnit?.name || m.unit || "units";
       if (isOut) {
         outOfStock += 1;
         lowStockList.push({
@@ -39229,7 +40442,7 @@ var dashboardService = {
           name: m.name,
           currentStock: 0,
           reorderLevel: Number(m.reorderLevel),
-          unit: unitCode,
+          unit: m.unitCode,
           isOutOfStock: true
         });
       } else if (isLow) {
@@ -39239,34 +40452,17 @@ var dashboardService = {
           name: m.name,
           currentStock: stock.toNumber(),
           reorderLevel: Number(m.reorderLevel),
-          unit: unitCode,
+          unit: m.unitCode,
           isOutOfStock: false
         });
       }
-      const sortedBatches = [...m.batches].sort((a, b) => a.expiryDate.getTime() - b.expiryDate.getTime());
-      const earliestBatch = sortedBatches[0];
-      let hasExpired = false;
-      let hasNearExpiry = false;
-      for (const b of m.batches) {
-        const batchStock = b.stockEntries.reduce((s, e) => s.plus(e.quantityDelta), new import_library9.Decimal(0)).toNumber();
-        if (batchStock <= 0) continue;
-        if (b.expiryDate <= now) {
-          expired += 1;
-          hasExpired = true;
-        } else if (b.expiryDate <= nearExpiryCutoff) {
-          nearExpiry += 1;
-          hasNearExpiry = true;
-          nearExpiryList.push({
-            id: b.id,
-            medicineId: m.id,
-            name: m.name,
-            batchNumber: b.batchNumber,
-            expiryDate: b.expiryDate.toISOString(),
-            daysLeft: Math.max(0, Math.ceil((b.expiryDate.getTime() - now.getTime()) / 864e5)),
-            quantityRemaining: batchStock
-          });
-        }
-      }
+      const medBatches = batchesByMedicine.get(m.id) || [];
+      const earliestBatch = medBatches[0];
+      const hasExpired = medBatches.some((b) => new Date(b.expiryDate) <= now);
+      const hasNearExpiry = medBatches.some((b) => {
+        const exp = new Date(b.expiryDate);
+        return exp > now && exp <= nearExpiryCutoff;
+      });
       const itemStatus = isOut || hasExpired ? "Critical" : isLow || hasNearExpiry ? "Low Stock" : "Healthy";
       inventoryOverview.push({
         id: m.id,
@@ -39275,7 +40471,7 @@ var dashboardService = {
         category: catName,
         currentStock: stock.toNumber(),
         reorderLevel: Number(m.reorderLevel),
-        expiryDate: earliestBatch ? earliestBatch.expiryDate.toISOString() : null,
+        expiryDate: earliestBatch ? new Date(earliestBatch.expiryDate).toISOString() : null,
         status: itemStatus,
         batchNumber: earliestBatch ? earliestBatch.batchNumber : null
       });
@@ -39286,25 +40482,16 @@ var dashboardService = {
       return a.currentStock - a.reorderLevel - (b.currentStock - b.reorderLevel);
     });
     nearExpiryList.sort((a, b) => a.daysLeft - b.daysLeft);
-    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    const monthlyTrend = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = /* @__PURE__ */ new Date();
-      d.setMonth(d.getMonth() - i);
-      const mIdx = d.getMonth();
-      const y = d.getFullYear();
-      const mStart = new Date(Date.UTC(y, mIdx, 1));
-      const mEnd = new Date(Date.UTC(y, mIdx + 1, 1));
-      const mInvoices = recentInvoices.filter((inv) => inv.createdAt >= mStart && inv.createdAt < mEnd);
-      const mPurchases = recentPurchases.filter((p) => p.createdAt >= mStart && p.createdAt < mEnd);
-      const financial = financialReport(financialData, { gte: mStart, lte: new Date(Math.min(mEnd.getTime() - 1, now.getTime())) }).totals;
-      const rev = Number(financial.recognizedRevenue);
+    const monthlyTrend = monthDefs.map((def) => {
+      const financial = timelineResults.get(def.id);
+      const mInvoices = recentInvoices.filter((inv) => inv.createdAt >= def.mStart && inv.createdAt < def.mEnd);
+      const mPurchases = recentPurchases.filter((p) => p.createdAt >= def.mStart && p.createdAt < def.mEnd);
       const pur = mPurchases.reduce((s, p) => s.plus(p.total), new import_library9.Decimal(0)).toNumber();
       const exp = Number(financial.operatingExpenses);
       const profit = financial.operatingProfit === null ? null : Number(financial.operatingProfit);
-      monthlyTrend.push({
-        month: `${monthNames[mIdx]} ${String(y).slice(-2)}`,
-        revenue: rev,
+      return {
+        month: def.monthLabel,
+        revenue: Number(financial.recognizedRevenue),
         grossSales: Number(financial.grossSales),
         netBilling: Number(financial.netBilling),
         collections: Number(financial.collections),
@@ -39314,28 +40501,19 @@ var dashboardService = {
         expenses: exp,
         profit,
         orders: mInvoices.length
-      });
-    }
-    const dailyTrend = [];
-    for (let i = 29; i >= 0; i--) {
-      const d = new Date(now);
-      d.setDate(d.getDate() - i);
-      const y = d.getFullYear();
-      const m = d.getMonth();
-      const dayNum = d.getDate();
-      const dayStart = new Date(Date.UTC(y, m, dayNum, 0, 0, 0));
-      const dayEnd = new Date(Date.UTC(y, m, dayNum + 1, 0, 0, 0));
-      const dInvoices = recentInvoices.filter((inv) => inv.createdAt >= dayStart && inv.createdAt < dayEnd);
-      const dPurchases = recentPurchases.filter((p) => p.createdAt >= dayStart && p.createdAt < dayEnd);
-      const financial = financialReport(financialData, { gte: dayStart, lte: new Date(Math.min(dayEnd.getTime() - 1, now.getTime())) }).totals;
-      const rev = Number(financial.recognizedRevenue);
+      };
+    });
+    const dailyTrend = dayDefs.map((def) => {
+      const financial = timelineResults.get(def.id);
+      const dInvoices = recentInvoices.filter((inv) => inv.createdAt >= def.dayStart && inv.createdAt < def.dayEnd);
+      const dPurchases = recentPurchases.filter((p) => p.createdAt >= def.dayStart && p.createdAt < def.dayEnd);
       const pur = dPurchases.reduce((s, p) => s.plus(p.total), new import_library9.Decimal(0)).toNumber();
       const exp = Number(financial.operatingExpenses);
       const profit = financial.operatingProfit === null ? null : Number(financial.operatingProfit);
-      dailyTrend.push({
-        date: i === 0 ? "Today" : `${dayNum} ${monthNames[m]}`,
-        fullDate: d.toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "short", year: "numeric" }),
-        revenue: rev,
+      return {
+        date: def.dateLabel,
+        fullDate: def.fullDateLabel,
+        revenue: Number(financial.recognizedRevenue),
         grossSales: Number(financial.grossSales),
         netBilling: Number(financial.netBilling),
         collections: Number(financial.collections),
@@ -39345,8 +40523,8 @@ var dashboardService = {
         expenses: exp,
         profit,
         orders: dInvoices.length
-      });
-    }
+      };
+    });
     const totalStockNum = Math.max(1, totalStockUnits.toNumber());
     const categoryDistribution = Object.entries(categoryMap).map(([category, info]) => {
       const stockNum = Math.max(0, info.stock.toNumber());
@@ -39416,7 +40594,7 @@ var dashboardService = {
       operatingProfitToday: todayFinancial.operatingProfit,
       incompleteInvoices: lifetimeFinancial.incompleteInvoices,
       totalSalesCountAllTime: totalSalesAllTime._count,
-      totalMedicines: medicines.length,
+      totalMedicines: activeMedicines.length,
       totalStockUnits: totalStockUnits.toNumber(),
       currentStockValue: stockValue,
       lowStockCount: lowStock + outOfStock,
@@ -39441,21 +40619,45 @@ var dashboardService = {
   async getSalesSummary(userId) {
     const today = startOfDay();
     const tomorrow = new Date(today.getTime() + 864e5);
-    const [mySales, pendingHmsRequests, expected] = await Promise.all([
-      prisma.pharmacyInvoice.aggregate({ where: { dispensedById: userId, createdAt: { gte: today, lt: tomorrow } }, _sum: { total: true, paidTotal: true }, _count: true }),
+    const [mySales, pendingHmsRequests, expected, paymentAggregates, refundAggregates] = await Promise.all([
+      prisma.pharmacyInvoice.aggregate({
+        where: { dispensedById: userId, createdAt: { gte: today, lt: tomorrow } },
+        _sum: { total: true, paidTotal: true },
+        _count: true
+      }),
       prisma.medicineRequest.count({ where: { status: { in: ["REQUESTED", "PARTIALLY_ACCEPTED"] } } }),
-      cashService.expectedCash(userId)
+      cashService.expectedCash(userId),
+      prisma.pharmacyPayment.groupBy({
+        by: ["method"],
+        where: {
+          collectedById: userId,
+          paidAt: { gte: today, lt: tomorrow },
+          invoice: { channel: "RETAIL" }
+        },
+        _sum: { amount: true }
+      }),
+      prisma.cashLedgerEntry.groupBy({
+        by: ["isPhysicalCash"],
+        where: {
+          portalUserId: userId,
+          occurredAt: { gte: today, lt: tomorrow },
+          category: "REFUND",
+          referenceTable: "pharmacy_invoices"
+        },
+        _sum: { amount: true }
+      })
     ]);
-    const data = await loadFinancialData();
-    const retailData = { ...data, invoices: data.invoices.filter((i) => i.channel === "RETAIL") };
-    const period = { gte: today, lte: new Date(tomorrow.getTime() - 1) };
-    const cash = financialReport(retailData, period, { cashierId: userId, method: "CASH" }).totals.collections;
-    const nonCash = financialReport(retailData, period, { cashierId: userId }).totals.collections.minus(cash);
+    const cashPayments = paymentAggregates.find((p) => p.method === "CASH")?._sum.amount ?? new import_library9.Decimal(0);
+    const nonCashPayments = paymentAggregates.filter((p) => p.method !== "CASH").reduce((sum2, p) => sum2.plus(p._sum.amount ?? 0), new import_library9.Decimal(0));
+    const cashRefunds = refundAggregates.find((r) => r.isPhysicalCash)?._sum.amount ?? new import_library9.Decimal(0);
+    const nonCashRefunds = refundAggregates.find((r) => !r.isPhysicalCash)?._sum.amount ?? new import_library9.Decimal(0);
+    const cashCollectionToday = cashPayments.minus(cashRefunds);
+    const cardOnlineCollectionToday = nonCashPayments.minus(nonCashRefunds);
     return {
       mySalesToday: mySales._sum.total ?? new import_library9.Decimal(0),
       mySalesCountToday: mySales._count,
-      cashCollectionToday: cash,
-      cardOnlineCollectionToday: nonCash,
+      cashCollectionToday,
+      cardOnlineCollectionToday,
       pendingHmsRequests,
       expectedCash: expected
     };
@@ -39487,23 +40689,23 @@ var dashboard_routes_default = router10;
 var import_express11 = __toESM(require_express2());
 
 // src/modules/reports/incomeExpense.ts
-var import_client17 = require("@prisma/client");
+var import_client18 = require("@prisma/client");
 async function incomeExpenseReport(db, range = {}) {
   const [data, ledger] = await Promise.all([
-    loadFinancialData(db),
+    loadFinancialData(db, range),
     db.vendorLedgerEntry.findMany({ where: { createdAt: { lte: range.lte } } })
   ]);
   const { totals } = financialReport(data, range);
-  let vendorPayments = new import_client17.Prisma.Decimal(0), vendorRefunds = new import_client17.Prisma.Decimal(0);
+  let vendorPayments = new import_client18.Prisma.Decimal(0), vendorRefunds = new import_client18.Prisma.Decimal(0);
   const balances = /* @__PURE__ */ new Map();
   for (const entry of ledger) {
-    balances.set(entry.vendorId, (balances.get(entry.vendorId) ?? new import_client17.Prisma.Decimal(0)).plus(entry.amount));
+    balances.set(entry.vendorId, (balances.get(entry.vendorId) ?? new import_client18.Prisma.Decimal(0)).plus(entry.amount));
     if (entry.entryType === "PAYMENT" && (!range.gte || entry.createdAt >= range.gte)) {
       if (entry.amount.isNegative()) vendorPayments = vendorPayments.minus(entry.amount);
       else vendorRefunds = vendorRefunds.plus(entry.amount);
     }
   }
-  let vendorOutstanding = new import_client17.Prisma.Decimal(0), supplierAdvances = new import_client17.Prisma.Decimal(0);
+  let vendorOutstanding = new import_client18.Prisma.Decimal(0), supplierAdvances = new import_client18.Prisma.Decimal(0);
   for (const balance of balances.values()) {
     if (balance.isPositive()) vendorOutstanding = vendorOutstanding.plus(balance);
     else supplierAdvances = supplierAdvances.minus(balance);
@@ -39530,10 +40732,10 @@ async function incomeExpenseReport(db, range = {}) {
 }
 
 // src/modules/reports/operatingProfit.ts
-var import_client18 = require("@prisma/client");
+var import_client19 = require("@prisma/client");
 async function operatingProfitReport(db, range = {}) {
   const [data, ledger] = await Promise.all([
-    loadFinancialData(db),
+    loadFinancialData(db, range),
     db.vendorLedgerEntry.findMany({
       where: {
         createdAt: { lte: range.lte }
@@ -39541,13 +40743,13 @@ async function operatingProfitReport(db, range = {}) {
     })
   ]);
   const { rows, totals } = financialReport(data, range);
-  let totalVendorPayments = new import_client18.Prisma.Decimal(0);
-  let supplierRefundsReceived = new import_client18.Prisma.Decimal(0);
+  let totalVendorPayments = new import_client19.Prisma.Decimal(0);
+  let supplierRefundsReceived = new import_client19.Prisma.Decimal(0);
   const balances = /* @__PURE__ */ new Map();
   for (const entry of ledger) {
     balances.set(
       entry.vendorId,
-      (balances.get(entry.vendorId) ?? new import_client18.Prisma.Decimal(0)).plus(entry.amount)
+      (balances.get(entry.vendorId) ?? new import_client19.Prisma.Decimal(0)).plus(entry.amount)
     );
     if (entry.entryType === "PAYMENT" && (!range.gte || entry.createdAt >= range.gte)) {
       if (entry.amount.isNegative()) {
@@ -39557,8 +40759,8 @@ async function operatingProfitReport(db, range = {}) {
       }
     }
   }
-  let vendorOutstanding = new import_client18.Prisma.Decimal(0);
-  let supplierAdvances = new import_client18.Prisma.Decimal(0);
+  let vendorOutstanding = new import_client19.Prisma.Decimal(0);
+  let supplierAdvances = new import_client19.Prisma.Decimal(0);
   for (const balance of balances.values()) {
     if (balance.isPositive()) {
       vendorOutstanding = vendorOutstanding.plus(balance);
@@ -39633,13 +40835,13 @@ async function operatingProfitReport(db, range = {}) {
       entry = {
         date: key,
         label,
-        grossSales: new import_client18.Prisma.Decimal(0),
-        recognizedRevenue: new import_client18.Prisma.Decimal(0),
-        medicineCogs: new import_client18.Prisma.Decimal(0),
-        grossProfit: new import_client18.Prisma.Decimal(0),
-        operatingExpenses: new import_client18.Prisma.Decimal(0),
-        operatingProfit: new import_client18.Prisma.Decimal(0),
-        collections: new import_client18.Prisma.Decimal(0),
+        grossSales: new import_client19.Prisma.Decimal(0),
+        recognizedRevenue: new import_client19.Prisma.Decimal(0),
+        medicineCogs: new import_client19.Prisma.Decimal(0),
+        grossProfit: new import_client19.Prisma.Decimal(0),
+        operatingExpenses: new import_client19.Prisma.Decimal(0),
+        operatingProfit: new import_client19.Prisma.Decimal(0),
+        collections: new import_client19.Prisma.Decimal(0),
         invoiceCount: 0
       };
       dailyMap.set(key, entry);
@@ -39743,7 +40945,7 @@ async function operatingProfitReport(db, range = {}) {
 }
 
 // src/modules/reports/reports.service.ts
-var ROW_LIMIT = 500;
+var DEFAULT_ROW_LIMIT = 2e3;
 function endOfDayIfDateOnly(to) {
   if (!to) return void 0;
   if (to.getUTCHours() === 0 && to.getUTCMinutes() === 0 && to.getUTCSeconds() === 0) {
@@ -39761,43 +40963,47 @@ function dateRange(query) {
 var reportsService = {
   async run(query) {
     const range = dateRange(query);
+    const limit = query.limit ?? DEFAULT_ROW_LIMIT;
     switch (query.type) {
       case "INCOME_EXPENSE":
         return incomeExpenseReport(prisma, range);
       case "OPERATING_PROFIT":
         return operatingProfitReport(prisma, range);
       case "SALES_COLLECTION":
-        return financialReport(await loadFinancialData(), range, query);
+        return financialReport(await loadFinancialData(prisma, range), range, query);
       case "HMS_DISPENSE":
-        return hmsDispense(range);
+        return hmsDispense(range, limit);
       case "PURCHASE":
-        return purchase(range);
+        return purchase(range, limit);
       case "STOCK_MOVEMENT":
-        return stockMovement(range);
+        return stockMovement(range, limit);
       case "VENDOR_LEDGER":
-        return vendorLedger(range);
+        return vendorLedger(range, limit);
       case "EXPENSE":
-        return expense(range);
+        return expense(range, limit);
       case "RETURN_REFUND":
-        return returnRefund(range);
+        return returnRefund(range, limit);
       case "BALANCE_SETTLEMENT":
-        return balanceSettlement(range);
+        return balanceSettlement(range, limit);
       default:
         throw new ValidationError2(`Unknown report type`);
     }
   }
 };
-async function hmsDispense(range) {
-  const requests = await prisma.medicineRequest.findMany({
-    where: { requestedAt: range },
-    include: {
-      lines: { include: { medicine: { select: { name: true, code: true } } } },
-      invoice: { select: { invoiceNumber: true, total: true, paidTotal: true, outstanding: true, clearanceStatus: true } },
-      handledByUser: { select: { fullName: true } }
-    },
-    orderBy: { requestedAt: "desc" },
-    take: ROW_LIMIT
-  });
+async function hmsDispense(range, limit = DEFAULT_ROW_LIMIT) {
+  const [requests, totalCount] = await Promise.all([
+    prisma.medicineRequest.findMany({
+      where: { requestedAt: range },
+      include: {
+        lines: { include: { medicine: { select: { name: true, code: true } } } },
+        invoice: { select: { invoiceNumber: true, total: true, paidTotal: true, outstanding: true, clearanceStatus: true } },
+        handledByUser: { select: { fullName: true } }
+      },
+      orderBy: { requestedAt: "desc" },
+      take: limit
+    }),
+    prisma.medicineRequest.count({ where: { requestedAt: range } })
+  ]);
   const rows = requests.map((r) => ({
     requestNumber: r.requestNumber,
     admissionRef: r.externalAdmissionRef,
@@ -39812,15 +41018,22 @@ async function hmsDispense(range) {
     clearanceStatus: r.invoice?.clearanceStatus ?? null,
     requestedAt: r.requestedAt
   }));
-  return { rows, totals: null };
+  return { rows, totals: null, totalCount, limit };
 }
-async function purchase(range) {
-  const purchases = await prisma.purchase.findMany({
-    where: { purchaseDate: range },
-    include: { vendor: { select: { name: true, code: true } }, createdByUser: { select: { fullName: true } } },
-    orderBy: { purchaseDate: "desc" },
-    take: ROW_LIMIT
-  });
+async function purchase(range, limit = DEFAULT_ROW_LIMIT) {
+  const [purchases, aggregates] = await Promise.all([
+    prisma.purchase.findMany({
+      where: { purchaseDate: range },
+      include: { vendor: { select: { name: true, code: true } }, createdByUser: { select: { fullName: true } } },
+      orderBy: { purchaseDate: "desc" },
+      take: limit
+    }),
+    prisma.purchase.aggregate({
+      where: { purchaseDate: range },
+      _sum: { total: true, paidNow: true, vendorDue: true },
+      _count: true
+    })
+  ]);
   const rows = purchases.map((p) => ({
     purchaseNumber: p.purchaseNumber,
     vendor: p.vendor.name,
@@ -39833,16 +41046,23 @@ async function purchase(range) {
     status: p.status,
     receivedBy: p.createdByUser.fullName
   }));
-  const totals = { total: sumDecimal(purchases.map((p) => p.total)), paidNow: sumDecimal(purchases.map((p) => p.paidNow)), vendorDue: sumDecimal(purchases.map((p) => p.vendorDue)) };
-  return { rows, totals };
+  const totals = {
+    total: aggregates._sum.total ? Number(aggregates._sum.total) : 0,
+    paidNow: aggregates._sum.paidNow ? Number(aggregates._sum.paidNow) : 0,
+    vendorDue: aggregates._sum.vendorDue ? Number(aggregates._sum.vendorDue) : 0
+  };
+  return { rows, totals, totalCount: aggregates._count, limit };
 }
-async function stockMovement(range) {
-  const entries = await prisma.stockLedgerEntry.findMany({
-    where: { createdAt: range },
-    include: { medicine: { select: { name: true, code: true } }, batch: { select: { batchNumber: true } }, actor: { select: { fullName: true, role: true } } },
-    orderBy: { createdAt: "desc" },
-    take: ROW_LIMIT
-  });
+async function stockMovement(range, limit = DEFAULT_ROW_LIMIT) {
+  const [entries, totalCount] = await Promise.all([
+    prisma.stockLedgerEntry.findMany({
+      where: { createdAt: range },
+      include: { medicine: { select: { name: true, code: true } }, batch: { select: { batchNumber: true } }, actor: { select: { fullName: true, role: true } } },
+      orderBy: { createdAt: "desc" },
+      take: limit
+    }),
+    prisma.stockLedgerEntry.count({ where: { createdAt: range } })
+  ]);
   const rows = entries.map((e) => ({
     itemCode: e.medicine.code,
     medicine: e.medicine.name,
@@ -39853,15 +41073,22 @@ async function stockMovement(range) {
     performedBy: e.actor.fullName,
     createdAt: e.createdAt
   }));
-  return { rows, totals: null };
+  return { rows, totals: null, totalCount, limit };
 }
-async function vendorLedger(range) {
-  const entries = await prisma.vendorLedgerEntry.findMany({
-    where: { createdAt: range },
-    include: { vendor: { select: { name: true, code: true } }, actor: { select: { fullName: true } } },
-    orderBy: { createdAt: "desc" },
-    take: ROW_LIMIT
-  });
+async function vendorLedger(range, limit = DEFAULT_ROW_LIMIT) {
+  const [entries, aggregates] = await Promise.all([
+    prisma.vendorLedgerEntry.findMany({
+      where: { createdAt: range },
+      include: { vendor: { select: { name: true, code: true } }, actor: { select: { fullName: true } } },
+      orderBy: { createdAt: "desc" },
+      take: limit
+    }),
+    prisma.vendorLedgerEntry.aggregate({
+      where: { createdAt: range },
+      _sum: { amount: true },
+      _count: true
+    })
+  ]);
   const rows = entries.map((e) => ({
     vendor: e.vendor.name,
     entryType: e.entryType,
@@ -39870,16 +41097,23 @@ async function vendorLedger(range) {
     actor: e.actor.fullName,
     createdAt: e.createdAt
   }));
-  const totals = { amount: sumDecimal(entries.map((e) => e.amount)) };
-  return { rows, totals };
+  const totals = { amount: aggregates._sum.amount ? Number(aggregates._sum.amount) : 0 };
+  return { rows, totals, totalCount: aggregates._count, limit };
 }
-async function expense(range) {
-  const expenses = await prisma.expense.findMany({
-    where: { date: range },
-    include: { enteredByUser: { select: { fullName: true } }, approvedByUser: { select: { fullName: true } } },
-    orderBy: { date: "desc" },
-    take: ROW_LIMIT
-  });
+async function expense(range, limit = DEFAULT_ROW_LIMIT) {
+  const [expenses, aggregates] = await Promise.all([
+    prisma.expense.findMany({
+      where: { date: range },
+      include: { enteredByUser: { select: { fullName: true } }, approvedByUser: { select: { fullName: true } } },
+      orderBy: { date: "desc" },
+      take: limit
+    }),
+    prisma.expense.aggregate({
+      where: { date: range },
+      _sum: { amount: true },
+      _count: true
+    })
+  ]);
   const rows = expenses.map((e) => ({
     category: e.category,
     date: e.date,
@@ -39890,16 +41124,34 @@ async function expense(range) {
     enteredBy: e.enteredByUser.fullName,
     approvedBy: e.approvedByUser?.fullName ?? null
   }));
-  const totals = { amount: sumDecimal(expenses.map((e) => e.amount)) };
-  return { rows, totals };
+  const totals = { amount: aggregates._sum.amount ? Number(aggregates._sum.amount) : 0 };
+  return { rows, totals, totalCount: aggregates._count, limit };
 }
-async function returnRefund(range) {
-  const refunds = await prisma.cashLedgerEntry.findMany({
-    where: { category: "REFUND", occurredAt: range },
-    include: { portalUser: { select: { fullName: true } } },
-    orderBy: { occurredAt: "desc" },
-    take: ROW_LIMIT
-  });
+async function returnRefund(range, limit = DEFAULT_ROW_LIMIT) {
+  const [refunds, refundAggregates, vendorReturns, vendorAggregates] = await Promise.all([
+    prisma.cashLedgerEntry.findMany({
+      where: { category: "REFUND", occurredAt: range },
+      include: { portalUser: { select: { fullName: true } } },
+      orderBy: { occurredAt: "desc" },
+      take: limit
+    }),
+    prisma.cashLedgerEntry.aggregate({
+      where: { category: "REFUND", occurredAt: range },
+      _sum: { amount: true },
+      _count: true
+    }),
+    prisma.vendorLedgerEntry.findMany({
+      where: { entryType: "RETURN_CREDIT", createdAt: range },
+      include: { vendor: { select: { name: true } }, actor: { select: { fullName: true } } },
+      orderBy: { createdAt: "desc" },
+      take: limit
+    }),
+    prisma.vendorLedgerEntry.aggregate({
+      where: { entryType: "RETURN_CREDIT", createdAt: range },
+      _sum: { amount: true },
+      _count: true
+    })
+  ]);
   const invoiceIds = refunds.filter((r) => r.referenceTable === "pharmacy_invoices" && r.referenceId).map((r) => r.referenceId);
   const invoices = invoiceIds.length > 0 ? await prisma.pharmacyInvoice.findMany({
     where: { id: { in: invoiceIds } },
@@ -39926,12 +41178,6 @@ async function returnRefund(range) {
       occurredAt: r.occurredAt
     };
   });
-  const vendorReturns = await prisma.vendorLedgerEntry.findMany({
-    where: { entryType: "RETURN_CREDIT", createdAt: range },
-    include: { vendor: { select: { name: true } }, actor: { select: { fullName: true } } },
-    orderBy: { createdAt: "desc" },
-    take: ROW_LIMIT
-  });
   const purchaseReturnRows = vendorReturns.map((vr) => ({
     type: "Purchase Return",
     returnNumber: vr.referenceNo ?? "\u2014",
@@ -39952,20 +41198,24 @@ async function returnRefund(range) {
   const allRows = [...salesReturnRows, ...purchaseReturnRows].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
-  const totalRefund = sumDecimal(allRows.map((r) => r.refundAmount));
+  const totalCount = refundAggregates._count + vendorAggregates._count;
+  const totalAmount = (refundAggregates._sum.amount ? Number(refundAggregates._sum.amount) : 0) + (vendorAggregates._sum.amount ? Number(vendorAggregates._sum.amount) : 0);
   const totals = {
-    refundAmount: totalRefund,
-    amount: totalRefund
+    refundAmount: totalAmount,
+    amount: totalAmount
   };
-  return { rows: allRows, totals };
+  return { rows: allRows.slice(0, limit), totals, totalCount, limit };
 }
-async function balanceSettlement(range) {
-  const settlements = await prisma.accountSettlement.findMany({
-    where: { submittedAt: range },
-    include: { submittedByUser: { select: { fullName: true } }, reviewedByUser: { select: { fullName: true } } },
-    orderBy: { submittedAt: "desc" },
-    take: ROW_LIMIT
-  });
+async function balanceSettlement(range, limit = DEFAULT_ROW_LIMIT) {
+  const [settlements, totalCount] = await Promise.all([
+    prisma.accountSettlement.findMany({
+      where: { submittedAt: range },
+      include: { submittedByUser: { select: { fullName: true } }, reviewedByUser: { select: { fullName: true } } },
+      orderBy: { submittedAt: "desc" },
+      take: limit
+    }),
+    prisma.accountSettlement.count({ where: { submittedAt: range } })
+  ]);
   const rows = settlements.map((s) => ({
     submittedBy: s.submittedByUser.fullName,
     periodFrom: s.periodFrom,
@@ -39978,10 +41228,7 @@ async function balanceSettlement(range) {
     reviewedBy: s.reviewedByUser?.fullName ?? null,
     submittedAt: s.submittedAt
   }));
-  return { rows, totals: null };
-}
-function sumDecimal(values) {
-  return values.reduce((s, v) => s + Number(v), 0);
+  return { rows, totals: null, totalCount, limit };
 }
 
 // src/modules/reports/reports.controller.ts
@@ -40010,7 +41257,8 @@ var reportQuerySchema = external_exports.object({
   method: external_exports.enum(["CASH", "CARD", "ONLINE", "BANK", "UNKNOWN"]).optional(),
   cashierId: external_exports.string().max(150).optional(),
   from: external_exports.coerce.date().optional(),
-  to: external_exports.coerce.date().optional()
+  to: external_exports.coerce.date().optional(),
+  limit: external_exports.coerce.number().int().min(1).max(5e4).optional()
 });
 
 // src/modules/reports/reports.routes.ts

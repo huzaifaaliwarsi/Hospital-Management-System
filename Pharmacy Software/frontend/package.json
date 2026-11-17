@@ -7,10 +7,12 @@
     "dev": "vite --port=5180 --host=0.0.0.0",
     "build": "vite build",
     "preview": "vite preview",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "npx tsx src/__tests__/query-caching-stock-sync.test.ts && npx tsx src/__tests__/invoices-pagination.test.ts"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",
+    "@tanstack/react-query": "^5.107.1",
     "@vitejs/plugin-react": "^5.0.4",
     "axios": "^1.20.0",
     "clsx": "^2.1.1",
@@ -23,7 +25,8 @@
     "tailwindcss": "^4.1.14",
     "vite": "^6.2.3",
     "xlsx": "^0.18.5",
-    "xlsx-js-style": "^1.2.0"
+    "xlsx-js-style": "^1.2.0",
+    "zustand": "^5.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

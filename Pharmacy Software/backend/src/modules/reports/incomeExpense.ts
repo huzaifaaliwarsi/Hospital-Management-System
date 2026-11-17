@@ -4,7 +4,7 @@ import { financialReport, loadFinancialData } from './financialRecognition';
 /** One recognition engine; supplier cash movements never enter operating profit. */
 export async function incomeExpenseReport(db: Prisma.TransactionClient, range: { gte?: Date; lte?: Date } = {}) {
   const [data, ledger] = await Promise.all([
-    loadFinancialData(db),
+    loadFinancialData(db, range),
     db.vendorLedgerEntry.findMany({ where: { createdAt: { lte: range.lte } } }),
   ]);
   const { totals } = financialReport(data, range);

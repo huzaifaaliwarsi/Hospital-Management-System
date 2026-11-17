@@ -5,7 +5,7 @@ import { prisma } from '@/db/client';
 import { ValidationError } from '@/shared/errors/AppError';
 import type { ReportQuery } from './reports.schemas';
 
-const ROW_LIMIT = 500;
+const DEFAULT_ROW_LIMIT = 2000;
 
 /** Inclusive `to` — a date-only `to` from the query should still capture that whole day. */
 function endOfDayIfDateOnly(to?: Date) {
@@ -28,44 +28,48 @@ function dateRange(query: ReportQuery) {
 export const reportsService = {
   async run(query: ReportQuery) {
     const range = dateRange(query);
+    const limit = query.limit ?? DEFAULT_ROW_LIMIT;
     switch (query.type) {
       case 'INCOME_EXPENSE':
         return incomeExpenseReport(prisma, range);
       case 'OPERATING_PROFIT':
         return operatingProfitReport(prisma, range);
       case 'SALES_COLLECTION':
-        return financialReport(await loadFinancialData(), range, query);
+        return financialReport(await loadFinancialData(prisma, range), range, query);
       case 'HMS_DISPENSE':
-        return hmsDispense(range);
+        return hmsDispense(range, limit);
       case 'PURCHASE':
-        return purchase(range);
+        return purchase(range, limit);
       case 'STOCK_MOVEMENT':
-        return stockMovement(range);
+        return stockMovement(range, limit);
       case 'VENDOR_LEDGER':
-        return vendorLedger(range);
+        return vendorLedger(range, limit);
       case 'EXPENSE':
-        return expense(range);
+        return expense(range, limit);
       case 'RETURN_REFUND':
-        return returnRefund(range);
+        return returnRefund(range, limit);
       case 'BALANCE_SETTLEMENT':
-        return balanceSettlement(range);
+        return balanceSettlement(range, limit);
       default:
         throw new ValidationError(`Unknown report type`);
     }
   },
 };
 
-async function hmsDispense(range?: { gte?: Date; lte?: Date }) {
-  const requests = await prisma.medicineRequest.findMany({
-    where: { requestedAt: range },
-    include: {
-      lines: { include: { medicine: { select: { name: true, code: true } } } },
-      invoice: { select: { invoiceNumber: true, total: true, paidTotal: true, outstanding: true, clearanceStatus: true } },
-      handledByUser: { select: { fullName: true } },
-    },
-    orderBy: { requestedAt: 'desc' },
-    take: ROW_LIMIT,
-  });
+async function hmsDispense(range?: { gte?: Date; lte?: Date }, limit = DEFAULT_ROW_LIMIT) {
+  const [requests, totalCount] = await Promise.all([
+    prisma.medicineRequest.findMany({
+      where: { requestedAt: range },
+      include: {
+        lines: { include: { medicine: { select: { name: true, code: true } } } },
+        invoice: { select: { invoiceNumber: true, total: true, paidTotal: true, outstanding: true, clearanceStatus: true } },
+        handledByUser: { select: { fullName: true } },
+      },
+      orderBy: { requestedAt: 'desc' },
+      take: limit,
+    }),
+    prisma.medicineRequest.count({ where: { requestedAt: range } }),
+  ]);
   const rows = requests.map((r) => ({
     requestNumber: r.requestNumber,
     admissionRef: r.externalAdmissionRef,
@@ -80,16 +84,23 @@ async function hmsDispense(range?: { gte?: Date; lte?: Date }) {
     clearanceStatus: r.invoice?.clearanceStatus ?? null,
     requestedAt: r.requestedAt,
   }));
-  return { rows, totals: null };
+  return { rows, totals: null, totalCount, limit };
 }
 
-async function purchase(range?: { gte?: Date; lte?: Date }) {
-  const purchases = await prisma.purchase.findMany({
-    where: { purchaseDate: range },
-    include: { vendor: { select: { name: true, code: true } }, createdByUser: { select: { fullName: true } } },
-    orderBy: { purchaseDate: 'desc' },
-    take: ROW_LIMIT,
-  });
+async function purchase(range?: { gte?: Date; lte?: Date }, limit = DEFAULT_ROW_LIMIT) {
+  const [purchases, aggregates] = await Promise.all([
+    prisma.purchase.findMany({
+      where: { purchaseDate: range },
+      include: { vendor: { select: { name: true, code: true } }, createdByUser: { select: { fullName: true } } },
+      orderBy: { purchaseDate: 'desc' },
+      take: limit,
+    }),
+    prisma.purchase.aggregate({
+      where: { purchaseDate: range },
+      _sum: { total: true, paidNow: true, vendorDue: true },
+      _count: true,
+    }),
+  ]);
   const rows = purchases.map((p) => ({
     purchaseNumber: p.purchaseNumber,
     vendor: p.vendor.name,
@@ -102,17 +113,24 @@ async function purchase(range?: { gte?: Date; lte?: Date }) {
     status: p.status,
     receivedBy: p.createdByUser.fullName,
   }));
-  const totals = { total: sumDecimal(purchases.map((p) => p.total)), paidNow: sumDecimal(purchases.map((p) => p.paidNow)), vendorDue: sumDecimal(purchases.map((p) => p.vendorDue)) };
-  return { rows, totals };
+  const totals = {
+    total: aggregates._sum.total ? Number(aggregates._sum.total) : 0,
+    paidNow: aggregates._sum.paidNow ? Number(aggregates._sum.paidNow) : 0,
+    vendorDue: aggregates._sum.vendorDue ? Number(aggregates._sum.vendorDue) : 0,
+  };
+  return { rows, totals, totalCount: aggregates._count, limit };
 }
 
-async function stockMovement(range?: { gte?: Date; lte?: Date }) {
-  const entries = await prisma.stockLedgerEntry.findMany({
-    where: { createdAt: range },
-    include: { medicine: { select: { name: true, code: true } }, batch: { select: { batchNumber: true } }, actor: { select: { fullName: true, role: true } } },
-    orderBy: { createdAt: 'desc' },
-    take: ROW_LIMIT,
-  });
+async function stockMovement(range?: { gte?: Date; lte?: Date }, limit = DEFAULT_ROW_LIMIT) {
+  const [entries, totalCount] = await Promise.all([
+    prisma.stockLedgerEntry.findMany({
+      where: { createdAt: range },
+      include: { medicine: { select: { name: true, code: true } }, batch: { select: { batchNumber: true } }, actor: { select: { fullName: true, role: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    }),
+    prisma.stockLedgerEntry.count({ where: { createdAt: range } }),
+  ]);
   const rows = entries.map((e) => ({
     itemCode: e.medicine.code,
     medicine: e.medicine.name,
@@ -123,16 +141,23 @@ async function stockMovement(range?: { gte?: Date; lte?: Date }) {
     performedBy: e.actor.fullName,
     createdAt: e.createdAt,
   }));
-  return { rows, totals: null };
+  return { rows, totals: null, totalCount, limit };
 }
 
-async function vendorLedger(range?: { gte?: Date; lte?: Date }) {
-  const entries = await prisma.vendorLedgerEntry.findMany({
-    where: { createdAt: range },
-    include: { vendor: { select: { name: true, code: true } }, actor: { select: { fullName: true } } },
-    orderBy: { createdAt: 'desc' },
-    take: ROW_LIMIT,
-  });
+async function vendorLedger(range?: { gte?: Date; lte?: Date }, limit = DEFAULT_ROW_LIMIT) {
+  const [entries, aggregates] = await Promise.all([
+    prisma.vendorLedgerEntry.findMany({
+      where: { createdAt: range },
+      include: { vendor: { select: { name: true, code: true } }, actor: { select: { fullName: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    }),
+    prisma.vendorLedgerEntry.aggregate({
+      where: { createdAt: range },
+      _sum: { amount: true },
+      _count: true,
+    }),
+  ]);
   const rows = entries.map((e) => ({
     vendor: e.vendor.name,
     entryType: e.entryType,
@@ -141,17 +166,24 @@ async function vendorLedger(range?: { gte?: Date; lte?: Date }) {
     actor: e.actor.fullName,
     createdAt: e.createdAt,
   }));
-  const totals = { amount: sumDecimal(entries.map((e) => e.amount)) };
-  return { rows, totals };
+  const totals = { amount: aggregates._sum.amount ? Number(aggregates._sum.amount) : 0 };
+  return { rows, totals, totalCount: aggregates._count, limit };
 }
 
-async function expense(range?: { gte?: Date; lte?: Date }) {
-  const expenses = await prisma.expense.findMany({
-    where: { date: range },
-    include: { enteredByUser: { select: { fullName: true } }, approvedByUser: { select: { fullName: true } } },
-    orderBy: { date: 'desc' },
-    take: ROW_LIMIT,
-  });
+async function expense(range?: { gte?: Date; lte?: Date }, limit = DEFAULT_ROW_LIMIT) {
+  const [expenses, aggregates] = await Promise.all([
+    prisma.expense.findMany({
+      where: { date: range },
+      include: { enteredByUser: { select: { fullName: true } }, approvedByUser: { select: { fullName: true } } },
+      orderBy: { date: 'desc' },
+      take: limit,
+    }),
+    prisma.expense.aggregate({
+      where: { date: range },
+      _sum: { amount: true },
+      _count: true,
+    }),
+  ]);
   const rows = expenses.map((e) => ({
     category: e.category,
     date: e.date,
@@ -162,17 +194,35 @@ async function expense(range?: { gte?: Date; lte?: Date }) {
     enteredBy: e.enteredByUser.fullName,
     approvedBy: e.approvedByUser?.fullName ?? null,
   }));
-  const totals = { amount: sumDecimal(expenses.map((e) => e.amount)) };
-  return { rows, totals };
+  const totals = { amount: aggregates._sum.amount ? Number(aggregates._sum.amount) : 0 };
+  return { rows, totals, totalCount: aggregates._count, limit };
 }
 
-async function returnRefund(range?: { gte?: Date; lte?: Date }) {
-  const refunds = await prisma.cashLedgerEntry.findMany({
-    where: { category: 'REFUND', occurredAt: range },
-    include: { portalUser: { select: { fullName: true } } },
-    orderBy: { occurredAt: 'desc' },
-    take: ROW_LIMIT,
-  });
+async function returnRefund(range?: { gte?: Date; lte?: Date }, limit = DEFAULT_ROW_LIMIT) {
+  const [refunds, refundAggregates, vendorReturns, vendorAggregates] = await Promise.all([
+    prisma.cashLedgerEntry.findMany({
+      where: { category: 'REFUND', occurredAt: range },
+      include: { portalUser: { select: { fullName: true } } },
+      orderBy: { occurredAt: 'desc' },
+      take: limit,
+    }),
+    prisma.cashLedgerEntry.aggregate({
+      where: { category: 'REFUND', occurredAt: range },
+      _sum: { amount: true },
+      _count: true,
+    }),
+    prisma.vendorLedgerEntry.findMany({
+      where: { entryType: 'RETURN_CREDIT', createdAt: range },
+      include: { vendor: { select: { name: true } }, actor: { select: { fullName: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    }),
+    prisma.vendorLedgerEntry.aggregate({
+      where: { entryType: 'RETURN_CREDIT', createdAt: range },
+      _sum: { amount: true },
+      _count: true,
+    }),
+  ]);
 
   const invoiceIds = refunds
     .filter((r) => r.referenceTable === 'pharmacy_invoices' && r.referenceId)
@@ -207,14 +257,6 @@ async function returnRefund(range?: { gte?: Date; lte?: Date }) {
     };
   });
 
-  // Also include Vendor Returns (Purchase Returns) if any exist
-  const vendorReturns = await prisma.vendorLedgerEntry.findMany({
-    where: { entryType: 'RETURN_CREDIT', createdAt: range },
-    include: { vendor: { select: { name: true } }, actor: { select: { fullName: true } } },
-    orderBy: { createdAt: 'desc' },
-    take: ROW_LIMIT,
-  });
-
   const purchaseReturnRows = vendorReturns.map((vr) => ({
     type: 'Purchase Return',
     returnNumber: vr.referenceNo ?? '—',
@@ -237,22 +279,29 @@ async function returnRefund(range?: { gte?: Date; lte?: Date }) {
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
 
-  const totalRefund = sumDecimal(allRows.map((r) => r.refundAmount));
+  const totalCount = refundAggregates._count + vendorAggregates._count;
+  const totalAmount =
+    (refundAggregates._sum.amount ? Number(refundAggregates._sum.amount) : 0) +
+    (vendorAggregates._sum.amount ? Number(vendorAggregates._sum.amount) : 0);
+
   const totals = {
-    refundAmount: totalRefund,
-    amount: totalRefund,
+    refundAmount: totalAmount,
+    amount: totalAmount,
   };
 
-  return { rows: allRows, totals };
+  return { rows: allRows.slice(0, limit), totals, totalCount, limit };
 }
 
-async function balanceSettlement(range?: { gte?: Date; lte?: Date }) {
-  const settlements = await prisma.accountSettlement.findMany({
-    where: { submittedAt: range },
-    include: { submittedByUser: { select: { fullName: true } }, reviewedByUser: { select: { fullName: true } } },
-    orderBy: { submittedAt: 'desc' },
-    take: ROW_LIMIT,
-  });
+async function balanceSettlement(range?: { gte?: Date; lte?: Date }, limit = DEFAULT_ROW_LIMIT) {
+  const [settlements, totalCount] = await Promise.all([
+    prisma.accountSettlement.findMany({
+      where: { submittedAt: range },
+      include: { submittedByUser: { select: { fullName: true } }, reviewedByUser: { select: { fullName: true } } },
+      orderBy: { submittedAt: 'desc' },
+      take: limit,
+    }),
+    prisma.accountSettlement.count({ where: { submittedAt: range } }),
+  ]);
   const rows = settlements.map((s) => ({
     submittedBy: s.submittedByUser.fullName,
     periodFrom: s.periodFrom,
@@ -265,9 +314,5 @@ async function balanceSettlement(range?: { gte?: Date; lte?: Date }) {
     reviewedBy: s.reviewedByUser?.fullName ?? null,
     submittedAt: s.submittedAt,
   }));
-  return { rows, totals: null };
-}
-
-function sumDecimal(values: { toString(): string }[]) {
-  return values.reduce((s: number, v) => s + Number(v), 0);
+  return { rows, totals: null, totalCount, limit };
 }

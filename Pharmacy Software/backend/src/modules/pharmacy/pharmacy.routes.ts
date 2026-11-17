@@ -43,6 +43,8 @@ router.get('/collection-accounts', create, asyncHandler(async (_req, res) => {
 }));
 
 // POS (pharmacy.md §6) — Sales CAN dispense/create sales (`create` granted to all three roles).
+router.get('/pos/catalog', view, validate({ query: s.posCatalogQuerySchema }), asyncHandler(c.getPosCatalog));
+router.post('/pos/stock-check', view, validate({ body: s.posStockCheckBodySchema }), asyncHandler(c.getPosStockCheck));
 router.post('/dispense', create, validate({ body: s.dispenseRetailBodySchema }), asyncHandler(c.dispenseRetail));
 router.post('/sales-returns', create, validate({ body: s.salesReturnBodySchema }), asyncHandler(c.salesReturn));
 router.get('/invoices', view, validate({ query: s.listInvoicesQuerySchema }), asyncHandler(c.listInvoices));

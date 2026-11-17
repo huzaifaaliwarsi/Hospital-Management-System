@@ -1,4 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { queryClient, queryKeys } from '../queryClient';
 import { Loader2, Landmark, AlertCircle, Clock, CheckCircle2, Send } from 'lucide-react';
 import { formatPKR } from '../utils/format';
 import { useToast } from '../context/ToastContext';
@@ -51,26 +53,25 @@ function toRow(raw: any): ReceivableRow {
  */
 export const HmsReceivablesPage: React.FC = () => {
   const toast = useToast();
-  const [rows, setRows] = useState<ReceivableRow[]>([]);
-  const [loading, setLoading] = useState(true);
+
+  const {
+    data: rows = [],
+    isLoading: loading,
+    refetch: reloadReceivables,
+  } = useQuery({
+    queryKey: queryKeys.financial.receivables(),
+    queryFn: () => pharmacyApi.listHmsReceivables().then((raw: any[]) => raw.map(toRow)),
+    staleTime: 30 * 1000,
+  });
+
   const [activeRow, setActiveRow] = useState<ReceivableRow | null>(null);
   const [requestAmount, setRequestAmount] = useState('');
   const [remarks, setRemarks] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const load = () => {
-    setLoading(true);
-    pharmacyApi
-      .listHmsReceivables()
-      .then((raw: any[]) => setRows(raw.map(toRow)))
-      .catch(() => toast.error('Failed to load HMS receivables.'))
-      .finally(() => setLoading(false));
+    reloadReceivables();
   };
-
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const totalReceivable = useMemo(() => rows.reduce((s, r) => s + r.hmsReceivable, 0), [rows]);
   const totalCollectedByHms = useMemo(() => rows.reduce((s, r) => s + r.hmsCollectedAmount, 0), [rows]);
@@ -111,6 +112,8 @@ export const HmsReceivablesPage: React.FC = () => {
       });
       toast.success(`Settlement request sent to HMS for ${formatPKR(amount)}.`);
       setActiveRow(null);
+      queryClient.invalidateQueries({ queryKey: queryKeys.financial.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
       load();
     } catch (err: any) {
       toast.error(err?.response?.data?.error?.message || 'Failed to send settlement request.');

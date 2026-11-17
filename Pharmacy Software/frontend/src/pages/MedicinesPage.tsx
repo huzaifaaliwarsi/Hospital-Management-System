@@ -31,6 +31,9 @@ import {
   PackagePlus,
   Upload,
 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { queryClient, queryKeys } from '../queryClient';
+import { usePharmacyUIStore } from '../store/usePharmacyUIStore';
 import { pharmacyApi, MedicineRow, Unit, MedicineCategory } from '../services/pharmacyApi';
 import { formatPKR, formatNumber } from '../utils/format';
 import { useToast } from '../context/ToastContext';
@@ -76,33 +79,66 @@ type SortOrder = 'asc' | 'desc';
 
 export const MedicinesPage: React.FC<{ canEdit: boolean; onNavigate?: (page: string) => void }> = ({ canEdit, onNavigate }) => {
   const toast = useToast();
-  const [rows, setRows] = useState<MedicineRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const medicinesUI = usePharmacyUIStore((s) => s.medicines);
+  const setMedicinesUI = usePharmacyUIStore((s) => s.setMedicinesState);
 
   // Filter toolbar state (Top bar)
-  const [searchInput, setSearchInput] = useState('');
-  const [categoryInput, setCategoryInput] = useState('ALL');
-  const [stockStatusInput, setStockStatusInput] = useState('ALL');
-  const [unitInput, setUnitInput] = useState('ALL');
+  const [searchInput, setSearchInput] = useState(medicinesUI.searchInput);
+  const [categoryInput, setCategoryInput] = useState(medicinesUI.categoryInput);
+  const [stockStatusInput, setStockStatusInput] = useState(medicinesUI.stockStatusInput);
+  const [unitInput, setUnitInput] = useState(medicinesUI.unitInput);
 
   // Applied filters (Triggered when user clicks "Filter" or resets)
-  const [appliedFilters, setAppliedFilters] = useState({
-    search: '',
-    category: 'ALL',
-    stockStatus: 'ALL',
-    unit: 'ALL',
-  });
+  const [appliedFilters, setAppliedFilters] = useState(medicinesUI.appliedFilters);
 
   // Table In-Results quick search
-  const [inResultSearch, setInResultSearch] = useState('');
+  const [inResultSearch, setInResultSearch] = useState(medicinesUI.inResultSearch);
 
   // Sorting
-  const [sortField, setSortField] = useState<SortField>('name');
-  const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
+  const [sortField, setSortField] = useState<SortField>(medicinesUI.sortField as SortField);
+  const [sortOrder, setSortOrder] = useState<SortOrder>(medicinesUI.sortOrder);
 
   // Pagination
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(15);
+  const [currentPage, setCurrentPage] = useState(medicinesUI.currentPage);
+  const [pageSize, setPageSize] = useState(medicinesUI.pageSize);
+
+  // Sync state preservation to Zustand
+  useEffect(() => {
+    setMedicinesUI({
+      currentPage,
+      pageSize,
+      searchInput,
+      categoryInput,
+      stockStatusInput,
+      unitInput,
+      appliedFilters,
+      inResultSearch,
+      sortField,
+      sortOrder,
+    });
+  }, [currentPage, pageSize, searchInput, categoryInput, stockStatusInput, unitInput, appliedFilters, inResultSearch, sortField, sortOrder, setMedicinesUI]);
+
+  // TanStack Query for formulary catalog (with 1-min staleTime, background SWR, instant revisit)
+  const {
+    data: rows = [],
+    isLoading: loading,
+    refetch: reloadMedicines,
+  } = useQuery({
+    queryKey: queryKeys.medicines.paginated({ search: appliedFilters.search || undefined }),
+    queryFn: () => pharmacyApi.listMedicines(appliedFilters.search || undefined),
+    staleTime: 60 * 1000,
+  });
+
+  // Reference units catalog (15 min staleTime)
+  const { data: unitCatalog = [] } = useQuery({
+    queryKey: queryKeys.medicines.units(),
+    queryFn: () => pharmacyApi.listUnits(),
+    staleTime: 15 * 60 * 1000,
+  });
+
+  const load = () => {
+    reloadMedicines();
+  };
 
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
@@ -117,7 +153,6 @@ export const MedicinesPage: React.FC<{ canEdit: boolean; onNavigate?: (page: str
 
   const [form, setForm] = useState(emptyForm);
   const [packaging, setPackaging] = useState(emptyPackaging);
-  const [unitCatalog, setUnitCatalog] = useState<Unit[]>([]);
   const [loadingPackaging, setLoadingPackaging] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -155,26 +190,7 @@ export const MedicinesPage: React.FC<{ canEdit: boolean; onNavigate?: (page: str
     }
   }, [rows, appliedFilters, inResultSearch, pageSize, currentPage]);
 
-  const load = () => {
-    setLoading(true);
-    pharmacyApi
-      .listMedicines(appliedFilters.search || undefined)
-      .then((data) => {
-        setRows(data);
-      })
-      .catch(() => toast.error('Failed to load medicines catalogue.'))
-      .finally(() => setLoading(false));
-  };
 
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appliedFilters.search]);
-
-  useEffect(() => {
-    pharmacyApi.listUnits().then(setUnitCatalog).catch(() => toast.error('Failed to load unit catalog.'));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Distinct categories and units from data
   const categories = useMemo(() => {
@@ -424,7 +440,9 @@ export const MedicinesPage: React.FC<{ canEdit: boolean; onNavigate?: (page: str
       });
       toast.success(`Medicine "${form.name}" updated successfully.`);
       setShowEditModal(false);
-      load();
+      queryClient.invalidateQueries({ queryKey: queryKeys.medicines.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.pos.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
     } catch (err: any) {
       toast.error(err?.response?.data?.error?.message || 'Failed to update medicine.');
     } finally {
@@ -439,7 +457,9 @@ export const MedicinesPage: React.FC<{ canEdit: boolean; onNavigate?: (page: str
       await pharmacyApi.deleteMedicine(medicineToDelete.id);
       toast.success(`Medicine "${medicineToDelete.name}" deleted successfully.`);
       setMedicineToDelete(null);
-      load();
+      queryClient.invalidateQueries({ queryKey: queryKeys.medicines.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.pos.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
     } catch (err: any) {
       toast.error(err?.response?.data?.error?.message || err?.message || 'Failed to delete medicine.');
     } finally {
@@ -1229,8 +1249,12 @@ export const MedicinesPage: React.FC<{ canEdit: boolean; onNavigate?: (page: str
         open={showAddModal}
         onClose={() => setShowAddModal(false)}
         units={unitCatalog}
-        onUnitCreated={(u) => setUnitCatalog((prev) => [...prev, u])}
-        onCreated={() => load()}
+        onUnitCreated={() => queryClient.invalidateQueries({ queryKey: queryKeys.medicines.units() })}
+        onCreated={() => {
+          queryClient.invalidateQueries({ queryKey: queryKeys.medicines.all });
+          queryClient.invalidateQueries({ queryKey: queryKeys.pos.all });
+          queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
+        }}
       />
 
       {/* ═════════════════════════════════════════════════════════════════════
@@ -1338,7 +1362,7 @@ export const MedicinesPage: React.FC<{ canEdit: boolean; onNavigate?: (page: str
                 ) : (
                   <MedicinePackagingFields
                     units={unitCatalog}
-                    onUnitCreated={(u) => setUnitCatalog((prev) => [...prev, u])}
+                    onUnitCreated={() => queryClient.invalidateQueries({ queryKey: queryKeys.medicines.units() })}
                     baseUnitId={packaging.baseUnitId}
                     onBaseUnitIdChange={(id) => setPackaging((prev) => ({ ...prev, baseUnitId: id }))}
                     baseIsSaleUnit={packaging.baseIsSaleUnit}
@@ -1425,7 +1449,9 @@ export const MedicinesPage: React.FC<{ canEdit: boolean; onNavigate?: (page: str
           open={showBulkImportModal}
           onClose={() => setShowBulkImportModal(false)}
           onSuccess={() => {
-            load();
+            queryClient.invalidateQueries({ queryKey: queryKeys.medicines.all });
+            queryClient.invalidateQueries({ queryKey: queryKeys.pos.all });
+            queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
           }}
         />
       )}

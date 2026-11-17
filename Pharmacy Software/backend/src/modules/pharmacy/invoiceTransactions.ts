@@ -3,7 +3,19 @@ import { Decimal } from '@prisma/client/runtime/library';
 type Amount = Decimal | number | string;
 type Payment = { id: string; amount: Amount; method: string; paidAt: Date; isInitial: boolean | null; paymentAccount?: { name: string } | null; collectedByUser: { fullName: string; username?: string } };
 type Event = { id: string; kind: string; occurredAt: Date | null; collectionDelta: Amount; saleDelta: Amount; reference: string | null; method: string | null; actorId: string | null };
-type Invoice = { id: string; createdAt: Date; total: Amount; outstanding: Amount; payments: Payment[]; financialEvents: Event[] };
+type Invoice = {
+  id: string;
+  invoiceNumber?: string;
+  customerName?: string | null;
+  createdAt: Date;
+  total: Amount;
+  paidTotal?: Amount;
+  outstanding: Amount;
+  payments: Payment[];
+  financialEvents: Event[];
+  dispensedByUser?: { id?: string; fullName?: string; username?: string } | null;
+  [key: string]: any;
+};
 type Refund = { id: string; referenceId: string | null; referenceNo: string | null; amount: Amount; occurredAt: Date; isPhysicalCash: boolean; paymentMethod: string | null; paymentAccount?: { name: string } | null; portalUser: { fullName: string } };
 const day = (d: Date) => new Date(d.getTime() + 18000000).toISOString().slice(0, 10);
 const sum = (values: Amount[]) => values.reduce<Decimal>((s, v) => s.plus(v), new Decimal(0)).toNumber();
@@ -38,4 +50,24 @@ export function invoiceTransactions<T extends Invoice>(invoices: T[], refunds: R
     ];
     return entries.map(e => ({ ...invoice, id: e.id, invoiceId: invoice.id, transactionId: e.id, transactionType: e.type, transactionAt: e.at, billingAmount: e.billing, collectedAmount: e.collected, receiptNumber: e.receipt, paymentMethod: e.method, paymentAccountName: e.account, collectedByName: e.collector, outstanding: Number(invoice.outstanding) }));
   }).sort((a, b) => (b.transactionAt?.getTime() ?? 0) - (a.transactionAt?.getTime() ?? 0) || a.id.localeCompare(b.id));
+}
+
+export function summarizeInvoiceTransactions(rows: { invoiceId: string; transactionType?: string; billingAmount?: unknown; collectedAmount?: unknown; outstanding?: unknown }[]) {
+  const seen = new Set<string>();
+  let billing = 0, collected = 0, outstanding = 0, invoices = 0;
+  for (const row of rows) {
+    billing += Math.round(Number(row.billingAmount || 0) * 100);
+    collected += Math.round(Number(row.collectedAmount || 0) * 100);
+    if (!seen.has(row.invoiceId)) {
+      outstanding += Math.round(Number(row.outstanding || 0) * 100);
+      seen.add(row.invoiceId);
+    }
+    if (row.transactionType === 'Original Sale') invoices++;
+  }
+  return {
+    billing: billing / 100,
+    collected: collected / 100,
+    outstanding: outstanding / 100,
+    invoices: invoices > 0 ? invoices : seen.size,
+  };
 }

@@ -2,8 +2,8 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '@/db/client';
 import { NotFoundError, ValidationError, ConflictError } from '@/shared/errors/AppError';
 import { nextCode, peekNextCode, SEQUENCE } from '@/shared/sequence';
-import type { Prisma } from '@prisma/client';
-import { invoiceTransactions } from './invoiceTransactions';
+import { Prisma } from '@prisma/client';
+import { invoiceTransactions, summarizeInvoiceTransactions } from './invoiceTransactions';
 import type {
   CreateMedicineBody,
   UpdateMedicineBody,
@@ -18,13 +18,14 @@ import type {
   SalesReturnBody,
   PackagingLevelInput,
   BulkImportBody,
+  PosCatalogQuery,
 } from './pharmacy.schemas';
 
 /** pharmacy.md §3 Settings screen — configured, not hardcoded; one singleton row, auto-created on first read. */
-async function getSettings() {
-  const existing = await prisma.pharmacySettings.findFirst();
+async function getSettings(db: Prisma.TransactionClient = prisma) {
+  const existing = await db.pharmacySettings.findFirst();
   if (existing) return existing;
-  return prisma.pharmacySettings.create({ data: {} });
+  return db.pharmacySettings.create({ data: {} });
 }
 
 /**
@@ -515,50 +516,242 @@ export const pharmacyService = {
     return { medicineId, baseUnitId: medicine.baseUnitId, levels };
   },
 
-  async listMedicines(query: ListMedicinesQuery) {
-    const [medicines, settings] = await Promise.all([
-      prisma.medicineMaster.findMany({
-        where: query.search
-          ? { OR: [{ name: { contains: query.search, mode: 'insensitive' } }, { code: { contains: query.search, mode: 'insensitive' } }, { barcode: { contains: query.search, mode: 'insensitive' } }] }
-          : undefined,
-        include: {
-          batches: {
-            include: { stockEntries: { select: { quantityDelta: true } } },
-            orderBy: [{ expiryDate: 'asc' }, { createdAt: 'asc' }],
-          },
-          stockEntries: { select: { quantityDelta: true } },
-          baseUnit: true,
-          category: true,
-          packagingLevels: { include: { unit: true }, orderBy: { level: 'asc' } },
-        },
-        orderBy: { name: 'asc' },
-      }),
-      getSettings(),
-    ]);
+  async listMedicines(query: ListMedicinesQuery, transaction?: Prisma.TransactionClient) {
+    const db = transaction ?? prisma;
+    const isPaginated = query.paginated === 'true' || query.page !== undefined;
+    const page = Math.max(1, query.page || 1);
+    const limit = Math.min(100, Math.max(1, query.limit || 20));
+    const skip = (page - 1) * limit;
 
+    const [settings] = await Promise.all([getSettings(db)]);
     const now = new Date();
     const nearExpiryCutoff = new Date(now.getTime() + settings.nearExpiryWindowDays * 86_400_000);
 
+    const where: Prisma.MedicineMasterWhereInput = {};
+
+    if (query.search?.trim()) {
+      const q = query.search.trim();
+      where.OR = [
+        { name: { contains: q, mode: 'insensitive' } },
+        { code: { contains: q, mode: 'insensitive' } },
+        { barcode: { contains: q, mode: 'insensitive' } },
+        { genericName: { contains: q, mode: 'insensitive' } },
+      ];
+    }
+
+    if (query.category && query.category !== 'ALL') {
+      where.OR = [
+        { category: { name: query.category } },
+        { categoryLabel: query.category },
+        { categoryId: query.category },
+      ];
+    } else if (query.categoryId && query.categoryId !== 'ALL') {
+      where.categoryId = query.categoryId;
+    }
+
+    if (query.unit && query.unit !== 'ALL') {
+      where.unit = query.unit;
+    }
+
+    if (query.stockStatus === 'EXPIRED') {
+      where.batches = { some: { expiryDate: { lte: now } } };
+    } else if (query.stockStatus === 'NEAR_EXPIRY') {
+      where.batches = { some: { expiryDate: { gt: now, lte: nearExpiryCutoff } } };
+    } else if (query.stockStatus === 'OUT') {
+      const outMeds = await prisma.$queryRaw<Array<{ medicine_id: string }>>`
+        SELECT m.id AS medicine_id
+        FROM medicine_masters m
+        LEFT JOIN stock_ledger_entries sle ON sle.medicine_id = m.id
+        GROUP BY m.id
+        HAVING COALESCE(SUM(sle.quantity_delta), 0) <= 0
+      `;
+      where.id = { in: outMeds.map((r) => r.medicine_id) };
+    } else if (query.stockStatus === 'LOW') {
+      const lowMeds = await prisma.$queryRaw<Array<{ medicine_id: string }>>`
+        SELECT m.id AS medicine_id
+        FROM medicine_masters m
+        JOIN stock_ledger_entries sle ON sle.medicine_id = m.id
+        GROUP BY m.id, m.reorder_level
+        HAVING SUM(sle.quantity_delta) > 0 AND SUM(sle.quantity_delta) <= m.reorder_level
+      `;
+      where.id = { in: lowMeds.map((r) => r.medicine_id) };
+    } else if (query.stockStatus === 'OK') {
+      const okMeds = await prisma.$queryRaw<Array<{ medicine_id: string }>>`
+        SELECT m.id AS medicine_id
+        FROM medicine_masters m
+        JOIN stock_ledger_entries sle ON sle.medicine_id = m.id
+        GROUP BY m.id, m.reorder_level
+        HAVING SUM(sle.quantity_delta) > m.reorder_level
+      `;
+      where.id = { in: okMeds.map((r) => r.medicine_id) };
+    }
+
+    const sortOrder = query.sortOrder === 'desc' ? 'desc' : 'asc';
+    const orderBy: Prisma.MedicineMasterOrderByWithRelationInput[] = [];
+    if (query.sortBy === 'code') orderBy.push({ code: sortOrder });
+    else if (query.sortBy === 'saleRate') orderBy.push({ saleRate: sortOrder });
+    else if (query.sortBy === 'reorderLevel') orderBy.push({ reorderLevel: sortOrder });
+    else if (query.sortBy === 'createdAt') orderBy.push({ createdAt: sortOrder });
+    else if (query.sortBy === 'unit') orderBy.push({ unit: sortOrder });
+    else if (query.sortBy === 'category') orderBy.push({ category: { name: sortOrder } });
+    else orderBy.push({ name: sortOrder });
+
+    let total = 0;
+    let summary: any = undefined;
+
+    if (isPaginated) {
+      const [countResult, totalCount, outRows, lowRows, categoriesCount] = await Promise.all([
+        db.medicineMaster.count({ where }),
+        db.medicineMaster.count(),
+        db.$queryRaw<Array<{ count: number }>>`
+          SELECT COUNT(*)::int AS count FROM (
+            SELECT m.id
+            FROM medicine_masters m
+            LEFT JOIN stock_ledger_entries sle ON sle.medicine_id = m.id
+            GROUP BY m.id
+            HAVING COALESCE(SUM(sle.quantity_delta), 0) <= 0
+          ) sub
+        `,
+        db.$queryRaw<Array<{ count: number }>>`
+          SELECT COUNT(*)::int AS count FROM (
+            SELECT m.id
+            FROM medicine_masters m
+            JOIN stock_ledger_entries sle ON sle.medicine_id = m.id
+            GROUP BY m.id, m.reorder_level
+            HAVING SUM(sle.quantity_delta) > 0 AND SUM(sle.quantity_delta) <= m.reorder_level
+          ) sub
+        `,
+        db.medicineCategory.count({ where: { isActive: true } }),
+      ]);
+
+      total = countResult;
+      const outOfStockCount = Number(outRows[0]?.count || 0);
+      const lowStockCount = Number(lowRows[0]?.count || 0);
+      const normalStockCount = Math.max(0, totalCount - outOfStockCount - lowStockCount);
+
+      summary = {
+        totalItems: totalCount,
+        outOfStockCount,
+        lowStockCount,
+        normalStockCount,
+        categoriesCount,
+      };
+    }
+
+    const medicines = await db.medicineMaster.findMany({
+      where,
+      include: {
+        baseUnit: true,
+        category: true,
+        packagingLevels: { include: { unit: true }, orderBy: { level: 'asc' } },
+      },
+      orderBy,
+      ...(isPaginated ? { skip, take: limit } : {}),
+    });
+
+    if (medicines.length === 0) {
+      if (isPaginated) {
+        return {
+          items: [],
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit) || 1,
+          summary,
+        };
+      }
+      return [];
+    }
+
+    const medIds = medicines.map((m) => m.id);
+
+    const [stockAgg, activeBatchesAgg, batchCountsAgg] = await Promise.all([
+      db.$queryRaw<Array<{ medicine_id: string; stock: Decimal | number | string }>>`
+        SELECT medicine_id, COALESCE(SUM(quantity_delta), 0) AS stock
+        FROM stock_ledger_entries
+        WHERE medicine_id IN (${Prisma.join(medIds)})
+        GROUP BY medicine_id
+      `,
+      db.$queryRaw<Array<{
+        id: string;
+        medicine_id: string;
+        batch_number: string;
+        expiry_date: Date;
+        sale_rate: Decimal | null;
+        cost_rate: Decimal;
+        available: Decimal | number | string;
+      }>>`
+        SELECT 
+          b.id,
+          b.medicine_id,
+          b.batch_number,
+          b.expiry_date,
+          b.sale_rate,
+          b.cost_rate,
+          COALESCE(SUM(sle.quantity_delta), 0) AS available
+        FROM medicine_batches b
+        LEFT JOIN stock_ledger_entries sle ON sle.batch_id = b.id
+        WHERE b.medicine_id IN (${Prisma.join(medIds)}) AND b.expiry_date > ${now}
+        GROUP BY b.id, b.medicine_id, b.batch_number, b.expiry_date, b.sale_rate, b.cost_rate
+        HAVING COALESCE(SUM(sle.quantity_delta), 0) > 0
+        ORDER BY b.expiry_date ASC, b.created_at ASC
+      `,
+      db.$queryRaw<Array<{
+        medicine_id: string;
+        batches_count: bigint | number;
+        expired_count: bigint | number;
+        near_expiry_count: bigint | number;
+      }>>`
+        SELECT 
+          medicine_id,
+          COUNT(id) AS batches_count,
+          COUNT(CASE WHEN expiry_date <= ${now} THEN 1 END) AS expired_count,
+          COUNT(CASE WHEN expiry_date > ${now} AND expiry_date <= ${nearExpiryCutoff} THEN 1 END) AS near_expiry_count
+        FROM medicine_batches
+        WHERE medicine_id IN (${Prisma.join(medIds)})
+        GROUP BY medicine_id
+      `,
+    ]);
+
+    const stockMap = new Map<string, Decimal>();
+    stockAgg.forEach((r) => {
+      stockMap.set(r.medicine_id, new Decimal(r.stock.toString()));
+    });
+
+    const activeBatchesMap = new Map<string, any[]>();
+    activeBatchesAgg.forEach((b) => {
+      const list = activeBatchesMap.get(b.medicine_id) || [];
+      list.push({
+        id: b.id,
+        batchNumber: b.batch_number,
+        expiryDate: b.expiry_date,
+        saleRate: b.sale_rate,
+        costRate: b.cost_rate,
+        available: new Decimal(b.available.toString()),
+      });
+      activeBatchesMap.set(b.medicine_id, list);
+    });
+
+    const batchCountsMap = new Map<string, { total: number; expired: number; nearExpiry: number }>();
+    batchCountsAgg.forEach((b) => {
+      batchCountsMap.set(b.medicine_id, {
+        total: Number(b.batches_count),
+        expired: Number(b.expired_count),
+        nearExpiry: Number(b.near_expiry_count),
+      });
+    });
+
     const rows = medicines.map((m) => {
-      const stock = m.stockEntries.reduce((s, e) => s.plus(e.quantityDelta), new Decimal(0));
+      const stock = stockMap.get(m.id) || new Decimal(0);
       const isLow = stock.lessThanOrEqualTo(m.reorderLevel);
       const isOut = stock.lessThanOrEqualTo(0);
-      const hasExpired = m.batches.some((b) => b.expiryDate <= now);
-      const hasNearExpiry = m.batches.some((b) => b.expiryDate > now && b.expiryDate <= nearExpiryCutoff);
-      const activeBatches = m.batches
-        .filter((b) => b.expiryDate > now)
-        .map((b) => {
-          const avail = b.stockEntries.reduce((s, e) => s.plus(e.quantityDelta), new Decimal(0));
-          return {
-            id: b.id,
-            batchNumber: b.batchNumber,
-            expiryDate: b.expiryDate,
-            saleRate: b.saleRate ?? m.saleRate,
-            costRate: b.costRate,
-            available: avail,
-          };
-        })
-        .filter((b) => b.available.greaterThan(0));
+      const bCounts = batchCountsMap.get(m.id) || { total: 0, expired: 0, nearExpiry: 0 };
+      const rawActiveBatches = activeBatchesMap.get(m.id) || [];
+      const activeBatches = rawActiveBatches.map((b) => ({
+        ...b,
+        saleRate: b.saleRate ?? m.saleRate,
+      }));
+
       return {
         id: m.id,
         code: m.code,
@@ -567,7 +760,6 @@ export const pharmacyService = {
         genericName: m.genericName,
         strength: m.strength,
         dosageForm: m.dosageForm,
-        /// Flat string for old consumers (filters, CSV, table cell) — sourced from the relation, falling back to the legacy label cache.
         category: m.category?.name ?? m.categoryLabel,
         categoryId: m.categoryId,
         categoryActive: m.category?.isActive ?? null,
@@ -582,21 +774,287 @@ export const pharmacyService = {
         taxPercent: m.taxPercent,
         isActive: m.isActive,
         currentStock: stock,
-        batchesCount: m.batches.length,
+        batchesCount: bCounts.total,
         activeBatches,
         isLowStock: isLow && !isOut,
         isOutOfStock: isOut,
-        hasExpiredBatch: hasExpired,
-        hasNearExpiryBatch: hasNearExpiry,
+        hasExpiredBatch: bCounts.expired > 0,
+        hasNearExpiryBatch: bCounts.nearExpiry > 0,
       };
     });
 
-    if (!query.stockStatus) return rows;
-    return rows.filter((r) => {
-      if (query.stockStatus === 'LOW') return r.isLowStock;
-      if (query.stockStatus === 'OUT') return r.isOutOfStock;
-      if (query.stockStatus === 'NEAR_EXPIRY') return r.hasNearExpiryBatch;
-      return r.hasExpiredBatch;
+    if (query.sortBy === 'currentStock' || query.sortBy === 'stockValue' || query.sortBy === 'status') {
+      rows.sort((a, b) => {
+        let cmp = 0;
+        if (query.sortBy === 'currentStock') {
+          cmp = a.currentStock.minus(b.currentStock).toNumber();
+        } else if (query.sortBy === 'stockValue') {
+          const valA = a.currentStock.times(a.saleRate);
+          const valB = b.currentStock.times(b.saleRate);
+          cmp = valA.minus(valB).toNumber();
+        } else if (query.sortBy === 'status') {
+          const rankA = a.isOutOfStock ? 2 : a.isLowStock ? 1 : 0;
+          const rankB = b.isOutOfStock ? 2 : b.isLowStock ? 1 : 0;
+          cmp = rankA - rankB;
+        }
+        return sortOrder === 'asc' ? cmp : -cmp;
+      });
+    }
+
+    if (isPaginated) {
+      return {
+        items: rows,
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit) || 1,
+        summary,
+      };
+    }
+
+    return rows;
+  },
+
+  // ── POS Fast Lightweight Catalog (pharmacy-performance-batch-2) ──────────
+  async getPosCatalog(query?: PosCatalogQuery, transaction?: Prisma.TransactionClient) {
+    const db = transaction ?? prisma;
+    const where: Prisma.MedicineMasterWhereInput = {
+      isActive: true,
+    };
+
+    if (query?.search?.trim()) {
+      const q = query.search.trim();
+      where.OR = [
+        { name: { contains: q, mode: 'insensitive' } },
+        { code: { contains: q, mode: 'insensitive' } },
+        { barcode: { contains: q, mode: 'insensitive' } },
+        { genericName: { contains: q, mode: 'insensitive' } },
+      ];
+    }
+
+    if (query?.category && query.category !== 'ALL') {
+      where.OR = [
+        { category: { name: query.category } },
+        { categoryLabel: query.category },
+        { categoryId: query.category },
+      ];
+    } else if (query?.categoryId && query.categoryId !== 'ALL') {
+      where.categoryId = query.categoryId;
+    }
+
+    const medicines = await db.medicineMaster.findMany({
+      where,
+      select: {
+        id: true,
+        code: true,
+        barcode: true,
+        name: true,
+        genericName: true,
+        strength: true,
+        dosageForm: true,
+        category: { select: { id: true, name: true, isActive: true } },
+        categoryLabel: true,
+        categoryId: true,
+        unit: true,
+        baseUnitId: true,
+        baseUnit: { select: { id: true, name: true, shortCode: true } },
+        packagingLevels: {
+          where: { isActive: true },
+          select: {
+            id: true,
+            unitId: true,
+            level: true,
+            conversionToBase: true,
+            isPurchaseUnit: true,
+            isSaleUnit: true,
+            overrideSaleRate: true,
+            unit: { select: { id: true, name: true, shortCode: true } },
+          },
+          orderBy: { level: 'asc' },
+        },
+        batchManaged: true,
+        reorderLevel: true,
+        saleRate: true,
+        taxPercent: true,
+        isActive: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    if (medicines.length === 0) return [];
+
+    const medIds = medicines.map((m) => m.id);
+    const now = new Date();
+
+    const [stockAgg, activeBatchesAgg] = await Promise.all([
+      db.$queryRaw<Array<{ medicine_id: string; stock: Decimal | number | string }>>`
+        SELECT medicine_id, COALESCE(SUM(quantity_delta), 0) AS stock
+        FROM stock_ledger_entries
+        WHERE medicine_id IN (${Prisma.join(medIds)})
+        GROUP BY medicine_id
+      `,
+      db.$queryRaw<Array<{
+        id: string;
+        medicine_id: string;
+        batch_number: string;
+        expiry_date: Date;
+        sale_rate: Decimal | null;
+        cost_rate: Decimal;
+        available: Decimal | number | string;
+      }>>`
+        SELECT 
+          b.id,
+          b.medicine_id,
+          b.batch_number,
+          b.expiry_date,
+          b.sale_rate,
+          b.cost_rate,
+          COALESCE(SUM(sle.quantity_delta), 0) AS available
+        FROM medicine_batches b
+        LEFT JOIN stock_ledger_entries sle ON sle.batch_id = b.id
+        WHERE b.medicine_id IN (${Prisma.join(medIds)}) AND b.expiry_date > ${now}
+        GROUP BY b.id, b.medicine_id, b.batch_number, b.expiry_date, b.sale_rate, b.cost_rate
+        HAVING COALESCE(SUM(sle.quantity_delta), 0) > 0
+        ORDER BY b.expiry_date ASC, b.created_at ASC
+      `,
+    ]);
+
+    const stockMap = new Map<string, Decimal>();
+    stockAgg.forEach((r) => {
+      stockMap.set(r.medicine_id, new Decimal(r.stock.toString()));
+    });
+
+    const activeBatchesMap = new Map<string, any[]>();
+    activeBatchesAgg.forEach((b) => {
+      const list = activeBatchesMap.get(b.medicine_id) || [];
+      list.push({
+        id: b.id,
+        batchNumber: b.batch_number,
+        expiryDate: b.expiry_date,
+        saleRate: b.sale_rate,
+        costRate: b.cost_rate,
+        available: new Decimal(b.available.toString()),
+      });
+      activeBatchesMap.set(b.medicine_id, list);
+    });
+
+    return medicines.map((m) => {
+      const stock = stockMap.get(m.id) || new Decimal(0);
+      const isLow = stock.lessThanOrEqualTo(m.reorderLevel);
+      const isOut = stock.lessThanOrEqualTo(0);
+      const rawActiveBatches = activeBatchesMap.get(m.id) || [];
+      const activeBatches = rawActiveBatches.map((b) => ({
+        ...b,
+        saleRate: b.saleRate ?? m.saleRate,
+      }));
+
+      return {
+        id: m.id,
+        code: m.code,
+        barcode: m.barcode,
+        name: m.name,
+        genericName: m.genericName,
+        strength: m.strength,
+        dosageForm: m.dosageForm,
+        category: m.category?.name ?? m.categoryLabel,
+        categoryId: m.categoryId,
+        categoryActive: m.category?.isActive ?? null,
+        unit: m.unit,
+        baseUnitId: m.baseUnitId,
+        baseUnit: m.baseUnit,
+        packagingLevels: m.packagingLevels,
+        batchManaged: m.batchManaged,
+        reorderLevel: m.reorderLevel,
+        saleRate: m.saleRate,
+        taxPercent: m.taxPercent,
+        isActive: m.isActive,
+        currentStock: stock,
+        batchesCount: activeBatches.length,
+        activeBatches,
+        isLowStock: isLow && !isOut,
+        isOutOfStock: isOut,
+        hasExpiredBatch: false,
+        hasNearExpiryBatch: false,
+      };
+    });
+  },
+
+  async getMedicinesStock(medicineIds: string[], tx?: Prisma.TransactionClient) {
+    if (medicineIds.length === 0) return [];
+    const client = tx ?? prisma;
+    const now = new Date();
+
+    const [medicines, stockAgg, activeBatchesAgg] = await Promise.all([
+      client.medicineMaster.findMany({
+        where: { id: { in: medicineIds } },
+        select: { id: true, reorderLevel: true, saleRate: true },
+      }),
+      client.$queryRaw<Array<{ medicine_id: string; stock: Decimal | number | string }>>`
+        SELECT medicine_id, COALESCE(SUM(quantity_delta), 0) AS stock
+        FROM stock_ledger_entries
+        WHERE medicine_id IN (${Prisma.join(medicineIds)})
+        GROUP BY medicine_id
+      `,
+      client.$queryRaw<Array<{
+        id: string;
+        medicine_id: string;
+        batch_number: string;
+        expiry_date: Date;
+        sale_rate: Decimal | null;
+        cost_rate: Decimal;
+        available: Decimal | number | string;
+      }>>`
+        SELECT 
+          b.id,
+          b.medicine_id,
+          b.batch_number,
+          b.expiry_date,
+          b.sale_rate,
+          b.cost_rate,
+          COALESCE(SUM(sle.quantity_delta), 0) AS available
+        FROM medicine_batches b
+        LEFT JOIN stock_ledger_entries sle ON sle.batch_id = b.id
+        WHERE b.medicine_id IN (${Prisma.join(medicineIds)}) AND b.expiry_date > ${now}
+        GROUP BY b.id, b.medicine_id, b.batch_number, b.expiry_date, b.sale_rate, b.cost_rate
+        HAVING COALESCE(SUM(sle.quantity_delta), 0) > 0
+        ORDER BY b.expiry_date ASC, b.created_at ASC
+      `,
+    ]);
+
+    const stockMap = new Map<string, Decimal>();
+    stockAgg.forEach((r) => stockMap.set(r.medicine_id, new Decimal(r.stock.toString())));
+
+    const batchesMap = new Map<string, any[]>();
+    activeBatchesAgg.forEach((b) => {
+      const list = batchesMap.get(b.medicine_id) || [];
+      list.push({
+        id: b.id,
+        batchNumber: b.batch_number,
+        expiryDate: b.expiry_date,
+        saleRate: b.sale_rate,
+        costRate: b.cost_rate,
+        available: new Decimal(b.available.toString()),
+      });
+      batchesMap.set(b.medicine_id, list);
+    });
+
+    return medicines.map((m) => {
+      const stock = stockMap.get(m.id) || new Decimal(0);
+      const isLow = stock.lessThanOrEqualTo(m.reorderLevel);
+      const isOut = stock.lessThanOrEqualTo(0);
+      const rawBatches = batchesMap.get(m.id) || [];
+      const activeBatches = rawBatches.map((b) => ({
+        ...b,
+        saleRate: b.saleRate ?? m.saleRate,
+      }));
+
+      return {
+        medicineId: m.id,
+        currentStock: stock,
+        isLowStock: isLow && !isOut,
+        isOutOfStock: isOut,
+        activeBatches,
+      };
     });
   },
 
@@ -693,8 +1151,8 @@ export const pharmacyService = {
   },
 
   // ── POS Retail Dispensing (pharmacy.md §6 — real tax/discount/split payment/outstanding, §19.2 fix) ──
-  async dispenseRetail(body: DispenseRetailBody, actorId: string) {
-    return prisma.$transaction(async (tx) => {
+  async dispenseRetail(body: DispenseRetailBody, actorId: string, transaction?: Prisma.TransactionClient) {
+    const execute = async (tx: Prisma.TransactionClient) => {
       let subtotal = new Decimal(0);
       let discountTotal = new Decimal(0);
       let taxTotal = new Decimal(0);
@@ -814,15 +1272,33 @@ export const pharmacyService = {
         }
       }
 
-      return invoice;
-    });
+      const updatedStock = await pharmacyService.getMedicinesStock(uniqueMedIds, tx);
+
+      return {
+        ...invoice,
+        updatedStock,
+      };
+    };
+    return transaction ? execute(transaction) : prisma.$transaction(execute);
   },
 
-  async addPayment(invoiceId: string, body: AddPaymentBody, actorId: string) {
-    return prisma.$transaction(async (tx) => {
+  async addPayment(invoiceId: string, body: AddPaymentBody, actorId: string, transaction?: Prisma.TransactionClient) {
+    const execute = async (tx: Prisma.TransactionClient) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${invoiceId}))`;
       const invoice = await tx.pharmacyInvoice.findUnique({ where: { id: invoiceId } });
       if (!invoice) throw new NotFoundError('Invoice not found');
+
+      const amount = new Decimal(body.amount);
+      if (body.requestKey) {
+        const existing = await tx.pharmacyPayment.findUnique({ where: { requestKey: body.requestKey } });
+        if (existing) {
+          if (!new Decimal(existing.amount).equals(amount)) {
+            throw new ConflictError('A payment with this requestKey has already been recorded with a different amount');
+          }
+          return invoice;
+        }
+      }
+
       if (invoice.status === 'PAID') throw new ConflictError('Invoice is already fully paid');
       // HMS-linked invoices are paid by the patient at the HMS Front Desk,
       // never at this pharmacy counter — "collecting" one here would log a
@@ -835,13 +1311,8 @@ export const pharmacyService = {
           'HMS-linked invoices are collected by the patient at the HMS Front Desk, not here. Use "Request Settlement" on this invoice to collect what HMS owes Pharmacy.',
         );
       }
-      const amount = new Decimal(body.amount);
       if (amount.greaterThan(invoice.outstanding)) throw new ValidationError(`Payment exceeds outstanding balance of ${invoice.outstanding}`);
-
-      if (body.requestKey) {
-        const existing = await tx.pharmacyPayment.findUnique({ where: { requestKey: body.requestKey } });
-        if (existing) return invoice;
-      }
+      if (body.method !== 'CASH' && !body.paymentAccountId) throw new ValidationError('Payment account is required for non-cash payments');
 
       await tx.pharmacyPayment.create({
         data: {
@@ -879,14 +1350,391 @@ export const pharmacyService = {
       });
 
       return updated;
-    });
+    };
+    return transaction ? execute(transaction) : prisma.$transaction(execute);
   },
 
-  async listInvoices(query: ListInvoicesQuery) {
-    const invoices = await prisma.pharmacyInvoice.findMany({
-      where: { channel: query.channel, status: query.status },
+  async listInvoiceTransactionsSql(
+    query: ListInvoicesQuery,
+    client: Prisma.TransactionClient | typeof prisma
+  ) {
+    const channelFilter = query.channel && query.channel !== 'ALL' ? query.channel : undefined;
+    const statusFilter = query.status && query.status !== 'ALL' ? query.status : undefined;
+    const searchTerm = query.search?.trim();
+    const fromDate = query.fromDate?.trim();
+    const toDate = query.toDate?.trim();
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = [20, 25, 50, 100].includes(Number(query.limit)) ? Number(query.limit) : 25;
+    const offset = (page - 1) * limit;
+    const sortBy = query.sortBy || 'date';
+    const sortOrder = query.sortOrder || 'desc';
+
+    let startUtc: Date | undefined;
+    let endUtc: Date | undefined;
+    if (fromDate) {
+      startUtc = new Date(`${fromDate}T00:00:00+05:00`);
+    }
+    if (toDate) {
+      endUtc = new Date(`${toDate}T23:59:59.999+05:00`);
+    }
+
+    const conditions: Prisma.Sql[] = [];
+    if (channelFilter) {
+      conditions.push(Prisma.sql`channel = ${channelFilter}`);
+    }
+    if (statusFilter) {
+      conditions.push(Prisma.sql`status = ${statusFilter}`);
+    }
+    if (startUtc) {
+      conditions.push(Prisma.sql`transaction_at >= ${startUtc}`);
+    }
+    if (endUtc) {
+      conditions.push(Prisma.sql`transaction_at <= ${endUtc}`);
+    }
+    if (searchTerm) {
+      const q = `%${searchTerm}%`;
+      conditions.push(Prisma.sql`(
+        invoice_number ILIKE ${q} OR
+        customer_name ILIKE ${q} OR
+        receipt_number ILIKE ${q} OR
+        transaction_type ILIKE ${q} OR
+        collected_by_name ILIKE ${q} OR
+        dispensed_by_full_name ILIKE ${q} OR
+        dispensed_by_username ILIKE ${q} OR
+        payment_method ILIKE ${q} OR
+        external_admission_ref ILIKE ${q}
+      )`);
+    }
+
+    const whereClause = conditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
+
+    const sortColumnMap: Record<string, string> = {
+      date: 'transaction_at',
+      invoiceNumber: 'invoice_number',
+      billing: 'billing_amount',
+      collected: 'collected_amount',
+      outstanding: 'outstanding',
+    };
+    const col = sortColumnMap[sortBy] || 'transaction_at';
+    const dir = sortOrder === 'asc' ? 'ASC' : 'DESC';
+    const orderClause = Prisma.raw(`ORDER BY ${col} ${dir}, id ASC`);
+
+    const ctes = Prisma.sql`
+      WITH ranked_payments AS (
+        SELECT
+          p.id, p.invoice_id, p.amount, p.method, p.paid_at, p.payment_account_id, p.collected_by, p.is_initial,
+          ROW_NUMBER() OVER (PARTITION BY p.invoice_id ORDER BY p.paid_at ASC, p.id ASC) as pay_rank
+        FROM pharmacy_payments p
+        WHERE p.amount > 0
+      ),
+      classified_payments AS (
+        SELECT
+          p.id, p.invoice_id, p.amount, p.method, p.paid_at, p.payment_account_id, p.collected_by,
+          CASE
+            WHEN p.is_initial = true THEN true
+            WHEN p.is_initial = false THEN false
+            WHEN p.paid_at = i.created_at THEN true
+            WHEN (p.paid_at + INTERVAL '5 hours')::date = (i.created_at + INTERVAL '5 hours')::date AND rp.pay_rank = 1 THEN true
+            ELSE false
+          END as is_initial_effective
+        FROM pharmacy_payments p
+        JOIN pharmacy_invoices i ON i.id = p.invoice_id
+        LEFT JOIN ranked_payments rp ON rp.id = p.id
+      ),
+      first_hms_events AS (
+        SELECT DISTINCT ON (e.invoice_id)
+          e.id, e.invoice_id, e.collection_delta, e.occurred_at, e.reference, e.method, e.actor_id
+        FROM pharmacy_financial_events e
+        JOIN pharmacy_invoices i ON i.id = e.invoice_id
+        WHERE e.kind LIKE 'HMS_%' AND e.occurred_at IS NOT NULL AND e.collection_delta > 0
+          AND (e.occurred_at + INTERVAL '5 hours')::date = (i.created_at + INTERVAL '5 hours')::date
+        ORDER BY e.invoice_id, e.occurred_at ASC, e.id ASC
+      ),
+      invoice_returns AS (
+        SELECT invoice_id, COALESCE(SUM(sale_delta), 0) as total_return_sale
+        FROM pharmacy_financial_events WHERE kind = 'RETURN' GROUP BY invoice_id
+      ),
+      invoice_legacy_refunds AS (
+        SELECT r.reference_id as invoice_id, COALESCE(SUM(r.amount), 0) as total_refund_amount
+        FROM cash_ledger_entries r
+        WHERE r.category = 'REFUND' AND r.reference_table = 'pharmacy_invoices'
+          AND NOT EXISTS (SELECT 1 FROM pharmacy_financial_events e WHERE e.reference = r.id)
+        GROUP BY r.reference_id
+      ),
+      initial_payments_agg AS (
+        SELECT
+          cp.invoice_id,
+          COALESCE(SUM(cp.amount), 0) as initial_collected,
+          STRING_AGG('PAY-' || UPPER(SUBSTRING(cp.id, 1, 8)), ', ' ORDER BY cp.paid_at ASC, cp.id ASC) as initial_receipts,
+          STRING_AGG(cp.method::text, ', ' ORDER BY cp.paid_at ASC, cp.id ASC) as initial_methods,
+          STRING_AGG(COALESCE(pa.name, ''), ', ' ORDER BY cp.paid_at ASC, cp.id ASC) as initial_accounts,
+          STRING_AGG(COALESCE(pu.full_name, ''), ', ' ORDER BY cp.paid_at ASC, cp.id ASC) as initial_collectors
+        FROM classified_payments cp
+        LEFT JOIN payment_accounts pa ON pa.id = cp.payment_account_id
+        LEFT JOIN portal_users pu ON pu.id = cp.collected_by
+        WHERE cp.is_initial_effective = true
+        GROUP BY cp.invoice_id
+      ),
+      all_transactions AS (
+        -- 1. Original Sale
+        SELECT
+          'invoice:' || i.id as id, i.id as invoice_id, 'invoice:' || i.id as transaction_id,
+          'Original Sale' as transaction_type, i.created_at as transaction_at, i.created_at as invoice_created_at,
+          i.invoice_number, i.channel::text as channel, i.customer_name, i.external_admission_ref, i.status::text as status,
+          i.outstanding::numeric as outstanding, i.total::numeric as invoice_total, i.paid_total::numeric as invoice_paid_total,
+          i.subtotal::numeric as invoice_subtotal, i.discount_total::numeric as invoice_discount_total, i.tax_total::numeric as invoice_tax_total,
+          (i.total - COALESCE(ret.total_return_sale, 0) + COALESCE(ref.total_refund_amount, 0))::numeric as billing_amount,
+          (COALESCE(ipa.initial_collected, 0) + COALESCE(fhe.collection_delta, 0))::numeric as collected_amount,
+          NULLIF(TRIM(CONCAT_WS(', ', ipa.initial_receipts, fhe.reference)), '') as receipt_number,
+          NULLIF(TRIM(CONCAT_WS(', ', ipa.initial_methods, fhe.method)), '') as payment_method,
+          NULLIF(TRIM(ipa.initial_accounts), '') as payment_account_name,
+          COALESCE(NULLIF(TRIM(CONCAT_WS(', ', ipa.initial_collectors, CASE WHEN fhe.id IS NOT NULL THEN COALESCE(fhe.actor_id, 'HMS Front Desk') END)), ''), u.full_name, 'Staff') as collected_by_name,
+          u.id as dispensed_by_id, u.full_name as dispensed_by_full_name, u.username as dispensed_by_username
+        FROM pharmacy_invoices i
+        JOIN portal_users u ON u.id = i.dispensed_by
+        LEFT JOIN initial_payments_agg ipa ON ipa.invoice_id = i.id
+        LEFT JOIN first_hms_events fhe ON fhe.invoice_id = i.id
+        LEFT JOIN invoice_returns ret ON ret.invoice_id = i.id
+        LEFT JOIN invoice_legacy_refunds ref ON ref.invoice_id = i.id
+
+        UNION ALL
+
+        -- 2. Remaining Collections
+        SELECT
+          'payment:' || cp.id as id, i.id as invoice_id, 'payment:' || cp.id as transaction_id,
+          CASE WHEN cp.amount < 0 THEN 'Collection Reversal' ELSE 'Remaining Collection' END as transaction_type,
+          cp.paid_at as transaction_at, i.created_at as invoice_created_at,
+          i.invoice_number, i.channel::text as channel, i.customer_name, i.external_admission_ref, i.status::text as status,
+          i.outstanding::numeric as outstanding, i.total::numeric as invoice_total, i.paid_total::numeric as invoice_paid_total,
+          i.subtotal::numeric as invoice_subtotal, i.discount_total::numeric as invoice_discount_total, i.tax_total::numeric as invoice_tax_total,
+          0::numeric as billing_amount, cp.amount::numeric as collected_amount,
+          'PAY-' || UPPER(SUBSTRING(cp.id, 1, 8)) as receipt_number, cp.method::text as payment_method,
+          COALESCE(pa.name, '') as payment_account_name, COALESCE(pu.full_name, 'Staff') as collected_by_name,
+          u.id as dispensed_by_id, u.full_name as dispensed_by_full_name, u.username as dispensed_by_username
+        FROM classified_payments cp
+        JOIN pharmacy_invoices i ON i.id = cp.invoice_id
+        JOIN portal_users u ON u.id = i.dispensed_by
+        LEFT JOIN payment_accounts pa ON pa.id = cp.payment_account_id
+        LEFT JOIN portal_users pu ON pu.id = cp.collected_by
+        WHERE cp.is_initial_effective = false
+
+        UNION ALL
+
+        -- 3. Financial Events
+        SELECT
+          'event:' || e.id as id, i.id as invoice_id, 'event:' || e.id as transaction_id,
+          CASE WHEN e.kind = 'RETURN' THEN 'Return / Refund' WHEN e.collection_delta < 0 THEN 'Collection Reversal' ELSE 'Remaining Collection' END as transaction_type,
+          e.occurred_at as transaction_at, i.created_at as invoice_created_at,
+          i.invoice_number, i.channel::text as channel, i.customer_name, i.external_admission_ref, i.status::text as status,
+          i.outstanding::numeric as outstanding, i.total::numeric as invoice_total, i.paid_total::numeric as invoice_paid_total,
+          i.subtotal::numeric as invoice_subtotal, i.discount_total::numeric as invoice_discount_total, i.tax_total::numeric as invoice_tax_total,
+          e.sale_delta::numeric as billing_amount, e.collection_delta::numeric as collected_amount,
+          COALESCE(cle.reference_no, e.reference, 'EVT-' || UPPER(SUBSTRING(e.id, 1, 8))) as receipt_number,
+          COALESCE(e.method, '') as payment_method, COALESCE(pa.name, '') as payment_account_name,
+          COALESCE(cle_u.full_name, e.actor_id, 'HMS Front Desk') as collected_by_name,
+          u.id as dispensed_by_id, u.full_name as dispensed_by_full_name, u.username as dispensed_by_username
+        FROM pharmacy_financial_events e
+        JOIN pharmacy_invoices i ON i.id = e.invoice_id
+        JOIN portal_users u ON u.id = i.dispensed_by
+        LEFT JOIN first_hms_events fhe ON fhe.id = e.id
+        LEFT JOIN cash_ledger_entries cle ON cle.id = e.reference
+        LEFT JOIN payment_accounts pa ON pa.id = cle.payment_account_id
+        LEFT JOIN portal_users cle_u ON cle_u.id = cle.portal_user_id
+        WHERE fhe.id IS NULL
+
+        UNION ALL
+
+        -- 4. Legacy Refunds
+        SELECT
+          'refund:' || r.id as id, i.id as invoice_id, 'refund:' || r.id as transaction_id,
+          'Legacy Return / Refund' as transaction_type, r.occurred_at as transaction_at, i.created_at as invoice_created_at,
+          i.invoice_number, i.channel::text as channel, i.customer_name, i.external_admission_ref, i.status::text as status,
+          i.outstanding::numeric as outstanding, i.total::numeric as invoice_total, i.paid_total::numeric as invoice_paid_total,
+          i.subtotal::numeric as invoice_subtotal, i.discount_total::numeric as invoice_discount_total, i.tax_total::numeric as invoice_tax_total,
+          (-r.amount)::numeric as billing_amount, (-r.amount)::numeric as collected_amount,
+          COALESCE(r.reference_no, 'REF-' || UPPER(SUBSTRING(r.id, 1, 8))) as receipt_number,
+          COALESCE(r.payment_method::text, CASE WHEN r.is_physical_cash THEN 'CASH' ELSE 'UNKNOWN' END) as payment_method,
+          COALESCE(pa.name, '') as payment_account_name, COALESCE(pu.full_name, 'Staff') as collected_by_name,
+          u.id as dispensed_by_id, u.full_name as dispensed_by_full_name, u.username as dispensed_by_username
+        FROM cash_ledger_entries r
+        JOIN pharmacy_invoices i ON i.id = r.reference_id
+        JOIN portal_users u ON u.id = i.dispensed_by
+        LEFT JOIN payment_accounts pa ON pa.id = r.payment_account_id
+        LEFT JOIN portal_users pu ON pu.id = r.portal_user_id
+        WHERE r.category = 'REFUND' AND r.reference_table = 'pharmacy_invoices'
+          AND NOT EXISTS (SELECT 1 FROM pharmacy_financial_events e WHERE e.reference = r.id)
+      )
+    `;
+
+    const pagedQuery = Prisma.sql`
+      ${ctes}
+      SELECT * FROM all_transactions
+      ${whereClause}
+      ${orderClause}
+      LIMIT ${limit} OFFSET ${offset};
+    `;
+
+    const summaryQuery = Prisma.sql`
+      ${ctes},
+      filtered_tx AS (
+        SELECT * FROM all_transactions
+        ${whereClause}
+      ),
+      summary_m AS (
+        SELECT
+          COALESCE(SUM(billing_amount), 0)::numeric as total_billing,
+          COALESCE(SUM(collected_amount), 0)::numeric as total_collected,
+          COUNT(*)::int as total_count,
+          COUNT(DISTINCT invoice_id)::int as total_invoices
+        FROM filtered_tx
+      ),
+      distinct_inv AS (
+        SELECT DISTINCT ON (invoice_id) outstanding FROM filtered_tx
+      ),
+      out_m AS (
+        SELECT COALESCE(SUM(outstanding), 0)::numeric as total_outstanding FROM distinct_inv
+      )
+      SELECT s.*, o.total_outstanding FROM summary_m s, out_m o;
+    `;
+
+    const [itemsRaw, summaryRaw] = await Promise.all([
+      client.$queryRaw<any[]>(pagedQuery),
+      client.$queryRaw<any[]>(summaryQuery),
+    ]);
+
+    const summary = summaryRaw[0] || {
+      total_billing: 0,
+      total_collected: 0,
+      total_outstanding: 0,
+      total_invoices: 0,
+      total_count: 0,
+    };
+
+    const items = itemsRaw.map((row) => ({
+      id: row.id,
+      invoiceId: row.invoice_id,
+      transactionId: row.transaction_id,
+      transactionType: row.transaction_type,
+      transactionAt: row.transaction_at,
+      billingAmount: Number(row.billing_amount),
+      collectedAmount: Number(row.collected_amount),
+      receiptNumber: row.receipt_number || '',
+      paymentMethod: row.payment_method || '',
+      paymentAccountName: row.payment_account_name || '',
+      collectedByName: row.collected_by_name || 'Staff',
+      outstanding: Number(row.outstanding),
+      status: row.status,
+      channel: row.channel,
+      customerName: row.customer_name,
+      invoiceNumber: row.invoice_number,
+      total: Number(row.invoice_total),
+      paidTotal: Number(row.invoice_paid_total),
+      subtotal: Number(row.invoice_subtotal),
+      discountTotal: Number(row.invoice_discount_total),
+      taxTotal: Number(row.invoice_tax_total),
+      createdAt: row.invoice_created_at,
+      externalAdmissionRef: row.external_admission_ref,
+      dispensedById: row.dispensed_by_id,
+      dispensedByUser: {
+        id: row.dispensed_by_id,
+        fullName: row.dispensed_by_full_name,
+        username: row.dispensed_by_username,
+      },
+    }));
+
+    const total = Number(summary.total_count);
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+
+    return {
+      items,
+      page,
+      limit,
+      total,
+      totalPages,
+      summary: {
+        totalBilling: Number(summary.total_billing),
+        totalCollected: Number(summary.total_collected),
+        totalOutstanding: Number(summary.total_outstanding),
+        totalInvoices: Number(summary.total_invoices),
+      },
+    };
+  },
+
+  async listInvoices(query: ListInvoicesQuery, tx?: Prisma.TransactionClient) {
+    const client = tx || prisma;
+    const isPaginated = query.page != null || query.limit != null;
+
+    // Database-level SQL transaction projection & pagination for paginated requests
+    if (isPaginated && query.transactions === 'true') {
+      return pharmacyService.listInvoiceTransactionsSql(query, client);
+    }
+
+    const channelFilter = query.channel && query.channel !== 'ALL' ? query.channel : undefined;
+    const statusFilter = query.status && query.status !== 'ALL' ? query.status : undefined;
+    const searchTerm = query.search?.trim();
+    const fromDate = query.fromDate?.trim();
+    const toDate = query.toDate?.trim();
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = [20, 25, 50, 100].includes(Number(query.limit)) ? Number(query.limit) : 25;
+    const sortBy = query.sortBy || 'date';
+    const sortOrder = query.sortOrder || 'desc';
+
+    // Parse PKT date range (UTC+5) to UTC timestamps
+    let startUtc: Date | undefined;
+    let endUtc: Date | undefined;
+    if (fromDate) {
+      startUtc = new Date(`${fromDate}T00:00:00+05:00`);
+    }
+    if (toDate) {
+      endUtc = new Date(`${toDate}T23:59:59.999+05:00`);
+    }
+
+    // Build Prisma query condition
+    const searchWhere: Prisma.PharmacyInvoiceWhereInput | undefined = searchTerm
+      ? {
+          OR: [
+            { invoiceNumber: { contains: searchTerm, mode: 'insensitive' } },
+            { customerName: { contains: searchTerm, mode: 'insensitive' } },
+            { externalAdmissionRef: { contains: searchTerm, mode: 'insensitive' } },
+            { payments: { some: { collectedByUser: { fullName: { contains: searchTerm, mode: 'insensitive' } } } } },
+            { dispensedByUser: { fullName: { contains: searchTerm, mode: 'insensitive' } } },
+          ],
+        }
+      : undefined;
+
+    const dateConditions: Prisma.PharmacyInvoiceWhereInput[] = [];
+    if (startUtc && endUtc) {
+      dateConditions.push(
+        { createdAt: { gte: startUtc, lte: endUtc } },
+        { payments: { some: { paidAt: { gte: startUtc, lte: endUtc } } } },
+        { financialEvents: { some: { occurredAt: { gte: startUtc, lte: endUtc } } } }
+      );
+    } else if (startUtc) {
+      dateConditions.push(
+        { createdAt: { gte: startUtc } },
+        { payments: { some: { paidAt: { gte: startUtc } } } },
+        { financialEvents: { some: { occurredAt: { gte: startUtc } } } }
+      );
+    } else if (endUtc) {
+      dateConditions.push(
+        { createdAt: { lte: endUtc } },
+        { payments: { some: { paidAt: { lte: endUtc } } } },
+        { financialEvents: { some: { occurredAt: { lte: endUtc } } } }
+      );
+    }
+
+    const where: Prisma.PharmacyInvoiceWhereInput = {
+      channel: channelFilter,
+      status: statusFilter,
+      ...(searchWhere || {}),
+      ...(dateConditions.length > 0 ? { OR: dateConditions } : {}),
+    };
+
+    // Load candidate invoices with payments, dispensedByUser, and financialEvents.
+    // Lines and medicineRequests are omitted for high performance (they are loaded on demand via getInvoiceById).
+    const invoices = await client.pharmacyInvoice.findMany({
+      where,
       include: {
-        lines: { include: { medicine: true, batch: true, saleUnit: true } },
         payments: {
           include: {
             collectedByUser: { select: { id: true, fullName: true, username: true } },
@@ -894,29 +1742,119 @@ export const pharmacyService = {
           },
         },
         dispensedByUser: { select: { id: true, fullName: true, username: true } },
-        medicineRequests: { include: { lines: true } },
         financialEvents: true,
       },
       orderBy: { createdAt: 'desc' },
-      take: 200,
+      ...(isPaginated ? {} : { take: 200 }),
     });
 
-    if (query.transactions !== 'true') return invoices;
+    if (query.transactions !== 'true' && !isPaginated) {
+      return invoices;
+    }
 
     const invoiceIds = invoices.map((i) => i.id);
-    const refunds = await prisma.cashLedgerEntry.findMany({
-      where: {
-        category: 'REFUND',
-        referenceTable: 'pharmacy_invoices',
-        referenceId: { in: invoiceIds },
-      },
-      include: {
-        portalUser: { select: { fullName: true } },
-        paymentAccount: { select: { name: true } },
-      },
+    const refunds =
+      invoiceIds.length > 0
+        ? await client.cashLedgerEntry.findMany({
+            where: {
+              category: 'REFUND',
+              referenceTable: 'pharmacy_invoices',
+              referenceId: { in: invoiceIds },
+            },
+            include: {
+              portalUser: { select: { fullName: true } },
+              paymentAccount: { select: { name: true } },
+            },
+          })
+        : [];
+
+    // Project transactions (original sales + subsequent collections/events/refunds)
+    let rows = invoiceTransactions(invoices as any, refunds as any);
+
+    // Apply strict date window filtering on transaction rows
+    if (startUtc || endUtc) {
+      rows = rows.filter((r) => {
+        const tAt = r.transactionAt || r.createdAt;
+        if (!tAt) return false;
+        const d = new Date(tAt);
+        if (startUtc && d < startUtc) return false;
+        if (endUtc && d > endUtc) return false;
+        return true;
+      });
+    }
+
+    // Apply text search on expanded transaction attributes
+    if (searchTerm) {
+      const q = searchTerm.toLowerCase();
+      rows = rows.filter((r) => {
+        return (
+          (r.invoiceNumber && r.invoiceNumber.toLowerCase().includes(q)) ||
+          (r.customerName && r.customerName.toLowerCase().includes(q)) ||
+          (r.receiptNumber && r.receiptNumber.toLowerCase().includes(q)) ||
+          (r.transactionType && r.transactionType.toLowerCase().includes(q)) ||
+          (r.collectedByName && r.collectedByName.toLowerCase().includes(q)) ||
+          (r.dispensedByUser?.fullName && r.dispensedByUser.fullName.toLowerCase().includes(q)) ||
+          (r.dispensedByUser?.username && r.dispensedByUser.username.toLowerCase().includes(q)) ||
+          (r.paymentMethod && r.paymentMethod.toLowerCase().includes(q))
+        );
+      });
+    }
+
+    // Calculate aggregated KPIs across the entire filtered dataset
+    const summary = summarizeInvoiceTransactions(rows);
+
+    // Sort visible transaction rows
+    rows.sort((a, b) => {
+      let cmp = 0;
+      if (sortBy === 'date') {
+        const timeA = (a.transactionAt ? new Date(a.transactionAt).getTime() : new Date(a.createdAt).getTime()) || 0;
+        const timeB = (b.transactionAt ? new Date(b.transactionAt).getTime() : new Date(b.createdAt).getTime()) || 0;
+        cmp = timeA - timeB;
+      } else if (sortBy === 'invoiceNumber') {
+        cmp = (a.invoiceNumber || '').localeCompare(b.invoiceNumber || '');
+      } else if (sortBy === 'billing') {
+        const valA = Number(a.billingAmount ?? a.total ?? 0);
+        const valB = Number(b.billingAmount ?? b.total ?? 0);
+        cmp = valA - valB;
+      } else if (sortBy === 'collected') {
+        const valA = Number(a.collectedAmount ?? a.paidTotal ?? 0);
+        const valB = Number(b.collectedAmount ?? b.paidTotal ?? 0);
+        cmp = valA - valB;
+      } else if (sortBy === 'outstanding') {
+        const valA = Number(a.outstanding ?? 0);
+        const valB = Number(b.outstanding ?? 0);
+        cmp = valA - valB;
+      }
+      if (cmp === 0) {
+        cmp = a.id.localeCompare(b.id);
+      }
+      return sortOrder === 'desc' ? -cmp : cmp;
     });
 
-    return invoiceTransactions(invoices as any, refunds as any);
+    if (!isPaginated) {
+      return rows;
+    }
+
+    // Paginate visible transaction rows
+    const total = rows.length;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const validPage = Math.min(page, totalPages);
+    const start = (validPage - 1) * limit;
+    const items = rows.slice(start, start + limit);
+
+    return {
+      items,
+      page: validPage,
+      limit,
+      total,
+      totalPages,
+      summary: {
+        totalBilling: summary.billing,
+        totalCollected: summary.collected,
+        totalOutstanding: summary.outstanding,
+        totalInvoices: summary.invoices,
+      },
+    };
   },
 
   // ── Sales Return (pharmacy.md §9.1 SALES_RETURN_IN) ─────────────────────
@@ -1058,14 +1996,21 @@ export const pharmacyService = {
     return transaction ? execute(transaction) : prisma.$transaction(execute);
   },
 
-  async getInvoiceById(id: string) {
-    const invoice = await prisma.pharmacyInvoice.findUnique({
+  async getInvoiceById(id: string, tx?: Prisma.TransactionClient) {
+    const client = tx || prisma;
+    const invoice = await client.pharmacyInvoice.findUnique({
       where: { id },
       include: {
         lines: { include: { medicine: true, batch: true, saleUnit: true } },
-        payments: { include: { collectedByUser: { select: { id: true, fullName: true } } } },
+        payments: {
+          include: {
+            collectedByUser: { select: { id: true, fullName: true, username: true } },
+            paymentAccount: { select: { id: true, name: true } },
+          },
+        },
         dispensedByUser: { select: { id: true, fullName: true, username: true } },
         medicineRequests: { include: { lines: true } },
+        financialEvents: true,
       },
     });
     if (!invoice) throw new NotFoundError('Invoice not found');

@@ -17,6 +17,9 @@ import {
   User,
   Calendar,
 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { queryClient, queryKeys } from '../queryClient';
+import { usePharmacyUIStore } from '../store/usePharmacyUIStore';
 import { pharmacyApi } from '../services/pharmacyApi';
 import { formatPKR, formatNumber, formatDateTime } from '../utils/format';
 import { useToast } from '../context/ToastContext';
@@ -26,27 +29,84 @@ import { PharmacyInvoiceModal } from '../components/PharmacyInvoiceModal';
 
 export const InvoicesPage: React.FC = () => {
   const toast = useToast();
-  const [rows, setRows] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const invoicesUI = usePharmacyUIStore((s) => s.invoices);
+  const setInvoicesUI = usePharmacyUIStore((s) => s.setInvoicesState);
+
   const [selectedInvoice, setSelectedInvoice] = useState<any | null>(null);
   const [modalInitialAction, setModalInitialAction] = useState<'return' | 'payment' | undefined>(undefined);
 
-  // Filters
-  const [statusFilter, setStatusFilter] = useState<string>('ALL');
-  const [channelFilter, setChannelFilter] = useState<string>('ALL');
-  const [fromDate, setFromDate] = useState('');
-  const [toDate, setToDate] = useState('');
+  // Filters & Pagination - preserved in Zustand across page switches
+  const [page, setPage] = useState<number>(invoicesUI.page || 1);
+  const [pageSize, setPageSize] = useState<number>(invoicesUI.pageSize || 25);
+  const [search, setSearch] = useState<string>(invoicesUI.search || '');
+  const [statusFilter, setStatusFilter] = useState<string>(invoicesUI.statusFilter || 'ALL');
+  const [channelFilter, setChannelFilter] = useState<string>(invoicesUI.channelFilter || 'ALL');
+  const [fromDate, setFromDate] = useState<string>(invoicesUI.fromDate || '');
+  const [toDate, setToDate] = useState<string>(invoicesUI.toDate || '');
+  const [sortBy, setSortBy] = useState<string>(invoicesUI.sortBy || 'date');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>(invoicesUI.sortOrder || 'desc');
 
-  const load = () => {
-    setLoading(true);
-    pharmacyApi
-      .listInvoices(true)
-      .then(setRows)
-      .catch(() => toast.error('Failed to load pharmacy invoices.'))
-      .finally(() => setLoading(false));
+  useEffect(() => {
+    setInvoicesUI({
+      page,
+      pageSize,
+      search,
+      statusFilter,
+      channelFilter,
+      fromDate,
+      toDate,
+      sortBy,
+      sortOrder,
+    });
+  }, [page, pageSize, search, statusFilter, channelFilter, fromDate, toDate, sortBy, sortOrder, setInvoicesUI]);
+
+  // TanStack Query (30s stale time, background SWR, instant revisit from cache)
+  const {
+    data: queryResult,
+    isLoading: loading,
+    refetch: reloadInvoices,
+  } = useQuery({
+    queryKey: queryKeys.invoices.list({
+      page,
+      limit: pageSize,
+      search,
+      channel: channelFilter,
+      status: statusFilter,
+      fromDate,
+      toDate,
+      sortBy,
+      sortOrder,
+    }),
+    queryFn: () =>
+      pharmacyApi.listInvoicesPaginated({
+        page,
+        limit: pageSize,
+        search: search.trim() || undefined,
+        channel: channelFilter === 'ALL' ? undefined : channelFilter,
+        status: statusFilter === 'ALL' ? undefined : statusFilter,
+        fromDate: fromDate || undefined,
+        toDate: toDate || undefined,
+        sortBy,
+        sortOrder,
+        transactions: true,
+      }),
+    placeholderData: (prev) => prev,
+    staleTime: 30 * 1000,
+  });
+
+  const rows = queryResult?.items || [];
+  const total = queryResult?.total || 0;
+  const totalPages = queryResult?.totalPages || 1;
+  const summary = queryResult?.summary || {
+    totalBilling: 0,
+    totalCollected: 0,
+    totalOutstanding: 0,
+    totalInvoices: 0,
   };
 
-  useEffect(load, []);
+  const load = () => {
+    reloadInvoices();
+  };
 
   const openInvoiceModal = async (inv: any, action?: 'return' | 'payment') => {
     setModalInitialAction(action);
@@ -59,71 +119,32 @@ export const InvoicesPage: React.FC = () => {
     }
   };
 
-  // Filtered dataset
-  const filteredInvoices = useMemo(() => {
-    return rows.filter((inv) => {
-      if (statusFilter !== 'ALL' && inv.status !== statusFilter) return false;
-      if (channelFilter !== 'ALL' && inv.channel !== channelFilter) return false;
-      const tAt = inv.transactionAt || inv.createdAt;
-      const date = tAt ? new Date(new Date(tAt).getTime() + 18000000).toISOString().slice(0, 10) : '';
-      if ((fromDate || toDate) && !date) return false;
-      if (fromDate && date < fromDate) return false;
-      if (toDate && date > toDate) return false;
-      return true;
-    });
-  }, [rows, statusFilter, channelFilter, fromDate, toDate]);
-
-  // Top KPI calculations (HMS transaction projection standard)
-  const totalSales = useMemo(() => {
-    return filteredInvoices
-      .filter((r) => r.transactionType === 'Original Sale' || !r.transactionType)
-      .reduce((s, r) => s + Number(r.billingAmount != null ? r.billingAmount : r.total || 0), 0);
-  }, [filteredInvoices]);
-
-  const totalPaid = useMemo(() => {
-    return filteredInvoices.reduce((s, r) => s + Number(r.collectedAmount != null ? r.collectedAmount : r.paidTotal || 0), 0);
-  }, [filteredInvoices]);
-
-  const uniqueInvoices = useMemo(() => {
-    const map = new Map<string, any>();
-    filteredInvoices.forEach((r) => {
-      const id = r.invoiceId || r.id;
-      if (!map.has(id)) map.set(id, r);
-    });
-    return Array.from(map.values());
-  }, [filteredInvoices]);
-
-  const totalOutstanding = useMemo(() => {
-    return uniqueInvoices.reduce((s, r) => s + Number(r.outstanding || 0), 0);
-  }, [uniqueInvoices]);
-
-  const totalInvoices = uniqueInvoices.length;
-
+  // Top KPI calculations (Server-aggregated across entire filtered database)
   const kpis: KpiItem[] = [
     {
       label: 'Gross Pharmacy Sales',
-      value: formatPKR(totalSales),
+      value: formatPKR(summary.totalBilling),
       icon: TrendingUp,
-      subtitle: `${totalInvoices} distinct invoices in selected period`,
+      subtitle: `${summary.totalInvoices} distinct invoices in selected period`,
       tone: 'default',
     },
     {
       label: 'Total Collected',
-      value: formatPKR(totalPaid),
+      value: formatPKR(summary.totalCollected),
       icon: CheckCircle2,
       subtitle: 'Settled via cash / card / bank (including installments)',
       tone: 'success',
     },
     {
       label: 'Current Receivables',
-      value: formatPKR(totalOutstanding),
+      value: formatPKR(summary.totalOutstanding),
       icon: AlertCircle,
       subtitle: 'Pending customer settlement',
-      tone: totalOutstanding > 0 ? 'danger' : 'success',
+      tone: summary.totalOutstanding > 0 ? 'danger' : 'success',
     },
     {
       label: 'Invoices Dispensed',
-      value: totalInvoices,
+      value: summary.totalInvoices,
       icon: Receipt,
       subtitle: 'Retail POS & HMS inpatient',
       tone: 'info',
@@ -343,21 +364,35 @@ export const InvoicesPage: React.FC = () => {
       {/* Main Table */}
       <PharmacyDataTable
         columns={columns}
-        data={filteredInvoices}
+        data={rows}
         loading={loading}
         title="Sales Invoices Register"
         badge="Active Invoices"
         exportFileName="pharmacy_sales_invoices"
         searchPlaceholder="Search by invoice #, patient/customer name, or pharmacist…"
-        searchFilter={(inv, q) =>
-          inv.invoiceNumber.toLowerCase().includes(q) ||
-          (inv.customerName && inv.customerName.toLowerCase().includes(q)) ||
-          (inv.receiptNumber && inv.receiptNumber.toLowerCase().includes(q)) ||
-          (inv.transactionType && inv.transactionType.toLowerCase().includes(q)) ||
-          (inv.collectedByName && inv.collectedByName.toLowerCase().includes(q)) ||
-          (inv.dispensedByUser?.fullName && inv.dispensedByUser.fullName.toLowerCase().includes(q)) ||
-          (inv.dispensedByUser?.username && inv.dispensedByUser.username.toLowerCase().includes(q))
-        }
+        serverPagination={{
+          page,
+          pageSize,
+          total,
+          totalPages,
+          onPageChange: (p) => setPage(p),
+          onPageSizeChange: (s) => {
+            setPageSize(s);
+            setPage(1);
+          },
+          searchValue: search,
+          onSearchChange: (q) => {
+            setSearch(q);
+            setPage(1);
+          },
+          sortBy,
+          sortOrder,
+          onSortChange: (f, o) => {
+            setSortBy(f);
+            setSortOrder(o);
+            setPage(1);
+          },
+        }}
         onRefresh={load}
         onApplyFilters={load}
         onResetFilters={() => {
@@ -365,6 +400,8 @@ export const InvoicesPage: React.FC = () => {
           setStatusFilter('ALL');
           setFromDate('');
           setToDate('');
+          setSearch('');
+          setPage(1);
           load();
         }}
         filterControls={
@@ -430,7 +467,11 @@ export const InvoicesPage: React.FC = () => {
           }}
           onUpdated={(updated) => {
             setSelectedInvoice(updated);
-            load();
+            queryClient.invalidateQueries({ queryKey: queryKeys.invoices.all });
+            queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all });
+            queryClient.invalidateQueries({ queryKey: queryKeys.pos.all });
+            queryClient.invalidateQueries({ queryKey: queryKeys.medicines.all });
+            queryClient.invalidateQueries({ queryKey: queryKeys.financial.all });
           }}
         />
       )}
