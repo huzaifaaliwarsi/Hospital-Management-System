@@ -4,7 +4,6 @@ import {
   X,
   Printer,
   Receipt,
-  FileText,
   CreditCard,
   Undo2,
   CheckCircle2,
@@ -43,9 +42,7 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
 }) => {
   const toast = useToast();
   const [invoice, setInvoice] = useState(initialInvoice);
-  const [viewMode, setViewMode] = useState<'thermal' | 'tax_invoice' | 'hms_details'>(
-    initialInvoice.channel === 'HMS_LINKED' ? 'hms_details' : 'thermal'
-  );
+  const [viewMode, setViewMode] = useState<'thermal' | 'hms_details'>('thermal');
   const [hmsTab, setHmsTab] = useState<'granular' | 'aggregated'>('granular');
 
   // Payment states
@@ -200,67 +197,39 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-900/60 backdrop-blur-xs overflow-y-auto print:p-0 print:bg-white print:static">
-      <div className={`bg-white rounded-2xl w-full shadow-2xl border border-slate-200 flex flex-col max-h-[92vh] overflow-hidden print:max-h-none print:shadow-none print:border-none print:w-full print:max-w-none ${viewMode === 'hms_details' ? 'max-w-4xl' : 'max-w-2xl'}`}>
+      <div className={`bg-white rounded-2xl w-full shadow-2xl border border-slate-200 flex flex-col max-h-[92vh] overflow-hidden print:max-h-none print:shadow-none print:border-none print:w-full print:max-w-none ${viewMode === 'hms_details' ? 'max-w-4xl' : 'max-w-md'}`}>
         {/* Top Control Bar (Clean White Theme — Hidden when printing) */}
-        <div className="px-5 py-3.5 bg-white border-b border-slate-200/90 flex items-center justify-between gap-3 shrink-0 print:hidden">
-          <div className="flex items-center gap-3">
-            <div className="h-8 w-8 rounded-lg bg-emerald-50 text-[#0e7d5a] flex items-center justify-center font-bold">
+        <div className="px-4 py-3 bg-white border-b border-slate-200/90 flex items-center justify-between gap-3 shrink-0 print:hidden">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="h-8 w-8 rounded-lg bg-emerald-50 text-[#0e7d5a] flex items-center justify-center font-bold shrink-0">
               {viewMode === 'hms_details' ? <Pill className="h-4 w-4" /> : <Receipt className="h-4 w-4" />}
             </div>
-            <div>
+            <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <span className="font-mono text-sm font-extrabold tracking-tight text-slate-900">
+                <span className="font-mono text-sm font-extrabold tracking-tight text-slate-900 truncate">
                   {invoice.invoiceNumber}
                 </span>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wider ${statusColor}`}>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wider shrink-0 ${statusColor}`}>
                   {invoice.status.replace('_', ' ')}
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-[11px] text-slate-400 truncate">
                 {pharmacySettings?.hospitalName || pharmacySettings?.receiptHeaderText || hospitalProfile?.name || 'CH Sharif & Saeed Hospital'} · {pharmacySettings?.pharmacySubtitle || 'Central Pharmacy POS Slip'}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            {/* View Mode Toggle (Clean Slate Pill) */}
-            <div className="bg-slate-100 p-0.5 rounded-lg flex items-center border border-slate-200">
-              {invoice.channel === 'HMS_LINKED' && (
-                <button
-                  type="button"
-                  onClick={() => setViewMode('hms_details')}
-                  className={`px-2.5 py-1 text-xs font-semibold rounded-md flex items-center gap-1.5 transition-colors cursor-pointer ${
-                    viewMode === 'hms_details'
-                      ? 'bg-white text-[#0e7d5a] shadow-2xs font-bold'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <Pill className="h-3.5 w-3.5" /> Inpatient Details
-                </button>
-              )}
+          <div className="flex items-center gap-2 shrink-0">
+            {invoice.channel === 'HMS_LINKED' && (
               <button
                 type="button"
-                onClick={() => setViewMode('thermal')}
-                className={`px-2.5 py-1 text-xs font-semibold rounded-md flex items-center gap-1.5 transition-colors cursor-pointer ${
-                  viewMode === 'thermal'
-                    ? 'bg-white text-slate-900 shadow-2xs font-bold'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
+                onClick={() => setViewMode((prev) => (prev === 'thermal' ? 'hms_details' : 'thermal'))}
+                className="px-2.5 py-1 text-xs font-semibold rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 transition-colors cursor-pointer"
               >
-                <Receipt className="h-3.5 w-3.5" /> Thermal (80mm)
+                <Pill className="h-3.5 w-3.5 text-emerald-600" />
+                {viewMode === 'thermal' ? 'Inpatient Details' : 'Thermal Slip'}
               </button>
-              <button
-                type="button"
-                onClick={() => setViewMode('tax_invoice')}
-                className={`px-2.5 py-1 text-xs font-semibold rounded-md flex items-center gap-1.5 transition-colors cursor-pointer ${
-                  viewMode === 'tax_invoice'
-                    ? 'bg-white text-slate-900 shadow-2xs font-bold'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <FileText className="h-3.5 w-3.5" /> A4 Invoice
-              </button>
-            </div>
+            )}
 
             {/* Print Button */}
             <button
@@ -284,40 +253,30 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
         </div>
 
         {/* Action Toolbar (Return & Add Payment options) */}
-        <div className="px-5 py-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0 print:hidden text-xs">
-          <div className="flex items-center gap-2">
+        <div className="px-4 py-2 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0 print:hidden text-xs">
+          <div className="flex items-center gap-1.5">
             <span className="text-slate-500">Channel:</span>
-            <span className="font-semibold text-slate-800 bg-white px-2 py-0.5 rounded border border-slate-200">
+            <span className="font-semibold text-slate-800 bg-white px-2 py-0.5 rounded border border-slate-200 text-[11px]">
               {invoice.channel === 'HMS_LINKED' ? 'Inpatient / HMS Dispense' : 'Retail Walk-In POS'}
             </span>
-            {invoice.customerName && (
-              <span className="text-slate-600">
-                Customer: <strong className="text-slate-900">{invoice.customerName}</strong>
-              </span>
-            )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={() => {
                 setShowReturn((prev) => !prev);
                 setShowAddPayment(false);
               }}
-              className={`px-2.5 py-1 rounded-md font-semibold border flex items-center gap-1 transition-colors ${
+              className={`px-2 py-1 rounded-md font-semibold border flex items-center gap-1 transition-colors text-[11px] cursor-pointer ${
                 showReturn
                   ? 'bg-rose-50 text-rose-700 border-rose-300'
                   : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
               }`}
             >
-              <Undo2 className="h-3.5 w-3.5" /> {showReturn ? 'Cancel Return' : 'Sales Return'}
+              <Undo2 className="h-3 w-3" /> {showReturn ? 'Cancel' : 'Return'}
             </button>
 
-            {/* HMS-linked invoices are paid by the patient at the HMS Front
-                Desk, not at this pharmacy counter — "Record Payment" here
-                is only for retail/walk-in invoices. What HMS owes Pharmacy
-                back is collected via "Request Settlement" instead (see the
-                HMS Receivable card above / HMS Receivables page). */}
             {invoice.channel !== 'HMS_LINKED' && Number(invoice.outstanding) > 0 && (
               <button
                 type="button"
@@ -326,13 +285,13 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
                   setShowAddPayment((prev) => !prev);
                   setShowReturn(false);
                 }}
-                className={`px-2.5 py-1 rounded-md font-semibold border flex items-center gap-1 transition-colors ${
+                className={`px-2 py-1 rounded-md font-semibold border flex items-center gap-1 transition-colors text-[11px] cursor-pointer ${
                   showAddPayment
                     ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
                     : 'bg-[#08775A] text-white border-[#08775A] hover:bg-[#065f46]'
                 }`}
               >
-                <CreditCard className="h-3.5 w-3.5" /> {showAddPayment ? 'Close' : 'Collect Remaining Payment'}
+                <CreditCard className="h-3 w-3" /> {showAddPayment ? 'Close' : 'Collect Remaining'}
               </button>
             )}
           </div>
@@ -348,241 +307,7 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
             />
           )}
 
-          {viewMode === 'tax_invoice' && (
-            <div
-              id="pharmacy-printable-invoice"
-              className="bg-white shadow-sm border border-slate-200 print:shadow-none print:border-none w-full transition-all max-w-2xl p-7 text-xs text-slate-800"
-            >
-              {/* ═════════════════════════════════════════════════════════════
-                 STANDARD TAX INVOICE VIEW (A4 Medical Bill)
-                 ═════════════════════════════════════════════════════════════ */}
-              <div className="space-y-6">
-                {/* Header Banner */}
-                <div className="flex items-start justify-between pb-4 border-b-2 border-emerald-800">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      {hospitalLogo ? (
-                        <img
-                          src={hospitalLogo}
-                          alt="Hospital Logo"
-                          className="h-8 w-8 object-contain rounded border border-emerald-200"
-                        />
-                      ) : (
-                        <div className="h-8 w-8 rounded-lg bg-emerald-700 text-white flex items-center justify-center font-bold text-base">
-                          CH
-                        </div>
-                      )}
-                      <h1 className="text-lg font-black tracking-tight text-slate-900 uppercase">
-                        {pharmacySettings?.hospitalName || pharmacySettings?.receiptHeaderText || hospitalProfile?.name || 'CH Sharif & Saeed Hospital'}
-                      </h1>
-                    </div>
-                    <p className="text-xs font-semibold text-emerald-800 uppercase tracking-wide">
-                      {pharmacySettings?.pharmacySubtitle || 'Central Pharmacy & Retail Dispensary'}
-                    </p>
-                    <p className="text-[11px] text-slate-500">
-                      {pharmacySettings?.address || hospitalProfile?.address || 'Main Boulevard, Near Jail Road · 24/7 Pharmacy Care'}
-                    </p>
-                    <p className="text-[11px] text-slate-500">
-                      {pharmacySettings?.phone || (hospitalProfile?.primaryPhone ? `Phone: ${hospitalProfile.primaryPhone}` : 'UAN: +92 42 111-467-748')}
-                    </p>
-                    {pharmacySettings?.email && (
-                      <p className="text-[11px] text-slate-500">
-                        {pharmacySettings.email}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="text-right space-y-1">
-                    <div className="inline-block px-3 py-1 rounded bg-slate-900 text-white font-mono text-xs font-bold uppercase tracking-wider">
-                      PHARMACY INVOICE
-                    </div>
-                    <div className="font-mono text-sm font-bold text-slate-950">
-                      {invoice.invoiceNumber}
-                    </div>
-                    <div className="text-[11px] text-slate-500">
-                      Dated: {formatDateTime(invoice.createdAt)}
-                    </div>
-                    <div className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full border ${statusColor}`}>
-                      {invoice.status.replace('_', ' ')}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Patient / Customer & Dispenser Info Cards */}
-                <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
-                  <div className="space-y-1">
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                      Patient / Customer Details
-                    </div>
-                    <div className="font-bold text-sm text-slate-900">
-                      {invoice.customerName || 'Walk-In Customer'}
-                    </div>
-                    <div className="text-[11px] text-slate-600">
-                      Channel: <span className="font-semibold text-slate-800">{invoice.channel === 'HMS_LINKED' ? 'Inpatient / Admission' : 'Retail Walk-in'}</span>
-                    </div>
-                    {invoice.medicineRequestId && (
-                      <div className="text-[11px] text-slate-600">
-                        HMS Request Ref: <span className="font-mono">{invoice.medicineRequestId.slice(0, 8).toUpperCase()}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="space-y-1 text-right sm:text-left">
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                      Dispensing Attribution
-                    </div>
-                    <div className="font-bold text-sm text-slate-900">
-                      {invoice.dispensedByUser?.fullName || invoice.dispensedByUser?.username || 'Staff Pharmacist'}
-                    </div>
-                    <div className="text-[11px] text-slate-600">
-                      Role: <span className="font-semibold text-slate-800">{invoice.dispensedByUser?.role || 'Pharmacist'}</span>
-                    </div>
-                    <div className="text-[11px] text-slate-600">
-                      Station: Central Pharmacy POS-1
-                    </div>
-                  </div>
-                </div>
-
-                {/* Medicine Items Grid */}
-                <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
-                  <table className="w-full text-left">
-                    <thead className="bg-[#f1f5f9] text-[11px] font-bold text-slate-800 uppercase tracking-wide border-b border-slate-200">
-                      <tr>
-                        <th className="py-2.5 px-3 text-center w-10">#</th>
-                        <th className="py-2.5 px-3">Medicine Description</th>
-                        <th className="py-2.5 px-3">Batch &amp; Expiry</th>
-                        <th className="py-2.5 px-3 text-center">Qty</th>
-                        <th className="py-2.5 px-3 text-right">Unit Rate</th>
-                        <th className="py-2.5 px-3 text-right">Discount</th>
-                        <th className="py-2.5 px-3 text-right">Net Amount</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-xs">
-                      {invoice.lines?.map((line: any, idx: number) => {
-                        const medName = line.medicine?.name || 'Medicine Item';
-                        const medCode = line.medicine?.code || '';
-                        const batchNo = line.batch?.batchNumber || '—';
-                        const expDate = line.batch?.expiryDate
-                          ? new Date(line.batch.expiryDate).toLocaleDateString('en-GB')
-                          : '—';
-                        const qty = Number(line.quantity || 0);
-                        const retQty = Number(line.returnedQuantity || 0);
-                        const rate = Number(line.rateSnapshot || 0);
-                        const disc = Number(line.discountAmount || 0);
-                        const net = Number(line.lineNet || 0);
-
-                        return (
-                          <tr key={line.id || idx} className="hover:bg-slate-50/60">
-                            <td className="py-2 px-3 text-center text-slate-400 font-mono text-[11px]">
-                              {idx + 1}
-                            </td>
-                            <td className="py-2 px-3">
-                              <div className="font-bold text-slate-900">{medName}</div>
-                              {medCode && (
-                                <div className="text-[10px] text-slate-400 font-mono">{medCode}</div>
-                              )}
-                              {retQty > 0 && (
-                                <span className="inline-block mt-0.5 text-[9.5px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.2 rounded">
-                                  {retQty} returned
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-2 px-3 text-[11px] text-slate-600">
-                              <span className="font-mono font-medium">{batchNo}</span>
-                              <div className="text-[10px] text-slate-400">Exp: {expDate}</div>
-                            </td>
-                            <td className="py-2 px-3 text-center font-bold tabular-nums">
-                              {qty}
-                            </td>
-                            <td className="py-2 px-3 text-right tabular-nums text-slate-700">
-                              {formatPKR(rate)}
-                            </td>
-                            <td className="py-2 px-3 text-right tabular-nums text-slate-500">
-                              {disc > 0 ? formatPKR(disc) : '—'}
-                            </td>
-                            <td className="py-2 px-3 text-right font-bold tabular-nums text-slate-900">
-                              {formatPKR(net)}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Financial Summary & Signatures */}
-                <div className="grid grid-cols-2 gap-6 pt-2 items-start">
-                  <div className="space-y-3">
-                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-[11px] text-slate-600 space-y-1">
-                      <div className="font-bold text-slate-800 uppercase tracking-wider text-[10px]">
-                        Pharmacy Terms &amp; Return Conditions:
-                      </div>
-                      <p className="whitespace-pre-line leading-relaxed">
-                        {pharmacySettings?.footerTerms ||
-                          pharmacySettings?.receiptFooterText ||
-                          '1. Returns accepted within 3 days with this original receipt.\n2. Cut strips, syringes, ampoules, and cold chain items cannot be returned.\n3. Keep all medicines out of reach of children.'}
-                      </p>
-                      {pharmacySettings?.footerMessage && (
-                        <p className="font-semibold text-emerald-800 pt-1.5 border-t border-slate-200/80 text-[11px]">
-                          {pharmacySettings.footerMessage}
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="pt-8 grid grid-cols-2 gap-4 text-center">
-                      <div className="border-t border-slate-300 pt-1 text-[10px] text-slate-500">
-                        Dispensed by Pharmacist
-                      </div>
-                      <div className="border-t border-slate-300 pt-1 text-[10px] text-slate-500">
-                        Customer Signature
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
-                    <div className="flex justify-between text-xs text-slate-600">
-                      <span>Gross Amount:</span>
-                      <span className="font-semibold tabular-nums">{formatPKR(invoice.subtotal)}</span>
-                    </div>
-                    {Number(invoice.discountTotal) > 0 && (
-                      <div className="flex justify-between text-xs text-emerald-700">
-                        <span>Total Discounts:</span>
-                        <span className="font-semibold tabular-nums">- {formatPKR(invoice.discountTotal)}</span>
-                      </div>
-                    )}
-                    {Number(invoice.taxTotal) > 0 && (
-                      <div className="flex justify-between text-xs text-slate-600">
-                        <span>Applicable GST/Tax:</span>
-                        <span className="font-semibold tabular-nums">+ {formatPKR(invoice.taxTotal)}</span>
-                      </div>
-                    )}
-                    <div className="border-t border-slate-300 pt-2 flex justify-between text-sm font-bold text-slate-900">
-                      <span>Total Net Payable:</span>
-                      <span className="tabular-nums text-base text-emerald-800">{formatPKR(invoice.total)}</span>
-                    </div>
-                    <div className="flex justify-between text-xs text-emerald-800 font-semibold">
-                      <span>Total Paid:</span>
-                      <span className="tabular-nums">{formatPKR(invoice.paidTotal)}</span>
-                    </div>
-                    <div className="border-t border-slate-200 pt-2 flex justify-between text-xs font-bold">
-                      <span className={Number(invoice.outstanding) > 0 ? 'text-rose-700' : 'text-slate-700'}>
-                        Outstanding Balance:
-                      </span>
-                      <span className={`tabular-nums ${Number(invoice.outstanding) > 0 ? 'text-rose-700 text-sm' : 'text-slate-800'}`}>
-                        {formatPKR(invoice.outstanding)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {pharmacySettings?.footerPoweredBy && (
-                  <div className="text-[10px] text-slate-400 text-center pt-3 border-t border-slate-100">
-                    {pharmacySettings.footerPoweredBy}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+          
 
           {/* ═════════════════════════════════════════════════════════════
              HMS-LINKED INPATIENT DISPENSE DETAILS (§15)
@@ -814,35 +539,7 @@ export const PharmacyInvoiceModal: React.FC<PharmacyInvoiceModalProps> = ({
           )}
         </div>
 
-        <section className="p-4 border-t max-h-48 overflow-auto text-xs" aria-label="Payment history">
-          <h3 className="font-semibold text-slate-800 mb-1">Payment History</h3>
-          <p className="text-slate-600 mb-2">Total: {formatPKR(invoice.total)} | Paid: {formatPKR(invoice.paidTotal)} | Current outstanding: {formatPKR(invoice.outstanding)}</p>
-          {(invoice.payments || []).map((p: any) => {
-            // Guarantee short clean voucher ID even if stored as full UUID in DB or reference
-            const rawRef = p.reference || '';
-            const isLongUuid = /[0-9a-f]{8}-[0-9a-f]{4}/i.test(rawRef) || rawRef.length > 20;
-            const payRef = rawRef && !isLongUuid
-              ? rawRef
-              : `PAY-${(p.id || rawRef.replace(/^PAY-/i, '') || '').slice(0, 8).toUpperCase()}`;
-            return (
-              <div key={p.id} className="py-1 border-b">
-                <span className="font-mono font-medium text-slate-800">{payRef}</span> | {formatDateTime(p.paidAt)} | {formatPKR(p.amount)} | {p.method} {p.paymentAccount?.name || ''} | {p.collectedByUser?.fullName || p.collectedByUser?.username || ''}
-              </div>
-            );
-          })}
-          {(invoice.financialEvents || []).map((e: any) => {
-            const rawRef = e.reference || '';
-            const isLongUuid = /[0-9a-f]{8}-[0-9a-f]{4}/i.test(rawRef) || rawRef.length > 20;
-            const eventRef = rawRef && !isLongUuid
-              ? rawRef
-              : `EVT-${(e.id || rawRef.replace(/^EVT-/i, '') || '').slice(0, 8).toUpperCase()}`;
-            return (
-              <div key={e.id} className="py-1 border-b">
-                <span className="font-mono font-medium text-slate-800">{eventRef}</span> | {e.occurredAt ? formatDateTime(e.occurredAt) : 'Date unavailable'} | {e.kind} | {formatPKR(e.collectionDelta)} | {e.method} | {e.actorId || 'HMS Front Desk'}
-              </div>
-            );
-          })}
-        </section>
+        
         {/* In-Modal Add Payment Section */}
         {showAddPayment && invoice.channel === 'RETAIL' && (
           <div className="p-4 bg-emerald-50 border-t border-emerald-200 shrink-0 print:hidden space-y-3">
