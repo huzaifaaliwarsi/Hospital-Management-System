@@ -1,4 +1,3 @@
-import { summarizeInvoiceTransactions, originalInvoiceForAction } from '../utils/transactionExport';
 import React, { useEffect, useState, useMemo } from 'react';
 import {
   Loader2,
@@ -41,7 +40,7 @@ export const InvoicesPage: React.FC = () => {
   const load = () => {
     setLoading(true);
     pharmacyApi
-      .listInvoices(true)
+      .listInvoices()
       .then(setRows)
       .catch(() => toast.error('Failed to load pharmacy invoices.'))
       .finally(() => setLoading(false));
@@ -54,7 +53,7 @@ export const InvoicesPage: React.FC = () => {
     return rows.filter((inv) => {
       if (statusFilter !== 'ALL' && inv.status !== statusFilter) return false;
       if (channelFilter !== 'ALL' && inv.channel !== channelFilter) return false;
-      const date = inv.transactionAt ? new Date(new Date(inv.transactionAt).getTime() + 18000000).toISOString().slice(0, 10) : '';
+      const date = inv.createdAt ? new Date(new Date(inv.createdAt).getTime() + 18000000).toISOString().slice(0, 10) : '';
       if ((fromDate || toDate) && !date) return false;
       if (fromDate && date < fromDate) return false;
       if (toDate && date > toDate) return false;
@@ -63,14 +62,17 @@ export const InvoicesPage: React.FC = () => {
   }, [rows, statusFilter, channelFilter, fromDate, toDate]);
 
   // Top KPI calculations
-  const { billing: totalSales, collected: totalPaid, outstanding: totalOutstanding, invoices: totalInvoices } = summarizeInvoiceTransactions(filteredInvoices);
+  const totalSales = filteredInvoices.reduce((s, r) => s + Number(r.total || 0), 0);
+  const totalPaid = filteredInvoices.reduce((s, r) => s + Number(r.paidTotal || 0), 0);
+  const totalOutstanding = filteredInvoices.reduce((s, r) => s + Number(r.outstanding || 0), 0);
+  const totalInvoices = filteredInvoices.length;
 
   const kpis: KpiItem[] = [
     {
-      label: 'Net Billing',
+      label: 'Gross Pharmacy Sales',
       value: formatPKR(totalSales),
       icon: TrendingUp,
-      subtitle: `${totalInvoices} original invoices in selected period`,
+      subtitle: `${totalInvoices} total invoices in selected period`,
       tone: 'default',
     },
     {
@@ -97,11 +99,6 @@ export const InvoicesPage: React.FC = () => {
   ];
 
   const columns: Column<any>[] = [
-    { key: 'transactionType', header: 'Transaction' },
-    { key: 'receiptNumber', header: 'Receipt Reference', render: inv => <span className="text-xs break-all">{inv.receiptNumber || '-'}</span> },
-    { key: 'paymentMethod', header: 'Method' },
-    { key: 'paymentAccountName', header: 'Payment Account' },
-    { key: 'collectedByName', header: 'Collected By' },
     {
       key: 'invoiceNumber',
       header: 'Invoice #',
@@ -113,12 +110,12 @@ export const InvoicesPage: React.FC = () => {
       ),
     },
     {
-      key: 'transactionAt',
-      header: 'Transaction Date',
+      key: 'createdAt',
+      header: 'Date & Time',
       width: '160px',
       render: (inv) => (
         <span className="text-xs text-slate-700 whitespace-nowrap">
-          {inv.transactionAt ? formatDateTime(inv.transactionAt) : 'Date unavailable'}
+          {inv.createdAt ? formatDateTime(inv.createdAt) : 'Date unavailable'}
         </span>
       ),
     },
@@ -152,22 +149,22 @@ export const InvoicesPage: React.FC = () => {
       ),
     },
     {
-      key: 'billingAmount',
-      header: 'Billing (PKR)',
+      key: 'total',
+      header: 'Net Total (PKR)',
       align: 'right',
       render: (inv) => (
         <span className="font-bold text-xs text-slate-900 whitespace-nowrap">
-          {formatPKR(inv.billingAmount)}
+          {formatPKR(inv.total)}
         </span>
       ),
     },
     {
-      key: 'collectedAmount',
-      header: 'Collection (PKR)',
+      key: 'paidTotal',
+      header: 'Paid (PKR)',
       align: 'right',
       render: (inv) => (
         <span className="font-bold text-xs text-slate-900 whitespace-nowrap">
-          {formatPKR(inv.collectedAmount)}
+          {formatPKR(inv.paidTotal)}
         </span>
       ),
     },
@@ -222,14 +219,14 @@ export const InvoicesPage: React.FC = () => {
       key: 'actions',
       header: 'Actions',
       align: 'center',
-      width: '160px',
+      width: '200px',
       render: (inv) => (
         <div className="flex items-center justify-center gap-1.5 whitespace-nowrap">
           <button
             type="button"
             onClick={() => {
               setModalInitialAction(undefined);
-              setSelectedInvoice(originalInvoiceForAction(inv));
+              setSelectedInvoice(inv);
             }}
             title="View & Print Pharmacy Invoice"
             className="px-2 py-1 text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
@@ -237,13 +234,26 @@ export const InvoicesPage: React.FC = () => {
             <Printer className="h-3 w-3" /> Print
           </button>
 
-          {inv.channel === 'RETAIL' && Number(inv.outstanding) > 0 && <button type="button" className="px-2 py-1 text-xs border rounded text-emerald-800" onClick={() => { setModalInitialAction('payment'); setSelectedInvoice(originalInvoiceForAction(inv)); }}>Collect Remaining Payment</button>}
+          {inv.channel === 'RETAIL' && Number(inv.outstanding) > 0 && (
+            <button
+              type="button"
+              className="px-2 py-1 text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
+              onClick={() => {
+                setModalInitialAction('payment');
+                setSelectedInvoice(inv);
+              }}
+              title="Collect Remaining Payment"
+            >
+              <CreditCard className="h-3 w-3" /> Collect
+            </button>
+          )}
+
           {inv.channel === 'RETAIL' && Number(inv.paidTotal || 0) > 0 && (
             <button
               type="button"
               onClick={() => {
                 setModalInitialAction('return');
-                setSelectedInvoice(originalInvoiceForAction(inv));
+                setSelectedInvoice(inv);
               }}
               title="Return items & issue refund"
               className="px-2 py-1 text-[11px] font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
@@ -278,16 +288,14 @@ export const InvoicesPage: React.FC = () => {
 
       {/* Main Table */}
       <PharmacyDataTable
-        printAllRows
         columns={columns}
         data={filteredInvoices}
         loading={loading}
         title="Sales Invoices Register"
-        badge="Transactions"
+        badge="Active Invoices"
         exportFileName="pharmacy_sales_invoices"
         searchPlaceholder="Search by invoice #, patient/customer name, or pharmacist…"
         searchFilter={(inv, q) =>
-          [inv.transactionType, inv.receiptNumber, inv.paymentMethod, inv.paymentAccountName, inv.collectedByName].some(v => String(v || '').toLowerCase().includes(q)) ||
           inv.invoiceNumber.toLowerCase().includes(q) ||
           (inv.customerName && inv.customerName.toLowerCase().includes(q)) ||
           (inv.dispensedByUser?.fullName && inv.dispensedByUser.fullName.toLowerCase().includes(q)) ||
@@ -298,13 +306,32 @@ export const InvoicesPage: React.FC = () => {
         onResetFilters={() => {
           setChannelFilter('ALL');
           setStatusFilter('ALL');
-          setFromDate(''); setToDate('');
+          setFromDate('');
+          setToDate('');
           load();
         }}
         filterControls={
-          <>
-            <label className="text-xs">From <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className="border rounded p-1" /></label>
-            <label className="text-xs">To <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="border rounded p-1" /></label>
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1 text-xs text-slate-600 bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">
+              <span className="text-[10px] uppercase font-bold text-slate-400">From</span>
+              <input
+                type="date"
+                value={fromDate}
+                onChange={(e) => setFromDate(e.target.value)}
+                className="bg-transparent text-xs text-slate-700 outline-none cursor-pointer"
+              />
+            </div>
+
+            <div className="flex items-center gap-1 text-xs text-slate-600 bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">
+              <span className="text-[10px] uppercase font-bold text-slate-400">To</span>
+              <input
+                type="date"
+                value={toDate}
+                onChange={(e) => setToDate(e.target.value)}
+                className="bg-transparent text-xs text-slate-700 outline-none cursor-pointer"
+              />
+            </div>
+
             <div className="w-36">
               <select
                 value={channelFilter}
@@ -329,7 +356,7 @@ export const InvoicesPage: React.FC = () => {
                 <option value="UNPAID">Unpaid Due</option>
               </select>
             </div>
-          </>
+          </div>
         }
         emptyTitle="No Invoices Found"
         emptyDescription="No sales or dispense records match your filters."
