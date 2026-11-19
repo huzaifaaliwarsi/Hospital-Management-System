@@ -21,6 +21,6 @@ export const reportQuerySchema = z.object({
   cashierId: z.string().max(150).optional(),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
-  limit: z.coerce.number().int().min(1).max(50000).optional(),
+  limit: z.coerce.number().int().min(1).max(1000000).optional(),
 });
 export type ReportQuery = z.infer<typeof reportQuerySchema>;

@@ -61,14 +61,14 @@ export async function operatingProfitReport(
   const outstanding = totals.outstanding;
   const recognizedRevenue = totals.recognizedRevenue;
   const medicineCogs = totals.recognizedCogs;
-  const grossProfit = recognizedRevenue.minus(medicineCogs);
+  const grossProfit = totals.grossProfit;
   const operatingExpenses = totals.operatingExpenses;
-  const operatingProfit = grossProfit.minus(operatingExpenses);
+  const operatingProfit = totals.operatingProfit;
 
-  const grossMarginPercent = recognizedRevenue.gt(0)
+  const grossMarginPercent = grossProfit && recognizedRevenue.gt(0)
     ? Number(grossProfit.div(recognizedRevenue).mul(100).toFixed(2))
     : 0;
-  const operatingMarginPercent = recognizedRevenue.gt(0)
+  const operatingMarginPercent = operatingProfit && recognizedRevenue.gt(0)
     ? Number(operatingProfit.div(recognizedRevenue).mul(100).toFixed(2))
     : 0;
   const collectionsRatioPercent = totalInvoiced.gt(0)
@@ -100,7 +100,7 @@ export async function operatingProfitReport(
       outstanding: r.outstanding,
       recognizedRevenue: r.recognizedRevenue,
       recognizedCogs: r.recognizedCogs,
-      grossProfit: r.grossProfit ?? r.recognizedRevenue.minus(r.recognizedCogs),
+      grossProfit: r.grossProfit,
       recognizedAt: r.recognizedAt,
       soldBy: r.soldBy,
       collectedBy: r.collectedBy,
@@ -209,10 +209,11 @@ export async function operatingProfitReport(
     ['1. Revenue & Sales', 'Actual Collections Received', actualCollections],
     ['1. Revenue & Sales', 'Sales Returns & Cash Refunds', totalRefunded],
     ['1. Revenue & Sales', 'Outstanding Receivables (as of report end)', outstanding],
-    ['2. Revenue Recognition', 'Recognized Revenue (Fully Paid Sales, excl. tax)', recognizedRevenue],
+    ['2. Revenue Recognition', 'Recognized Revenue (Earned Sales, excl. tax)', recognizedRevenue],
     ['3. Cost of Goods Sold', 'Medicine COGS (Historical Batch Cost)', medicineCogs],
     ['4. Gross Margin', 'Gross Profit (Recognized Revenue − COGS)', grossProfit],
     ['5. Operating Overheads', 'Operating Expenses (Overhead & Operations)', operatingExpenses],
+    ['5. Operating Overheads', 'Inventory / Stock Losses (Damaged / Expired)', totals.inventoryLosses],
     ['6. Operating Result', 'Net Operating Profit / Loss', operatingProfit],
     ['7. Vendor Settlements (Informational)', 'Total Vendor Payments (Capital movement — not an expense)', totalVendorPayments],
     ['7. Vendor Settlements (Informational)', 'Supplier Refunds Received', supplierRefundsReceived],
@@ -228,8 +229,6 @@ export async function operatingProfitReport(
 
   const totalsObj = {
     ...totals,
-    grossProfit,
-    operatingProfit,
     vendorPayments: totalVendorPayments,
     vendorRefunds: supplierRefundsReceived,
     vendorOutstanding,

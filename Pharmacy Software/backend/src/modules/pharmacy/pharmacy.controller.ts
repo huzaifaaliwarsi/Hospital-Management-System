@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { AuthenticationError } from '@/shared/errors/AppError';
+import { prisma } from '@/db/client';
 import { pharmacyService } from './pharmacy.service';
 import type {
   CreateMedicineBody,
@@ -83,7 +84,8 @@ export const pharmacyController = {
     res.json({ data });
   },
   async listInvoices(req: Request, res: Response) {
-    const data = await pharmacyService.listInvoices(req.query as unknown as ListInvoicesQuery);
+    const sellerId = req.user?.role === 'SALES_DISPENSING' ? req.user.sub : undefined;
+    const data = await pharmacyService.listInvoices(req.query as unknown as ListInvoicesQuery, prisma, sellerId);
     res.json({ data });
   },
   async salesReturn(req: Request, res: Response) {
@@ -92,7 +94,7 @@ export const pharmacyController = {
     res.status(201).json({ data });
   },
   async getInvoiceById(req: Request, res: Response) {
-    const data = await pharmacyService.getInvoiceById(req.params.id as string);
+    const data = await pharmacyService.getInvoiceById(req.params.id as string, undefined, req.user);
     res.json({ data });
   },
   async getPosCatalog(req: Request, res: Response) {

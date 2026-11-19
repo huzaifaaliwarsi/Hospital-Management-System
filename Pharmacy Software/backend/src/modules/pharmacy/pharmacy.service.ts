@@ -1,6 +1,6 @@
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '@/db/client';
-import { NotFoundError, ValidationError, ConflictError } from '@/shared/errors/AppError';
+import { NotFoundError, ValidationError, ConflictError, AuthorizationError } from '@/shared/errors/AppError';
 import { nextCode, peekNextCode, SEQUENCE } from '@/shared/sequence';
 import { Prisma } from '@prisma/client';
 import { invoiceTransactions, summarizeInvoiceTransactions } from './invoiceTransactions';
@@ -1356,7 +1356,8 @@ export const pharmacyService = {
 
   async listInvoiceTransactionsSql(
     query: ListInvoicesQuery,
-    client: Prisma.TransactionClient | typeof prisma
+    client: Prisma.TransactionClient | typeof prisma,
+    sellerId?: string
   ) {
     const channelFilter = query.channel && query.channel !== 'ALL' ? query.channel : undefined;
     const statusFilter = query.status && query.status !== 'ALL' ? query.status : undefined;
@@ -1390,6 +1391,12 @@ export const pharmacyService = {
     }
     if (endUtc) {
       conditions.push(Prisma.sql`transaction_at <= ${endUtc}`);
+    }
+    if (sellerId) {
+      conditions.push(Prisma.sql`(
+        (transaction_type = 'Original Sale' AND (dispensed_by_id = ${sellerId} OR collected_by_id = ${sellerId}))
+        OR (transaction_type != 'Original Sale' AND collected_by_id = ${sellerId})
+      )`);
     }
     if (searchTerm) {
       const q = `%${searchTerm}%`;
@@ -1489,7 +1496,8 @@ export const pharmacyService = {
           NULLIF(TRIM(CONCAT_WS(', ', ipa.initial_methods, fhe.method)), '') as payment_method,
           NULLIF(TRIM(ipa.initial_accounts), '') as payment_account_name,
           COALESCE(NULLIF(TRIM(CONCAT_WS(', ', ipa.initial_collectors, CASE WHEN fhe.id IS NOT NULL THEN COALESCE(fhe.actor_id, 'HMS Front Desk') END)), ''), u.full_name, 'Staff') as collected_by_name,
-          u.id as dispensed_by_id, u.full_name as dispensed_by_full_name, u.username as dispensed_by_username
+          u.id as dispensed_by_id, u.full_name as dispensed_by_full_name, u.username as dispensed_by_username,
+          u.id as collected_by_id
         FROM pharmacy_invoices i
         JOIN portal_users u ON u.id = i.dispensed_by
         LEFT JOIN initial_payments_agg ipa ON ipa.invoice_id = i.id
@@ -1510,7 +1518,8 @@ export const pharmacyService = {
           0::numeric as billing_amount, cp.amount::numeric as collected_amount,
           'PAY-' || UPPER(SUBSTRING(cp.id, 1, 8)) as receipt_number, cp.method::text as payment_method,
           COALESCE(pa.name, '') as payment_account_name, COALESCE(pu.full_name, 'Staff') as collected_by_name,
-          u.id as dispensed_by_id, u.full_name as dispensed_by_full_name, u.username as dispensed_by_username
+          u.id as dispensed_by_id, u.full_name as dispensed_by_full_name, u.username as dispensed_by_username,
+          cp.collected_by as collected_by_id
         FROM classified_payments cp
         JOIN pharmacy_invoices i ON i.id = cp.invoice_id
         JOIN portal_users u ON u.id = i.dispensed_by
@@ -1532,7 +1541,8 @@ export const pharmacyService = {
           COALESCE(cle.reference_no, e.reference, 'EVT-' || UPPER(SUBSTRING(e.id, 1, 8))) as receipt_number,
           COALESCE(e.method, '') as payment_method, COALESCE(pa.name, '') as payment_account_name,
           COALESCE(cle_u.full_name, e.actor_id, 'HMS Front Desk') as collected_by_name,
-          u.id as dispensed_by_id, u.full_name as dispensed_by_full_name, u.username as dispensed_by_username
+          u.id as dispensed_by_id, u.full_name as dispensed_by_full_name, u.username as dispensed_by_username,
+          COALESCE(cle.portal_user_id, e.actor_id) as collected_by_id
         FROM pharmacy_financial_events e
         JOIN pharmacy_invoices i ON i.id = e.invoice_id
         JOIN portal_users u ON u.id = i.dispensed_by
@@ -1555,7 +1565,8 @@ export const pharmacyService = {
           COALESCE(r.reference_no, 'REF-' || UPPER(SUBSTRING(r.id, 1, 8))) as receipt_number,
           COALESCE(r.payment_method::text, CASE WHEN r.is_physical_cash THEN 'CASH' ELSE 'UNKNOWN' END) as payment_method,
           COALESCE(pa.name, '') as payment_account_name, COALESCE(pu.full_name, 'Staff') as collected_by_name,
-          u.id as dispensed_by_id, u.full_name as dispensed_by_full_name, u.username as dispensed_by_username
+          u.id as dispensed_by_id, u.full_name as dispensed_by_full_name, u.username as dispensed_by_username,
+          r.portal_user_id as collected_by_id
         FROM cash_ledger_entries r
         JOIN pharmacy_invoices i ON i.id = r.reference_id
         JOIN portal_users u ON u.id = i.dispensed_by
@@ -1660,13 +1671,13 @@ export const pharmacyService = {
     };
   },
 
-  async listInvoices(query: ListInvoicesQuery, tx?: Prisma.TransactionClient) {
+  async listInvoices(query: ListInvoicesQuery, tx?: Prisma.TransactionClient, sellerId?: string) {
     const client = tx || prisma;
     const isPaginated = query.page != null || query.limit != null;
 
     // Database-level SQL transaction projection & pagination for paginated requests
     if (isPaginated && query.transactions === 'true') {
-      return pharmacyService.listInvoiceTransactionsSql(query, client);
+      return pharmacyService.listInvoiceTransactionsSql(query, client, sellerId);
     }
 
     const channelFilter = query.channel && query.channel !== 'ALL' ? query.channel : undefined;
@@ -1723,12 +1734,22 @@ export const pharmacyService = {
       );
     }
 
-    const where: Prisma.PharmacyInvoiceWhereInput = {
-      channel: channelFilter,
-      status: statusFilter,
-      ...(searchWhere || {}),
-      ...(dateConditions.length > 0 ? { OR: dateConditions } : {}),
-    };
+    const andClauses: Prisma.PharmacyInvoiceWhereInput[] = [];
+    if (channelFilter) andClauses.push({ channel: channelFilter });
+    if (statusFilter) andClauses.push({ status: statusFilter });
+    if (searchWhere) andClauses.push(searchWhere);
+    if (dateConditions.length > 0) andClauses.push({ OR: dateConditions });
+    if (sellerId) {
+      andClauses.push({
+        OR: [
+          { dispensedById: sellerId },
+          { payments: { some: { collectedById: sellerId } } },
+          { financialEvents: { some: { actorId: sellerId } } },
+        ],
+      });
+    }
+
+    const where: Prisma.PharmacyInvoiceWhereInput = andClauses.length > 0 ? { AND: andClauses } : {};
 
     // Load candidate invoices with payments, dispensedByUser, and financialEvents.
     // Lines and medicineRequests are omitted for high performance (they are loaded on demand via getInvoiceById).
@@ -1996,7 +2017,7 @@ export const pharmacyService = {
     return transaction ? execute(transaction) : prisma.$transaction(execute);
   },
 
-  async getInvoiceById(id: string, tx?: Prisma.TransactionClient) {
+  async getInvoiceById(id: string, tx?: Prisma.TransactionClient, user?: { role: string; sub: string }) {
     const client = tx || prisma;
     const invoice = await client.pharmacyInvoice.findUnique({
       where: { id },
@@ -2014,6 +2035,18 @@ export const pharmacyService = {
       },
     });
     if (!invoice) throw new NotFoundError('Invoice not found');
+
+    if (user && user.role === 'SALES_DISPENSING') {
+      const isAuthorized =
+        invoice.dispensedById === user.sub ||
+        invoice.payments.some((p) => p.collectedById === user.sub) ||
+        invoice.financialEvents.some((e) => e.actorId === user.sub) ||
+        (invoice.status !== 'PAID' && Number(invoice.outstanding) > 0);
+      if (!isAuthorized) {
+        throw new AuthorizationError('Access denied: You are not authorized to view this invoice');
+      }
+    }
+
     return invoice;
   },
 

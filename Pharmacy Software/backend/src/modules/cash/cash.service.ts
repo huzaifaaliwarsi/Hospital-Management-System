@@ -60,7 +60,13 @@ export const cashService = {
     const activity = entries.filter(e => e.category !== 'SETTLEMENT_HANDOVER');
     const settlements = range ? await db.accountSettlement.findMany({
       where: { portalUserId: userId, status: 'ACCEPTED', reviewedAt: { gte: range.gte, lte: range.lte } },
-    }) : [];
+    }) : await db.accountSettlement.findMany({
+      where: {
+        portalUserId: userId,
+        status: 'ACCEPTED',
+        ...(lastSettlement ? { submittedAt: { gte: lastSettlement.submittedAt } } : {}),
+      },
+    });
     const pendingSettlement = await db.accountSettlement.findFirst({ where: { portalUserId: userId, status: 'SUBMITTED' }, select: { id: true } });
     const referenceIds = (table: string) => activity.filter(e => e.referenceTable === table && e.referenceId).map(e => e.referenceId!);
     const [invoices, purchases, expenses, vendorPayments] = await Promise.all([
@@ -100,7 +106,9 @@ export const cashService = {
       pendingSettlement: Boolean(pendingSettlement),
       summary: {
         ...summary,
-        openingCash, closingCash,
+        openingCash,
+        closingCash,
+        remainingCash: closingCash,
         settlementCount: settlements.length,
         settledAmount: settlements.reduce((s, e) => s.plus(e.settlementAmount ?? 0), new Decimal(0)),
         physicalCashCounted: settlements.reduce((s, e) => s.plus(e.physicalCash), new Decimal(0)),
@@ -143,19 +151,74 @@ export const cashService = {
       const settlement = await tx.accountSettlement.findUnique({ where: { id } });
       if (!settlement) throw new NotFoundError('Settlement not found');
       if (settlement.status !== 'SUBMITTED') throw new ConflictError('This settlement has already been reviewed');
+      if (settlement.portalUserId === reviewerId) {
+        throw new ValidationError('Unauthorized self-approval: Cannot review or accept your own settlement');
+      }
 
       if (body.decision === 'ACCEPTED') {
-        // Fold every physical-cash entry that existed as of submission into it — Expected Cash resets to 0 going
-        // forward. Must use `submittedAt` (a precise timestamp), not `periodTo` (a date-only audit-period label):
-        // `periodTo` parses to midnight UTC of that date, which would exclude every entry from later that same day —
-        // exactly the entries `submitSettlement`'s `expectedCash()` total already included with no date filter at
-        // all. Using periodTo here left same-day cash permanently unsettled even after approval.
+        const handoverAmount = settlement.physicalCash;
+        const expectedBefore = settlement.expectedCash;
+        const remaining = expectedBefore.minus(handoverAmount);
+
+        // 1. Fold sender's unsettled physical-cash entries prior to submission into settled
         await tx.cashLedgerEntry.updateMany({
-          where: { portalUserId: settlement.portalUserId, isPhysicalCash: true, isSettled: false, occurredAt: { lte: settlement.submittedAt } },
+          where: {
+            portalUserId: settlement.portalUserId,
+            isPhysicalCash: true,
+            isSettled: false,
+            occurredAt: { lte: settlement.submittedAt },
+          },
           data: { isSettled: true },
         });
+
+        // 2. Sender OUT: Record the physical cash handover OUT of the sender's drawer
         await tx.cashLedgerEntry.create({
-          data: { portalUserId: settlement.portalUserId, direction: 'OUT', amount: settlement.physicalCash, category: 'SETTLEMENT_HANDOVER', isPhysicalCash: true, isSettled: true, note: body.note },
+          data: {
+            portalUserId: settlement.portalUserId,
+            direction: 'OUT',
+            amount: handoverAmount,
+            category: 'SETTLEMENT_HANDOVER',
+            isPhysicalCash: true,
+            isSettled: true,
+            referenceTable: 'account_settlements',
+            referenceId: settlement.id,
+            note: body.note ? `Handover: ${body.note}` : 'Settlement cash handover to manager',
+          },
+        });
+
+        // 3. Retained cash: If expected before settlement exceeded accepted handover,
+        // preserve the remaining cash in the cashier's drawer as unsettled opening balance
+        if (remaining.gt(0)) {
+          await tx.cashLedgerEntry.create({
+            data: {
+              portalUserId: settlement.portalUserId,
+              direction: 'IN',
+              amount: remaining,
+              category: 'ADJUSTMENT',
+              isPhysicalCash: true,
+              isSettled: false,
+              referenceTable: 'account_settlements',
+              referenceId: settlement.id,
+              note: 'Retained drawer cash carry-forward',
+              occurredAt: new Date(settlement.submittedAt.getTime() + 1000),
+            },
+          });
+        }
+
+        // 4. Receiver IN: Record the corresponding physical cash transfer IN to the reviewing manager's custody
+        await tx.cashLedgerEntry.create({
+          data: {
+            portalUserId: reviewerId,
+            direction: 'IN',
+            amount: handoverAmount,
+            category: 'SETTLEMENT_HANDOVER',
+            isPhysicalCash: true,
+            isSettled: false,
+            issuedById: settlement.portalUserId,
+            referenceTable: 'account_settlements',
+            referenceId: settlement.id,
+            note: body.note ? `Received handover: ${body.note}` : 'Settlement received from cashier',
+          },
         });
       }
       return tx.accountSettlement.update({
@@ -167,8 +230,9 @@ export const cashService = {
     return transaction ? runInTx(transaction) : prisma.$transaction(runInTx);
   },
 
-  async listSettlements(query: ListSettlementsQuery) {
-    return prisma.accountSettlement.findMany({
+  async listSettlements(query: ListSettlementsQuery, tx?: Prisma.TransactionClient) {
+    const client = tx || prisma;
+    return client.accountSettlement.findMany({
       where: { portalUserId: query.userId, status: query.status },
       include: { submittedByUser: { select: { id: true, fullName: true, username: true } }, reviewedByUser: { select: { id: true, fullName: true } } },
       orderBy: { submittedAt: 'desc' },

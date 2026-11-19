@@ -30,6 +30,7 @@ export async function incomeExpenseReport(db: Prisma.TransactionClient, range: {
     ['Income', 'Recognized Revenue', totals.recognizedRevenue],
     ['Expenses', 'Medicine COGS (matched to recognized sales)', totals.recognizedCogs],
     ['Expenses', 'Operating Expenses', totals.operatingExpenses],
+    ['Expenses', 'Inventory / Stock Losses', totals.inventoryLosses],
     ['Vendor Payments', 'Total Vendor Payments', vendorPayments],
     ['Vendor Payments', 'Supplier Refunds Received', vendorRefunds],
     ['Vendor Payments', 'Vendor Outstanding', vendorOutstanding],

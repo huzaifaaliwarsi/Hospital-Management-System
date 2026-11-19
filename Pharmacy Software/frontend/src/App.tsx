@@ -101,7 +101,21 @@ const App: React.FC = () => {
   const navGroups = isSales ? SALES_NAV : MANAGEMENT_NAV;
   const portalLabel = isSales ? 'Sales Portal' : currentUser.role === 'SUPER_ADMIN' ? 'Super Admin — Management Portal' : 'Admin — Management Portal';
 
+  const SALES_ALLOWED_PAGES = new Set([
+    'dashboard',
+    'pos',
+    'invoices',
+    'hms-requests',
+    'balance-sheet',
+    'settlements',
+    'reports-sales',
+    'reports',
+  ]);
+
   const renderPage = () => {
+    if (isSales && !SALES_ALLOWED_PAGES.has(page)) {
+      return <ComingSoonPage title="Access Denied" step="This screen is restricted to administrators." />;
+    }
     switch (page) {
       case 'dashboard':
         return isSales ? <SalesDashboardPage onNavigate={navigate} /> : <ManagementDashboardPage onNavigate={navigate} />;

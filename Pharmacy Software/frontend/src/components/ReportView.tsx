@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Loader2, FileBarChart, Filter, RotateCcw, FileSpreadsheet, Download, FileText, Printer } from 'lucide-react';
 import apiClient from '../services/apiClient';
+import { useAuth } from '../context/AuthContext';
 import { formatPKR, formatNumber } from '../utils/format';
 
 export type ReportType =
@@ -173,6 +174,8 @@ export const ALL_REPORTS_LIST = [
  * instead of switched via local state.
  */
 export const ReportView: React.FC<Props> = ({ type, title, subtitle, onNavigate, currentPage }) => {
+  const { currentUser } = useAuth();
+  const isSales = currentUser?.role === 'SALES_DISPENSING';
   const today = new Date(Date.now() + 5 * 3600000).toISOString().slice(0, 10);
   const isStatement = type === 'INCOME_EXPENSE' || type === 'OPERATING_PROFIT';
   const [from, setFrom] = useState(isStatement ? today : '');
@@ -221,7 +224,7 @@ export const ReportView: React.FC<Props> = ({ type, title, subtitle, onNavigate,
           type,
           from: from ? `${from}T00:00:00+05:00` : undefined,
           to: to ? `${to}T23:59:59.999+05:00` : undefined,
-          limit: Math.min(totalCount, 50000),
+          limit: Math.min(totalCount, 1000000),
         },
       });
       return r.data.data.rows || rows;
@@ -310,8 +313,8 @@ export const ReportView: React.FC<Props> = ({ type, title, subtitle, onNavigate,
 
   return (
     <div className="p-6 sm:p-8 space-y-6 max-w-[1700px] mx-auto">
-      {/* Report Switcher Tabs */}
-      {onNavigate && (
+      {/* Report Switcher Tabs (Only for Management/Admins) */}
+      {onNavigate && !isSales && (
         <div className="flex items-center gap-1.5 overflow-x-auto pb-2 border-b border-slate-200/80 -mt-1">
           {ALL_REPORTS_LIST.map((tab) => {
             const isActive = (currentPage === tab.page) || (type === tab.type);

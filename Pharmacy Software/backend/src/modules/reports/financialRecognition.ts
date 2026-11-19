@@ -166,9 +166,7 @@ export function projectInvoice(
   let sale = zero(),
     tax = zero(),
     paid = zero(),
-    cost = zero(),
-    recognized = zero(),
-    recognizedCost = zero();
+    cost = zero();
   let grossSales = zero(),
     netBilling = zero(),
     taxBilled = zero(),
@@ -179,41 +177,41 @@ export function projectInvoice(
   let recognizedAt: Date | null = null;
   const collectors = new Set<string>();
   const methods: Record<string, Decimal> = {};
+  // Attribution rule: Sales revenue, billing, and inventory COGS are attributed to the
+  // dispensing seller. A seller who only collects an installment is attributed collections,
+  // avoiding duplicate sales, revenue, COGS, or commissions across sellers.
+  const isDispenser = !filters.cashierId || filters.cashierId === invoice.dispensedById;
+
   for (const e of events) {
     if (range.lte && e.at > range.lte) continue;
     sale = sale.plus(e.sale);
     tax = tax.plus(e.tax);
     paid = paid.plus(e.collection);
     cost = cost.plus(e.cost);
-    const fullyPaid = sale.gt(0) && paid.gte(sale);
-    let target = recognized,
-      targetCost = recognizedCost;
-    if (fullyPaid) {
-      target = Decimal.max(0, sale.minus(tax));
-      targetCost = cost;
-    } else if (e.kind === "RETURN") {
-      target = Decimal.min(recognized, Decimal.max(0, sale.minus(tax)));
-      targetCost = recognizedCost.gt(0)
-        ? Decimal.max(0, recognizedCost.plus(e.cost))
-        : zero();
-    } else if (e.collection.lt(0)) {
-      target = zero();
-      targetCost = zero();
-    }
-    const delta = target.minus(recognized),
-      costChange = targetCost.minus(recognizedCost);
-    recognized = target;
-    recognizedCost = targetCost;
-    if (delta.gt(0)) recognizedAt = e.at;
+
     if (!inRange(e.at, range)) continue;
-    // Gross sales remain before returns; the difference to net billing exposes discounts and returns.
-    if (e.kind === "SALE") grossSales = grossSales.plus(e.gross);
-    netBilling = netBilling.plus(e.sale.minus(e.tax));
-    taxBilled = taxBilled.plus(e.tax);
-    if (!issues.length) {
-      revenue = revenue.plus(delta);
-      cogs = cogs.plus(costChange);
+
+    // Professional accrual accounting: Net sales revenue and batch COGS are earned
+    // when medicines are completed/dispensed, independent of when payments occur.
+    if (e.kind === "SALE" && isDispenser) {
+      grossSales = grossSales.plus(e.gross);
+      netBilling = netBilling.plus(e.sale.minus(e.tax));
+      taxBilled = taxBilled.plus(e.tax);
+      if (recognizedAt === null) recognizedAt = e.at;
+      if (!issues.length && !missingCost) {
+        revenue = revenue.plus(e.sale.minus(e.tax));
+        cogs = cogs.plus(e.cost);
+      }
+    } else if (e.kind === "RETURN" && isDispenser) {
+      netBilling = netBilling.plus(e.sale.minus(e.tax));
+      taxBilled = taxBilled.plus(e.tax);
+      if (!issues.length && !missingCost) {
+        revenue = revenue.plus(e.sale.minus(e.tax));
+        cogs = cogs.plus(e.cost);
+      }
     }
+
+    // Collections and refunds track physical/bank cash receipts, separate from revenue
     if (
       (!filters.method || filters.method === e.method) &&
       (!filters.cashierId || filters.cashierId === e.actor)
@@ -238,7 +236,7 @@ export function projectInvoice(
     total: netBilling.plus(taxBilled),
     paidTotal: collections,
     collections,
-    outstanding: Decimal.max(0, sale.minus(paid)),
+    outstanding: isDispenser ? Decimal.max(0, sale.minus(paid)) : zero(),
     recognizedRevenue: revenue,
     recognizedCogs: cogs,
     grossProfit: missingCost || issues.length ? null : revenue.minus(cogs),
@@ -259,7 +257,9 @@ export async function loadFinancialData(
   db: Pick<
     Prisma.TransactionClient,
     "pharmacyInvoice" | "cashLedgerEntry" | "expense"
-  > = prisma,
+  > & {
+    stockLedgerEntry?: Prisma.TransactionClient["stockLedgerEntry"];
+  } = prisma,
   range?: FinancialRange,
 ) {
   const invoiceWhere: Prisma.PharmacyInvoiceWhereInput = {};
@@ -273,10 +273,16 @@ export async function loadFinancialData(
       { financialEvents: { some: { occurredAt: { gte: range.gte, ...(range.lte ? { lte: range.lte } : {}) } } } },
       { lines: { some: { dispensedAt: { gte: range.gte, ...(range.lte ? { lte: range.lte } : {}) } } } },
       { status: { not: 'PAID' } },
+      ...(range.lte
+        ? [
+            { payments: { some: { paidAt: { gt: range.lte } } } },
+            { financialEvents: { some: { occurredAt: { gt: range.lte } } } },
+          ]
+        : []),
     ];
   }
 
-  const [invoices, refunds, expenses] = await Promise.all([
+  const [invoices, refunds, expenses, rawStockLosses] = await Promise.all([
     db.pharmacyInvoice.findMany({
       where: Object.keys(invoiceWhere).length > 0 ? invoiceWhere : undefined,
       include,
@@ -319,15 +325,55 @@ export async function loadFinancialData(
       },
       orderBy: { date: 'desc' },
     }),
+    db.stockLedgerEntry
+      ? db.stockLedgerEntry.findMany({
+          where: {
+            movementType: "NEGATIVE_ADJUSTMENT",
+            ...(range ? {
+              createdAt: {
+                ...(range.gte ? { gte: range.gte } : {}),
+                ...(range.lte ? { lte: range.lte } : {}),
+              },
+            } : {}),
+          },
+          select: {
+            id: true,
+            quantityDelta: true,
+            batch: { select: { costRate: true } },
+            medicine: { select: { purchaseRate: true } },
+            createdAt: true,
+          },
+        })
+      : Promise.resolve([]),
   ]);
-  return { invoices, refunds, expenses };
+
+  const stockLosses = (rawStockLosses || []).map((entry) => {
+    const rate = entry.batch?.costRate ?? entry.medicine?.purchaseRate ?? zero();
+    const qty = entry.quantityDelta ? Decimal.abs(entry.quantityDelta) : zero();
+    return {
+      id: entry.id,
+      amount: qty.mul(rate),
+      at: entry.createdAt,
+    };
+  });
+
+  return { invoices, refunds, expenses, stockLosses };
 }
 export function financialReport(
   data: Awaited<ReturnType<typeof loadFinancialData>>,
   range: FinancialRange = {},
   filters: { method?: string; cashierId?: string } = {},
 ) {
-  const rows = data.invoices
+  const candidateInvoices = filters.cashierId
+    ? data.invoices.filter(
+        (i) =>
+          i.dispensedById === filters.cashierId ||
+          i.payments.some((p) => p.collectedById === filters.cashierId) ||
+          i.financialEvents.some((e) => e.actorId === filters.cashierId) ||
+          data.refunds.some((r) => r.referenceId === i.id && r.portalUserId === filters.cashierId),
+      )
+    : data.invoices;
+  const rows = candidateInvoices
     .filter((i) => !range.lte || i.createdAt <= range.lte)
     .map((i) =>
       projectInvoice(
@@ -337,13 +383,25 @@ export function financialReport(
         data.refunds.filter((r) => r.referenceId === i.id),
       ),
     );
-  const expenses = add(
-    data.expenses.filter((e) => inRange(e.date, range)),
-    (e) => e.amount,
-  );
+  const expenses = filters.cashierId
+    ? zero()
+    : add(
+        data.expenses.filter((e) => inRange(e.date, range)),
+        (e) => e.amount,
+      );
+  const inventoryLosses = filters.cashierId
+    ? zero()
+    : add(
+        (data.stockLosses ?? []).filter((s) => inRange(s.at, range)),
+        (s) => s.amount,
+      );
   const recognizedRevenue = add(rows, (r) => r.recognizedRevenue),
     recognizedCogs = add(rows, (r) => r.recognizedCogs);
   const incomplete = rows.filter((r) => !r.recognitionComplete).length;
+  const grossProfit = incomplete ? null : recognizedRevenue.minus(recognizedCogs);
+  const operatingProfit = incomplete
+    ? null
+    : recognizedRevenue.minus(recognizedCogs).minus(expenses).minus(inventoryLosses);
   const totals = {
     grossSales: add(rows, (r) => r.grossSales),
     netBilling: add(rows, (r) => r.netBilling),
@@ -356,10 +414,10 @@ export function financialReport(
     outstanding: add(rows, (r) => r.outstanding),
     recognizedRevenue,
     recognizedCogs,
+    grossProfit,
     operatingExpenses: expenses,
-    operatingProfit: incomplete
-      ? null
-      : recognizedRevenue.minus(recognizedCogs).minus(expenses),
+    inventoryLosses,
+    operatingProfit,
     incompleteInvoices: incomplete,
   };
   return { rows, totals };
@@ -387,6 +445,7 @@ export function summarizeFinancialTimeline(
       recognizedRevenue: Decimal;
       recognizedCogs: Decimal;
       operatingExpenses: Decimal;
+      inventoryLosses: Decimal;
       outstanding: Decimal;
       incompleteCount: number;
     }
@@ -402,6 +461,7 @@ export function summarizeFinancialTimeline(
       recognizedRevenue: zero(),
       recognizedCogs: zero(),
       operatingExpenses: zero(),
+      inventoryLosses: zero(),
       outstanding: zero(),
       incompleteCount: 0,
     });
@@ -531,51 +591,28 @@ export function summarizeFinancialTimeline(
     if (missingCost) issues.push('Historical sale cost snapshot unavailable');
     const isIncomplete = missingCost || issues.length > 0;
 
-    let sale = zero();
-    let tax = zero();
-    let paid = zero();
-    let cost = zero();
-    let recognized = zero();
-    let recognizedCost = zero();
-
     for (const e of events) {
-      sale = sale.plus(e.sale);
-      tax = tax.plus(e.tax);
-      paid = paid.plus(e.collection);
-      cost = cost.plus(e.cost);
-
-      const fullyPaid = sale.gt(0) && paid.gte(sale);
-      let target = recognized;
-      let targetCost = recognizedCost;
-
-      if (fullyPaid) {
-        target = Decimal.max(0, sale.minus(tax));
-        targetCost = cost;
-      } else if (e.kind === 'RETURN') {
-        target = Decimal.min(recognized, Decimal.max(0, sale.minus(tax)));
-        targetCost = recognizedCost.gt(0) ? Decimal.max(0, recognizedCost.plus(e.cost)) : zero();
-      } else if (e.collection.lt(0)) {
-        target = zero();
-        targetCost = zero();
-      }
-
-      const delta = target.minus(recognized);
-      const costChange = targetCost.minus(recognizedCost);
-      recognized = target;
-      recognizedCost = targetCost;
-
       for (const inv of intervals) {
         if ((!inv.gte || e.at >= inv.gte) && (!inv.lte || e.at <= inv.lte)) {
           const acc = intervalMap.get(inv.id)!;
-          if (e.kind === 'SALE') acc.grossSales = acc.grossSales.plus(e.gross);
-          acc.netBilling = acc.netBilling.plus(e.sale.minus(e.tax));
-          acc.taxBilled = acc.taxBilled.plus(e.tax);
+          if (e.kind === 'SALE') {
+            acc.grossSales = acc.grossSales.plus(e.gross);
+            acc.netBilling = acc.netBilling.plus(e.sale.minus(e.tax));
+            acc.taxBilled = acc.taxBilled.plus(e.tax);
+            if (!isIncomplete) {
+              acc.recognizedRevenue = acc.recognizedRevenue.plus(e.sale.minus(e.tax));
+              acc.recognizedCogs = acc.recognizedCogs.plus(e.cost);
+            }
+          } else if (e.kind === 'RETURN') {
+            acc.netBilling = acc.netBilling.plus(e.sale.minus(e.tax));
+            acc.taxBilled = acc.taxBilled.plus(e.tax);
+            if (!isIncomplete) {
+              acc.recognizedRevenue = acc.recognizedRevenue.plus(e.sale.minus(e.tax));
+              acc.recognizedCogs = acc.recognizedCogs.plus(e.cost);
+            }
+          }
           acc.collections = acc.collections.plus(e.collection);
           if (e.collection.lt(0)) acc.totalRefunded = acc.totalRefunded.minus(e.collection);
-          if (!isIncomplete) {
-            acc.recognizedRevenue = acc.recognizedRevenue.plus(delta);
-            acc.recognizedCogs = acc.recognizedCogs.plus(costChange);
-          }
         }
       }
     }
@@ -606,10 +643,22 @@ export function summarizeFinancialTimeline(
     }
   }
 
+  for (const loss of data.stockLosses ?? []) {
+    for (const inv of intervals) {
+      if ((!inv.gte || loss.at >= inv.gte) && (!inv.lte || loss.at <= inv.lte)) {
+        const acc = intervalMap.get(inv.id)!;
+        acc.inventoryLosses = acc.inventoryLosses.plus(loss.amount);
+      }
+    }
+  }
+
   const resultMap = new Map<string, ReturnType<typeof financialReport>['totals']>();
   for (const inv of intervals) {
     const acc = intervalMap.get(inv.id)!;
-    const opProfit = acc.incompleteCount > 0 ? null : acc.recognizedRevenue.minus(acc.recognizedCogs).minus(acc.operatingExpenses);
+    const gp = acc.incompleteCount > 0 ? null : acc.recognizedRevenue.minus(acc.recognizedCogs);
+    const opProfit = acc.incompleteCount > 0
+      ? null
+      : acc.recognizedRevenue.minus(acc.recognizedCogs).minus(acc.operatingExpenses).minus(acc.inventoryLosses);
     resultMap.set(inv.id, {
       grossSales: acc.grossSales,
       netBilling: acc.netBilling,
@@ -622,7 +671,9 @@ export function summarizeFinancialTimeline(
       outstanding: acc.outstanding,
       recognizedRevenue: acc.recognizedRevenue,
       recognizedCogs: acc.recognizedCogs,
+      grossProfit: gp,
       operatingExpenses: acc.operatingExpenses,
+      inventoryLosses: acc.inventoryLosses,
       operatingProfit: opProfit,
       incompleteInvoices: acc.incompleteCount,
     });

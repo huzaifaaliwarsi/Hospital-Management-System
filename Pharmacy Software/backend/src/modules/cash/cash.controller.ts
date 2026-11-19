@@ -26,7 +26,13 @@ export const cashController = {
     res.json({ data });
   },
   async listSettlements(req: Request, res: Response) {
-    const data = await cashService.listSettlements(req.query as unknown as ListSettlementsQuery);
+    const query = { ...(req.query as unknown as ListSettlementsQuery) };
+    // Enforce own-user scope for Sales/Cashier users — cannot inspect other cashiers' settlements
+    if (req.user?.role === 'SALES_DISPENSING') {
+      query.userId = req.user.sub;
+      if (req.query) (req.query as any).userId = req.user.sub;
+    }
+    const data = await cashService.listSettlements(query);
     res.json({ data });
   },
 };

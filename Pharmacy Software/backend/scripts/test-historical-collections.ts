@@ -64,8 +64,10 @@ async function main() {
       eq(saved.payments.find(p => p.id === original.payments[0]!.id), original.payments[0], 'B: initial receipt unchanged');
       eq([saved.payments.length, Number(saved.paidTotal), Number(saved.outstanding), saved.status], [3, 1000, 0, 'PAID'], 'B: three receipts, final clearance');
       eq(await tx.pharmacyInvoice.count({ where: { invoiceNumber: saved.invoiceNumber } }), 1, 'B: exactly one invoice');
+      const recognizedDay1 = await report(1);
+      eq([Number(recognizedDay1.recognizedRevenue), Number(recognizedDay1.recognizedCogs), Number(recognizedDay1.operatingProfit)], [1000, 600, 400], 'B: accrual revenue/COGS/profit at dispense date');
       const recognized = await report(16);
-      eq([Number(recognized.recognizedRevenue), Number(recognized.recognizedCogs), Number(recognized.operatingProfit)], [1000, 600, 400], 'B: full-payment revenue/COGS/profit once');
+      eq([Number(recognized.recognizedRevenue), Number(recognized.recognizedCogs), Number(recognized.operatingProfit)], [0, 0, 0], 'B: zero revenue/COGS/profit at final installment payment date');
       eq(Number((await report(17)).recognizedRevenue), 0, 'B: no repeated recognition next day');
       eq(Number((await report(6)).outstanding), 300, 'C: Nov 6 historical outstanding stays 300 after clearance');
       const ledger = await tx.cashLedgerEntry.findMany({ where: { referenceId: initial.id } });
