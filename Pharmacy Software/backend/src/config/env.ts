@@ -35,6 +35,8 @@ const envSchema = z.object({
   AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(5),
 
   HMS_BACKEND_URL: z.string().default('http://localhost:4000/api/v1'),
+  HMS_SYNC_INTERVAL_MS: z.coerce.number().int().min(20_000).max(300_000).default(60_000),
+  HMS_SYNC_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(10_000),
   INTERNAL_BRIDGE_SECRET: z.string().default('chss_bridge_shared_secret_2026_secure'),
 });
 

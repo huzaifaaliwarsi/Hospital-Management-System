@@ -38,7 +38,10 @@ import deviceRoutes from '@/modules/devices/devices.routes';
 import { devicesController } from '@/modules/devices/devices.controller';
 import { setupController } from '@/modules/setup/setup.controller';
 import { asyncHandler } from '@/shared/asyncHandler';
+import { singleFlight } from '@/shared/singleFlight';
 
+const runRoomChargeCron = singleFlight(() => admissionService.runScheduledRoomCharges());
+const runBiometricCron = singleFlight(() => devicesService.processPending());
 
 export function createApp() {
   const app = express();
@@ -86,7 +89,7 @@ export function createApp() {
       return;
     }
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ data: await admissionService.runScheduledRoomCharges() });
+    res.json({ data: await runRoomChargeCron() });
   }));
 
   app.get('/api/cron/biometric-reprocess', asyncHandler(async (req, res) => {
@@ -94,7 +97,7 @@ export function createApp() {
       res.status(401).json({ error: 'Unauthorized' }); return;
     }
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ data: await devicesService.processPending() });
+    res.json({ data: await runBiometricCron() });
   }));
 
   // Everything from here on requires a valid access token; mutating verbs

@@ -59,6 +59,7 @@ function playNotificationChime() {
     gain2.gain.exponentialRampToValueAtTime(0.0001, now + 0.55);
     osc2.connect(gain2);
     gain2.connect(ctx.destination);
+    osc2.onended = () => { void ctx.close().catch(() => {}); };
     osc2.start(now + 0.11);
     osc2.stop(now + 0.55);
   } catch {

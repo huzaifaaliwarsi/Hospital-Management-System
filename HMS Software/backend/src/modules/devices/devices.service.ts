@@ -177,6 +177,7 @@ export class DevicesService {
       where: { deviceId, staffId: { not: null }, processingStatus: { in: ['RECEIVED', 'ERROR'] } },
       orderBy: [{ lastAttemptAt: { sort: 'asc', nulls: 'first' } }, { receivedAt: 'asc' }, { id: 'asc' }], take: 100, select: { id: true, staffId: true, punchAt: true },
     });
+    if (rows.length === 0) return { processed: 0, failed: 0, scanned: 0 };
     const profile = await prisma.hospitalProfile.findFirst({ select: { timezone: true } });
     const timezone = profile?.timezone || 'Asia/Karachi';
     let processed = 0, failed = 0;

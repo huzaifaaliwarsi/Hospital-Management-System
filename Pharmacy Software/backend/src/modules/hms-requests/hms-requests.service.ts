@@ -6,6 +6,8 @@ import { NotFoundError, ConflictError, ValidationError } from '@/shared/errors/A
 import { nextCode, SEQUENCE } from '@/shared/sequence';
 import { hmsBridgeClient } from '@/shared/hmsBridgeClient';
 import { broadcastHmsNotification } from '@/shared/hmsEvents';
+import { singleFlight } from '@/shared/singleFlight';
+import { logger } from '@/shared/logger';
 import { pharmacyService } from '../pharmacy/pharmacy.service';
 import type {
   CreateRequestBody,
@@ -24,6 +26,18 @@ async function getOrCreateSettings() {
   const existing = await prisma.pharmacySettings.findFirst();
   if (existing) return existing;
   return prisma.pharmacySettings.create({ data: {} });
+}
+
+let lastSyncWarning = -Infinity;
+let suppressedSyncWarnings = 0;
+function logSyncFailure() {
+  if (Date.now() - lastSyncWarning < 60_000) {
+    suppressedSyncWarnings++;
+    return;
+  }
+  logger.warn('HMS outbox sync failed; pending work will retry', { suppressed: suppressedSyncWarnings });
+  lastSyncWarning = Date.now();
+  suppressedSyncWarnings = 0;
 }
 
 const requestInclude = {
@@ -191,22 +205,30 @@ export const hmsRequestsService = {
   },
 
   // ── Sync queued requests from HMS Outbox (when Pharmacy was offline) ──────
-  async syncFromHmsOutbox() {
+  syncFromHmsOutbox: singleFlight(async (): Promise<{ synced: number; error?: string }> => {
     try {
       const pending = await hmsBridgeClient.getPendingRequests();
       if (!Array.isArray(pending) || pending.length === 0) {
         return { synced: 0 };
       }
 
+      const refs = [...new Set(pending.map((req) => req.externalRequestRef).filter(Boolean))];
+      const ingested = new Set<string>();
+      // Bounded batches replace one existence query for every pending request.
+      for (let offset = 0; offset < refs.length; offset += 200) {
+        const existing = await prisma.medicineRequest.findMany({
+          where: { externalRequestRef: { in: refs.slice(offset, offset + 200) } },
+          select: { externalRequestRef: true },
+        });
+        for (const request of existing) {
+          if (request.externalRequestRef) ingested.add(request.externalRequestRef);
+        }
+      }
       let syncedCount = 0;
       for (const req of pending) {
         if (!req.externalRequestRef) continue;
 
-        // Check if already ingested in Pharmacy
-        const existing = await prisma.medicineRequest.findFirst({
-          where: { externalRequestRef: req.externalRequestRef },
-        });
-        if (existing) continue;
+        if (ingested.has(req.externalRequestRef)) continue;
 
         const validLines: Array<{ medicineId: string; requestedQuantity: number; notes?: string }> = [];
         for (const l of req.lines || []) {
@@ -227,7 +249,7 @@ export const hmsRequestsService = {
 
         if (validLines.length === 0) continue;
 
-        await this.createRequest(
+        await hmsRequestsService.createRequest(
           {
             externalAdmissionRef: req.externalAdmissionRef,
             externalRequestRef: req.externalRequestRef,
@@ -238,20 +260,21 @@ export const hmsRequestsService = {
           },
           'bridge-system',
         );
+        ingested.add(req.externalRequestRef);
         syncedCount++;
       }
 
       return { synced: syncedCount };
     } catch (err: any) {
-      // eslint-disable-next-line no-console
-      console.warn('[hmsRequestsService.syncFromHmsOutbox] sync warning:', err?.message || err);
-      return { synced: 0, error: err?.message };
+      // Do not log payloads/URLs/Prisma messages: they may contain patient data.
+      logSyncFailure();
+      return { synced: 0, error: 'HMS synchronization failed; pending work will retry' };
     }
-  },
+  }),
 
   async list(query: ListRequestsQuery) {
     // Proactively pull any pending requests that were queued while Pharmacy was offline
-    await this.syncFromHmsOutbox().catch(() => null);
+    await this.syncFromHmsOutbox();
     return prisma.medicineRequest.findMany({ where: { status: query.status }, include: requestInclude, orderBy: { requestedAt: 'desc' } });
   },
 

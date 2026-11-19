@@ -126,11 +126,15 @@ export const hmsBridgeClient = {
     }>;
   }>> {
     const urlsToTry = getHmsBaseUrls();
+    // One deadline covers every fallback AND response-body consumption.
+    const signal = AbortSignal.timeout(env.HMS_SYNC_TIMEOUT_MS);
     for (const baseUrl of urlsToTry) {
+      if (signal.aborted) break;
       try {
         const url = `${baseUrl}/pharmacy-bridge/pending-requests`;
         const res = await fetch(url, {
           method: 'GET',
+          signal,
           headers: {
             'Content-Type': 'application/json',
             'x-bridge-token': env.INTERNAL_BRIDGE_SECRET,
@@ -138,6 +142,7 @@ export const hmsBridgeClient = {
         });
 
         if (!res.ok) {
+          await res.body?.cancel();
           continue;
         }
 
@@ -145,11 +150,10 @@ export const hmsBridgeClient = {
         if (data && Array.isArray((data as any).data)) {
           return (data as any).data;
         }
-      } catch (err: any) {
-        // eslint-disable-next-line no-console
-        console.warn(`[hmsBridgeClient] getPendingRequests failed on ${baseUrl}: ${err.message}`);
+      } catch {
+        // The service reports one rate-limited, sanitized warning per failed run.
       }
     }
-    return [];
+    throw new Error('HMS pending-request endpoint unavailable or returned an invalid response');
   },
 };
