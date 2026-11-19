@@ -38,6 +38,16 @@ export const managementReportsController = {
       data: await svc.getInventoryPharmacy(req.query as unknown as InventoryPharmacyQuery),
     });
   },
+  operatingProfit: async (req: Request, res: Response) => {
+    res.json({
+      data: await svc.getOperatingProfit(req.query as unknown as ManagementSummaryQuery),
+    });
+  },
+  detailedExpenses: async (req: Request, res: Response) => {
+    res.json({
+      data: await svc.getDetailedExpenses(req.query as unknown as ManagementSummaryQuery),
+    });
+  },
   filterOptions: async (_req: Request, res: Response) => {
     res.json({ data: await svc.getFilterOptions() });
   },

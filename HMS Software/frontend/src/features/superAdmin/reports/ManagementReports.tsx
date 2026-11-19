@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BarChart2, Receipt, AlertCircle, TrendingDown, FileSpreadsheet, Users, Boxes, Eye, Pill } from 'lucide-react';
+import { BarChart2, Receipt, AlertCircle, TrendingDown, TrendingUp, FileSpreadsheet, Users, Boxes, Eye, Pill } from 'lucide-react';
 import { GenericReportView } from '../../../components/reports/GenericReportView';
 import { TextInput } from '../../../components/forms/FormControls';
 import { useReportFilters, useFilterOptions, FilterSelect, opts } from '../../../components/reports/reportFilters';
@@ -25,6 +25,10 @@ import {
   fetchBalanceSettlements,
   fetchStaffPayrollCommission,
   fetchInventoryPharmacy,
+  fetchOperatingProfit,
+  OperatingProfitRecord,
+  fetchDetailedExpenses,
+  DetailedExpenseRow,
   SummaryRecord,
   BillingCollectionRow,
   OutstandingPanelRow,
@@ -114,10 +118,10 @@ export const ManagementSummaryReport: React.FC = () => {
   const { filters, bind, reset } = useReportFilters({ departmentId: '', portalUserId: '', method: '' });
   return (
     <GenericReportView<SummaryRecord>
-      title="Management Summary"
-      subtitle="Salary and commission generated use approval dates plus posted adjustments; paid uses payment dates; outstanding includes prior balances as of period end. User filters approvals by approver and payments by payer. Collection-Based Operating Profit / Loss uses actual collections net of refunds less operating vouchers and approved salary/commission costs, counted once. Billing and outstanding are independent of payment method. Inventory expenses without departments apply hospital-wide only."
+      title="Income & Expense"
+      subtitle="Accrual Net Revenue − Direct Consumables − Staff Salaries − Doctor Commissions − Operating Expenses = Operating Profit. Collections and outstanding are tracked separately."
       icon={BarChart2}
-      filenamePrefix="Management_Summary"
+      filenamePrefix="Income_Expense"
       tableZoom={1.2}
       compact
       fetchReport={(range) => fetchManagementSummary(range, filters)}
@@ -249,34 +253,61 @@ export const AdmissionBedReport: React.FC = () => (
 
 export const ExpenseReport: React.FC = () => {
   const options = useOptions();
-  const { filters, bind, reset } = useReportFilters({ category: '', paymentMethod: '', createdById: '' });
+  const { filters, bind, reset } = useReportFilters({ departmentId: '' });
   return (
-    <GenericReportView<ExpenseRecord>
-      title="Expense Report"
-      subtitle="Date, category, amount, method, details and Entered By. Voided expenses are excluded."
+    <GenericReportView<DetailedExpenseRow>
+      title="Detailed Expense"
+      subtitle="Consolidated recognized expenses: hospital approved vouchers, clinical consumables, staff payroll, doctor commissions, and store expenses."
       icon={TrendingDown}
-      filenamePrefix="Expense_Report"
+      filenamePrefix="Detailed_Expense"
       compact
-      fetchReport={(range) => fetchExpenses(range, filters)}
+      fetchReport={(range) => fetchDetailedExpenses(range, filters)}
       onResetExtraFilters={reset}
       extraFilters={
         <>
-          <FilterSelect label="Category" options={EXPENSE_CATEGORY_OPTIONS} {...bind('category')} />
-          <FilterSelect label="Payment Method" options={EXPENSE_METHOD_OPTIONS} {...bind('paymentMethod')} />
-          <FilterSelect label="Entered By" options={options.users} {...bind('createdById')} />
+          <FilterSelect label="Department" options={options.departments} {...bind('departmentId')} />
         </>
       }
       rowKey={(r) => r.id}
-      emptyMessage="No expenses for these filters."
+      emptyMessage="No recognized expenses for these filters."
       columns={[
-        { header: 'Date', cell: (r) => r.expenseDateLabel },
-        { header: 'Expense #', cell: (r) => r.expenseNumber },
-        { header: 'Category', cell: (r) => EXPENSE_CATEGORY_LABEL[r.category] },
+        { header: 'Date', cell: (r) => r.date },
+        { header: 'Source', cell: (r) => r.source },
+        { header: 'Category', cell: (r) => r.category },
+        { header: 'Voucher / Ref', cell: (r) => r.voucherRef },
+        { header: 'Department', cell: (r) => r.department },
         money('Amount', (r) => r.amount),
-        { header: 'Payment Method', cell: (r) => PAYMENT_METHOD_LABEL[r.paymentMethod] },
-        { header: 'Paid To', cell: (r) => r.paidTo },
-        { header: 'Details / Reference', cell: (r) => [r.description, r.reference].filter(Boolean).join(' · ') || '—' },
+        { header: 'Description / Payee', cell: (r) => r.description },
         { header: 'Entered By', cell: (r) => r.enteredBy },
+      ]}
+    />
+  );
+};
+
+// ── #4 Operating Profit (P&L) ─────────────────────────────────────────────
+
+export const OperatingProfitReport: React.FC = () => {
+  const options = useOptions();
+  const { filters, bind, reset } = useReportFilters({ departmentId: '' });
+  return (
+    <GenericReportView<OperatingProfitRecord>
+      title="Operating Profit (P&L)"
+      subtitle="Accrual Operating Profit: Net Earned Revenue − Direct Consumables − Staff Salaries − Doctor Commissions − Operating Expenses. Independent of collection installments."
+      icon={TrendingUp}
+      filenamePrefix="Operating_Profit_PL"
+      fetchReport={(range) => fetchOperatingProfit(range, filters)}
+      onResetExtraFilters={reset}
+      extraFilters={
+        <>
+          <FilterSelect label="Department" options={options.departments} {...bind('departmentId')} />
+        </>
+      }
+      rowKey={(r) => r.key}
+      noTotalColumns={['Amount (PKR)']}
+      columns={[
+        { header: 'P&L Line Item', cell: (r) => r.item },
+        money('Amount', (r) => r.amount),
+        { header: 'Basis / Audit Note', cell: (r) => r.note },
       ]}
     />
   );
@@ -521,6 +552,7 @@ export const MANAGEMENT_REPORT_VIEWS: Record<string, React.FC> = {
   sa_outstanding_panel: OutstandingPanelReport,
   sa_admission_bed: AdmissionBedReport,
   sa_expense: ExpenseReport,
+  sa_operating_profit: OperatingProfitReport,
   sa_balance_settlements: BalanceSettlementsReport,
   sa_staff_payroll_commission: StaffPayrollCommissionReport,
   sa_pharmacy_medicines: PharmacyMedicinesReport,

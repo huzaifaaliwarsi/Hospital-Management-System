@@ -226,6 +226,21 @@ export const financeControlService = {
   },
 
   async reviewSettlement(id: string, body: ReviewSettlementBody, reviewerPortalUserId: string) {
+    const reviewerUser = await prisma.portalUser.findUnique({
+      where: { id: reviewerPortalUserId },
+      select: userSummarySelect,
+    });
+    if (!reviewerUser) throw new NotFoundError('Reviewer portal user not found');
+
+    const actualReceiverId = body.receiverPortalUserId ?? reviewerPortalUserId;
+    const receiverUser = body.receiverPortalUserId
+      ? await prisma.portalUser.findUnique({
+          where: { id: actualReceiverId },
+          select: userSummarySelect,
+        })
+      : reviewerUser;
+    if (!receiverUser) throw new NotFoundError('Receiver portal user not found');
+
     const settlement = await prisma.accountSettlement.findUnique({
       where: { id },
       include: { submittedByUser: { select: userSummarySelect } },
@@ -251,12 +266,26 @@ export const financeControlService = {
         },
       });
 
+      // If returned or rejected, restore underlying transactions to unsettled so submitter can recount/resubmit
+      if (newStatus === 'REJECTED' || newStatus === 'RETURNED') {
+        const links = await tx.settlementTransaction.findMany({
+          where: { accountSettlementId: id },
+          select: { userCashBalanceId: true },
+        });
+        if (links.length > 0) {
+          await tx.userCashBalance.updateMany({
+            where: { id: { in: links.map((l) => l.userCashBalanceId) } },
+            data: { isSettled: false },
+          });
+        }
+      }
+
       // Accepting a settlement is the cashier physically handing custody
       // back — that cash re-enters the Main Cash Fund (`mainFund.service.ts`)
-      // so it can be re-issued as petty cash to someone else. `handoverAmount`
-      // is the explicit "cash actually handed over" figure when the cashier
-      // keeps part of what they counted; falls back to the full counted
-      // `physicalCash` when not specified.
+      // and posts Sender Cash OUT and Receiver Cash IN in UserCashBalance.
+      // `handoverAmount` is the explicit "cash actually handed over" figure
+      // when the cashier keeps part of what they counted; falls back to the
+      // full counted `physicalCash` when not specified.
       if (newStatus === 'ACCEPTED' || newStatus === 'PARTIALLY_ACCEPTED') {
         const returnedAmount = reviewed.handoverAmount ?? reviewed.physicalCash;
         if (returnedAmount.greaterThan(0)) {
@@ -268,6 +297,44 @@ export const financeControlService = {
               note: `Settlement handover from ${settlement.submittedByUser.displayName || settlement.submittedByUser.username}`,
               performedById: reviewerPortalUserId,
               relatedAccountSettlementId: reviewed.id,
+            },
+          });
+
+          const occurredAt = reviewed.reviewedAt ?? new Date();
+          const senderName = settlement.submittedByUser.displayName || settlement.submittedByUser.username;
+          const receiverName = receiverUser.displayName || receiverUser.username;
+          const approverName = reviewerUser.displayName || reviewerUser.username;
+
+          // 1. Sender Cash OUT (drawer deduction, marked settled)
+          await tx.userCashBalance.create({
+            data: {
+              portalUserId: settlement.portalUserId,
+              moduleScope: settlement.moduleScope,
+              direction: 'OUT',
+              amount: returnedAmount,
+              category: 'RECOVERY',
+              isPhysicalCash: true,
+              isSettled: true,
+              issuedById: reviewerPortalUserId,
+              note: `Settlement handover to ${receiverName} [settlement:${reviewed.id}]`,
+              occurredAt,
+            },
+          });
+
+          // 2. Receiver Cash IN (unsettled in receiver's live drawer)
+          const receiverScope = resolveCashModuleScope(receiverUser.role);
+          await tx.userCashBalance.create({
+            data: {
+              portalUserId: actualReceiverId,
+              moduleScope: receiverScope,
+              direction: 'IN',
+              amount: returnedAmount,
+              category: 'RECOVERY',
+              isPhysicalCash: true,
+              isSettled: false,
+              issuedById: settlement.portalUserId,
+              note: `Settlement received from ${senderName} (Approved by ${approverName}) [settlement:${reviewed.id}]`,
+              occurredAt,
             },
           });
         }
@@ -303,6 +370,14 @@ export const financeControlService = {
           reversalReason: body.reason.trim(),
           reversedById: actorPortalUserId,
           reversedAt: new Date(),
+        },
+      });
+
+      // Undo any settlement-linked Cash OUT / Cash IN entries
+      await tx.userCashBalance.deleteMany({
+        where: {
+          category: 'RECOVERY',
+          note: { contains: `[settlement:${id}]` },
         },
       });
 

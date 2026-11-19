@@ -142,7 +142,7 @@ export const cashService = {
         isSettled: t.isSettled,
         occurredAt: t.occurredAt,
         paymentAccount: t.paymentReceipt?.paymentAccount ?? null,
-        receiptNumber: t.paymentReceipt?.receiptNumber ?? null,
+        receiptNumber: t.paymentReceipt?.receiptNumber ?? (t.category === 'RECOVERY' ? 'SETTLEMENT' : null),
         invoiceNumber: t.paymentReceipt?.hospitalInvoice?.invoiceNumber ?? null,
         paymentMethod: t.paymentReceipt?.method ?? (t.isPhysicalCash ? 'CASH' : 'NON_CASH'),
         note: t.note,

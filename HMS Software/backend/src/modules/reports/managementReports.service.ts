@@ -1,7 +1,6 @@
 import { invoiceAsOf } from '@/shared/invoiceAsOf';
 import { allocateCollection, allocateInvoiceAmount, collectionSelect, collectionInvoiceSelect, invoiceBalance, panelCollectionLedger, signedReceiptWhere } from '@/shared/departmentCollections';
 import { Decimal } from '@prisma/client/runtime/library';
-import { Prisma } from '@prisma/client';
 import { prisma } from '@/db/client';
 import { resolveDateRange } from './dashboard.service';
 import { PAYABLE_EQUIVALENT } from '@/modules/attendance/attendance.service';
@@ -86,6 +85,7 @@ export const managementReportsService = {
       hospitalExpenses,
       staffFinance,
       panelCollections,
+      departmentIssues,
     ] = await Promise.all([
       prisma.hospitalInvoice.findMany({
         where: {
@@ -93,11 +93,11 @@ export const managementReportsService = {
           status: { not: 'VOID' },
           ...(dept
             ? {
-                OR: [
-                  { departmentId: dept },
-                  { lines: { some: { serviceRate: { departmentId: dept } } } },
-                ],
-              }
+              OR: [
+                { departmentId: dept },
+                { lines: { some: { serviceRate: { departmentId: dept } } } },
+              ],
+            }
             : {}),
           ...(user ? { createdById: user } : {}),
         },
@@ -138,13 +138,13 @@ export const managementReportsService = {
           ...(user ? { collectedById: user } : {}),
           ...(dept
             ? {
-                OR: [
-                  { hospitalInvoice: { departmentId: dept } },
-                  { hospitalInvoice: { lines: { some: { serviceRate: { departmentId: dept } } } } },
-                  { hospitalInvoiceId: null, admissionRecord: { departmentId: dept } },
-                  { hospitalInvoiceId: null, appointment: { departmentId: dept } },
-                ],
-              }
+              OR: [
+                { hospitalInvoice: { departmentId: dept } },
+                { hospitalInvoice: { lines: { some: { serviceRate: { departmentId: dept } } } } },
+                { hospitalInvoiceId: null, admissionRecord: { departmentId: dept } },
+                { hospitalInvoiceId: null, appointment: { departmentId: dept } },
+              ],
+            }
             : {}),
         },
         select: collectionSelect,
@@ -173,6 +173,22 @@ export const managementReportsService = {
       expensesService.totalBetween(start, end, dept, method),
       staffFinanceSummary(start, end, dept, user, method),
       panelCollectionLedger(prisma, end, { start, departmentId: dept, method, userId: user }),
+      prisma.departmentRequisition.findMany({
+        where: {
+          issuedAt: { gte: start, lte: end },
+          status: { in: ['ISSUED', 'PARTIALLY_RETURNED', 'CLOSED'] },
+          ...(dept ? { departmentId: dept } : {}),
+        },
+        include: {
+          lines: {
+            select: {
+              quantity: true,
+              returnedQuantity: true,
+              costRate: true,
+            },
+          },
+        },
+      }),
     ]);
 
     type Row = {
@@ -290,22 +306,52 @@ export const managementReportsService = {
     const table = Array.from(rows.values()).sort((a, b) =>
       a.department.localeCompare(b.department),
     );
-    const operatingCosts = hospitalExpenses.plus(expenses._sum.amount ?? ZERO())
-      .plus(staffFinance.salaryGenerated).plus(staffFinance.commissionGenerated);
+    let directServiceCosts = ZERO();
+    for (const req of (departmentIssues as any[] || [])) {
+      for (const line of req.lines || []) {
+        const netQty = line.quantity.minus(line.returnedQuantity);
+        if (netQty.greaterThan(0)) {
+          directServiceCosts = directServiceCosts.plus(netQty.times(line.costRate ?? ZERO()));
+        }
+      }
+    }
+
+    const grossBilling = sumOf(table, (r) => r.gross);
+    const discounts = sumOf(table, (r) => r.discount);
+    const netEarnedRevenue = sumOf(table, (r) => r.net);
+    const grossProfit = netEarnedRevenue.minus(directServiceCosts);
+    const otherOperatingExpenses = hospitalExpenses.plus(expenses._sum.amount ?? ZERO());
+    const totalOperatingCosts = directServiceCosts
+      .plus(staffFinance.salaryGenerated)
+      .plus(staffFinance.commissionGenerated)
+      .plus(otherOperatingExpenses);
+    const operatingProfit = grossProfit
+      .minus(staffFinance.salaryGenerated)
+      .minus(staffFinance.commissionGenerated)
+      .minus(otherOperatingExpenses);
     const collectedIncome = sumOf(table, (r) => r.collected);
+    const operatingMargin = netEarnedRevenue.isZero() ? ZERO() : operatingProfit.dividedBy(netEarnedRevenue).times(100);
+
     return {
       period: periodOf(start, end, label),
       summary: {
         ...staffFinance,
-        totalOperatingCosts: operatingCosts,
-        operatingResult: collectedIncome.minus(operatingCosts),
+        grossBilling,
+        discounts,
+        totalBilling: netEarnedRevenue,
+        netEarnedRevenue,
+        directServiceCosts,
+        grossProfit,
+        payrollCost: staffFinance.salaryGenerated,
+        doctorCommissionCost: staffFinance.commissionGenerated,
+        otherOperatingExpenses,
+        totalOperatingCosts,
+        operatingProfit,
+        operatingResult: operatingProfit, // Accrual-based Operating Profit (replaces collectedIncome - costs)
+        operatingMargin,
+        collections: collectedIncome,
         collectedIncome,
-        grossBilling: sumOf(table, (r) => r.gross),
-        discounts: sumOf(table, (r) => r.discount),
-        totalBilling: sumOf(table, (r) => r.net),
-        collections: sumOf(table, (r) => r.collected),
         outstanding: sumOf(table, (r) => r.outstanding),
-        // Expense Management entries (Super Admin / Admin) — separate from cashier drawer outflows below.
         hospitalExpenses,
         expenses: expenses._sum.amount ?? ZERO(),
         activeAdmissions: table.reduce((s, r) => s + r.activeAdmissions, 0),
@@ -321,13 +367,17 @@ export const managementReportsService = {
   async getBillingCollection(query: BillingCollectionQuery) {
     const { start, end, label } = resolveDateRange(query);
     const invoices = await prisma.hospitalInvoice.findMany({
-      where: { createdAt: { lte: end }, status: query.status === 'VOID' ? 'VOID' : { not: 'VOID' },
+      where: {
+        createdAt: { lte: end }, status: query.status === 'VOID' ? 'VOID' : { not: 'VOID' },
         ...(query.departmentId ? { OR: [{ departmentId: query.departmentId }, { lines: { some: { serviceRate: { departmentId: query.departmentId } } } }] } : {}),
-        ...(query.corporatePanelId ? { corporatePanelId: query.corporatePanelId } : {}) },
-      include: { ...patientSelect, department: { select: { id: true, name: true } }, lines: collectionInvoiceSelect.lines,
+        ...(query.corporatePanelId ? { corporatePanelId: query.corporatePanelId } : {})
+      },
+      include: {
+        ...patientSelect, department: { select: { id: true, name: true } }, lines: collectionInvoiceSelect.lines,
         corporatePanel: { select: { organizationName: true } },
         paymentReceipts: { where: { ...signedReceiptWhere, collectedAt: { lte: end } }, include: { collectedBy: userSelect } },
-        panelRemittanceAllocations: { where: { panelRemittance: { receivedAt: { lte: end } } }, include: { panelRemittance: { include: { receivedByUser: userSelect } } } } },
+        panelRemittanceAllocations: { where: { panelRemittance: { receivedAt: { lte: end } } }, include: { panelRemittance: { include: { receivedByUser: userSelect } } } }
+      },
       orderBy: { createdAt: 'desc' },
     });
     const rows = invoices.map(invoiceAsOf).flatMap(i => {
@@ -336,14 +386,16 @@ export const managementReportsService = {
       const panels = i.panelRemittanceAllocations.filter(a => a.panelRemittance.receivedAt >= start && (!query.method || (query.method === 'BANK' ? ['BANK', 'BANK_TRANSFER', 'BANK TRANSFER'] : [query.method]).includes(a.panelRemittance.method.toUpperCase())) && (!query.collectedById || a.panelRemittance.receivedById === query.collectedById));
       if (!receipts.length && !panels.length && (i.createdAt < start || query.method || query.collectedById)) return [];
       const scoped = (amount: Decimal, basis: 'lineNet' | 'patientShare' | 'panelReceivable') => !query.departmentId ? amount : allocateInvoiceAmount(amount, i, basis).filter(a => a.departmentId === query.departmentId).reduce((sum, a) => sum.plus(a.amount), ZERO());
-      return [{ id: i.id, invoiceNumber: i.invoiceNumber, createdAt: i.createdAt, patient: patientName(i), payer: i.corporatePanel?.organizationName ?? 'Self-Pay',
+      return [{
+        id: i.id, invoiceNumber: i.invoiceNumber, createdAt: i.createdAt, patient: patientName(i), payer: i.corporatePanel?.organizationName ?? 'Self-Pay',
         department: unique([i.department?.name, ...i.lines.map(l => l.serviceRate?.department?.name)]).join(', '),
         gross: scoped(i.subtotal, 'lineNet'), discount: scoped(i.discountTotal, 'lineNet'), net: scoped(i.total, 'lineNet'),
         periodBilled: i.createdAt >= start ? scoped(i.total, 'lineNet') : ZERO(),
         collected: scoped(sumOf(receipts, p => p.amount), 'patientShare').plus(scoped(sumOf(panels, a => a.allocatedAmount), 'panelReceivable')),
         outstanding: scoped(i.balance.patientDue, 'patientShare').plus(scoped(i.balance.panelDue, 'panelReceivable')),
         methods: unique([...receipts.map(p => p.method), ...panels.map(a => a.panelRemittance.method)]).join(', '),
-        collectedBy: unique([...receipts.map(p => userName(p.collectedBy)), ...panels.map(a => userName(a.panelRemittance.receivedByUser))]).join(', '), status: i.status }];
+        collectedBy: unique([...receipts.map(p => userName(p.collectedBy)), ...panels.map(a => userName(a.panelRemittance.receivedByUser))]).join(', '), status: i.status
+      }];
     });
     return { period: periodOf(start, end, label), rows };
   },
@@ -359,10 +411,12 @@ export const managementReportsService = {
       where: {
         createdAt: { lte: end },
         status: { not: 'VOID' },
-        ...(query.departmentId ? { OR: [
-          { departmentId: query.departmentId },
-          { lines: { some: { serviceRate: { departmentId: query.departmentId } } } },
-        ] } : {}),
+        ...(query.departmentId ? {
+          OR: [
+            { departmentId: query.departmentId },
+            { lines: { some: { serviceRate: { departmentId: query.departmentId } } } },
+          ]
+        } : {}),
         ...(query.corporatePanelId ? { corporatePanelId: query.corporatePanelId } : {}),
         ...(query.payerType === 'PANEL' ? { corporatePanelId: { not: null } } : {}),
         ...(query.payerType === 'SELF_PAY' ? { corporatePanelId: null } : {}),
@@ -382,34 +436,34 @@ export const managementReportsService = {
     return {
       period: periodOf(start, end, label),
       rows: invoices.map(invoiceAsOf).map((i) => {
-          const paidAtCutoff = sumOf(i.paymentReceipts, r => r.amount);
-          const balance = invoiceBalance({ ...i, paidTotal: paidAtCutoff });
-          const scoped = (amount: Decimal, basis: 'lineNet' | 'patientShare' | 'panelReceivable') => !query.departmentId ? amount :
-            allocateInvoiceAmount(amount, i, basis).filter(r => r.departmentId === query.departmentId)
-              .reduce((sum, r) => sum.plus(r.amount), ZERO());
-          const patientDue = scoped(balance.patientDue, 'patientShare');
-          const panelDue = scoped(balance.panelDue, 'panelReceivable');
-          const due = patientDue.plus(panelDue);
-          const collected = scoped(paidAtCutoff, 'patientShare').plus(scoped(balance.panelPaid, 'panelReceivable'));
-          const departmentName = query.departmentId
-            ? i.lines.find(l => l.serviceRate?.department?.id === query.departmentId)?.serviceRate?.department?.name ?? i.department?.name
-            : i.department?.name;
-          return {
-            id: i.id,
-            invoiceNumber: i.invoiceNumber,
-            createdAt: i.createdAt,
-            patient: patientName(i),
-            payerType: i.corporatePanelId ? 'Panel' : 'Self-Pay',
-            panel: i.corporatePanel?.organizationName ?? null,
-            department: departmentName ?? null,
-            net: scoped(i.total, 'lineNet'),
-            paid: collected,
-            patientDue,
-            panelDue,
-            due,
-            status: i.status,
-          };
-        }).filter(row => row.due.gt(0) && (!query.status || row.status === query.status)),
+        const paidAtCutoff = sumOf(i.paymentReceipts, r => r.amount);
+        const balance = invoiceBalance({ ...i, paidTotal: paidAtCutoff });
+        const scoped = (amount: Decimal, basis: 'lineNet' | 'patientShare' | 'panelReceivable') => !query.departmentId ? amount :
+          allocateInvoiceAmount(amount, i, basis).filter(r => r.departmentId === query.departmentId)
+            .reduce((sum, r) => sum.plus(r.amount), ZERO());
+        const patientDue = scoped(balance.patientDue, 'patientShare');
+        const panelDue = scoped(balance.panelDue, 'panelReceivable');
+        const due = patientDue.plus(panelDue);
+        const collected = scoped(paidAtCutoff, 'patientShare').plus(scoped(balance.panelPaid, 'panelReceivable'));
+        const departmentName = query.departmentId
+          ? i.lines.find(l => l.serviceRate?.department?.id === query.departmentId)?.serviceRate?.department?.name ?? i.department?.name
+          : i.department?.name;
+        return {
+          id: i.id,
+          invoiceNumber: i.invoiceNumber,
+          createdAt: i.createdAt,
+          patient: patientName(i),
+          payerType: i.corporatePanelId ? 'Panel' : 'Self-Pay',
+          panel: i.corporatePanel?.organizationName ?? null,
+          department: departmentName ?? null,
+          net: scoped(i.total, 'lineNet'),
+          paid: collected,
+          patientDue,
+          panelDue,
+          due,
+          status: i.status,
+        };
+      }).filter(row => row.due.gt(0) && (!query.status || row.status === query.status)),
     };
   },
 
@@ -569,10 +623,12 @@ export const managementReportsService = {
 
     const staff = await prisma.staff.findMany({
       where: {
-        ...(query.departmentId ? { OR: [
-          { staffDepartments: { some: { departmentId: query.departmentId } } },
-          { commissionAccruals: { some: { periodStart: { lte: end }, invoiceLineItem: commissionDepartmentFilter(query.departmentId) } } },
-        ] } : {}),
+        ...(query.departmentId ? {
+          OR: [
+            { staffDepartments: { some: { departmentId: query.departmentId } } },
+            { commissionAccruals: { some: { periodStart: { lte: end }, invoiceLineItem: commissionDepartmentFilter(query.departmentId) } } },
+          ]
+        } : {}),
         ...(query.staffId ? { id: query.staffId } : {}),
       },
       select: {
@@ -592,10 +648,12 @@ export const managementReportsService = {
           where: { periodStart: { lte: end }, periodEnd: { gte: start } },
           select: { id: true, payrollRunId: true, generatedAmount: true, status: true, payments: true, correctionEntries: true },
         },
-        commissionAccruals: { where: { periodStart: { lte: end }, ...(query.departmentId ? { invoiceLineItem: commissionDepartmentFilter(query.departmentId) } : {}) }, select: {
-          id: true, periodStart: true, collectionEvent: true, commissionRunId: true, commissionAmount: true, ruleSnapshot: true, status: true,
-          payouts: { where: { paidAt: { lte: end } } }, reversals: { where: { reversedAt: { lte: end } } }, adjustments: { where: { createdAt: { lte: end } } },
-        } },
+        commissionAccruals: {
+          where: { periodStart: { lte: end }, ...(query.departmentId ? { invoiceLineItem: commissionDepartmentFilter(query.departmentId) } : {}) }, select: {
+            id: true, periodStart: true, collectionEvent: true, commissionRunId: true, commissionAmount: true, ruleSnapshot: true, status: true,
+            payouts: { where: { paidAt: { lte: end } } }, reversals: { where: { reversedAt: { lte: end } } }, adjustments: { where: { createdAt: { lte: end } } },
+          }
+        },
       },
       orderBy: { fullName: 'asc' },
     });
@@ -606,8 +664,8 @@ export const managementReportsService = {
         const statuses = s.salarySlips.map(x => x.status);
         const payrollStatus = !statuses.length ? 'NOT_GENERATED'
           : statuses.every(x => x === 'PAID') ? 'PAID'
-          : statuses.some(x => x === 'PAID' || x === 'PARTIALLY_PAID') ? 'PARTIALLY_PAID'
-          : statuses.some(x => x === 'GENERATED' || x === 'DRAFT') ? 'GENERATED' : 'APPROVED';
+            : statuses.some(x => x === 'PAID' || x === 'PARTIALLY_PAID') ? 'PARTIALLY_PAID'
+              : statuses.some(x => x === 'GENERATED' || x === 'DRAFT') ? 'GENERATED' : 'APPROVED';
         const salaries = s.salarySlips.map(salaryBalance);
         const commissions = s.commissionAccruals.map(row => commissionPeriodBalance(row, start, end));
         return {
@@ -689,16 +747,16 @@ export const managementReportsService = {
     const ids = items.map((i) => i.id);
     const [balances, movements] = ids.length
       ? await Promise.all([
-          prisma.stockLedger.groupBy({
-            by: ['stockItemId'],
-            where: { stockItemId: { in: ids } },
-            _sum: { quantityDelta: true },
-          }),
-          prisma.stockLedger.findMany({
-            where: { stockItemId: { in: ids }, createdAt: { gte: start, lte: end } },
-            select: { stockItemId: true, quantityDelta: true },
-          }),
-        ])
+        prisma.stockLedger.groupBy({
+          by: ['stockItemId'],
+          where: { stockItemId: { in: ids } },
+          _sum: { quantityDelta: true },
+        }),
+        prisma.stockLedger.findMany({
+          where: { stockItemId: { in: ids }, createdAt: { gte: start, lte: end } },
+          select: { stockItemId: true, quantityDelta: true },
+        }),
+      ])
       : [[], []];
     const balanceOf = new Map(balances.map((b) => [b.stockItemId, b._sum.quantityDelta ?? ZERO()]));
     const inOf = new Map<string, Decimal>();
@@ -723,118 +781,118 @@ export const managementReportsService = {
       isAmount: boolean;
       isAlert: boolean;
     }[] = [
-      {
-        section: 'Purchases',
-        metric: 'Purchase Orders',
-        value: purchases._count._all,
-        isAmount: false,
-        isAlert: false,
-      },
-      {
-        section: 'Purchases',
-        metric: 'Purchase Amount',
-        value: Number(purchases._sum.totalAmount ?? 0),
-        isAmount: true,
-        isAlert: false,
-      },
-      {
-        section: 'Inventory Stock',
-        metric: 'Active Stock Items',
-        value: items.length,
-        isAmount: false,
-        isAlert: false,
-      },
-      {
-        section: 'Inventory Stock',
-        metric: 'Stock In (Qty)',
-        value: Number(sumOf([...inOf.values()], (v) => v)),
-        isAmount: false,
-        isAlert: false,
-      },
-      {
-        section: 'Inventory Stock',
-        metric: 'Stock Out (Qty)',
-        value: Number(sumOf([...outOf.values()], (v) => v)),
-        isAmount: false,
-        isAlert: false,
-      },
-      {
-        section: 'Inventory Stock',
-        metric: 'Low Stock Items (at or below reorder level)',
-        value: lowStockItems,
-        isAmount: false,
-        isAlert: true,
-      },
-      {
-        section: 'Inventory Stock',
-        metric: 'Batches Near Expiry (60 Days)',
-        value: inventoryNearExpiryOnlyCount,
-        isAmount: false,
-        isAlert: true,
-      },
-      {
-        section: 'Inventory Stock',
-        metric: 'Expired Batches',
-        value: inventoryExpiredCount,
-        isAmount: false,
-        isAlert: true,
-      },
-      {
-        section: 'Inventory Stock',
-        metric: 'Supplier Payable',
-        value: Number(inventorySupplierPayable),
-        isAmount: true,
-        isAlert: inventorySupplierPayable.greaterThan(0),
-      },
-      {
-        section: 'Medicine Expiry',
-        metric: 'Batches Expiring in 60 Days',
-        value: expiring,
-        isAmount: false,
-        isAlert: true,
-      },
-      {
-        section: 'Medicine Expiry',
-        metric: 'Expired Batches',
-        value: expired,
-        isAmount: false,
-        isAlert: true,
-      },
-      {
-        section: 'Pharmacy Requests',
-        metric: 'Total Requests',
-        value: count(requests.map((r) => r.status)),
-        isAmount: false,
-        isAlert: false,
-      },
-      {
-        section: 'Pharmacy Requests',
-        metric: 'Pending (Requested / Authorization / Dispensing)',
-        value: count([
-          'REQUESTED',
-          'ACCEPTED',
-          'PARTIALLY_FULFILLED',
-          'DISPENSING',
-          'AUTHORIZATION_REQUIRED',
-        ]),
-        isAmount: false,
-        isAlert: true,
-      },
-      {
-        section: 'Pharmacy Requests',
-        metric: 'Cleared (Dispensed / Invoiced)',
-        value: count(['DISPENSED', 'INVOICED', 'CLEARANCE_SENT']),
-        isAmount: false,
-        isAlert: false,
-      },
-      {
-        section: 'Pharmacy Requests',
-        metric: 'Rejected',
-        value: count(['REJECTED']),
-        isAmount: false,
-        isAlert: false,
-      },
-    ];
+        {
+          section: 'Purchases',
+          metric: 'Purchase Orders',
+          value: purchases._count._all,
+          isAmount: false,
+          isAlert: false,
+        },
+        {
+          section: 'Purchases',
+          metric: 'Purchase Amount',
+          value: Number(purchases._sum.totalAmount ?? 0),
+          isAmount: true,
+          isAlert: false,
+        },
+        {
+          section: 'Inventory Stock',
+          metric: 'Active Stock Items',
+          value: items.length,
+          isAmount: false,
+          isAlert: false,
+        },
+        {
+          section: 'Inventory Stock',
+          metric: 'Stock In (Qty)',
+          value: Number(sumOf([...inOf.values()], (v) => v)),
+          isAmount: false,
+          isAlert: false,
+        },
+        {
+          section: 'Inventory Stock',
+          metric: 'Stock Out (Qty)',
+          value: Number(sumOf([...outOf.values()], (v) => v)),
+          isAmount: false,
+          isAlert: false,
+        },
+        {
+          section: 'Inventory Stock',
+          metric: 'Low Stock Items (at or below reorder level)',
+          value: lowStockItems,
+          isAmount: false,
+          isAlert: true,
+        },
+        {
+          section: 'Inventory Stock',
+          metric: 'Batches Near Expiry (60 Days)',
+          value: inventoryNearExpiryOnlyCount,
+          isAmount: false,
+          isAlert: true,
+        },
+        {
+          section: 'Inventory Stock',
+          metric: 'Expired Batches',
+          value: inventoryExpiredCount,
+          isAmount: false,
+          isAlert: true,
+        },
+        {
+          section: 'Inventory Stock',
+          metric: 'Supplier Payable',
+          value: Number(inventorySupplierPayable),
+          isAmount: true,
+          isAlert: inventorySupplierPayable.greaterThan(0),
+        },
+        {
+          section: 'Medicine Expiry',
+          metric: 'Batches Expiring in 60 Days',
+          value: expiring,
+          isAmount: false,
+          isAlert: true,
+        },
+        {
+          section: 'Medicine Expiry',
+          metric: 'Expired Batches',
+          value: expired,
+          isAmount: false,
+          isAlert: true,
+        },
+        {
+          section: 'Pharmacy Requests',
+          metric: 'Total Requests',
+          value: count(requests.map((r) => r.status)),
+          isAmount: false,
+          isAlert: false,
+        },
+        {
+          section: 'Pharmacy Requests',
+          metric: 'Pending (Requested / Authorization / Dispensing)',
+          value: count([
+            'REQUESTED',
+            'ACCEPTED',
+            'PARTIALLY_FULFILLED',
+            'DISPENSING',
+            'AUTHORIZATION_REQUIRED',
+          ]),
+          isAmount: false,
+          isAlert: true,
+        },
+        {
+          section: 'Pharmacy Requests',
+          metric: 'Cleared (Dispensed / Invoiced)',
+          value: count(['DISPENSED', 'INVOICED', 'CLEARANCE_SENT']),
+          isAmount: false,
+          isAlert: false,
+        },
+        {
+          section: 'Pharmacy Requests',
+          metric: 'Rejected',
+          value: count(['REJECTED']),
+          isAmount: false,
+          isAlert: false,
+        },
+      ];
 
     return {
       period: periodOf(start, end, label),
@@ -907,6 +965,268 @@ export const managementReportsService = {
       panels: panels.map((p) => ({ value: p.id, label: p.organizationName })),
       staff: staff.map((s) => ({ value: s.id, label: `${s.fullName} (${s.employeeId})` })),
       stockCategories: categories.map((c) => ({ value: c.category!, label: c.category! })),
+    };
+  },
+  /** M04 Operating Profit (P&L) — Revenue - Direct Cost - Gross Profit - Payroll - Commission - Opex. */
+  async getOperatingProfit(query: ManagementSummaryQuery) {
+    const summaryData = await this.getSummary(query);
+    const { summary, period, rows } = summaryData;
+
+    return {
+      period,
+      summary: {
+        revenue: summary.netEarnedRevenue,
+        grossBilling: summary.grossBilling,
+        discounts: summary.discounts,
+        directCost: summary.directServiceCosts,
+        grossProfit: summary.grossProfit,
+        payroll: summary.payrollCost,
+        doctorCommission: summary.doctorCommissionCost,
+        otherOperatingExpenses: summary.otherOperatingExpenses,
+        totalCosts: summary.totalOperatingCosts,
+        operatingProfit: summary.operatingProfit,
+        marginPercentage: summary.operatingMargin,
+        collections: summary.collections,
+        outstanding: summary.outstanding,
+      },
+      rows: rows.map((r) => ({
+        department: r.department,
+        invoices: r.invoices,
+        gross: r.gross,
+        discount: r.discount,
+        revenue: r.net,
+        collected: r.collected,
+        outstanding: r.outstanding,
+      })),
+    };
+  },
+
+  /** M03 Detailed Expense — Itemized hospital expenses, consumables, payroll, and commissions. */
+  async getDetailedExpenses(query: ManagementSummaryQuery) {
+    const { start, end, label } = resolveDateRange(query);
+    const dept = query.departmentId;
+
+    const [
+      hospitalExpenseRows,
+      deptRequisitions,
+      salarySlips,
+      commissionAccruals,
+      inventoryExpenseRows,
+    ] = await Promise.all([
+      prisma.expense.findMany({
+        where: {
+          status: 'ACTIVE',
+          expenseDate: {
+            gte: new Date(start.toLocaleDateString('en-CA')),
+            lte: new Date(end.toLocaleDateString('en-CA')),
+          },
+          ...(dept ? { departmentId: dept } : {}),
+        },
+        include: {
+          department: { select: { id: true, name: true } },
+          createdByUser: { select: { id: true, displayName: true, username: true, role: true } },
+        },
+        orderBy: { expenseDate: 'desc' },
+      }),
+      prisma.departmentRequisition.findMany({
+        where: {
+          issuedAt: { gte: start, lte: end },
+          status: { in: ['ISSUED', 'PARTIALLY_RETURNED', 'CLOSED'] },
+          ...(dept ? { departmentId: dept } : {}),
+        },
+        include: {
+          department: { select: { id: true, name: true } },
+          issuedBy: { select: { id: true, displayName: true, username: true, role: true } },
+          lines: {
+            include: {
+              stockItem: { select: { id: true, name: true, code: true, unit: true } },
+            },
+          },
+        },
+        orderBy: { issuedAt: 'desc' },
+      }),
+      prisma.salarySlip.findMany({
+        where: {
+          approvedAt: { gte: start, lte: end },
+          status: { in: ['APPROVED', 'PARTIALLY_PAID', 'PAID'] },
+          ...(dept
+            ? {
+                OR: [
+                  { payrollRun: { departmentId: dept } },
+                  { staff: { staffDepartments: { some: { departmentId: dept } } } },
+                ],
+              }
+            : {}),
+        },
+        include: {
+          staff: { select: { id: true, fullName: true, employeeId: true } },
+          payrollRun: { include: { department: { select: { id: true, name: true } } } },
+          payments: { where: { paidAt: { lte: end } } },
+          correctionEntries: { where: { createdAt: { lte: end } } },
+        },
+        orderBy: { approvedAt: 'desc' },
+      }),
+      prisma.doctorCommissionAccrual.findMany({
+        where: {
+          OR: [
+            { collectionEventId: { not: null }, collectionEvent: { occurredAt: { gte: start, lte: end } } },
+            { collectionEventId: null, approvedAt: { gte: start, lte: end }, status: { in: ['APPROVED', 'PARTIALLY_PAID', 'PAID'] } },
+          ],
+          ...(dept ? { invoiceLineItem: commissionDepartmentFilter(dept) } : {}),
+        },
+        include: {
+          doctor: { select: { id: true, fullName: true, employeeId: true } },
+          collectionEvent: true,
+          payouts: { where: { paidAt: { lte: end } } },
+          reversals: { where: { reversedAt: { lte: end } } },
+          adjustments: { where: { createdAt: { lte: end } } },
+        },
+      }),
+      prisma.inventoryExpense.findMany({
+        where: {
+          expenseDate: {
+            gte: new Date(start.toLocaleDateString('en-CA')),
+            lte: new Date(end.toLocaleDateString('en-CA')),
+          },
+          ...(dept ? { id: { in: [] } } : {}),
+        },
+        include: {
+          createdByUser: { select: { id: true, displayName: true, username: true, role: true } },
+        },
+        orderBy: { expenseDate: 'desc' },
+      }),
+    ]);
+
+    const items: Array<{
+      id: string;
+      date: string;
+      source: string;
+      category: string;
+      voucherRef: string;
+      department: string;
+      description: string;
+      amount: Decimal;
+      enteredBy: string;
+    }> = [];
+
+    let totalHospitalExpenses = ZERO();
+    for (const h of hospitalExpenseRows) {
+      totalHospitalExpenses = totalHospitalExpenses.plus(h.amount);
+      items.push({
+        id: `hosp-${h.id}`,
+        date: h.expenseDate.toISOString().slice(0, 10),
+        source: 'Hospital Voucher',
+        category: h.category,
+        voucherRef: h.expenseNumber,
+        department: h.department?.name ?? 'Hospital-Wide',
+        description: [h.paidTo, h.description].filter(Boolean).join(' — ') || 'Operating Expense',
+        amount: h.amount,
+        enteredBy: userName(h.createdByUser) || 'System',
+      });
+    }
+
+    let totalDirectConsumables = ZERO();
+    for (const r of deptRequisitions) {
+      for (const l of r.lines) {
+        const netQty = l.quantity.minus(l.returnedQuantity);
+        if (netQty.greaterThan(0)) {
+          const cost = netQty.times(l.costRate ?? ZERO());
+          totalDirectConsumables = totalDirectConsumables.plus(cost);
+          items.push({
+            id: `req-${l.id}`,
+            date: r.issuedAt.toISOString().slice(0, 10),
+            source: 'Inventory Consumption',
+            category: 'Clinical Consumables',
+            voucherRef: `REQ-${r.id.slice(0, 8).toUpperCase()}`,
+            department: r.department?.name ?? 'Clinical Department',
+            description: `${l.stockItem.name} (${netQty.toString()} ${l.stockItem.unit})`,
+            amount: cost,
+            enteredBy: userName(r.issuedBy) || 'System',
+          });
+        }
+      }
+    }
+
+    let totalPayroll = ZERO();
+    for (const s of salarySlips) {
+      const balance = salaryBalance(s);
+      const before = (s.approvedAt ?? s.createdAt) < start
+        ? salaryBalance({ ...s, correctionEntries: s.correctionEntries.filter((a) => a.createdAt < start) }).payable
+        : ZERO();
+      const recognized = balance.payable.minus(before);
+      if (recognized.greaterThan(0)) {
+        totalPayroll = totalPayroll.plus(recognized);
+        items.push({
+          id: `sal-${s.id}`,
+          date: (s.approvedAt ?? s.createdAt).toISOString().slice(0, 10),
+          source: 'Staff Payroll',
+          category: 'Salaries & Wages',
+          voucherRef: `SLIP-${s.id.slice(0, 8).toUpperCase()}`,
+          department: s.payrollRun?.department?.name ?? 'Hospital Staff',
+          description: `Salary: ${s.staff.fullName} (${s.staff.employeeId})`,
+          amount: recognized,
+          enteredBy: 'Payroll System',
+        });
+      }
+    }
+
+    let totalCommission = ZERO();
+    for (const c of commissionAccruals) {
+      const balance = commissionBalance(c);
+      const before = (c.collectionEvent?.occurredAt ?? c.approvedAt ?? c.createdAt) < start
+        ? commissionBalance({ ...c, reversals: c.reversals.filter((r) => r.reversedAt < start), adjustments: c.adjustments.filter((a) => a.createdAt < start) }).payable
+        : ZERO();
+      const recognized = balance.payable.minus(before);
+      if (recognized.greaterThan(0)) {
+        totalCommission = totalCommission.plus(recognized);
+        items.push({
+          id: `comm-${c.id}`,
+          date: (c.collectionEvent?.occurredAt ?? c.approvedAt ?? c.createdAt).toISOString().slice(0, 10),
+          source: 'Doctor Commission',
+          category: 'Doctor Commissions',
+          voucherRef: `COMM-${c.id.slice(0, 8).toUpperCase()}`,
+          department: 'Medical Services',
+          description: `Commission: Dr. ${c.doctor.fullName} (${c.doctor.employeeId})`,
+          amount: recognized,
+          enteredBy: 'Billing Collection Event',
+        });
+      }
+    }
+
+    let totalInventoryOpex = ZERO();
+    for (const ie of inventoryExpenseRows) {
+      totalInventoryOpex = totalInventoryOpex.plus(ie.amount);
+      items.push({
+        id: `inve-${ie.id}`,
+        date: ie.expenseDate.toISOString().slice(0, 10),
+        source: 'Inventory Opex',
+        category: ie.category,
+        voucherRef: ie.reference || `INV-EXP-${ie.id.slice(0, 8).toUpperCase()}`,
+        department: 'Inventory / Stores',
+        description: ie.description ?? 'Store Operating Expense',
+        amount: ie.amount,
+        enteredBy: userName(ie.createdByUser) || 'System',
+      });
+    }
+
+    const totalOperatingCosts = totalHospitalExpenses
+      .plus(totalDirectConsumables)
+      .plus(totalPayroll)
+      .plus(totalCommission)
+      .plus(totalInventoryOpex);
+
+    return {
+      period: periodOf(start, end, label),
+      summary: {
+        totalOperatingCosts,
+        totalHospitalExpenses,
+        totalDirectConsumables,
+        totalPayroll,
+        totalCommission,
+        totalInventoryOpex,
+        rowCount: items.length,
+      },
+      rows: items,
     };
   },
 };

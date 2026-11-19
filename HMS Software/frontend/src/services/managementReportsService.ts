@@ -83,20 +83,23 @@ export async function fetchManagementSummary(range: RangeParams, filters?: Repor
   const hospital = [
     record('Billing', 'Gross Billing', s.grossBilling, true),
     record('Billing', 'Discounts', s.discounts, true),
-    record('Billing', 'Net Billing', s.totalBilling, true),
+    record('Billing', 'Net Billing (Earned Revenue)', s.totalBilling, true),
     record('Billing', 'Actual Collections', s.collections, true),
     record('Billing', 'Outstanding', s.outstanding, true),
     record('Expenses', 'Hospital Expenses (Expense Management)', s.hospitalExpenses, true),
     record('Expenses', 'Inventory Operating Expenses', s.expenses, true),
+    record('Direct Costs', 'Direct Consumable Costs', s.directServiceCosts, true),
     record('Salary Payroll', 'Total Salary Generated', s.salaryGenerated, true),
     record('Salary Payroll', 'Salary Paid', s.salaryPaid, true),
     record('Salary Payroll', 'Salary Outstanding', s.salaryOutstanding, true),
     record('Doctor Commission', 'Total Commission Generated', s.commissionGenerated, true),
     record('Doctor Commission', 'Commission Paid', s.commissionPaid, true),
     record('Doctor Commission', 'Commission Outstanding', s.commissionOutstanding, true),
-    record('Financial Summary', 'Collected Income', s.collectedIncome, true),
+    record('Financial Summary', 'Net Earned Hospital Revenue', s.netEarnedRevenue ?? s.totalBilling, true),
+    record('Financial Summary', 'Gross Profit', s.grossProfit, true),
     record('Financial Summary', 'Total Applicable Operating Costs', s.totalOperatingCosts, true),
-    record('Financial Summary', 'Collection-Based Operating Profit / Loss', s.operatingResult, true),
+    record('Financial Summary', 'Operating Profit / (Loss) [Accrual]', s.operatingResult, true),
+    record('Financial Summary', 'Actual Cash Collections (Custody)', s.collectedIncome, true),
     record('Admissions & Beds', 'Active Admissions', s.activeAdmissions, false),
     record('Admissions & Beds', 'Occupied Beds', s.occupiedBeds, false),
     record('Admissions & Beds', 'Available Beds', s.availableBeds, false),
@@ -249,4 +252,53 @@ export async function fetchStaffPayrollCommission(filters?: ReportFilters): Prom
 export async function fetchInventoryPharmacy(range: RangeParams, filters?: ReportFilters): Promise<ReportResult<SummaryRecord>> {
   const d = await get<any>('inventory-pharmacy', params(range, filters));
   return { periodLabel: d.period.label, rows: d.rows.map((r: any) => record(r.section, r.metric, r.value, r.isAmount)) };
+}
+
+// ── #4 Operating Profit (P&L) ─────────────────────────────────────────────
+
+export interface OperatingProfitRecord {
+  key: string;
+  item: string;
+  amount: number;
+  note: string;
+}
+
+export async function fetchOperatingProfit(range: RangeParams, filters?: ReportFilters): Promise<ReportResult<OperatingProfitRecord>> {
+  const d = await get<any>('operating-profit', params(range, filters));
+  const s = d.summary;
+  const n = (v: any) => Number(v ?? 0);
+  return {
+    periodLabel: d.period.label,
+    rows: [
+      { key: 'revenue', item: '1. Net Earned Hospital Revenue', amount: n(s.revenue), note: 'Gross billing minus approved discounts (Accrual)' },
+      { key: 'directCost', item: '2. Less: Direct Consumable Costs', amount: n(s.directCost), note: 'Clinical consumables issued to departments at historical cost' },
+      { key: 'grossProfit', item: '3. Gross Profit', amount: n(s.grossProfit), note: 'Net Revenue minus Direct Consumables' },
+      { key: 'payroll', item: '4. Less: Staff Payroll Cost', amount: n(s.payroll), note: 'Total approved staff salaries for the period' },
+      { key: 'doctorCommission', item: '5. Less: Doctor Commission Expense', amount: n(s.doctorCommission), note: 'Net earned doctor commissions on collected receipts' },
+      { key: 'otherOpex', item: '6. Less: Other Operating Expenses', amount: n(s.otherOperatingExpenses), note: 'Approved hospital vouchers and inventory operating expenses' },
+      { key: 'operatingProfit', item: '7. Operating Profit / (Loss)', amount: n(s.operatingProfit), note: 'Gross Profit − Payroll − Commissions − Other OPEX' },
+    ],
+  };
+}
+
+// ── #3 Detailed Expense ───────────────────────────────────────────────────
+
+export interface DetailedExpenseRow {
+  id: string;
+  date: string;
+  source: string;
+  category: string;
+  voucherRef: string;
+  department: string;
+  description: string;
+  amount: number;
+  enteredBy: string;
+}
+
+export async function fetchDetailedExpenses(range: RangeParams, filters?: ReportFilters): Promise<ReportResult<DetailedExpenseRow>> {
+  const d = await get<any>('detailed-expenses', params(range, filters));
+  return {
+    periodLabel: d.period.label,
+    rows: d.rows.map((r: any) => toNumbers<DetailedExpenseRow>(r, ['amount'])),
+  };
 }

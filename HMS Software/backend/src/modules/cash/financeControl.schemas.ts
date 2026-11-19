@@ -53,6 +53,7 @@ export const reviewSettlementBodySchema = z
   .object({
     action: z.enum(['ACCEPT', 'PARTIALLY_ACCEPT', 'RETURN', 'REJECT']),
     remarks: z.string().optional(),
+    receiverPortalUserId: z.string().uuid().optional(),
   })
   .refine((body) => (body.action === 'RETURN' || body.action === 'REJECT' ? !!body.remarks?.trim() : true), {
     message: 'Remarks are required when returning or rejecting a settlement.',
