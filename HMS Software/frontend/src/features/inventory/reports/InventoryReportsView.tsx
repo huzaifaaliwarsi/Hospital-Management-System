@@ -142,11 +142,12 @@ export const PurchaseReport: React.FC = () => {
         { header: 'Invoice Ref', cell: (r: any) => formatShortRef(r.invoiceReference, r.id, 'GRN') },
         { header: 'Payment Method', cell: (r: any) => r.paymentMethod },
         { header: 'Total', align: 'right', cell: (r: any) => formatPKR(r.totalAmount), excelValue: (r: any) => Number(r.totalAmount) },
+        { header: 'Paid', align: 'right', cell: (r: any) => formatPKR(r.paidAmount ?? (r.paymentMethod === 'CREDIT' ? 0 : r.totalAmount)), excelValue: (r: any) => Number(r.paidAmount ?? 0) },
         {
           header: 'Due',
           align: 'right',
-          cell: (r: any) => formatPKR(r.paymentMethod === 'CREDIT' ? r.totalAmount : 0),
-          excelValue: (r: any) => (r.paymentMethod === 'CREDIT' ? Number(r.totalAmount) : 0),
+          cell: (r: any) => formatPKR(r.dueAmount ?? (r.paymentMethod === 'CREDIT' ? r.totalAmount : 0)),
+          excelValue: (r: any) => Number(r.dueAmount ?? (r.paymentMethod === 'CREDIT' ? r.totalAmount : 0)),
         },
         { header: 'Created By', cell: (r: any) => r.createdByUser?.displayName || r.createdByUser?.username || '—' },
       ]}
@@ -232,7 +233,7 @@ export const SupplierReport: React.FC = () => {
       extraFilters={
         <FilterSelect
           label="Transaction Type"
-          options={opts(['PURCHASE_CREDIT', 'Purchase'], ['PAYMENT', 'Payment'], ['RETURN', 'Return'], ['CREDIT_NOTE', 'Credit Note'])}
+          options={opts(['PURCHASE_CREDIT', 'Purchase'], ['PAYMENT', 'Payment'], ['RETURN', 'Return'], ['CREDIT_NOTE', 'Credit Note'], ['ADJUSTMENT', 'Adjustment'])}
           {...bind('transactionType')}
         />
       }
@@ -240,12 +241,24 @@ export const SupplierReport: React.FC = () => {
         { header: 'Date', cell: (r: any) => formatDateTimeDDMMYYYY(r.createdAt) },
         { header: 'Supplier', cell: (r: any) => r.supplier?.name || '—' },
         { header: 'Type', cell: (r: any) => r.entryType },
-        { header: 'Amount', align: 'right', cell: (r: any) => formatPKR(r.amount), excelValue: (r: any) => Number(r.amount) },
+        { header: 'Debit (Paid/Return)', align: 'right', cell: (r: any) => formatPKR(r.debit ?? 0), excelValue: (r: any) => Number(r.debit ?? 0) },
+        { header: 'Credit (Purchase)', align: 'right', cell: (r: any) => formatPKR(r.credit ?? 0), excelValue: (r: any) => Number(r.credit ?? 0) },
+        { header: 'Running Balance', align: 'right', cell: (r: any) => formatPKR(r.runningBalance ?? r.amount), excelValue: (r: any) => Number(r.runningBalance ?? 0) },
         { header: 'Actor', cell: (r: any) => r.actor?.username || '—' },
       ]}
       fetchReport={async (r) => {
         const res = await inventoryReportsApiService.getSuppliers({ ...range(r), transactionType: filters.transactionType || undefined });
-        return { periodLabel: res.period.label, rows: res.rows };
+        return {
+          periodLabel: res.period.label,
+          rows: res.rows,
+          cards: [
+            { label: 'Opening Balance', value: formatPKR(res.openingBalance) },
+            { label: 'Purchases (Credit)', value: formatPKR(res.totalPurchases) },
+            { label: 'Payments', value: formatPKR(res.totalPayments) },
+            { label: 'Returns', value: formatPKR(res.totalReturns) },
+            { label: 'Closing Payable', value: formatPKR(res.closingPayable), isAlert: Number(res.closingPayable) > 0 },
+          ],
+        };
       }}
     />
   );
