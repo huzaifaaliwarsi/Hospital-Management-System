@@ -197,13 +197,15 @@ export async function fetchIncomeExpenseLedger(
   range: RangeParams | null,
   filters?: IncomeExpenseLedgerFilters,
   page = 1,
-  limit = 50,
+  limit = 25,
+  exportAll = false,
 ): Promise<IncomeExpenseLedgerResponse> {
   const query = {
     ...params(range, filters as ReportFilters),
     page,
     limit,
     search: filters?.search,
+    exportAll: exportAll ? true : undefined,
   };
   return await get<IncomeExpenseLedgerResponse>('income-expense-ledger', query);
 }

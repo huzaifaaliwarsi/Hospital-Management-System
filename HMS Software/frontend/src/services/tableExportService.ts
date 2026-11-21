@@ -1,3 +1,4 @@
+import { formatPKR } from '../utils/formatters';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
@@ -36,6 +37,11 @@ export interface ExportRequest<T> {
   currentUser: User | null;
   periodLabel?: string;
   filters?: string[];
+  /** Optional reconciliation rows (M01); excluded from report record counts. */
+  summaryTitle?: string;
+  /** M01: four compact footer rows without a heading. */
+  minimalSummary?: boolean;
+  summaryRows?: Array<{ label: string; value: string | number }>;
 }
 
 function nowStamp() {
@@ -45,7 +51,7 @@ function nowStamp() {
   return { now, dateStr, generatedOn: `${formatDisplayDate(now)}, ${timeStr}` };
 }
 
-export function downloadTablePDF<T>({ documentTitle, documentSubtitle, filenamePrefix, columns, rows, currentUser, periodLabel, filters }: ExportRequest<T>): void {
+export function downloadTablePDF<T>({ documentTitle, documentSubtitle, filenamePrefix, columns, rows, currentUser, periodLabel, filters, summaryRows, summaryTitle, minimalSummary }: ExportRequest<T>): void {
   const profile = getHospitalProfile();
   const { dateStr, generatedOn } = nowStamp();
   const generatedByName = currentUser?.name || 'Unauthenticated Session';
@@ -135,10 +141,16 @@ export function downloadTablePDF<T>({ documentTitle, documentSubtitle, filenameP
     },
   });
 
+  if (summaryRows?.length) autoTable(doc, {
+    startY: (doc as any).lastAutoTable.finalY + 6,
+    head: minimalSummary ? undefined : summaryTitle ? [[{ content: summaryTitle, colSpan: 2 }], ['Particulars', 'Amount (PKR)']] : [['Financial reconciliation', 'PKR']],
+    body: summaryRows.map(r => [r.label, minimalSummary && typeof r.value === 'number' ? formatPKR(r.value === 0 ? 0 : r.value) : r.value]), theme: 'grid',
+    headStyles: { fillColor: [8, 119, 90] }, columnStyles: { 1: { halign: 'right', ...(minimalSummary ? { fontStyle: 'bold' as const } : {}) } },
+  });
   doc.save(`${filenamePrefix}_${dateStr}.pdf`);
 }
 
-export function downloadTableExcel<T>({ documentTitle, filenamePrefix, columns, rows, currentUser, periodLabel, filters }: ExportRequest<T>): void {
+export function downloadTableExcel<T>({ documentTitle, filenamePrefix, columns, rows, currentUser, periodLabel, filters, summaryRows, summaryTitle, minimalSummary }: ExportRequest<T>): void {
   const profile = getHospitalProfile();
   const { generatedOn } = nowStamp();
 
@@ -164,15 +176,21 @@ export function downloadTableExcel<T>({ documentTitle, filenamePrefix, columns, 
   const sheetName = documentTitle.replace(/[:\\/?*[\]]/g, '-').slice(0, 31);
   XLSX.utils.book_append_sheet(workbook, wsData, sheetName);
   XLSX.utils.book_append_sheet(workbook, wsInfo, 'Export Information');
+  if (summaryRows?.length && minimalSummary) {
+    const footer = XLSX.utils.aoa_to_sheet(summaryRows.map(r => [r.label, r.value === 0 ? 0 : r.value]));
+    footer['!cols'] = [{ wch: 80 }, { wch: 22 }];
+    summaryRows.forEach((_, i) => { if (footer['B' + (i + 1)]) footer['B' + (i + 1)].z = '"PKR "#,##0.00;"PKR "-#,##0.00;"PKR "0.00'; });
+    XLSX.utils.book_append_sheet(workbook, footer, 'Summary');
+  } else if (summaryRows?.length) XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summaryTitle ? summaryRows.map(r => ({ Particulars: r.label, 'Amount (PKR)': r.value })) : summaryRows), summaryTitle?.slice(0, 31) || 'Financial Reconciliation');
 
   const { dateStr } = nowStamp();
   XLSX.writeFile(workbook, `${filenamePrefix}_${dateStr}.xlsx`);
 }
 
-export function downloadTableCSV<T>({ filenamePrefix, columns, rows }: ExportRequest<T>): void {
+export function downloadTableCSV<T>({ filenamePrefix, columns, rows, summaryRows, summaryTitle, minimalSummary }: ExportRequest<T>): void {
   const dataRows = rows.map((row) => Object.fromEntries(columns.map((c) => [c.header, c.excelValue ? c.excelValue(row) : c.cell(row)])));
   const wsData = XLSX.utils.json_to_sheet(dataRows);
-  const csv = XLSX.utils.sheet_to_csv(wsData);
+  const csv = XLSX.utils.sheet_to_csv(wsData) + (summaryRows?.length ? '\n\n' + XLSX.utils.sheet_to_csv(XLSX.utils.aoa_to_sheet([...(minimalSummary ? [] : summaryTitle ? [[summaryTitle], ['Particulars', 'Amount (PKR)']] : [['Financial reconciliation', 'PKR']]), ...summaryRows.map(r => [r.label, minimalSummary && typeof r.value === 'number' ? formatPKR(r.value === 0 ? 0 : r.value) : r.value])])) : '');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -185,7 +203,7 @@ export function downloadTableCSV<T>({ filenamePrefix, columns, rows }: ExportReq
   URL.revokeObjectURL(url);
 }
 
-export function printTable<T>({ documentTitle, documentSubtitle, columns, rows, currentUser, periodLabel, filters }: ExportRequest<T>): void {
+export function printTable<T>({ documentTitle, documentSubtitle, columns, rows, currentUser, periodLabel, filters, summaryRows, summaryTitle, minimalSummary }: ExportRequest<T>): void {
   const profile = getHospitalProfile();
   const { generatedOn } = nowStamp();
   const userName = currentUser?.name || 'Unauthenticated Session';
@@ -255,6 +273,7 @@ export function printTable<T>({ documentTitle, documentSubtitle, columns, rows, 
           </tbody>
         </table>
 
+        ${summaryRows?.length ? `<table>${!minimalSummary && summaryTitle ? `<caption style="text-align:left;font-weight:bold;color:#08775A;padding:10px 0 6px">${summaryTitle}</caption><thead><tr><th>Particulars</th><th style="text-align:right">Amount (PKR)</th></tr></thead>` : ''}<tbody>${summaryRows.map(r => `<tr><td>${r.label}</td><td style="text-align:right${minimalSummary ? ';font-weight:bold' : ''}">${minimalSummary && typeof r.value === 'number' ? formatPKR(r.value === 0 ? 0 : r.value) : r.value}</td></tr>`).join('')}</tbody></table>` : ''}
         <div class="footer">
           <div>CONFIDENTIAL • OFFICIAL HOSPITAL FINANCE RECORD • UNAUTHORIZED REPRODUCTION FORBIDDEN</div>
           <div>Report generated from Executive HMS Portal</div>

@@ -1,3 +1,4 @@
+import { m01SummaryRows } from './m01Summary';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   FileSpreadsheet,
@@ -229,13 +230,8 @@ export const IncomeExpenseLedgerView: React.FC = () => {
       {
         header: 'Gross Bill',
         align: 'right',
-        cell: (r) =>
-          r.grossBilling
-            ? formatPKR(r.grossBilling)
-            : r.recognizedExpense
-              ? formatPKR(r.recognizedExpense)
-              : '—',
-        excelValue: (r) => r.grossBilling || r.recognizedExpense || 0,
+        cell: (r) => r.transactionType === 'REVENUE' ? formatPKR(r.grossBilling) : 'N/A',
+        excelValue: (r) => r.transactionType === 'REVENUE' ? r.grossBilling : 'N/A',
       },
       {
         header: 'Received / Paid',
@@ -257,16 +253,13 @@ export const IncomeExpenseLedgerView: React.FC = () => {
           if (r.transactionType === 'SETTLEMENT') {
             return (r.cashIn || 0) - (r.cashOut || 0);
           }
-          return (
-            (r.collectionsReceived || r.cashIn || 0) -
-            (r.expensePaid || r.cashOut || (r.collectionsReceived < 0 ? Math.abs(r.collectionsReceived) : 0))
-          );
+          return r.collectionsReceived !== 0 ? r.collectionsReceived : (r.cashIn || 0) - (r.expensePaid || r.cashOut || 0);
         },
       },
       {
         header: 'Outstanding',
         align: 'right',
-        cell: (r) => (r.outstandingPayable ? formatPKR(r.outstandingPayable) : '—'),
+        cell: (r) => formatPKR(r.outstandingPayable),
         excelValue: (r) => r.outstandingPayable || 0,
       },
       { header: 'Payment Method', cell: (r) => r.paymentMethod || '—' },
@@ -292,33 +285,43 @@ export const IncomeExpenseLedgerView: React.FC = () => {
     };
   }, [exportColumns, data, currentUser, appliedFilters, options]);
 
+  const handleExport = async (kind: 'excel' | 'csv' | 'pdf' | 'print') => {
+    try {
+      const range = { preset: appliedFilters.preset, ...(appliedFilters.preset === 'custom' ? { fromDate: appliedFilters.fromDate, toDate: appliedFilters.toDate } : {}) };
+      const filters = Object.fromEntries(Object.entries(appliedFilters).filter(([key, value]) => !['preset', 'fromDate', 'toDate'].includes(key) && value && value !== 'ALL'));
+      const report = await fetchIncomeExpenseLedger(range as any, filters, 1, 500, true);
+      const context = { ...exportContext, rows: report.items, periodLabel: report.period.label,
+        minimalSummary: true,
+        summaryRows: m01SummaryRows(report.totals).map(({ label, value }) => ({ label, value })),
+      };
+      ({ excel: downloadTableExcel, csv: downloadTableCSV, pdf: downloadTablePDF, print: printTable })[kind](context);
+    } catch (err: any) { setError(err.message || 'Export failed'); }
+  };
+
   // Clean Number Formatter without repetitive prefix (Matching Salon ERP standard)
   const formatNum = (val: number | string | null | undefined) =>
-    formatPKR(val, { showPrefix: false });
+    formatPKR(Number(val) === 0 ? 0 : val, { showPrefix: Number(val) === 0 });
 
   // Value Display Helpers for 12 ERP Columns
   const getGrossBillContent = (r: IncomeExpenseLedgerRow) => {
-    if (r.grossBilling > 0) {
-      return <span className="font-bold text-slate-900">{formatNum(r.grossBilling)}</span>;
+    if (r.transactionType === 'REVENUE') {
+      return <span className="font-mono font-semibold text-slate-900">{formatNum(r.grossBilling)}</span>;
     }
-    if (r.recognizedExpense > 0) {
-      return <span className="font-bold text-slate-800">{formatNum(r.recognizedExpense)}</span>;
-    }
-    return <span className="text-slate-300 font-normal">—</span>;
+    return <span className="text-slate-500">N/A</span>;
   };
 
   const getReceivedPaidContent = (r: IncomeExpenseLedgerRow) => {
     if (r.transactionType === 'SETTLEMENT') {
       if (r.cashIn > 0) {
-        return <span className="font-bold text-emerald-600">+{formatNum(r.cashIn)}</span>;
+        return <span className="font-mono font-semibold text-emerald-600">+{formatNum(r.cashIn)}</span>;
       }
       if (r.cashOut > 0) {
-        return <span className="font-bold text-rose-600">-{formatNum(r.cashOut)}</span>;
+        return <span className="font-mono font-semibold text-rose-600">-{formatNum(r.cashOut)}</span>;
       }
       const handover = r.details?.handoverAmount || 0;
       return (
         <span
-          className="font-semibold text-slate-500 text-xs"
+          className="font-mono font-medium text-slate-500 text-[11px]"
           title="Internal Cash Custody Handover — Net Zero at Hospital Level"
         >
           {handover > 0 ? `Net 0.00 (±${formatNum(handover)})` : 'Net 0.00'}
@@ -326,51 +329,51 @@ export const IncomeExpenseLedgerView: React.FC = () => {
       );
     }
     if (r.collectionsReceived > 0) {
-      return <span className="font-bold text-emerald-600">+{formatNum(r.collectionsReceived)}</span>;
+      return <span className="font-mono font-semibold text-emerald-600">+{formatNum(r.collectionsReceived)}</span>;
     }
     if (r.collectionsReceived < 0) {
-      return <span className="font-bold text-rose-600">-{formatNum(Math.abs(r.collectionsReceived))}</span>;
+      return <span className="font-mono font-semibold text-rose-600">-{formatNum(Math.abs(r.collectionsReceived))}</span>;
     }
     if (r.expensePaid > 0) {
-      return <span className="font-bold text-rose-600">-{formatNum(r.expensePaid)}</span>;
+      return <span className="font-mono font-semibold text-rose-600">-{formatNum(r.expensePaid)}</span>;
     }
     if (r.cashIn > 0) {
-      return <span className="font-bold text-emerald-600">+{formatNum(r.cashIn)}</span>;
+      return <span className="font-mono font-semibold text-emerald-600">+{formatNum(r.cashIn)}</span>;
     }
     if (r.cashOut > 0) {
-      return <span className="font-bold text-rose-600">-{formatNum(r.cashOut)}</span>;
+      return <span className="font-mono font-semibold text-rose-600">-{formatNum(r.cashOut)}</span>;
     }
-    return <span className="text-slate-300 font-normal">—</span>;
+    return <span className="text-slate-300 font-mono font-normal">—</span>;
   };
 
   const getOutstandingContent = (r: IncomeExpenseLedgerRow) => {
     if (r.outstandingPayable > 0) {
-      return <span className="font-semibold text-amber-600">{formatNum(r.outstandingPayable)}</span>;
+      return <span className="font-mono font-semibold text-amber-600">{formatNum(r.outstandingPayable)}</span>;
     }
-    return <span className="text-slate-400 font-normal">{formatNum(0)}</span>;
+    return <span className="text-slate-400 font-mono font-normal">{formatNum(0)}</span>;
   };
 
   // Semantic Pure Text Formatters (Clean ERP Typography — NO Boxes or Pill Badges)
   const renderTransactionType = (type: string, label: string) => {
     switch (type) {
       case 'REVENUE':
-        return <span className="font-semibold text-emerald-700">{label}</span>;
+        return <span className="font-bold text-emerald-700">{label}</span>;
       case 'COLLECTION':
-        return <span className="font-semibold text-teal-700">{label}</span>;
+        return <span className="font-bold text-teal-700">{label}</span>;
       case 'EXPENSE':
-        return <span className="font-semibold text-amber-700">{label}</span>;
+        return <span className="font-bold text-amber-700">{label}</span>;
       case 'PAYROLL':
-        return <span className="font-semibold text-purple-700">{label}</span>;
+        return <span className="font-bold text-purple-700">{label}</span>;
       case 'COMMISSION':
-        return <span className="font-semibold text-indigo-700">{label}</span>;
+        return <span className="font-bold text-indigo-700">{label}</span>;
       case 'CONSUMABLE':
-        return <span className="font-semibold text-slate-600">{label}</span>;
+        return <span className="font-bold text-slate-600">{label}</span>;
       case 'REFUND':
-        return <span className="font-semibold text-rose-700">{label}</span>;
+        return <span className="font-bold text-rose-700">{label}</span>;
       case 'SETTLEMENT':
-        return <span className="font-semibold text-slate-600">{label}</span>;
+        return <span className="font-bold text-slate-600">{label}</span>;
       default:
-        return <span className="font-medium text-slate-700">{label}</span>;
+        return <span className="font-bold text-slate-700">{label}</span>;
     }
   };
 
@@ -380,23 +383,23 @@ export const IncomeExpenseLedgerView: React.FC = () => {
       case 'COMPLETED':
       case 'APPROVED':
       case 'ACCEPTED':
-        return <span className="font-semibold text-emerald-600">{label}</span>;
+        return <span className="font-bold text-emerald-600">{label}</span>;
       case 'PARTIALLY_PAID':
       case 'PARTIAL':
-        return <span className="font-semibold text-amber-600">{label}</span>;
+        return <span className="font-bold text-amber-600">{label}</span>;
       case 'UNPAID':
       case 'DRAFT':
-        return <span className="font-medium text-slate-400">{label}</span>;
+        return <span className="font-semibold text-slate-400">{label}</span>;
       case 'REVERSED':
       case 'VOID':
-        return <span className="font-semibold text-rose-600">{label}</span>;
+        return <span className="font-bold text-rose-600">{label}</span>;
       default:
-        return <span className="font-medium text-slate-500">{label}</span>;
+        return <span className="font-semibold text-slate-500">{label}</span>;
     }
   };
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 max-w-full space-y-4">
       {/* ── Page Header ── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-1 border-b border-slate-200">
         <div>
@@ -563,7 +566,7 @@ export const IncomeExpenseLedgerView: React.FC = () => {
             <button
               type="button"
               onClick={handleApplyFilters}
-              className="flex-1 h-8.5 px-3.5 rounded-lg bg-[#08775A] hover:bg-[#065f46] text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+              className="flex-1 h-8.5 px-2 rounded-lg bg-[#08775A] hover:bg-[#065f46] text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer"
             >
               <Filter className="h-3.5 w-3.5" />
               <span>Apply</span>
@@ -611,10 +614,10 @@ export const IncomeExpenseLedgerView: React.FC = () => {
             {/* Export Buttons */}
             <ExportButtonGroup
               disabled={!data || data.items.length === 0}
-              onExcel={() => downloadTableExcel(exportContext)}
-              onCsv={() => downloadTableCSV(exportContext)}
-              onPdf={() => downloadTablePDF(exportContext)}
-              onPrint={() => printTable(exportContext)}
+              onExcel={() => handleExport('excel')}
+              onCsv={() => handleExport('csv')}
+              onPdf={() => handleExport('pdf')}
+              onPrint={() => handleExport('print')}
             />
           </div>
         </div>
@@ -643,75 +646,78 @@ export const IncomeExpenseLedgerView: React.FC = () => {
             <p className="text-[11px] text-slate-400 mt-0.5">Try adjusting the period, department, or transaction type.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs border-collapse">
+          <div className="w-full min-w-0 max-w-full overflow-x-auto" role="region" aria-label="Income and expense transactions" tabIndex={0}>
+            <table className="w-full min-w-[1430px] table-fixed border-collapse text-left text-xs [&_td]:align-middle [&_th]:align-middle [&_th]:whitespace-normal [&_th]:break-normal [&_th]:leading-4">
+              <colgroup>
+                {[44, 160, 130, 160, 220, 150, 110, 110, 120, 110, 110, 44].map((width, i) => <col key={i} style={{ width }} />)}
+              </colgroup>
               <thead>
-                <tr className="border-b border-slate-200 bg-slate-50/90 text-slate-600 text-[11px] font-bold uppercase tracking-wider sticky top-0 z-10 whitespace-nowrap">
-                  <th className="py-3 px-2.5 text-center w-12 border-r border-slate-200">#</th>
-                  <th className="py-3 px-3 text-left border-r border-slate-200">Date &amp; Time</th>
-                  <th className="py-3 px-3 text-left border-r border-slate-200">Reference ID</th>
-                  <th className="py-3 px-3 text-left border-r border-slate-200">Transaction Type</th>
-                  <th className="py-3 px-3.5 text-left border-r border-slate-200">Patient / Payee / Description</th>
-                  <th className="py-3 px-3 text-left border-r border-slate-200">Department</th>
-                  <th className="py-3 px-3 text-left border-r border-slate-200">Status</th>
-                  <th className="py-3 px-3.5 text-right border-r border-slate-200">Gross Bill</th>
-                  <th className="py-3 px-3.5 text-right border-r border-slate-200">Received / Paid</th>
-                  <th className="py-3 px-3.5 text-right border-r border-slate-200">Outstanding</th>
-                  <th className="py-3 px-3 text-left border-r border-slate-200">Payment Method</th>
-                  <th className="py-3 px-2.5 text-center w-12">View</th>
+                <tr className="bg-[#f1f5f9] border-b border-slate-300 text-slate-800 text-[11px] font-bold uppercase tracking-wider sticky top-0 z-10 whitespace-nowrap">
+                  <th className="w-12 py-2.5 px-3 text-center border-r border-slate-300 font-bold text-slate-700">#</th>
+                  <th className="py-2.5 px-3 text-left border-r border-slate-300">Date &amp; Time</th>
+                  <th className="py-2.5 px-3 text-left border-r border-slate-300">Reference ID</th>
+                  <th className="py-2.5 px-3 text-left border-r border-slate-300 ">Transaction Type</th>
+                  <th className="py-2.5 px-2 text-left border-r border-slate-300 ">Patient / Payee / Description</th>
+                  <th className="py-2.5 px-3 text-left border-r border-slate-300 ">Department</th>
+                  <th className="py-2.5 px-3 text-left border-r border-slate-300">Status</th>
+                  <th className="py-2.5 px-2 text-right border-r border-slate-300">Gross Bill</th>
+                  <th className="py-2.5 px-2 text-right border-r border-slate-300">Received / Paid</th>
+                  <th className="py-2.5 px-2 text-right border-r border-slate-300">Outstanding</th>
+                  <th className="py-2.5 px-3 text-left border-r border-slate-300">Payment Method</th>
+                  <th className="py-2.5 px-2.5 text-center w-12">View</th>
                 </tr>
               </thead>
-              <tbody className="bg-white">
+              <tbody className="text-slate-800 font-medium">
                 {data.items.map((r, idx) => (
                   <tr
                     key={r.id}
-                    className="border-b border-slate-200 hover:bg-slate-50/80 transition-colors cursor-pointer text-slate-800"
+                    className="border-b border-slate-200 hover:bg-slate-50/90 transition-colors cursor-pointer text-slate-800 last:border-b-0"
                     onClick={() => setDetailRow(r)}
                   >
-                    <td className="py-3 px-2.5 text-center text-slate-400 font-normal border-r border-slate-200">
+                    <td className="py-2.5 px-3 text-center border-r border-slate-200 text-slate-500 font-mono text-[11px] bg-slate-50/60 whitespace-nowrap">
                       {(page - 1) * limit + idx + 1}
                     </td>
-                    <td className="py-3 px-3 whitespace-nowrap text-slate-500 text-xs border-r border-slate-200">
+                    <td className="py-2.5 px-2 whitespace-nowrap font-mono text-slate-700 text-[11.5px] border-r border-slate-200">
                       {formatDateTimeDDMMYYYY(r.date)}
                     </td>
-                    <td className="py-3 px-3 whitespace-nowrap font-bold text-slate-900 hover:text-[#08775A] transition-colors border-r border-slate-200">
+                    <td className="py-2.5 px-2 whitespace-normal font-mono font-semibold text-[#08775A] text-[11.5px] hover:underline border-r border-slate-200">
                       {r.reference}
                     </td>
-                    <td className="py-3 px-3 whitespace-nowrap text-xs border-r border-slate-200">
+                    <td className="py-2.5 px-2 whitespace-normal text-xs border-r border-slate-200">
                       {renderTransactionType(r.transactionType, r.typeLabel)}
                     </td>
-                    <td className="py-3 px-3.5 max-w-sm truncate border-r border-slate-200" title={r.patientPayeeDescription}>
-                      <div className="font-bold text-slate-900 text-xs">{r.patientPayeeDescription}</div>
+                    <td className="py-2.5 px-2 max-w-[240px] truncate border-r border-slate-200 overflow-hidden" title={r.patientPayeeDescription}>
+                      <div className="font-bold text-slate-900 text-xs truncate block">{r.patientPayeeDescription}</div>
                       {r.encounterInvoiceRef && (
-                        <div className="text-[11px] text-slate-400 font-normal mt-0.5">{r.encounterInvoiceRef}</div>
+                        <div className="text-[10.5px] text-slate-400 font-normal mt-0.5 truncate block">{r.encounterInvoiceRef}</div>
                       )}
                     </td>
-                    <td className="py-3 px-3 whitespace-nowrap text-slate-600 text-xs border-r border-slate-200">
+                    <td className="py-2.5 px-2 whitespace-normal text-slate-700 text-xs border-r border-slate-200 truncate max-w-[150px]" title={r.department}>
                       {r.department}
                     </td>
-                    <td className="py-3 px-3 whitespace-nowrap text-xs border-r border-slate-200">
+                    <td className="py-2.5 px-2 whitespace-normal text-xs border-r border-slate-200">
                       {renderStatus(r.status, r.statusLabel)}
                     </td>
-                    <td className="py-3 px-3.5 text-right whitespace-nowrap text-xs border-r border-slate-200">
+                    <td className="py-2.5 px-2 text-right whitespace-nowrap text-xs font-mono font-semibold border-r border-slate-200">
                       {getGrossBillContent(r)}
                     </td>
-                    <td className="py-3 px-3.5 text-right whitespace-nowrap text-xs border-r border-slate-200">
+                    <td className="py-2.5 px-2 text-right whitespace-nowrap text-xs font-mono font-semibold border-r border-slate-200">
                       {getReceivedPaidContent(r)}
                     </td>
-                    <td className="py-3 px-3.5 text-right whitespace-nowrap text-xs border-r border-slate-200">
+                    <td className="py-2.5 px-2 text-right whitespace-nowrap text-xs font-mono font-semibold border-r border-slate-200">
                       {getOutstandingContent(r)}
                     </td>
-                    <td className="py-3 px-3 whitespace-nowrap text-slate-600 text-xs border-r border-slate-200">
+                    <td className="py-2.5 px-2 whitespace-normal text-slate-700 text-xs border-r border-slate-200">
                       {r.paymentMethod || '—'}
                     </td>
-                    <td className="py-3 px-2.5 text-center">
+                    <td className="py-2.5 px-2.5 text-center">
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
                           setDetailRow(r);
                         }}
-                        className="p-1 rounded text-slate-400 hover:text-[#08775A] hover:bg-emerald-50 transition-colors"
+                        className="p-1 rounded text-slate-400 hover:text-[#08775A] hover:bg-emerald-50 transition-colors cursor-pointer"
                         title="View details"
                       >
                         <Eye className="h-4 w-4" />
@@ -723,14 +729,14 @@ export const IncomeExpenseLedgerView: React.FC = () => {
 
               {/* ── Table Column-Wise Totals Row ── */}
               <tfoot>
-                <tr className="bg-slate-50 font-bold text-slate-800 border-t-2 border-slate-300 text-xs whitespace-nowrap">
-                  <td colSpan={7} className="py-3 px-3.5 text-right uppercase tracking-wider text-slate-600 text-[11px] font-bold border-r border-slate-200">
-                    Transaction Subtotals:
+                <tr className="bg-[#f1f5f9] font-bold text-slate-900 border-t-2 border-slate-300 text-xs whitespace-nowrap sticky bottom-0">
+                  <td colSpan={7} className="py-2.5 px-2 text-right uppercase tracking-wider text-slate-700 text-[10.5px] font-bold border-r border-slate-300">
+                    Matching Report Rows:
                   </td>
-                  <td className="py-3 px-3.5 text-right font-bold text-slate-900 border-r border-slate-200">
+                  <td className="py-2.5 px-2 text-right font-mono font-bold text-slate-900 border-r border-slate-300">
                     {formatNum(data.columnTotals.grossBilling)}
                   </td>
-                  <td className="py-3 px-3.5 text-right font-bold border-r border-slate-200">
+                  <td className="py-2.5 px-2 text-right font-mono font-bold border-r border-slate-300">
                     {(() => {
                       const netMovement = data.columnTotals.collectionsReceived - data.columnTotals.expensePaid;
                       return (
@@ -741,10 +747,10 @@ export const IncomeExpenseLedgerView: React.FC = () => {
                       );
                     })()}
                   </td>
-                  <td className="py-3 px-3.5 text-right font-bold text-amber-700 border-r border-slate-200">
+                  <td className="py-2.5 px-2 text-right font-mono font-bold text-amber-700 border-r border-slate-300">
                     {formatNum(data.columnTotals.outstandingPayable)}
                   </td>
-                  <td colSpan={2} className="py-3 px-3 text-center text-slate-400 font-normal">
+                  <td colSpan={2} className="py-2.5 px-3 text-center text-slate-400 font-normal">
                     —
                   </td>
                 </tr>
@@ -753,79 +759,16 @@ export const IncomeExpenseLedgerView: React.FC = () => {
           </div>
         )}
 
-        {/* ── Bottom Summary Rows (Clean ERP Reconciliation Table — No Cards) ── */}
+        {/* M01 cash summary: four rows, using the existing server totals. */}
         {data && (
-          <div className="border-t border-slate-200 bg-white">
-            <div className="bg-slate-50/60 px-6 py-2.5 border-b border-slate-100 flex items-center justify-between">
-              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                Financial Movement &amp; Reconciliation Summary
-              </span>
-              <span className="text-[11px] text-slate-400 font-medium">
-                Period: <span className="font-semibold text-slate-600">{data.period?.label ?? 'Today'}</span>
-              </span>
-            </div>
-            <div className="divide-y divide-slate-100 text-xs">
-              <div className="flex items-center justify-between px-6 py-3 hover:bg-slate-50/60 transition-colors">
-                <div>
-                  <span className="font-medium text-slate-700 block">Total Customer Collections (Net of Customer Refunds)</span>
-                  <span className="text-[11px] text-slate-400">
-                    Physical Cash: {formatPKR(data.totals.collectionsReceivables.cashCollections)} · Bank/Card: {formatPKR(data.totals.collectionsReceivables.cardBankOnlineCollections)}
-                  </span>
-                </div>
-                <span className="font-bold text-emerald-600 text-sm">
-                  +{formatPKR(data.totals.cashMovement.totalCustomerCollections)}
-                </span>
-              </div>
-              <div className="flex items-center justify-between px-6 py-3 hover:bg-slate-50/60 transition-colors">
-                <div>
-                  <span className="font-medium text-slate-700 block">
-                    Actual Paid Operating Expenses (Cash-Disbursed)
-                  </span>
-                  <span className="text-[11px] text-slate-400">
-                    Total Paid Across Channels: {formatPKR(data.totals.cashMovement.actualPaidOperatingExpenses)} · Cash Portion: {formatPKR(data.totals.cashMovement.cashPaidOperatingExpenses ?? data.totals.cashMovement.actualPaidOperatingExpenses)} · Bank/Online: {formatPKR(data.totals.cashMovement.nonCashPaidOperatingExpenses ?? 0)}
-                  </span>
-                </div>
-                <span className="font-bold text-rose-600 text-sm">
-                  -{formatPKR(data.totals.cashMovement.cashPaidOperatingExpenses ?? data.totals.cashMovement.actualPaidOperatingExpenses)}
-                </span>
-              </div>
-              <div className="flex items-center justify-between px-6 py-3 hover:bg-slate-50/60 transition-colors">
-                  <div>
-                    <span className="font-medium text-slate-700 block">Other Non-Operating Cash Outflows (Net of Reversals)</span>
-                    <span className="text-[11px] text-slate-400">
-                      Internal custody settlements net to zero at hospital level
-                    </span>
-                  </div>
-                  <span className="font-bold text-slate-600 text-sm">
-                    -{formatPKR(data.totals.cashMovement.nonOperatingCashOutflows)}
-                  </span>
-              </div>
-              <div className="flex items-center justify-between px-6 py-3.5 bg-emerald-50/50 border-t border-b border-emerald-100">
-                <div>
-                  <span className="font-bold text-[#08775A] uppercase tracking-wide block">Net Physical Cash Movement</span>
-                  <span className="text-[11px] text-emerald-700 font-medium">
-                    Cash Collections (+{formatPKR(data.totals.collectionsReceivables.cashCollections)}) – Cash Expenses (-{formatPKR(data.totals.cashMovement.cashPaidOperatingExpenses ?? data.totals.cashMovement.actualPaidOperatingExpenses)}) – Non-Operating Outflows (-{formatPKR(data.totals.cashMovement.nonOperatingCashOutflows)})
-                  </span>
-                </div>
-                <span
-                                                              className={`font-black text-base ${(data.totals.cashMovement.netPhysicalCashMovement ?? data.totals.cashMovement.netCashMovement) >= 0 ? 'text-[#08775A]' : 'text-rose-600'
-                    }`}
-                >
-                  {(data.totals.cashMovement.netPhysicalCashMovement ?? data.totals.cashMovement.netCashMovement) >= 0 ? '+' : ''}
-                  {formatPKR(data.totals.cashMovement.netPhysicalCashMovement ?? data.totals.cashMovement.netCashMovement)}
-                </span>
-              </div>
-              <div className="flex items-center justify-between px-6 py-3 hover:bg-slate-50/60 transition-colors">
-                <div>
-                  <span className="font-medium text-slate-700 block">Current Remaining Customer Dues (As-of Selected End Date)</span>
-                  <span className="text-[11px] text-slate-400">Uncollected patient &amp; panel receivables</span>
-                </div>
-                <span className="font-bold text-amber-600 text-sm">
-                  {formatPKR(data.totals.cashMovement.currentRemainingCustomerDues)}
-                </span>
-              </div>
-            </div>
-          </div>
+          <table className="w-full border-collapse bg-white text-xs" aria-label="Income and expense footer">
+            <tbody>{m01SummaryRows(data.totals).map(row => (
+              <tr key={row.label} className={row.emphasis === 'cash' ? 'bg-emerald-50 text-[#08775A]' : 'text-slate-700'}>
+                <th scope="row" className="border border-slate-200 px-4 py-2 text-left font-semibold">{row.label}</th>
+                <td className="w-48 whitespace-nowrap border border-slate-200 px-4 py-2 text-right font-mono font-bold tabular-nums">{formatPKR(row.value)}</td>
+              </tr>
+            ))}</tbody>
+          </table>
         )}
 
         {/* ── Pagination Footer Bar (Default 25 Rows) ── */}
@@ -880,7 +823,7 @@ export const IncomeExpenseLedgerView: React.FC = () => {
       {/* ── Transaction Row Detail Modal ── */}
       {detailRow && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl border border-slate-200 max-w-xl w-full overflow-hidden animate-in fade-in duration-200">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200 max-w-4xl w-full overflow-hidden animate-in fade-in duration-200">
             <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
@@ -1009,6 +952,34 @@ export const IncomeExpenseLedgerView: React.FC = () => {
                 </div>
               </div>
 
+              {detailRow.details?.invoiceId && <div className="space-y-2 text-xs">
+                <div className="grid grid-cols-2 gap-3 border border-slate-200 p-3">
+                  <span>Service Type: <strong>{detailRow.details.serviceType}</strong></span>
+                  <span>Doctor: <strong>{detailRow.details.doctor}</strong></span>
+                  <span>Invoice Date: {formatDateTimeDDMMYYYY(detailRow.details.invoiceDate)}</span>
+                  <span>Cutoff: {formatDateTimeDDMMYYYY(detailRow.details.cutoff)}</span>
+                  <span>Net Invoice Amount: {formatPKR(detailRow.details.netInvoiceAmount)}</span>
+                  <span>Total Applied Payments: {formatPKR(detailRow.details.totalAppliedPayments)}</span>
+                  <span>Outstanding as of Cutoff: {formatPKR(detailRow.outstandingPayable)}</span>
+                  <span>Collection Portal: {detailRow.portal}</span>
+                </div>
+                <h3 className="font-bold text-slate-700">Payment History ? through selected cutoff</h3>
+                <table className="w-full border-collapse text-[11px]">
+                  <thead className="bg-slate-100"><tr>{['Receipt No.', 'Date', 'Method', 'Applied Amount', 'Collected By', 'Status'].map(h => <th key={h} className="border border-slate-200 p-2 text-left">{h}</th>)}</tr></thead>
+                  <tbody>{detailRow.details.payments.map((p: any) => <tr key={p.id}>
+                    <td className="border p-2">{p.reference}</td><td className="border p-2">{formatDateTimeDDMMYYYY(p.date)}</td><td className="border p-2">{p.method}</td>
+                    <td className="border p-2 text-right">{formatPKR(p.amount)}</td><td className="border p-2">{p.collectedBy}</td><td className="border p-2">{p.status}</td>
+                  </tr>)}</tbody>
+                </table>
+              </div>}
+
+              {detailRow.details?.history && <div className="space-y-2">
+                <p>Approved By: {detailRow.details.approvedBy || 'Unassigned'} ? {detailRow.details.approvedAt ? formatDateTimeDDMMYYYY(detailRow.details.approvedAt) : 'N/A'}</p>
+                <h3 className="font-bold">Payment / Approval History</h3>
+                <table className="w-full border-collapse"><thead><tr>{['Reference', 'Date', 'Method', 'Paid', 'Actor ID'].map(h => <th className="border p-2 text-left" key={h}>{h}</th>)}</tr></thead>
+                  <tbody>{detailRow.details.history.map((p: any) => <tr key={p.reference}><td className="border p-2">{p.reference}</td><td className="border p-2">{formatDateTimeDDMMYYYY(p.date)}</td><td className="border p-2">{p.method}</td><td className="border p-2 text-right">{formatPKR(p.amount)}</td><td className="border p-2">{p.actor}</td></tr>)}</tbody>
+                </table>
+              </div>}
               {/* Line Items If available */}
               {detailRow.details?.lines && detailRow.details.lines.length > 0 && (
                 <div className="space-y-1.5">
@@ -1019,7 +990,7 @@ export const IncomeExpenseLedgerView: React.FC = () => {
                         <tr>
                           <th className="py-1.5 px-2 text-left">Item / Service</th>
                           <th className="py-1.5 px-2 text-left">Department</th>
-                          <th className="py-1.5 px-2 text-right">Net</th>
+                          <th className="py-1.5 px-2 text-right">Qty</th><th className="py-1.5 px-2 text-right">Historical Rate</th><th className="py-1.5 px-2 text-right">Gross</th><th className="py-1.5 px-2 text-right">Discount</th><th className="py-1.5 px-2 text-right">Net</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -1027,7 +998,7 @@ export const IncomeExpenseLedgerView: React.FC = () => {
                           <tr key={i}>
                             <td className="py-1.5 px-2 font-medium">{l.name}</td>
                             <td className="py-1.5 px-2 text-slate-500">{l.department || '—'}</td>
-                            <td className="py-1.5 px-2 text-right font-bold text-slate-800">{formatPKR(l.net)}</td>
+                            <td className="py-1.5 px-2 text-right">{l.quantity}</td><td className="py-1.5 px-2 text-right">{formatPKR(l.rate)}</td><td className="py-1.5 px-2 text-right">{formatPKR(l.gross)}</td><td className="py-1.5 px-2 text-right">{formatPKR(l.discount)}</td><td className="py-1.5 px-2 text-right font-bold text-slate-800">{formatPKR(l.net)}</td>
                           </tr>
                         ))}
                       </tbody>

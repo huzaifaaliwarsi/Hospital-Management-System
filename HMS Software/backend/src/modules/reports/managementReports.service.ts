@@ -1,3 +1,4 @@
+import { projectM01Invoice } from './m01InvoiceProjection';
 import { invoiceAsOf } from '@/shared/invoiceAsOf';
 import { allocateCollection, allocateInvoiceAmount, collectionSelect, collectionInvoiceSelect, invoiceBalance, panelCollectionLedger, signedReceiptWhere } from '@/shared/departmentCollections';
 import { Decimal } from '@prisma/client/runtime/library';
@@ -69,8 +70,8 @@ const PORTAL_LABEL: Record<string, string> = {
 
 export const managementReportsService = {
   /** #1 Management Summary — hospital-wide totals (shown as table rows) + one row per department. */
-  async getSummary(query: ManagementSummaryQuery) {
-    const { start, end, label } = resolveDateRange(query);
+  async getSummary(query: ManagementSummaryQuery, reportingRange?: { start: Date; end: Date; label: string }) {
+    const { start, end, label } = reportingRange ?? resolveDateRange(query);
     const dept = query.departmentId;
     const user = query.portalUserId;
     const method = query.method;
@@ -1377,7 +1378,7 @@ export const managementReportsService = {
     const portal = query.portal;
     const search = query.search?.trim().toLowerCase();
     const page = Math.max(1, Number(query.page) || 1);
-    const limit = Math.max(1, Math.min(500, Number(query.limit) || 50));
+    const limit = Math.max(1, Math.min(500, Number(query.limit) || 25));
 
     // Parallel fetch of all source event records and full financial summary
     const [
@@ -1394,19 +1395,14 @@ export const managementReportsService = {
       // 1. Hospital Invoices (Earned Revenue)
       prisma.hospitalInvoice.findMany({
         where: {
-          createdAt: { gte: start, lte: end },
+          createdAt: { lte: end },
           status: { not: 'VOID' },
-          ...(dept
-            ? {
-              OR: [
-                { departmentId: dept },
-                { lines: { some: { serviceRate: { departmentId: dept } } } },
-              ],
-            }
-            : {}),
-          ...(user ? { createdById: user } : {}),
         },
         include: {
+          doctor: { select: { fullName: true } },
+          appointment: { select: { department: { select: { id: true, name: true } } } },
+          paymentReceipts: { where: { ...signedReceiptWhere, collectedAt: { lte: end } }, include: { collectedBy: userSelect } },
+          panelRemittanceAllocations: { where: { panelRemittance: { receivedAt: { lte: end } } }, include: { panelRemittance: { include: { receivedByUser: userSelect } } } },
           department: { select: { id: true, name: true } },
           createdByUser: { select: { id: true, displayName: true, username: true, role: true } },
           selfPayEncounter: { select: { id: true, mrNumber: true, fullName: true } },
@@ -1432,9 +1428,9 @@ export const managementReportsService = {
       // 2. Patient / Panel Collections & Refunds
       prisma.paymentReceipt.findMany({
         where: {
+          hospitalInvoiceId: null,
+          AND: [signedReceiptWhere],
           collectedAt: { gte: start, lte: end },
-          ...(method && method !== 'ALL' ? { method: method as any } : {}),
-          ...(user ? { collectedById: user } : {}),
           ...(dept
             ? {
               OR: [
@@ -1447,6 +1443,7 @@ export const managementReportsService = {
             : {}),
         },
         include: {
+          appointment: { select: { department: { select: { id: true, name: true } } } },
           collectedBy: { select: { id: true, displayName: true, username: true, role: true } },
           hospitalInvoice: {
             select: {
@@ -1468,6 +1465,7 @@ export const managementReportsService = {
             select: {
               id: true,
               admissionNumber: true,
+              department: { select: { id: true, name: true } },
               selfPayEncounter: { select: { fullName: true } },
               panelPatient: { select: { fullName: true } },
             },
@@ -1481,12 +1479,10 @@ export const managementReportsService = {
         where: {
           status: 'ACTIVE',
           expenseDate: {
-            gte: new Date(start.toLocaleDateString('en-CA')),
-            lte: new Date(end.toLocaleDateString('en-CA')),
+            gte: new Date(hospitalClock(start).date),
+            lte: new Date(hospitalClock(end).date),
           },
           ...(dept ? { departmentId: dept } : {}),
-          ...(user ? { createdById: user } : {}),
-          ...(method && method !== 'ALL' ? { paymentMethod: method as any } : {}),
         },
         include: {
           department: { select: { id: true, name: true } },
@@ -1499,12 +1495,10 @@ export const managementReportsService = {
       prisma.inventoryExpense.findMany({
         where: {
           expenseDate: {
-            gte: new Date(start.toLocaleDateString('en-CA')),
-            lte: new Date(end.toLocaleDateString('en-CA')),
+            gte: new Date(hospitalClock(start).date),
+            lte: new Date(hospitalClock(end).date),
           },
           ...(dept ? { id: { in: [] } } : {}),
-          ...(user ? { createdById: user } : {}),
-          ...(method && method !== 'ALL' ? { paymentMethod: method as any } : {}),
         },
         include: {
           createdByUser: { select: { id: true, displayName: true, username: true, role: true } },
@@ -1515,7 +1509,7 @@ export const managementReportsService = {
       // 5. Staff Payroll Slips
       prisma.salarySlip.findMany({
         where: {
-          approvedAt: { gte: start, lte: end },
+          OR: [{ approvedAt: { gte: start, lte: end } }, { payments: { some: { paidAt: { gte: start, lte: end } } } }],
           status: { in: ['APPROVED', 'PARTIALLY_PAID', 'PAID'] },
           ...(dept
             ? {
@@ -1536,6 +1530,8 @@ export const managementReportsService = {
             },
           },
           payrollRun: true,
+          approvedByUser: userSelect,
+          correctionEntries: { where: { createdAt: { lte: end } } },
           payments: { where: { paidAt: { lte: end } } },
         },
         orderBy: { approvedAt: 'desc' },
@@ -1545,6 +1541,7 @@ export const managementReportsService = {
       prisma.doctorCommissionAccrual.findMany({
         where: {
           OR: [
+            { payouts: { some: { paidAt: { gte: start, lte: end } } } },
             { collectionEventId: { not: null }, collectionEvent: { occurredAt: { gte: start, lte: end } } },
             { collectionEventId: null, approvedAt: { gte: start, lte: end }, status: { in: ['APPROVED', 'PARTIALLY_PAID', 'PAID'] } },
           ],
@@ -1560,6 +1557,8 @@ export const managementReportsService = {
             },
           },
           collectionEvent: true,
+          reversals: { where: { reversedAt: { lte: end } } },
+          adjustments: { where: { createdAt: { lte: end } } },
           payouts: { where: { paidAt: { lte: end } } },
           approvedByUser: { select: { id: true, displayName: true, username: true, role: true } },
           invoiceLineItem: {
@@ -1609,7 +1608,7 @@ export const managementReportsService = {
       }),
 
       // 9. Accrual Executive Summary
-      this.getSummary(query as any),
+      this.getSummary({ ...query, portalUserId: undefined, method: undefined } as any, { start, end, label }),
     ]);
 
     const allItems: Array<{
@@ -1641,65 +1640,16 @@ export const managementReportsService = {
       details?: Record<string, any>;
     }> = [];
 
-    // Map Invoices (Earned Revenue)
-    for (const inv of invoices) {
-      const pName =
-        inv.selfPayEncounter?.fullName ||
-        inv.panelPatient?.fullName ||
-        inv.admissionRecord?.selfPayEncounter?.fullName ||
-        inv.admissionRecord?.panelPatient?.fullName ||
-        'Walk-in Patient';
-      const dName = inv.department?.name || inv.lines[0]?.serviceRate?.department?.name || 'General Hospital Services';
-      const gross = Number(inv.subtotal);
-      const discount = Number(inv.discountTotal);
-      const net = Number(inv.total);
-      const paid = Number(inv.paidTotal);
-      const tax = Number((inv as any).taxAmount || 0);
-      const outstanding = Math.max(0, net - paid);
-      const isPaid = inv.status === 'PAID';
-      const isPartial = inv.status === 'PARTIALLY_PAID';
-
-      allItems.push({
-        id: `inv-${inv.id}`,
-        date: inv.createdAt.toISOString(),
-        reference: inv.invoiceNumber,
-        transactionType: 'REVENUE',
-        typeLabel: 'Hospital Revenue',
-        patientPayeeDescription: pName,
-        encounterInvoiceRef: inv.selfPayEncounter?.mrNumber || inv.admissionRecord?.admissionNumber || inv.invoiceNumber,
-        departmentId: inv.departmentId ?? undefined,
-        department: dName,
-        portalUserId: inv.createdById ?? undefined,
-        portalUser: userName(inv.createdByUser) || 'Front Desk Billing',
-        portal: 'Front Desk / Billing',
-        status: inv.status,
-        statusLabel: isPaid ? 'Paid' : isPartial ? 'Partially Paid' : inv.status === 'VOID' ? 'Voided' : 'Unpaid',
-        grossBilling: gross,
-        discountCredit: discount,
-        tax,
-        netRevenue: net,
-        collectionsReceived: 0,
-        recognizedExpense: 0,
-        expensePaid: 0,
-        cashIn: 0,
-        cashOut: 0,
-        outstandingPayable: outstanding,
-        paymentMethod: 'N/A',
-        details: {
-          lines: inv.lines.map((l: any) => ({
-            name: l.serviceRate?.name || 'Service',
-            gross: Number(l.lineGross),
-            discount: Number(l.discountAmount),
-            net: Number(l.lineNet),
-            department: l.serviceRate?.department?.name,
-          })),
-        },
-      });
+    // Stable invoice projection before filtering, counting and pagination.
+    const financialInvoices = invoices.map(inv => projectM01Invoice(inv, start, end, { departmentId: dept }));
+    const invoiceProjections = invoices.map(inv => projectM01Invoice(inv, start, end, query));
+    for (const projection of invoiceProjections) {
+      if (projection.row) allItems.push(projection.row);
     }
 
     // Map Receipts (Collections & Refunds)
     for (const rec of receipts) {
-      const isRefund = rec.amount.lessThan(0) || rec.isReversed;
+      const isRefund = rec.amount.lessThan(0);
       const absAmount = Math.abs(Number(rec.amount));
       const pName =
         rec.hospitalInvoice?.selfPayEncounter?.fullName ||
@@ -1709,7 +1659,8 @@ export const managementReportsService = {
         rec.admissionRecord?.selfPayEncounter?.fullName ||
         rec.admissionRecord?.panelPatient?.fullName ||
         'Patient Receipt';
-      const dName = rec.hospitalInvoice?.department?.name || 'Front Desk Billing';
+      const receiptDepartment = rec.hospitalInvoice?.department ?? rec.admissionRecord?.department ?? rec.appointment?.department;
+      const dName = receiptDepartment?.name || 'Unassigned';
       const isCash = rec.method === 'CASH';
 
       if (isRefund) {
@@ -1721,7 +1672,7 @@ export const managementReportsService = {
           typeLabel: 'Refund / Reversal',
           patientPayeeDescription: `${pName} (Refund / Credit)`,
           encounterInvoiceRef: rec.hospitalInvoice?.invoiceNumber || rec.admissionRecord?.admissionNumber || '—',
-          departmentId: rec.hospitalInvoice?.department?.id,
+          departmentId: receiptDepartment?.id,
           department: dName,
           portalUserId: rec.collectedById,
           portalUser: userName(rec.collectedBy) || 'Cashier',
@@ -1746,10 +1697,10 @@ export const managementReportsService = {
           date: rec.collectedAt.toISOString(),
           reference: rec.receiptNumber,
           transactionType: 'COLLECTION',
-          typeLabel: 'Collection / Receipt',
+          typeLabel: 'Unapplied Advance Receipt',
           patientPayeeDescription: pName,
           encounterInvoiceRef: rec.hospitalInvoice?.invoiceNumber || rec.admissionRecord?.admissionNumber || '—',
-          departmentId: rec.hospitalInvoice?.department?.id,
+          departmentId: receiptDepartment?.id,
           department: dName,
           portalUserId: rec.collectedById,
           portalUser: userName(rec.collectedBy) || 'Cashier',
@@ -1784,7 +1735,7 @@ export const managementReportsService = {
         patientPayeeDescription: [exp.paidTo, exp.description, exp.category].filter(Boolean).join(' — ') || 'Hospital Expense',
         encounterInvoiceRef: exp.reference || exp.expenseNumber,
         departmentId: exp.departmentId ?? undefined,
-        department: exp.department?.name || 'Hospital Administration',
+        department: exp.department?.name || 'Unassigned',
         portalUserId: exp.createdById ?? undefined,
         portalUser: userName(exp.createdByUser) || 'Administrator',
         portal: 'Admin',
@@ -1816,7 +1767,7 @@ export const managementReportsService = {
         typeLabel: 'Store Expense',
         patientPayeeDescription: [ie.payee, ie.description, ie.category].filter(Boolean).join(' — ') || 'Store Expense',
         encounterInvoiceRef: ie.reference || '—',
-        department: 'Inventory / Store',
+        department: 'Unassigned',
         portalUserId: ie.createdById,
         portalUser: userName(ie.createdByUser) || 'Inventory Manager',
         portal: 'Inventory Management',
@@ -1838,10 +1789,12 @@ export const managementReportsService = {
 
     // Map Staff Payroll Slips
     for (const sal of salarySlips) {
-      const payable = Number(sal.generatedAmount);
-      const paid = sal.payments?.reduce((s, p) => s + Number(p.amount), 0) || 0;
-      const remaining = Math.max(0, payable - paid);
-      const cashPayments = sal.payments?.filter((p) => p.method === 'CASH').reduce((s, p) => s + Number(p.amount), 0) || 0;
+      const payable = Number(salaryBalance(sal).payable);
+      const allPaid = sal.payments?.reduce((s, p) => s + Number(p.amount), 0) || 0;
+      const periodPayments = sal.payments.filter(p => p.paidAt >= start);
+      const paid = periodPayments.reduce((s, p) => s + Number(p.amount), 0);
+      const remaining = Math.max(0, payable - allPaid);
+      const cashPayments = periodPayments.filter((p) => p.method === 'CASH').reduce((s, p) => s + Number(p.amount), 0) || 0;
       const methodLabel = sal.payments?.[0]?.method || 'Bank / Online';
 
       allItems.push({
@@ -1852,8 +1805,9 @@ export const managementReportsService = {
         typeLabel: 'Staff Payroll',
         patientPayeeDescription: `${sal.staff.fullName} (${sal.staff.employeeId})`,
         encounterInvoiceRef: sal.payrollRunId || '—',
-        department: sal.staff.department?.name || 'Administration',
-        portalUser: 'HR / Payroll Officer',
+        department: sal.staff.department?.name || 'Unassigned',
+        portalUserId: sal.approvedById ?? undefined,
+        portalUser: userName(sal.approvedByUser) || 'Unassigned',
         portal: 'Admin',
         status: sal.status,
         statusLabel: sal.status.replace(/_/g, ' '),
@@ -1862,28 +1816,32 @@ export const managementReportsService = {
         tax: 0,
         netRevenue: 0,
         collectionsReceived: 0,
-        recognizedExpense: payable,
+        recognizedExpense: sal.approvedAt && sal.approvedAt >= start ? payable : 0,
         expensePaid: paid,
         cashIn: 0,
         cashOut: cashPayments,
         outstandingPayable: remaining,
         paymentMethod: methodLabel,
+        details: { actorIds: sal.payments.map(p => p.paidById), approvedAt: sal.approvedAt?.toISOString(), approvedBy: userName(sal.approvedByUser),
+          history: sal.payments.map(p => ({ reference: p.reference || p.id, date: p.paidAt.toISOString(), method: p.method, amount: Number(p.amount), actor: p.paidById })),
+          adjustments: sal.correctionEntries },
       });
     }
 
     // Map Doctor Commissions
     for (const com of commissionAccruals) {
-      const amt = Number(com.commissionAmount);
-      const periodPayouts = com.payouts?.filter((p) => p.paidAt >= start && p.paidAt <= end && !p.reversalOfId) || [];
+      const balance = commissionBalance({ ...com, reversals: com.reversals ?? [] });
+      const amt = Number(balance.payable);
+      const periodPayouts = com.payouts?.filter((p) => p.paidAt >= start && p.paidAt <= end) || [];
       const paid = periodPayouts.reduce((s, p) => s + Number(p.amount), 0);
       const cashPayouts = periodPayouts.filter((p) => p.method === 'CASH').reduce((s, p) => s + Number(p.amount), 0);
-      const totalPaidEver = com.payouts?.filter((p) => !p.reversalOfId).reduce((s, p) => s + Number(p.amount), 0) || 0;
+      const totalPaidEver = com.payouts?.reduce((s, p) => s + Number(p.amount), 0) || 0;
       const outstanding = Math.max(0, amt - totalPaidEver);
       const invRef = com.invoiceLineItem?.hospitalInvoice?.invoiceNumber || '—';
       const dName =
         com.invoiceLineItem?.serviceRate?.department?.name ||
         com.doctor.staffDepartments?.[0]?.department?.name ||
-        'Clinical Services';
+        'Unassigned';
       const payoutMethods = unique(periodPayouts.map((p) => p.method));
       const methodLabel = payoutMethods.length > 0 ? payoutMethods.join(', ') : 'Accrued (N/A)';
 
@@ -1906,12 +1864,15 @@ export const managementReportsService = {
         tax: 0,
         netRevenue: 0,
         collectionsReceived: 0,
-        recognizedExpense: amt,
+        recognizedExpense: (com.collectionEvent?.occurredAt || com.approvedAt || com.createdAt) >= start ? amt : 0,
         expensePaid: paid,
         cashIn: 0,
         cashOut: cashPayouts,
         outstandingPayable: outstanding,
         paymentMethod: methodLabel,
+        details: { actorIds: com.payouts.map(p => p.paidById), approvedAt: com.approvedAt?.toISOString(), approvedBy: userName(com.approvedByUser),
+          history: com.payouts.map(p => ({ reference: p.reference || p.id, date: p.paidAt.toISOString(), method: p.method, amount: Number(p.amount), actor: p.paidById })),
+          adjustments: com.adjustments, reversals: com.reversals },
       });
     }
 
@@ -1987,7 +1948,7 @@ export const managementReportsService = {
         typeLabel: 'Internal Custody Transfer',
         patientPayeeDescription: `Cash Settlement Handover: ${senderName} → ${receiverName}`,
         encounterInvoiceRef: '—',
-        department: 'Cash Custody',
+        department: 'Unassigned',
         portalUserId: st.portalUserId,
         portalUser: senderName,
         portal: 'Front Desk / Billing',
@@ -2015,23 +1976,23 @@ export const managementReportsService = {
     }
 
     // Sort chronologically (most recent first)
-    allItems.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    allItems.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime() || a.id.localeCompare(b.id));
 
     // Apply Filters
     const filteredItems = allItems.filter((it) => {
-      if (transactionType && transactionType !== 'ALL' && it.transactionType !== transactionType) {
+      if (transactionType && transactionType !== 'ALL' && it.transactionType !== transactionType && !(transactionType === 'COLLECTION' && it.transactionType === 'REVENUE' && it.collectionsReceived !== 0)) {
         return false;
       }
       if (dept && it.departmentId && it.departmentId !== dept) {
         return false;
       }
-      if (user && it.portalUserId && it.portalUserId !== user) {
+      if (user && it.portalUserId !== user && !it.details?.actorIds?.includes(user)) {
         return false;
       }
-      if (portal && portal !== 'ALL' && !it.portal.toLowerCase().includes(portal.toLowerCase())) {
+      if (portal && portal !== 'ALL' && !it.portal.toLowerCase().includes(portal.toLowerCase()) && !it.details?.actorPortals?.includes(portal)) {
         return false;
       }
-      if (method && method !== 'ALL' && it.paymentMethod !== 'N/A' && it.paymentMethod.toUpperCase() !== method.toUpperCase()) {
+      if (method && method !== 'ALL' && !it.paymentMethod.toUpperCase().split(', ').includes(method.toUpperCase())) {
         return false;
       }
       if (status && status !== 'ALL' && it.status.toUpperCase() !== status.toUpperCase()) {
@@ -2039,6 +2000,7 @@ export const managementReportsService = {
       }
       if (search) {
         const text = [
+          it.details?.receiptReferences || '',
           it.reference,
           it.patientPayeeDescription,
           it.encounterInvoiceRef,
@@ -2073,21 +2035,19 @@ export const managementReportsService = {
 
     // External Customer Collections:
     // Physical cash collections from receipts (excluding refunds and reversals)
-    const actualCashCollections = filteredItems
-      .filter((it) => it.transactionType === 'COLLECTION')
-      .reduce((s, it) => s + it.cashIn, 0);
+    const actualCashCollections = financialInvoices.reduce((s, p) => s + (p.row?.cashIn ?? 0), 0) + allItems.filter(it => it.id.startsWith('rec-')).reduce((s, it) => s + it.cashIn, 0);
 
-    const totalRefunds = filteredItems
+    const totalRefunds = allItems
       .filter((it) => it.transactionType === 'REFUND')
       .reduce((s, it) => s + Math.abs(it.collectionsReceived), 0);
 
     // Actual Paid Operating Expenses:
     // Recognized paid expenses across all payment channels (Bank, Cash, etc.)
-    const totalPaidOperatingExpenses = Number(sum.hospitalExpenses) + Number(sum.salaryPaid) + Number(sum.commissionPaid);
+    const totalPaidOperatingExpenses = Number(sum.hospitalExpenses) + Number(sum.expenses) + Number(sum.salaryPaid) + Number(sum.commissionPaid);
 
     // Physical Cash-Paid Operating Expenses:
     // Operating expenses paid specifically in physical cash (excluding bank transfers/cards)
-    const cashPaidExpenses = filteredItems
+    const cashPaidExpenses = allItems
       .filter((it) => ['EXPENSE', 'PAYROLL', 'COMMISSION'].includes(it.transactionType))
       .reduce((s, it) => s + it.cashOut, 0);
 
@@ -2095,32 +2055,30 @@ export const managementReportsService = {
 
     // Non-Operating Cash Outflows:
     // Internal settlements net to zero at the hospital-wide level.
-    // If scoped to a specific user drawer, count custody transfers out of that user's drawer.
-    let nonOperatingOutflows = 0;
-    if (user) {
-      nonOperatingOutflows = filteredItems
-        .filter((it) => it.transactionType === 'SETTLEMENT')
-        .reduce((s, it) => s + it.cashOut, 0);
-    }
+    // Only external refunds belong here; custody transfers are excluded.
+    const nonOperatingOutflows = allItems.filter(it => it.transactionType === 'REFUND').reduce((s, it) => s + it.cashOut, 0);
 
     // Net Physical Cash Movement:
     // External physical cash collections - physical cash paid for expenses - external non-operating cash outflows
     const netPhysicalCashMovement = actualCashCollections - cashPaidExpenses - nonOperatingOutflows;
 
+    const earnedRevenue = financialInvoices.reduce((s, p) => s + (p.row?.netRevenue ?? 0), 0);
+    const collections = financialInvoices.reduce((s, p) => s + (p.row?.collectionsReceived ?? 0), 0) + allItems.filter(it => it.id.startsWith('rec-') || it.id.startsWith('ref-')).reduce((s, it) => s + it.collectionsReceived, 0);
+    const operatingProfit = earnedRevenue - Number(sum.totalOperatingCosts);
     const totals = {
       hospitalRevenue: {
-        grossEarnedBilling: Number(sum.grossBilling),
-        discounts: Number(sum.discounts),
-        netEarnedRevenue: Number(sum.netEarnedRevenue),
+        grossEarnedBilling: financialInvoices.reduce((s, p) => s + (p.row?.grossBilling ?? 0), 0),
+        discounts: financialInvoices.reduce((s, p) => s + (p.row?.discountCredit ?? 0), 0),
+        netEarnedRevenue: earnedRevenue,
         taxAmount: filteredItems.reduce((s, it) => s + it.tax, 0),
       },
       collectionsReceivables: {
-        totalCollections: Number(sum.collections),
+        totalCollections: collections,
         cashCollections: actualCashCollections,
-        cardBankOnlineCollections: Math.max(0, Number(sum.collections) - actualCashCollections),
+        cardBankOnlineCollections: Math.max(0, collections - actualCashCollections),
         refunds: totalRefunds,
-        netCollections: Number(sum.collections),
-        closingOutstanding: Number(sum.outstanding),
+        netCollections: collections,
+        closingOutstanding: financialInvoices.reduce((s, p) => s + p.outstanding, 0),
       },
       hospitalCosts: {
         directConsumables: Number(sum.directServiceCosts),
@@ -2128,27 +2086,27 @@ export const managementReportsService = {
         doctorCommissionEarned: Number(sum.doctorCommissionCost),
         approvedHospitalExpenses: Number(sum.hospitalExpenses),
         inventoryOperatingExpenses: Number(sum.expenses),
-        totalOperatingCosts: Number(sum.totalOperatingCosts),
+        totalOperatingCosts: Number(sum.totalOperatingCosts) - Number(sum.directServiceCosts),
         hasIncompleteCost: sum.hasIncompleteCost,
         missingCostCount: sum.missingCostCount,
       },
       profit: {
-        grossProfit: Number(sum.grossProfit),
-        operatingProfit: Number(sum.operatingProfit),
-        operatingMargin: Number(sum.operatingMargin),
+        grossProfit: earnedRevenue - Number(sum.directServiceCosts),
+        operatingProfit,
+        operatingMargin: earnedRevenue ? operatingProfit / earnedRevenue * 100 : 0,
       },
       cashMovement: {
-        totalCustomerCollections: Number(sum.collections),
+        totalCustomerCollections: collections,
         cashCollections: actualCashCollections,
-        cardBankOnlineCollections: Math.max(0, Number(sum.collections) - actualCashCollections),
+        cardBankOnlineCollections: Math.max(0, collections - actualCashCollections),
         actualPaidOperatingExpenses: totalPaidOperatingExpenses,
         cashPaidOperatingExpenses: cashPaidExpenses,
         nonCashPaidOperatingExpenses: nonCashPaidOperatingExpenses,
         nonOperatingCashOutflows: nonOperatingOutflows,
         netPhysicalCashMovement,
         netCashMovement: netPhysicalCashMovement,
-        netTotalFundsMovement: Number(sum.collections) - totalPaidOperatingExpenses - nonOperatingOutflows,
-        currentRemainingCustomerDues: Number(sum.outstanding),
+        netTotalFundsMovement: collections - totalPaidOperatingExpenses,
+        currentRemainingCustomerDues: financialInvoices.reduce((s, p) => s + p.outstanding, 0),
       },
       payables: {
         payrollPaid: Number(sum.salaryPaid),
@@ -2162,7 +2120,7 @@ export const managementReportsService = {
 
     const totalRecords = filteredItems.length;
     const totalPages = Math.ceil(totalRecords / limit) || 1;
-    const paginatedItems = filteredItems.slice((page - 1) * limit, page * limit);
+    const paginatedItems = query.exportAll ? filteredItems : filteredItems.slice((page - 1) * limit, page * limit);
 
     return {
       period: periodOf(start, end, label),
