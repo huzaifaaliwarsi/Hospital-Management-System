@@ -32,12 +32,15 @@ export async function staffFinanceSummary(start: Date, end: Date, departmentId?:
     prisma.salaryPayment.findMany({ where: { paidAt: { gte: start, lte: end }, ...(method ? { method } : {}), ...(portalUserId ? { OR: [{ reversalOfId: null, paidById: portalUserId }, { reversalOf: { paidById: portalUserId } }] } : {}), salarySlip: salaryDepartment }, select: { amount: true } }),
     prisma.commissionPayout.findMany({ where: { paidAt: { gte: start, lte: end }, ...(method ? { method } : {}), ...(portalUserId ? { OR: [{ reversalOfId: null, paidById: portalUserId }, { reversalOf: { paidById: portalUserId } }] } : {}), doctorCommissionAccrual: commissionDepartment }, select: { amount: true } }),
   ]);
+  const sources: Array<{ id: string; date: string; reference: string; category: 'payroll' | 'commission'; amount: number; actor: string; status: string; details: Record<string, unknown> }> = [];
   let salaryGenerated = zero(), salaryOutstanding = zero(), commissionGenerated = zero(), commissionOutstanding = zero();
   for (const row of salary) {
     const balance = salaryBalance(row);
     const before = (row.approvedAt ?? row.createdAt) < start
       ? salaryBalance({ ...row, correctionEntries: row.correctionEntries.filter(a => a.createdAt < start) }).payable : zero();
-    salaryGenerated = salaryGenerated.plus(balance.payable.minus(before));
+    const recognized = balance.payable.minus(before);
+    salaryGenerated = salaryGenerated.plus(recognized);
+    if (!recognized.isZero()) sources.push({ id: row.id, date: ((row.approvedAt ?? row.createdAt) >= start ? (row.approvedAt ?? row.createdAt) : row.correctionEntries.filter(a => a.createdAt >= start).sort((a,b) => b.createdAt.getTime()-a.createdAt.getTime())[0]?.createdAt ?? start).toISOString(), reference: row.id, category: 'payroll', amount: Number(recognized), actor: row.approvedById ?? 'Unassigned', status: row.status, details: { staffId: row.staffId, approvedAt: row.approvedAt, generatedAmount: row.generatedAmount, adjustments: row.correctionEntries, payments: row.payments } });
     salaryOutstanding = salaryOutstanding.plus(balance.remaining);
   }
   // Sum receipt earnings exactly once; run totals are presentation snapshots.
@@ -45,9 +48,11 @@ export async function staffFinanceSummary(start: Date, end: Date, departmentId?:
     const balance = commissionBalance(row);
     const before = (row.collectionEvent?.occurredAt ?? row.approvedAt ?? row.createdAt) < start
       ? commissionBalance({ ...row, reversals: row.reversals.filter(r => r.reversedAt < start), adjustments: row.adjustments.filter(a => a.createdAt < start) }).payable : zero();
-    commissionGenerated = commissionGenerated.plus(balance.payable.minus(before));
+    const recognized = balance.payable.minus(before);
+    commissionGenerated = commissionGenerated.plus(recognized);
+    if (!recognized.isZero()) sources.push({ id: row.id, date: ((row.collectionEvent?.occurredAt ?? row.approvedAt ?? row.createdAt) >= start ? (row.collectionEvent?.occurredAt ?? row.approvedAt ?? row.createdAt) : [...row.reversals.map(r=>r.reversedAt), ...row.adjustments.map(a=>a.createdAt)].filter(d=>d>=start).sort((a,b)=>b.getTime()-a.getTime())[0] ?? start).toISOString(), reference: row.id, category: 'commission', amount: Number(recognized), actor: row.approvedById ?? 'Unassigned', status: row.status, details: { doctorId: row.staffId, collectionEvent: row.collectionEvent, commissionAmount: row.commissionAmount, ruleSnapshot: row.ruleSnapshot, reversals: row.reversals, adjustments: row.adjustments, payouts: row.payouts } });
     commissionOutstanding = commissionOutstanding.plus(balance.remaining);
   }
-  return { salaryGenerated, salaryPaid: salaryPayments.reduce((s, p) => s.plus(p.amount), zero()), salaryOutstanding,
+  return { sources, salaryGenerated, salaryPaid: salaryPayments.reduce((s, p) => s.plus(p.amount), zero()), salaryOutstanding,
     commissionGenerated, commissionPaid: commissionPayments.reduce((s, p) => s.plus(p.amount), zero()), commissionOutstanding };
 }

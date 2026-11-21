@@ -102,3 +102,18 @@ export const incomeExpenseLedgerQuerySchema = z.object({
 });
 export type IncomeExpenseLedgerQuery = z.infer<typeof incomeExpenseLedgerQuerySchema>;
 
+
+/** M04 only: Karachi date presets, equivalent comparison and source ledger pagination. */
+export const operatingProfitQuerySchema = z.object({
+  preset: z.enum(['today','yesterday','this_week','this_month','last_month','custom','all_time']).default('today'),
+  fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  departmentId: uuid,
+  comparison: z.enum(['previous','none']).default('previous'),
+  view: z.enum(['statement','ledger']).default('statement'),
+  category: z.string().optional(),
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().min(1).max(500).default(25),
+  exportAll: z.enum(['true','false']).optional().transform(v => v === 'true'),
+}).refine(q => q.preset !== 'custom' || (!!q.fromDate && !!q.toDate && q.fromDate <= q.toDate), {message:'A valid From/To range is required'});
+export type OperatingProfitQuery = z.infer<typeof operatingProfitQuerySchema>;

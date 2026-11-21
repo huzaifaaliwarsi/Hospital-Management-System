@@ -1,3 +1,6 @@
+import { operatingPerformance } from './operatingPerformance';
+
+
 import { projectM01Invoice } from './m01InvoiceProjection';
 import { invoiceAsOf } from '@/shared/invoiceAsOf';
 import { allocateCollection, allocateInvoiceAmount, collectionSelect, collectionInvoiceSelect, invoiceBalance, panelCollectionLedger, signedReceiptWhere } from '@/shared/departmentCollections';
@@ -2064,7 +2067,8 @@ export const managementReportsService = {
 
     const earnedRevenue = financialInvoices.reduce((s, p) => s + (p.row?.netRevenue ?? 0), 0);
     const collections = financialInvoices.reduce((s, p) => s + (p.row?.collectionsReceived ?? 0), 0) + allItems.filter(it => it.id.startsWith('rec-') || it.id.startsWith('ref-')).reduce((s, it) => s + it.collectionsReceived, 0);
-    const operatingProfit = earnedRevenue - Number(sum.totalOperatingCosts);
+    const performance = operatingPerformance(earnedRevenue, Number(sum.directServiceCosts), Number(sum.totalOperatingCosts) - Number(sum.directServiceCosts));
+    const operatingProfit = performance.operatingProfit;
     const totals = {
       hospitalRevenue: {
         grossEarnedBilling: financialInvoices.reduce((s, p) => s + (p.row?.grossBilling ?? 0), 0),
@@ -2091,9 +2095,9 @@ export const managementReportsService = {
         missingCostCount: sum.missingCostCount,
       },
       profit: {
-        grossProfit: earnedRevenue - Number(sum.directServiceCosts),
+        grossProfit: performance.grossProfit,
         operatingProfit,
-        operatingMargin: earnedRevenue ? operatingProfit / earnedRevenue * 100 : 0,
+        operatingMargin: performance.operatingMargin,
       },
       cashMovement: {
         totalCustomerCollections: collections,
