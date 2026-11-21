@@ -27,6 +27,8 @@ export const cashService = {
       select: { role: true },
     });
     const moduleScope = resolveCashModuleScope(targetUser.role);
+    const isManager = targetUser.role === 'ADMIN' || targetUser.role === 'SUPER_ADMIN';
+    const scopeFilter = isManager ? {} : { moduleScope };
 
     // Shift view: unsettled entries plus the current carry-forward liability
     // (Balance Sheet & Account Settlement Guide §5.1) — the most recent
@@ -36,7 +38,7 @@ export const cashService = {
       prisma.userCashBalance.findMany({
         where: {
           portalUserId,
-          moduleScope,
+          ...scopeFilter,
           ...(range ? { occurredAt: { gte: range.start, lte: range.end } } : { isSettled: false }),
         },
         include: {
@@ -52,14 +54,14 @@ export const cashService = {
       }),
       isShift
         ? prisma.accountSettlement.findFirst({
-            where: { portalUserId, moduleScope, status: { not: 'REVERSED' } },
+            where: { portalUserId, ...scopeFilter, status: { not: 'REVERSED' } },
             orderBy: { createdAt: 'desc' },
             select: { carryForwardAmount: true },
           })
         : Promise.resolve(null),
       range
         ? prisma.accountSettlement.findMany({
-            where: { portalUserId, moduleScope, status: { not: 'REVERSED' }, createdAt: { gte: range.start, lte: range.end } },
+            where: { portalUserId, ...scopeFilter, status: { not: 'REVERSED' }, createdAt: { gte: range.start, lte: range.end } },
             select: { physicalCash: true, variance: true },
           })
         : Promise.resolve([]),
@@ -76,6 +78,7 @@ export const cashService = {
     let cashExpenses = new Decimal(0);
     let cashRefunds = new Decimal(0);
     let settlementCashIn = new Decimal(0);
+    let settlementCashOut = new Decimal(0);
     let settledNet = new Decimal(0);
     let remainingNet = new Decimal(0);
 
@@ -101,7 +104,11 @@ export const cashService = {
           if (tx.category === 'REFUND') {
             totalRefunds = totalRefunds.plus(tx.amount);
             cashRefunds = cashRefunds.plus(tx.amount);
-          } else if (tx.category === 'EXPENSE') cashExpenses = cashExpenses.plus(tx.amount);
+          } else if (tx.category === 'EXPENSE') {
+            cashExpenses = cashExpenses.plus(tx.amount);
+          } else if (tx.category === 'RECOVERY') {
+            settlementCashOut = settlementCashOut.plus(tx.amount);
+          }
         }
       } else {
         // Digital (Card/Bank/Online): tracked separately without inflating physical cash
@@ -131,6 +138,7 @@ export const cashService = {
         cashExpenses,
         cashRefunds,
         settlementCashIn,
+        settlementCashOut,
         settledAmount: settledNet,
         remainingAmount: remainingNet.plus(carriedForwardAmount),
         // Only meaningful for a historical period — the counted cash and

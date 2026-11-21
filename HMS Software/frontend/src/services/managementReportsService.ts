@@ -184,6 +184,8 @@ export interface BalanceSettlementRow {
   opening: number;
   pettyCash: number;
   cashCollections: number;
+  settlementIn: number;
+  settlementOut: number;
   expenses: number;
   refunds: number;
   nonCash: number;
@@ -200,7 +202,21 @@ export async function fetchBalanceSettlements(range: RangeParams, filters?: Repo
   return {
     periodLabel: d.period.label,
     rows: d.rows.map((r: any) =>
-      toNumbers<BalanceSettlementRow>(r, ['opening', 'pettyCash', 'cashCollections', 'expenses', 'refunds', 'nonCash', 'expectedCash', 'submitted', 'variance', 'accepted', 'remaining']),
+      toNumbers<BalanceSettlementRow>(r, [
+        'opening',
+        'pettyCash',
+        'cashCollections',
+        'settlementIn',
+        'settlementOut',
+        'expenses',
+        'refunds',
+        'nonCash',
+        'expectedCash',
+        'submitted',
+        'variance',
+        'accepted',
+        'remaining',
+      ]),
     ),
   };
 }
@@ -271,12 +287,12 @@ export async function fetchOperatingProfit(range: RangeParams, filters?: ReportF
     periodLabel: d.period.label,
     rows: [
       { key: 'revenue', item: '1. Net Earned Hospital Revenue', amount: n(s.revenue), note: 'Gross billing minus approved discounts (Accrual)' },
-      { key: 'directCost', item: '2. Less: Direct Consumable Costs', amount: n(s.directCost), note: 'Clinical consumables issued to departments at historical cost' },
-      { key: 'grossProfit', item: '3. Gross Profit', amount: n(s.grossProfit), note: 'Net Revenue minus Direct Consumables' },
+      { key: 'directCost', item: '2. Less: Direct Consumable Costs', amount: n(s.directCost), note: s.hasIncompleteCost ? `Clinical consumables issued to departments [INCOMPLETE: ${s.missingCostCount} items missing cost rate]` : 'Clinical consumables issued to departments at historical cost' },
+      { key: 'grossProfit', item: '3. Gross Profit', amount: n(s.grossProfit), note: s.hasIncompleteCost ? 'Net Revenue minus Direct Consumables [INCOMPLETE COST RATE DATA]' : 'Net Revenue minus Direct Consumables' },
       { key: 'payroll', item: '4. Less: Staff Payroll Cost', amount: n(s.payroll), note: 'Total approved staff salaries for the period' },
       { key: 'doctorCommission', item: '5. Less: Doctor Commission Expense', amount: n(s.doctorCommission), note: 'Net earned doctor commissions on collected receipts' },
       { key: 'otherOpex', item: '6. Less: Other Operating Expenses', amount: n(s.otherOperatingExpenses), note: 'Approved hospital vouchers and inventory operating expenses' },
-      { key: 'operatingProfit', item: '7. Operating Profit / (Loss)', amount: n(s.operatingProfit), note: 'Gross Profit − Payroll − Commissions − Other OPEX' },
+      { key: 'operatingProfit', item: '7. Operating Profit / (Loss)', amount: n(s.operatingProfit), note: s.hasIncompleteCost ? `Gross Profit − Payroll − Commissions − Other OPEX [AFFECTED BY INCOMPLETE DIRECT COST]` : 'Gross Profit − Payroll − Commissions − Other OPEX' },
     ],
   };
 }

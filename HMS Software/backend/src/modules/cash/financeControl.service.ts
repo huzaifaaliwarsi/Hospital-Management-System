@@ -2,7 +2,7 @@ import { lockMainFund } from '@/shared/mainFundLock';
 import { Decimal } from '@prisma/client/runtime/library';
 import type { CashModuleScope } from '@prisma/client';
 import { prisma } from '@/db/client';
-import { NotFoundError, ValidationError, BusinessRuleError } from '@/shared/errors/AppError';
+import { NotFoundError, ValidationError, BusinessRuleError, AuthorizationError } from '@/shared/errors/AppError';
 import { resolveDateRange } from '@/modules/reports/dashboard.service';
 import { resolveCashModuleScope } from './moduleScope.util';
 import type {
@@ -212,6 +212,7 @@ export const financeControlService = {
       },
       include: {
         submittedByUser: { select: userSummarySelect },
+        receiverUser: { select: userSummarySelect },
         reviewedByUser: { select: userSummarySelect },
         reversedByUser: { select: userSummarySelect },
       },
@@ -232,22 +233,34 @@ export const financeControlService = {
     });
     if (!reviewerUser) throw new NotFoundError('Reviewer portal user not found');
 
-    const actualReceiverId = body.receiverPortalUserId ?? reviewerPortalUserId;
-    const receiverUser = body.receiverPortalUserId
-      ? await prisma.portalUser.findUnique({
-          where: { id: actualReceiverId },
-          select: userSummarySelect,
-        })
-      : reviewerUser;
-    if (!receiverUser) throw new NotFoundError('Receiver portal user not found');
-
     const settlement = await prisma.accountSettlement.findUnique({
       where: { id },
-      include: { submittedByUser: { select: userSummarySelect } },
+      include: {
+        submittedByUser: { select: userSummarySelect },
+        receiverUser: { select: userSummarySelect },
+      },
     });
     if (!settlement) throw new NotFoundError('Settlement not found');
     if (settlement.status !== 'SUBMITTED') {
       throw new BusinessRuleError(`Only a SUBMITTED settlement can be reviewed (current status: ${settlement.status}).`);
+    }
+
+    // STRICT APPROVED RULE: Only the designated receiving user can Accept/Reject/Return.
+    // Other Admin/Super Admin accounts have view oversight only; role alone is never enough.
+    if (settlement.receiverUserId && settlement.receiverUserId !== reviewerPortalUserId) {
+      throw new AuthorizationError(
+        'Only the designated settlement receiver is authorized to review, accept, or reject this settlement.',
+      );
+    }
+
+    const actualReceiverId = settlement.receiverUserId ?? body.receiverPortalUserId ?? reviewerPortalUserId;
+    const receiverUser = await prisma.portalUser.findUnique({
+      where: { id: actualReceiverId },
+      select: userSummarySelect,
+    });
+    if (!receiverUser) throw new NotFoundError('Receiver portal user not found');
+    if (!['ADMIN', 'SUPER_ADMIN'].includes(receiverUser.role)) {
+      throw new ValidationError('Settlement receiver must hold an Admin or Super Admin role.');
     }
 
     const newStatus = REVIEW_ACTION_TO_STATUS[body.action];
@@ -256,10 +269,16 @@ export const financeControlService = {
       await lockMainFund(tx);
       const current = await tx.accountSettlement.findUnique({ where: { id } });
       if (current?.status !== 'SUBMITTED') throw new BusinessRuleError('Only a submitted settlement can be reviewed.');
+      if (current.receiverUserId && current.receiverUserId !== reviewerPortalUserId) {
+        throw new AuthorizationError(
+          'Only the designated settlement receiver is authorized to review, accept, or reject this settlement.',
+        );
+      }
       const reviewed = await tx.accountSettlement.update({
         where: { id },
         data: {
           status: newStatus,
+          receiverUserId: actualReceiverId,
           reviewedById: reviewerPortalUserId,
           reviewedAt: new Date(),
           ...(body.remarks?.trim() ? { remarks: body.remarks.trim() } : {}),

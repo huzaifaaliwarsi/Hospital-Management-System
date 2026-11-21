@@ -29,7 +29,9 @@ export interface FinanceUserSummary {
 export interface FinanceSettlementRecord {
   id: string;
   portalUserId: string;
+  receiverUserId: string | null;
   submittedByUser: FinanceUserSummary;
+  receiverUser: FinanceUserSummary | null;
   reviewedByUser: FinanceUserSummary | null;
   reversedByUser: FinanceUserSummary | null;
   periodStart: string;
@@ -63,7 +65,9 @@ function toSettlementRecord(raw: Record<string, any>): FinanceSettlementRecord {
   return {
     id: raw.id,
     portalUserId: raw.portalUserId,
+    receiverUserId: raw.receiverUserId || raw.receiverUser?.id || null,
     submittedByUser: toUserSummary(raw.submittedByUser) as FinanceUserSummary,
+    receiverUser: raw.receiverUser ? (toUserSummary(raw.receiverUser) as FinanceUserSummary) : null,
     reviewedByUser: toUserSummary(raw.reviewedByUser),
     reversedByUser: toUserSummary(raw.reversedByUser),
     periodStart: formatDateTimeDDMMYYYY(raw.periodStart),

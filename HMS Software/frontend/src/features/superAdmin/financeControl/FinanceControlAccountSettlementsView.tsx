@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
 import { CheckSquare, Loader2, Eye, RotateCcw, CheckCircle2, XCircle, Undo2, AlertTriangle } from 'lucide-react';
 import { Textarea } from '../../../components/forms/FormControls';
+import { useAuth } from '../../../context/AuthContext';
+import { AdminOnwardSettlementModal } from './AdminOnwardSettlementModal';
+import { Send } from 'lucide-react';
 import { Modal } from '../../../components/common/Modal';
 import { GenericReportView } from '../../../components/reports/GenericReportView';
 import { useReportFilters, useFilterOptions, FilterSelect, opts } from '../../../components/reports/reportFilters';
@@ -63,6 +66,8 @@ const money = (header: string, pick: (r: FinanceSettlementRecord) => number) => 
  */
 export const FinanceControlAccountSettlementsView: React.FC = () => {
   const toast = useToast();
+  const { currentUser } = useAuth();
+  const [isOnwardModalOpen, setIsOnwardModalOpen] = useState(false);
   const { cashUsers } = useFilterOptions(fetchManagementFilterOptions, EMPTY_MANAGEMENT_OPTIONS);
   const { filters, bind, reset } = useReportFilters({ portalUserId: '', status: '' });
   const [refreshKey, setRefreshKey] = useState(0);
@@ -121,15 +126,32 @@ export const FinanceControlAccountSettlementsView: React.FC = () => {
     }
   };
 
+  const isDesignatedReceiver = (s: FinanceSettlementRecord) => {
+    if (!s.receiverUserId && !s.receiverUser) return true;
+    return s.receiverUserId === currentUser?.id || s.receiverUser?.id === currentUser?.id;
+  };
+
   const renderAction = (s: FinanceSettlementRecord) => {
     if (s.status === 'SUBMITTED') {
+      if (isDesignatedReceiver(s)) {
+        return (
+          <button
+            type="button"
+            onClick={() => setReviewTarget(s)}
+            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] rounded shadow-xs transition-colors cursor-pointer"
+          >
+            <CheckSquare className="h-3.5 w-3.5" /> Review
+          </button>
+        );
+      }
       return (
         <button
           type="button"
           onClick={() => setReviewTarget(s)}
-          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] rounded shadow-xs transition-colors cursor-pointer"
+          className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-slate-700 bg-slate-50 hover:bg-[#effaf5] border border-slate-200 rounded transition-colors cursor-pointer"
+          title="Management oversight view (Read-only for non-designated receiver)"
         >
-          <CheckSquare className="h-3.5 w-3.5" /> Review
+          <Eye className="h-3.5 w-3.5" /> View
         </button>
       );
     }
@@ -179,6 +201,16 @@ export const FinanceControlAccountSettlementsView: React.FC = () => {
         onResetExtraFilters={reset}
         extraFilters={
           <>
+            {(currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin') && (
+              <button
+                type="button"
+                onClick={() => setIsOnwardModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-[#08775A] hover:bg-[#065f46] rounded-lg shadow-xs transition-colors cursor-pointer mr-2"
+              >
+                <Send className="h-3.5 w-3.5" />
+                <span>Settle to Super Admin</span>
+              </button>
+            )}
             <FilterSelect label="User" options={cashUsers} {...bind('portalUserId')} />
             <FilterSelect label="Status" options={STATUS_FILTER} {...bind('status')} />
           </>
@@ -189,6 +221,7 @@ export const FinanceControlAccountSettlementsView: React.FC = () => {
         columns={[
           { header: 'Submitted At', cell: (r) => r.submittedAt },
           { header: 'Cashier', cell: (r) => r.submittedByUser.fullName },
+          { header: 'Settle To', cell: (r) => (r.receiverUser ? `${r.receiverUser.fullName} (${r.receiverUser.role === 'SUPER_ADMIN' ? 'Super Admin' : 'Admin'})` : '—') },
           { header: 'Shift Period', cell: (r) => `${r.periodStart} → ${r.periodEnd}` },
           money('Expected Cash', (r) => r.expectedCash),
           money('Counted Cash', (r) => r.physicalCash),
@@ -285,6 +318,10 @@ export const FinanceControlAccountSettlementsView: React.FC = () => {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs bg-slate-50/70 p-3 rounded-xl border border-slate-200">
               <div>
+                <span className="text-slate-500 block text-[11px]">Designated Receiver:</span>
+                <span className="font-semibold text-slate-900">{reviewTarget.receiverUser ? `${reviewTarget.receiverUser.fullName} (${reviewTarget.receiverUser.role === 'SUPER_ADMIN' ? 'Super Admin' : 'Admin'})` : '— Default Super Admin'}</span>
+              </div>
+              <div>
                 <span className="text-slate-500 block text-[11px]">Handover Amount:</span>
                 <span className="font-mono font-bold text-slate-900">
                   {reviewTarget.handoverAmount != null ? formatPKR(reviewTarget.handoverAmount) : '— None specified'}
@@ -296,7 +333,7 @@ export const FinanceControlAccountSettlementsView: React.FC = () => {
               </div>
             </div>
 
-            {reviewTarget.status === 'SUBMITTED' ? (
+            {reviewTarget.status === 'SUBMITTED' && isDesignatedReceiver(reviewTarget) ? (
               <div className="space-y-3 pt-2 border-t border-slate-200">
                 <Textarea
                   label="Audit Remarks (Mandatory for Return or Reject)"
@@ -345,6 +382,28 @@ export const FinanceControlAccountSettlementsView: React.FC = () => {
                   >
                     {reviewActionInFlight === 'ACCEPT' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
                     <span>Accept &amp; Verify Settle</span>
+                  </button>
+                </div>
+              </div>
+            ) : reviewTarget.status === 'SUBMITTED' ? (
+              <div className="space-y-3 pt-2 border-t border-slate-200">
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <strong>Management Oversight View (Read-Only):</strong> This settlement was designated to{' '}
+                    <strong>{reviewTarget.receiverUser ? `${reviewTarget.receiverUser.fullName} (@${reviewTarget.receiverUser.username})` : 'another administrator'}</strong>. Only the designated receiving user can accept, return, or reject this settlement.
+                  </div>
+                </div>
+                <div className="flex justify-between items-center pt-1">
+                  <span className={`px-3 py-1 rounded-full text-[11px] font-bold border ${STATUS_BADGE[reviewTarget.status]}`}>
+                    {STATUS_LABEL[reviewTarget.status]}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={closeReview}
+                    className="px-4 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
+                  >
+                    Close
                   </button>
                 </div>
               </div>
@@ -412,6 +471,11 @@ export const FinanceControlAccountSettlementsView: React.FC = () => {
           </div>
         )}
       </Modal>
+      <AdminOnwardSettlementModal
+        isOpen={isOnwardModalOpen}
+        onClose={() => setIsOnwardModalOpen(false)}
+        onSuccess={reload}
+      />
     </>
   );
 };

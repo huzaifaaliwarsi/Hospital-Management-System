@@ -38,6 +38,11 @@ export const cashController = {
     res.status(201).json({ data: settlement });
   },
 
+  getEligibleReceivers: async (req: Request, res: Response) => {
+    const receivers = await settlementService.getEligibleReceivers(actorId(req));
+    res.json({ data: receivers });
+  },
+
   listMySettlements: async (req: Request, res: Response) => {
     const settlements = await settlementService.listMySettlements(actorId(req), req.query as unknown as MySettlementsQuery);
     res.json({ data: settlements });

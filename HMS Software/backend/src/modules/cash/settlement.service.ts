@@ -5,32 +5,47 @@ import type { SubmitSettlementBody } from './settlement.schemas';
 import type { MySettlementsQuery } from './financeControl.schemas';
 import { resolveDateRange } from '@/modules/reports/dashboard.service';
 import { resolveCashModuleScope } from './moduleScope.util';
+import type { PortalRole } from '@/config/constants';
 
 /**
  * My Account Settlement (HMS_V7.2_NEW_REQUIREMENTS.md §3.3; Balance Sheet &
  * Account Settlement Guide §5.1) — closes out a cashier's shift: every
  * currently-unsettled `UserCashBalance` row (the same ledger
  * `cashService.getCashierBalanceSheet` reads) is bundled into one
- * `AccountSettlement` and flips `isSettled = true` — a transaction, once
- * accounted for in a settlement, is never left dangling or arbitrarily
- * picked apart.
- *
- * A cash SHORTFALL doesn't vanish, though: `carryForwardAmount` records
- * exactly what's still owed as a pure liability figure (not tied to any
- * specific transaction row), and the next call to this function — or to
- * `cashService.getCashierBalanceSheet` — folds the most recent settlement's
- * `carryForwardAmount` back into `expectedCash`, so it keeps showing up
- * until it's actually paid down. This is deliberately NOT the same thing as
- * an "Opening Float" (a fixed till amount handed to a cashier at shift
- * start) — that's a separate, not-yet-built feature.
+ * `AccountSettlement` and flips `isSettled = true`.
  *
  * Scoped to the submitting user's own `moduleScope`, resolved from their
- * role (`resolveCashModuleScope` — inventory.md §9 step 2). Previously
- * hardcoded to `'BILLING'`, which silently mis-tagged every non-Front-Desk
- * user's settlement (e.g. an Inventory user's submission was written as a
- * BILLING settlement).
+ * role (`resolveCashModuleScope` — inventory.md §9 step 2). ADMIN and SUPER_ADMIN
+ * manage hospital-wide custody across all module scopes.
  */
 export const settlementService = {
+  /**
+   * Returns active, authorized receiver accounts that the given submitter can settle to:
+   * - Front Desk / Staff -> Admin OR Super Admin
+   * - Admin -> Super Admin
+   */
+  async getEligibleReceivers(portalUserId: string) {
+    const targetUser = await prisma.portalUser.findUniqueOrThrow({
+      where: { id: portalUserId },
+      select: { role: true },
+    });
+    const targetRoles: PortalRole[] =
+      targetUser.role === 'ADMIN' ? ['SUPER_ADMIN'] : ['ADMIN', 'SUPER_ADMIN'];
+    return prisma.portalUser.findMany({
+      where: {
+        role: { in: targetRoles },
+        status: 'ACTIVE',
+      },
+      select: {
+        id: true,
+        username: true,
+        displayName: true,
+        role: true,
+      },
+      orderBy: [{ role: 'asc' }, { displayName: 'asc' }],
+    });
+  },
+
   async submitSettlement(portalUserId: string, body: SubmitSettlementBody) {
     return prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`settlement:${portalUserId}`}))`;
@@ -39,10 +54,40 @@ export const settlementService = {
         select: { role: true },
       });
       const moduleScope = resolveCashModuleScope(targetUser.role);
+      const isManager = targetUser.role === 'ADMIN' || targetUser.role === 'SUPER_ADMIN';
+      const scopeFilter = isManager ? {} : { moduleScope };
+
+      // Validate receiver if provided
+      let resolvedReceiverId: string | null = null;
+      if (body.receiverUserId) {
+        const receiver = await tx.portalUser.findUnique({
+          where: { id: body.receiverUserId },
+          select: { id: true, role: true, status: true },
+        });
+        if (!receiver || receiver.status !== 'ACTIVE') {
+          throw new ValidationError('Selected settlement receiver was not found or is inactive.');
+        }
+        if (targetUser.role === 'ADMIN' && receiver.role !== 'SUPER_ADMIN') {
+          throw new ValidationError('Admin can only settle cash onward to a Super Admin.');
+        }
+        if (!['ADMIN', 'SUPER_ADMIN'].includes(receiver.role)) {
+          throw new ValidationError('Settlement receiver must hold an Admin or Super Admin role.');
+        }
+        resolvedReceiverId = receiver.id;
+      } else {
+        const defaultReceiver =
+          typeof tx.portalUser.findFirst === 'function'
+            ? await tx.portalUser.findFirst({
+                where: { role: 'SUPER_ADMIN', status: 'ACTIVE' },
+                select: { id: true },
+              })
+            : null;
+        resolvedReceiverId = defaultReceiver?.id ?? null;
+      }
 
       const [unsettled, previousSettlement] = await Promise.all([
         tx.userCashBalance.findMany({
-          where: { portalUserId, moduleScope, isSettled: false },
+          where: { portalUserId, ...scopeFilter, isSettled: false },
           orderBy: { occurredAt: 'asc' },
         }),
         // The most recent non-reversed settlement carries this user's
@@ -50,7 +95,7 @@ export const settlementService = {
         // re-opens its linked rows (`financeControlService.reverseSettlement`),
         // so a reversed settlement's carry-forward must never be counted.
         tx.accountSettlement.findFirst({
-          where: { portalUserId, moduleScope, status: { not: 'REVERSED' } },
+          where: { portalUserId, ...scopeFilter, status: { not: 'REVERSED' } },
           orderBy: { createdAt: 'desc' },
           select: { carryForwardAmount: true },
         }),
@@ -91,6 +136,7 @@ export const settlementService = {
       const settlement = await tx.accountSettlement.create({
         data: {
           portalUserId,
+          receiverUserId: resolvedReceiverId,
           moduleScope,
           periodStart,
           periodEnd,
@@ -127,6 +173,8 @@ export const settlementService = {
       select: { role: true },
     });
     const moduleScope = resolveCashModuleScope(targetUser.role);
+    const isManager = targetUser.role === 'ADMIN' || targetUser.role === 'SUPER_ADMIN';
+    const scopeFilter = isManager ? {} : { moduleScope };
 
     const range =
       query && query.preset !== 'all'
@@ -135,9 +183,14 @@ export const settlementService = {
     return prisma.accountSettlement.findMany({
       where: {
         portalUserId,
-        moduleScope,
+        ...scopeFilter,
         ...(range ? { createdAt: { gte: range.start, lte: range.end } } : {}),
         ...(query?.status ? { status: query.status } : {}),
+      },
+      include: {
+        receiverUser: {
+          select: { id: true, username: true, displayName: true, role: true },
+        },
       },
       orderBy: { createdAt: 'desc' },
       take: range || query?.status ? 500 : 50,

@@ -7,7 +7,7 @@ import { formatPKR } from '../../../utils/formatters';
 import { useToast } from '../../../context/ToastContext';
 import { useRouter } from '../../../context/RouterContext';
 import { frontdeskApiService } from '../../../services/frontdeskApiService';
-import { fetchMySettlements, submitSettlement, SettlementRecord, SettlementStatus } from '../../../services/settlementService';
+import { fetchMySettlements, submitSettlement, fetchEligibleReceivers, EligibleReceiver, SettlementRecord, SettlementStatus } from '../../../services/settlementService';
 
 const STATUS_LABEL: Record<SettlementStatus, string> = {
   PREPARED: 'Prepared',
@@ -62,6 +62,20 @@ export const MyAccountSettlementView: React.FC = () => {
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [historyKey, setHistoryKey] = useState(0);
+  const [receivers, setReceivers] = useState<EligibleReceiver[]>([]);
+  const [selectedReceiverId, setSelectedReceiverId] = useState('');
+
+  useEffect(() => {
+    fetchEligibleReceivers()
+      .then((list) => {
+        setReceivers(list);
+        if (list.length > 0) {
+          const defaultRec = list.find((r) => r.role === 'SUPER_ADMIN') || list[0];
+          setSelectedReceiverId(defaultRec.id);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const { filters, bind, reset } = useReportFilters({ status: '' });
 
@@ -111,6 +125,7 @@ export const MyAccountSettlementView: React.FC = () => {
         varianceReason: difference !== 0 ? reason.trim() : undefined,
         // The cashier hands over everything counted — no second amount to type.
         handoverAmount: countedAmount,
+        receiverUserId: selectedReceiverId || undefined,
       });
       toast.success('Settlement submitted for review.');
       setCounted('');
@@ -167,6 +182,26 @@ export const MyAccountSettlementView: React.FC = () => {
           <>
             <table className="w-full text-xs border-collapse">
               <tbody>
+                <Row
+                  label={
+                    <label htmlFor="settle-receiver" className="font-bold text-slate-900">
+                      Settle To (Receiver) <span className="text-rose-500">*</span>
+                    </label>
+                  }
+                >
+                  <select
+                    id="settle-receiver"
+                    value={selectedReceiverId}
+                    onChange={(e) => setSelectedReceiverId(e.target.value)}
+                    className="w-full max-w-56 ml-auto block rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-right text-xs font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#08775A] focus:border-[#08775A]"
+                  >
+                    {receivers.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.displayName || r.username} ({r.role === 'SUPER_ADMIN' ? 'Super Admin' : 'Admin'})
+                      </option>
+                    ))}
+                  </select>
+                </Row>
                 <Row label="Unsettled transactions">{unsettledCount}</Row>
                 {carriedForward > 0 && <Row label="Previous shortfall (carried forward)">{formatPKR(carriedForward)}</Row>}
                 <Row label="Expected cash in drawer" strong>
@@ -271,6 +306,7 @@ export const MyAccountSettlementView: React.FC = () => {
         emptyMessage="No settlements yet."
         columns={[
           { header: 'Submitted At', cell: (s) => s.submittedAt },
+          { header: 'Settle To', cell: (s) => (s.receiverUser ? `${s.receiverUser.displayName || s.receiverUser.username} (${s.receiverUser.role === 'SUPER_ADMIN' ? 'Super Admin' : 'Admin'})` : '—') },
           { header: 'Status', cell: (s) => STATUS_LABEL[s.status] || s.status },
           { header: 'Expected Cash', align: 'right', cell: (s) => formatPKR(s.expectedCash), excelValue: (s) => s.expectedCash },
           { header: 'Counted Cash', align: 'right', cell: (s) => formatPKR(s.physicalCash), excelValue: (s) => s.physicalCash },
@@ -319,6 +355,9 @@ export const MyAccountSettlementView: React.FC = () => {
       >
         <table className="w-full text-xs border border-slate-200 rounded-lg overflow-hidden">
           <tbody>
+            <Row label="Settle To" strong>
+              {receivers.find((r) => r.id === selectedReceiverId)?.displayName || receivers.find((r) => r.id === selectedReceiverId)?.username || 'Admin / Super Admin'}
+            </Row>
             <Row label="Expected cash">{formatPKR(expectedCash)}</Row>
             <Row label="Cash counted" strong>
               {formatPKR(countedAmount)}

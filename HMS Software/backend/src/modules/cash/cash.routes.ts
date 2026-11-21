@@ -31,6 +31,7 @@ router.get('/balance-sheet/:userId', oversee, validate({ query: myBalanceSheetQu
 
 // My Account Settlement (§3.3) — closes out every currently-unsettled
 // balance-sheet row into one settlement record.
+router.get('/eligible-receivers', view, asyncHandler(c.getEligibleReceivers));
 router.get('/settlements', view, validate({ query: mySettlementsQuerySchema }), asyncHandler(c.listMySettlements));
 router.post('/settlements', create, validate({ body: submitSettlementSchema }), asyncHandler(c.submitMySettlement));
 

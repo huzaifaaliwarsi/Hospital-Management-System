@@ -26,6 +26,19 @@ export interface SettlementRecord {
   submittedAt: string;
   remarks: string;
   createdAt: string;
+  receiverUser?: {
+    id: string;
+    username: string;
+    displayName: string | null;
+    role: string;
+  } | null;
+}
+
+export interface EligibleReceiver {
+  id: string;
+  username: string;
+  displayName: string | null;
+  role: string;
 }
 
 function formatTs(iso?: string | null): string {
@@ -48,9 +61,18 @@ function toSettlementRecord(raw: Record<string, any>): SettlementRecord {
     submittedAt: formatTs(raw.submittedAt),
     remarks: raw.remarks || '',
     createdAt: formatTs(raw.createdAt),
+    receiverUser: raw.receiverUser ?? null,
   };
 }
 
+export async function fetchEligibleReceivers(): Promise<EligibleReceiver[]> {
+  try {
+    const res = await apiClient.get<{ data: EligibleReceiver[] }>('/cash/eligible-receivers');
+    return res.data.data;
+  } catch (err) {
+    throw new Error(toErrorMessage(err));
+  }
+}
 
 export async function fetchMySettlements(filters?: { preset?: string; fromDate?: string; toDate?: string; status?: string }): Promise<SettlementRecord[]> {
   try {
@@ -66,6 +88,7 @@ export async function submitSettlement(values: {
   varianceReason?: string;
   handoverAmount?: number;
   remarks?: string;
+  receiverUserId?: string;
 }): Promise<SettlementRecord> {
   try {
     const res = await apiClient.post<{ data: Record<string, any> }>('/cash/settlements', values);

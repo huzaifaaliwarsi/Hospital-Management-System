@@ -58,6 +58,7 @@ interface BalanceSheetData {
     physicalCashCounted: number;
     variance: number;
     settlementCashIn: number;
+    settlementCashOut: number;
   };
   period: { mode: 'shift' | 'period'; label: string };
   transactions: BalanceSheetTransaction[];
@@ -142,6 +143,7 @@ export const MyBalanceSheetView: React.FC<MyBalanceSheetViewProps> = ({ userId, 
           physicalCashCounted: n(raw.summary?.physicalCashCounted),
           variance: n(raw.summary?.variance),
           settlementCashIn: n(raw.summary?.settlementCashIn),
+          settlementCashOut: n(raw.summary?.settlementCashOut),
           expectedPhysicalCash: Number(raw.summary?.expectedPhysicalCash ?? 0),
           carriedForwardAmount: Number(raw.summary?.carriedForwardAmount ?? 0),
           physicalCashIn: Number(raw.summary?.physicalCashIn ?? 0),
@@ -254,7 +256,7 @@ export const MyBalanceSheetView: React.FC<MyBalanceSheetViewProps> = ({ userId, 
             <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
             <span>{isRefreshing ? 'Refreshing…' : 'Refresh'}</span>
           </button>
-          {userId || !isShift ? null : hasUnsettled ? (
+          {!isShift || (userId && userId !== currentUser?.id) ? null : hasUnsettled ? (
             <button
               type="button"
               onClick={() => navigate('/front-desk/my_account_settlement')}
@@ -470,8 +472,10 @@ export const MyBalanceSheetView: React.FC<MyBalanceSheetViewProps> = ({ userId, 
               ? [{ label: 'Previous Balance (Carried Forward):', value: summary.carriedForwardAmount, tone: 'bg-amber-50 text-amber-900' }]
               : []),
             { label: '(+) Cash Collections:', value: summary.cashCollections, tone: 'bg-[#dcfce7] text-emerald-900' },
+            { label: '(+) Settlement Received (Cash IN):', value: summary.settlementCashIn, tone: 'bg-[#dcfce7] text-emerald-900' },
             { label: '(−) Cash Expenses:', value: summary.cashExpenses, tone: 'bg-[#fee2e2] text-rose-900' },
             { label: '(−) Cash Refunds:', value: summary.cashRefunds, tone: 'bg-[#fee2e2] text-rose-900' },
+            { label: '(−) Settlement Handover (Cash OUT):', value: summary.settlementCashOut, tone: 'bg-[#fee2e2] text-rose-900' },
             { label: 'Non-Cash (Card / Bank / Online) — not physical cash:', value: summary.nonPhysicalTotal, tone: 'bg-blue-50 text-blue-900' },
             { label: 'Expected Cash (Physical):', value: summary.expectedPhysicalCash, tone: 'bg-[#bbf7d0] text-emerald-950', strong: true },
             ...(!isShift

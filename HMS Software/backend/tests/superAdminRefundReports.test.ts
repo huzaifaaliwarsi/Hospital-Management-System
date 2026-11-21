@@ -14,6 +14,8 @@ const db = vi.hoisted(() => ({
   admissionRecord: { groupBy: vi.fn() },
   bed: { count: vi.fn() },
   accountSettlement: { findMany: vi.fn(), count: vi.fn() },
+  departmentRequisition: { findMany: vi.fn().mockResolvedValue([]) },
+  department: { findMany: vi.fn().mockResolvedValue([]) },
 }));
 vi.mock('@/db/client', () => ({ prisma: db }));
 vi.mock('@/modules/expenses/expenses.service', () => ({ expensesService: { totalBetween: async () => new Decimal(0) } }));

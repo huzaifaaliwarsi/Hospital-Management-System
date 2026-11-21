@@ -341,15 +341,16 @@ export const BalanceSettlementsReport: React.FC = () => {
       columns={[
         { header: 'User', cell: (r) => r.user },
         { header: 'Portal', cell: (r) => r.portal },
-        money('Opening / Petty Cash', (r) => r.opening + r.pettyCash),
-        money('Net Cash Collections', (r) => r.cashCollections),
+        money('Opening Cash', (r) => r.opening + r.pettyCash),
+        money('Cash Collections', (r) => r.cashCollections),
         money('Expenses / Refunds', (r) => r.expenses + r.refunds),
+        money('Settlement IN', (r) => r.settlementIn),
+        money('Settlement OUT', (r) => r.settlementOut || r.accepted),
         money('Card / Bank / Online', (r) => r.nonCash),
         money('Expected Cash', (r) => r.expectedCash),
         money('Physical Submitted', (r) => r.submitted),
         money('Variance', (r) => r.variance),
-        money('Accepted', (r) => r.accepted),
-        money('Remaining', (r) => r.remaining),
+        money('Remaining Cash', (r) => r.remaining),
         { header: 'Settlement Status', cell: (r) => labelOf(SETTLEMENT_STATUS, r.settlementStatus) },
       ]}
     />

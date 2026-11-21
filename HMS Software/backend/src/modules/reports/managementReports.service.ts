@@ -533,6 +533,7 @@ export const managementReportsService = {
       pettyCash: Decimal;
       cashCollections: Decimal;
       settlementIn: Decimal;
+      settlementOut: Decimal;
       expenses: Decimal;
       refunds: Decimal;
       nonCash: Decimal;
@@ -559,6 +560,7 @@ export const managementReportsService = {
           pettyCash: ZERO(),
           cashCollections: ZERO(),
           settlementIn: ZERO(),
+          settlementOut: ZERO(),
           expenses: ZERO(),
           refunds: ZERO(),
           nonCash: ZERO(),
@@ -593,9 +595,16 @@ export const managementReportsService = {
         else if (e.category === 'RECOVERY') r.settlementIn = r.settlementIn.plus(e.amount);
         else r.cashCollections = r.cashCollections.plus(e.amount);
       } else {
-        r.physicalOut = r.physicalOut.plus(e.amount);
-        if (e.category === 'REFUND') r.refunds = r.refunds.plus(e.amount);
-        else r.expenses = r.expenses.plus(e.amount);
+        if (e.category === 'RECOVERY') {
+          // Accepted settlement handover OUT — pure custody transfer, NOT an operating expense
+          r.settlementOut = r.settlementOut.plus(e.amount);
+        } else if (e.category === 'REFUND') {
+          r.physicalOut = r.physicalOut.plus(e.amount);
+          r.refunds = r.refunds.plus(e.amount);
+        } else {
+          r.physicalOut = r.physicalOut.plus(e.amount);
+          r.expenses = r.expenses.plus(e.amount);
+        }
       }
     }
 
@@ -605,11 +614,9 @@ export const managementReportsService = {
       const wasAccepted = (ACCEPTED_SETTLEMENT as readonly string[]).includes(s.status) || (s.status === 'REVERSED' && !!s.reversedAt && !!s.reviewedAt);
       if (wasAccepted && acceptedAt && acceptedAt <= end) {
         const amount = s.handoverAmount ?? s.physicalCash;
-        if (acceptedAt < start) r.opening = r.opening.minus(amount);
-        else r.accepted = r.accepted.plus(amount);
-        if (s.reversedAt && s.reversedAt <= end) {
-          if (s.reversedAt < start) r.opening = r.opening.plus(amount);
-          else r.accepted = r.accepted.minus(amount);
+        if (acceptedAt >= start) r.accepted = r.accepted.plus(amount);
+        if (s.reversedAt && s.reversedAt <= end && s.reversedAt >= start) {
+          r.accepted = r.accepted.minus(amount);
         }
       }
       if (!s.submittedAt || s.submittedAt < start) continue;
@@ -622,8 +629,24 @@ export const managementReportsService = {
     const result = Array.from(rows.values())
       .filter((r) => !query.settlementStatus || r.settlementStatus === query.settlementStatus)
       .map(({ physicalOut, ...r }) => {
-        const expectedCash = r.opening.plus(r.pettyCash).plus(r.cashCollections).plus(r.settlementIn).minus(physicalOut);
-        return { ...r, cashCollections: r.cashCollections.minus(r.refunds), expectedCash, remaining: expectedCash.minus(r.accepted) };
+        const acceptedOut = Decimal.max(r.settlementOut, r.accepted);
+        const netCashCollections = r.cashCollections.minus(r.refunds);
+        // Pre-settlement expected cash in till
+        const expectedCash = r.opening
+          .plus(r.pettyCash)
+          .plus(netCashCollections)
+          .plus(r.settlementIn)
+          .minus(r.expenses);
+        // Post-settlement remaining cash in custody
+        const remaining = expectedCash.minus(acceptedOut);
+        return {
+          ...r,
+          cashCollections: netCashCollections,
+          settlementOut: acceptedOut,
+          accepted: acceptedOut,
+          expectedCash,
+          remaining,
+        };
       })
       .sort((a, b) => a.user.localeCompare(b.user) || a.portal.localeCompare(b.portal));
 
@@ -1080,7 +1103,14 @@ export const managementReportsService = {
             : {}),
         },
         include: {
-          staff: { select: { id: true, fullName: true, employeeId: true } },
+          staff: {
+            select: {
+              id: true,
+              fullName: true,
+              employeeId: true,
+              department: { select: { id: true, name: true } },
+            },
+          },
           payrollRun: { include: { department: { select: { id: true, name: true } } } },
           payments: { where: { paidAt: { lte: end } } },
           correctionEntries: { where: { createdAt: { lte: end } } },
@@ -1227,7 +1257,7 @@ export const managementReportsService = {
           source: 'Staff Payroll',
           category: 'Salaries & Wages',
           voucherRef: `SLIP-${s.id.slice(0, 8).toUpperCase()}`,
-          department: s.payrollRun?.department?.name ?? 'Hospital Staff',
+          department: s.payrollRun?.department?.name ?? s.staff.department?.name ?? 'Hospital Staff',
           description: `Salary: ${s.staff.fullName} (${s.staff.employeeId})`,
           amount: recognized,
           paidAmount: balance.paid,

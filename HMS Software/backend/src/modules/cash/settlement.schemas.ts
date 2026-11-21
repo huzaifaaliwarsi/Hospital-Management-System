@@ -5,6 +5,7 @@ export const submitSettlementSchema = z.object({
   handoverAmount: z.coerce.number().nonnegative().optional(),
   varianceReason: z.string().optional(),
   remarks: z.string().optional(),
+  receiverUserId: z.string().uuid().optional(),
 });
 
 export type SubmitSettlementBody = z.infer<typeof submitSettlementSchema>;
