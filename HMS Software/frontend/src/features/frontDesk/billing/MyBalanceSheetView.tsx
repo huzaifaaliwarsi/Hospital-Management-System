@@ -57,6 +57,7 @@ interface BalanceSheetData {
     settlementCount: number;
     physicalCashCounted: number;
     variance: number;
+    settlementCashIn: number;
   };
   period: { mode: 'shift' | 'period'; label: string };
   transactions: BalanceSheetTransaction[];
@@ -81,7 +82,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   EXPENSE: 'Expense',
   PURCHASE: 'Purchase',
   PETTY_CASH_ISSUE: 'Petty Cash',
-  RECOVERY: 'Recovery',
+  RECOVERY: 'Settlement Handover',
 };
 
 const PRINT_COLUMNS: ExportColumn<BalanceSheetTransaction>[] = [
@@ -140,6 +141,7 @@ export const MyBalanceSheetView: React.FC<MyBalanceSheetViewProps> = ({ userId, 
           settlementCount: n(raw.summary?.settlementCount),
           physicalCashCounted: n(raw.summary?.physicalCashCounted),
           variance: n(raw.summary?.variance),
+          settlementCashIn: n(raw.summary?.settlementCashIn),
           expectedPhysicalCash: Number(raw.summary?.expectedPhysicalCash ?? 0),
           carriedForwardAmount: Number(raw.summary?.carriedForwardAmount ?? 0),
           physicalCashIn: Number(raw.summary?.physicalCashIn ?? 0),

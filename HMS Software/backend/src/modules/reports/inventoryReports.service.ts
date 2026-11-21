@@ -41,7 +41,10 @@ export const inventoryReportsService = {
     const [items, purchasesInRange, movementsInRange, supplierLedgerAll, nearExpiryBatches] = await Promise.all([
       prisma.stockItem.findMany({
         where: { isActive: true, ...(query.category ? { category: query.category } : {}) },
-        include: { stockLedgerEntries: { select: { quantityDelta: true } }, purchaseOrderLines: { select: { rate: true }, take: 1, orderBy: { id: 'desc' } } },
+        include: {
+          stockLedgerEntries: { select: { quantityDelta: true, batchNo: true, expiryDate: true, createdAt: true } },
+          purchaseOrderLines: { select: { batchNo: true, rate: true }, orderBy: { id: 'desc' } },
+        },
       }),
       prisma.purchaseOrder.findMany({
         where: range ? { createdAt: { gte: range.start, lte: range.end } } : {},
@@ -60,8 +63,39 @@ export const inventoryReportsService = {
     let outOfStockCount = 0;
     for (const item of items) {
       const currentStock = item.stockLedgerEntries.reduce((sum, e) => sum.plus(e.quantityDelta), new Decimal(0));
-      const lastRate = item.purchaseOrderLines[0]?.rate ?? new Decimal(0);
-      totalStockValue = totalStockValue.plus(currentStock.mul(lastRate));
+      const defaultRate = item.purchaseOrderLines.length > 0 && item.purchaseOrderLines[0]
+        ? new Decimal(item.purchaseOrderLines[0].rate)
+        : new Decimal(0);
+
+      // Compute actual batch/lot valuation from positive batch balances and historical lot purchase rates
+      const batchMap = new Map<string, { batchNo: string | null; available: Decimal }>();
+      for (const entry of item.stockLedgerEntries) {
+        const bNo = entry.batchNo?.trim() || null;
+        const key = bNo ?? '__UNBATCHED__';
+        const existing = batchMap.get(key);
+        const delta = new Decimal(entry.quantityDelta);
+        if (!existing) {
+          batchMap.set(key, { batchNo: bNo, available: delta });
+        } else {
+          existing.available = existing.available.plus(delta);
+        }
+      }
+
+      for (const b of batchMap.values()) {
+        if (b.available.greaterThan(0)) {
+          let batchRate = defaultRate;
+          if (b.batchNo) {
+            const matched = item.purchaseOrderLines.find(
+              (pol) => pol.batchNo?.trim().toLowerCase() === b.batchNo!.trim().toLowerCase(),
+            );
+            if (matched) {
+              batchRate = new Decimal(matched.rate);
+            }
+          }
+          totalStockValue = totalStockValue.plus(b.available.mul(batchRate));
+        }
+      }
+
       if (currentStock.lessThanOrEqualTo(0)) outOfStockCount += 1;
       else if (currentStock.lessThanOrEqualTo(item.reorderLevel)) lowStockCount += 1;
     }
@@ -84,8 +118,7 @@ export const inventoryReportsService = {
     return {
       period: range ? { label: range.label, start: range.start.toISOString(), end: range.end.toISOString() } : ALL_TIME_PERIOD,
       totalItems: items.length,
-      // Approximated from each item's most recent purchase rate — this repo
-      // has no persisted weighted-average/FIFO cost yet.
+      // Valued using actual historical lot/batch purchase rates
       totalStockValue,
       lowStockCount,
       outOfStockCount,
@@ -124,7 +157,7 @@ export const inventoryReportsService = {
     };
   },
 
-  /** Report 3 — Purchase / Stock In: GRN/purchase details, supplier, totals, paid/due. */
+  /** Report 3 — Purchase / Stock In: GRN/purchase details, supplier, totals, paid/due accounting for returns and payments. */
   async getPurchaseReport(query: PurchaseReportQuery) {
     const range = resolveRangeOrAll(query);
     const where: Prisma.PurchaseOrderWhereInput = {
@@ -154,16 +187,74 @@ export const inventoryReportsService = {
       take: 500,
     });
 
-    const totalAmount = rows.reduce((s, r) => s.plus(r.totalAmount), new Decimal(0));
-    const totalDue = rows.reduce((s, r) => (r.paymentMethod === 'CREDIT' ? s.plus(r.totalAmount) : s), new Decimal(0));
+    // Fetch linked supplier ledger records (returns, payments against POs)
+    const poIds = rows.map((r) => r.id);
+    const poLedgerEntries = poIds.length > 0
+      ? await prisma.supplierLedger.findMany({
+          where: {
+            referenceTable: 'purchase_orders',
+            referenceId: { in: poIds },
+          },
+          select: { referenceId: true, entryType: true, amount: true },
+        })
+      : [];
+
+    const ledgerByPo = new Map<string, { returns: Decimal; payments: Decimal }>();
+    for (const e of poLedgerEntries) {
+      if (!e.referenceId) continue;
+      const cur = ledgerByPo.get(e.referenceId) ?? { returns: new Decimal(0), payments: new Decimal(0) };
+      if (e.entryType === 'RETURN' || e.entryType === 'CREDIT_NOTE') {
+        cur.returns = cur.returns.plus(e.amount);
+      } else if (e.entryType === 'PAYMENT') {
+        cur.payments = cur.payments.plus(e.amount);
+      }
+      ledgerByPo.set(e.referenceId, cur);
+    }
+
+    let totalAmount = new Decimal(0);
+    let totalPaid = new Decimal(0);
+    let totalDue = new Decimal(0);
+    let totalReturned = new Decimal(0);
+
+    const enrichedRows = rows.map((r) => {
+      const linked = ledgerByPo.get(r.id) ?? { returns: new Decimal(0), payments: new Decimal(0) };
+      totalAmount = totalAmount.plus(r.totalAmount);
+
+      const returnedAmount = linked.returns;
+      const netPayable = Decimal.max(new Decimal(0), r.totalAmount.minus(returnedAmount));
+      let paidAmount = new Decimal(0);
+      let dueAmount = new Decimal(0);
+
+      if (r.paymentMethod !== 'CREDIT') {
+        // Immediate non-credit purchase (Petty Cash, Management Direct, Online/Bank)
+        paidAmount = netPayable;
+        dueAmount = new Decimal(0);
+      } else {
+        // Credit purchase: accounted from actual ledger payments
+        paidAmount = Decimal.min(netPayable, linked.payments);
+        dueAmount = Decimal.max(new Decimal(0), netPayable.minus(paidAmount));
+      }
+
+      totalPaid = totalPaid.plus(paidAmount);
+      totalDue = totalDue.plus(dueAmount);
+      totalReturned = totalReturned.plus(returnedAmount);
+
+      return {
+        ...r,
+        paidAmount,
+        dueAmount,
+        returnedAmount,
+      };
+    });
 
     return {
       period: range ? { label: range.label, start: range.start.toISOString(), end: range.end.toISOString() } : ALL_TIME_PERIOD,
       totalPurchases: rows.length,
       totalAmount,
-      totalPaid: totalAmount.minus(totalDue),
+      totalPaid,
       totalDue,
-      rows,
+      totalReturned,
+      rows: enrichedRows,
     };
   },
 
@@ -214,34 +305,103 @@ export const inventoryReportsService = {
     };
   },
 
-  /** Report 5 — Supplier Report: ledger statement / outstanding per supplier. */
+  /** Report 5 — Supplier Report: ledger statement with Opening Balance, Purchases, Payments, Returns, Running Balance & Closing. */
   async getSupplierReport(query: SupplierReportQuery) {
     const range = resolveRangeOrAll(query);
+    const supplierFilter = query.supplierId ? { supplierId: query.supplierId } : {};
+    const typeFilter = query.transactionType ? { entryType: query.transactionType } : {};
+
+    // 1. Calculate opening balance (all entries strictly before range.start)
+    let openingBalance = new Decimal(0);
+    if (range) {
+      const priorEntries = await prisma.supplierLedger.findMany({
+        where: {
+          createdAt: { lt: range.start },
+          ...supplierFilter,
+        },
+        select: { entryType: true, amount: true },
+      });
+      openingBalance = priorEntries.reduce((acc, e) => {
+        const amt = new Decimal(e.amount);
+        if (e.entryType === 'PURCHASE_CREDIT') return acc.plus(amt);
+        if ((e.entryType as string) === 'ADJUSTMENT') return acc.plus(amt);
+        return acc.minus(amt);
+      }, new Decimal(0));
+    }
+
+    // 2. Fetch in-range entries in chronological order to compute running balance
     const where: Prisma.SupplierLedgerWhereInput = {
       ...(range ? { createdAt: { gte: range.start, lte: range.end } } : {}),
-      ...(query.supplierId ? { supplierId: query.supplierId } : {}),
-      ...(query.transactionType ? { entryType: query.transactionType } : {}),
+      ...supplierFilter,
+      ...typeFilter,
     };
 
-    const rows = await prisma.supplierLedger.findMany({
+    const inRangeEntries = await prisma.supplierLedger.findMany({
       where,
-      include: { supplier: { select: { id: true, name: true } }, actor: { select: userSummarySelect } },
-      orderBy: { createdAt: 'desc' },
+      include: {
+        supplier: { select: { id: true, name: true } },
+        actor: { select: userSummarySelect },
+      },
+      orderBy: { createdAt: 'asc' },
       take: 1000,
     });
 
-    const totalPurchaseCredit = rows.reduce((s, r) => (r.entryType === 'PURCHASE_CREDIT' ? s.plus(r.amount) : s), new Decimal(0));
-    const totalPaymentsAndReturns = rows.reduce(
-      (s, r) => (r.entryType !== 'PURCHASE_CREDIT' ? s.plus(r.amount) : s),
-      new Decimal(0),
-    );
+    let running = new Decimal(openingBalance);
+    let totalPurchases = new Decimal(0);
+    let totalPayments = new Decimal(0);
+    let totalReturns = new Decimal(0);
+
+    const rowsWithBalance = inRangeEntries.map((e) => {
+      const amt = new Decimal(e.amount);
+      let debit = new Decimal(0);
+      let credit = new Decimal(0);
+
+      if (e.entryType === 'PURCHASE_CREDIT') {
+        credit = amt;
+        totalPurchases = totalPurchases.plus(amt);
+        running = running.plus(amt);
+      } else if (e.entryType === 'PAYMENT') {
+        debit = amt;
+        totalPayments = totalPayments.plus(amt);
+        running = running.minus(amt);
+      } else if (e.entryType === 'RETURN' || e.entryType === 'CREDIT_NOTE') {
+        debit = amt;
+        totalReturns = totalReturns.plus(amt);
+        running = running.minus(amt);
+      } else if ((e.entryType as string) === 'ADJUSTMENT') {
+        if (amt.greaterThanOrEqualTo(0)) {
+          credit = amt;
+          totalPurchases = totalPurchases.plus(amt);
+          running = running.plus(amt);
+        } else {
+          debit = amt.abs();
+          totalReturns = totalReturns.plus(amt.abs());
+          running = running.minus(amt.abs());
+        }
+      }
+
+      return {
+        ...e,
+        debit,
+        credit,
+        runningBalance: running,
+      };
+    });
+
+    // Return most recent first for display, preserving accurate per-row runningBalance
+    const rows = [...rowsWithBalance].reverse();
+    const closingPayable = running;
+    const netMovement = totalPurchases.minus(totalPayments).minus(totalReturns);
 
     return {
       period: range ? { label: range.label, start: range.start.toISOString(), end: range.end.toISOString() } : ALL_TIME_PERIOD,
       totalEntries: rows.length,
-      totalPurchaseCredit,
-      totalPaymentsAndReturns,
-      netMovement: totalPurchaseCredit.minus(totalPaymentsAndReturns),
+      openingBalance,
+      totalPurchases,
+      totalPayments,
+      totalReturns,
+      netMovement,
+      closingPayable,
       rows,
     };
   },

@@ -75,6 +75,7 @@ export const cashService = {
     let cashCollections = new Decimal(0);
     let cashExpenses = new Decimal(0);
     let cashRefunds = new Decimal(0);
+    let settlementCashIn = new Decimal(0);
     let settledNet = new Decimal(0);
     let remainingNet = new Decimal(0);
 
@@ -90,7 +91,11 @@ export const cashService = {
           if (tx.category === 'COLLECTION') {
             totalCollections = totalCollections.plus(tx.amount);
             cashCollections = cashCollections.plus(tx.amount);
-          } else if (tx.category === 'PETTY_CASH_ISSUE') pettyCash = pettyCash.plus(tx.amount);
+          } else if (tx.category === 'PETTY_CASH_ISSUE') {
+            pettyCash = pettyCash.plus(tx.amount);
+          } else if (tx.category === 'RECOVERY') {
+            settlementCashIn = settlementCashIn.plus(tx.amount);
+          }
         } else {
           physicalCashOut = physicalCashOut.plus(tx.amount);
           if (tx.category === 'REFUND') {
@@ -125,6 +130,7 @@ export const cashService = {
         cashCollections,
         cashExpenses,
         cashRefunds,
+        settlementCashIn,
         settledAmount: settledNet,
         remainingAmount: remainingNet.plus(carriedForwardAmount),
         // Only meaningful for a historical period — the counted cash and

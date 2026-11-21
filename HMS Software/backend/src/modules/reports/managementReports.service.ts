@@ -56,6 +56,8 @@ const CASH_ROLES = [
   'INVENTORY_MANAGEMENT',
   'PHARMACY_MANAGER',
   'PHARMACY_SALES_DISPENSING',
+  'ADMIN',
+  'SUPER_ADMIN',
 ];
 const PORTAL_LABEL: Record<string, string> = {
   BILLING: 'Front Desk / Billing',
@@ -180,6 +182,7 @@ export const managementReportsService = {
           ...(dept ? { departmentId: dept } : {}),
         },
         include: {
+          department: { select: { id: true, name: true, departmentType: true } },
           lines: {
             select: {
               quantity: true,
@@ -307,10 +310,21 @@ export const managementReportsService = {
       a.department.localeCompare(b.department),
     );
     let directServiceCosts = ZERO();
+    let hasIncompleteCost = false;
+    let missingCostCount = 0;
     for (const req of (departmentIssues as any[] || [])) {
+      // Approved consumption rule: only issues to clinical/service departments constitute direct service costs
+      const deptType = req.department?.departmentType;
+      const isDirectServiceConsumption = !deptType || ['CLINICAL', 'SURGICAL', 'DIAGNOSTIC', 'EMERGENCY'].includes(deptType);
+      if (!isDirectServiceConsumption) continue;
+
       for (const line of req.lines || []) {
         const netQty = line.quantity.minus(line.returnedQuantity);
         if (netQty.greaterThan(0)) {
+          if (line.costRate === null || line.costRate === undefined || line.costRate.isZero()) {
+            hasIncompleteCost = true;
+            missingCostCount++;
+          }
           directServiceCosts = directServiceCosts.plus(netQty.times(line.costRate ?? ZERO()));
         }
       }
@@ -349,6 +363,8 @@ export const managementReportsService = {
         operatingProfit,
         operatingResult: operatingProfit, // Accrual-based Operating Profit (replaces collectedIncome - costs)
         operatingMargin,
+        hasIncompleteCost,
+        missingCostCount,
         collections: collectedIncome,
         collectedIncome,
         outstanding: sumOf(table, (r) => r.outstanding),
@@ -516,6 +532,7 @@ export const managementReportsService = {
       opening: Decimal;
       pettyCash: Decimal;
       cashCollections: Decimal;
+      settlementIn: Decimal;
       expenses: Decimal;
       refunds: Decimal;
       nonCash: Decimal;
@@ -541,6 +558,7 @@ export const managementReportsService = {
           opening: ZERO(),
           pettyCash: ZERO(),
           cashCollections: ZERO(),
+          settlementIn: ZERO(),
           expenses: ZERO(),
           refunds: ZERO(),
           nonCash: ZERO(),
@@ -572,6 +590,7 @@ export const managementReportsService = {
           continue;
         }
         if (e.category === 'PETTY_CASH_ISSUE') r.pettyCash = r.pettyCash.plus(e.amount);
+        else if (e.category === 'RECOVERY') r.settlementIn = r.settlementIn.plus(e.amount);
         else r.cashCollections = r.cashCollections.plus(e.amount);
       } else {
         r.physicalOut = r.physicalOut.plus(e.amount);
@@ -603,7 +622,7 @@ export const managementReportsService = {
     const result = Array.from(rows.values())
       .filter((r) => !query.settlementStatus || r.settlementStatus === query.settlementStatus)
       .map(({ physicalOut, ...r }) => {
-        const expectedCash = r.opening.plus(r.pettyCash).plus(r.cashCollections).minus(physicalOut);
+        const expectedCash = r.opening.plus(r.pettyCash).plus(r.cashCollections).plus(r.settlementIn).minus(physicalOut);
         return { ...r, cashCollections: r.cashCollections.minus(r.refunds), expectedCash, remaining: expectedCash.minus(r.accepted) };
       })
       .sort((a, b) => a.user.localeCompare(b.user) || a.portal.localeCompare(b.portal));
@@ -988,6 +1007,8 @@ export const managementReportsService = {
         marginPercentage: summary.operatingMargin,
         collections: summary.collections,
         outstanding: summary.outstanding,
+        hasIncompleteCost: summary.hasIncompleteCost,
+        missingCostCount: summary.missingCostCount,
       },
       rows: rows.map((r) => ({
         department: r.department,
@@ -1106,6 +1127,7 @@ export const managementReportsService = {
       department: string;
       description: string;
       amount: Decimal;
+      costStatus?: 'COMPLETE' | 'INCOMPLETE';
       enteredBy: string;
     }> = [];
 
@@ -1121,15 +1143,24 @@ export const managementReportsService = {
         department: h.department?.name ?? 'Hospital-Wide',
         description: [h.paidTo, h.description].filter(Boolean).join(' — ') || 'Operating Expense',
         amount: h.amount,
+        costStatus: 'COMPLETE',
         enteredBy: userName(h.createdByUser) || 'System',
       });
     }
 
     let totalDirectConsumables = ZERO();
+    let hasIncompleteCost = false;
+    let missingCostCount = 0;
+
     for (const r of deptRequisitions) {
       for (const l of r.lines) {
         const netQty = l.quantity.minus(l.returnedQuantity);
         if (netQty.greaterThan(0)) {
+          const isMissingCost = l.costRate === null || l.costRate === undefined || l.costRate.isZero();
+          if (isMissingCost) {
+            hasIncompleteCost = true;
+            missingCostCount++;
+          }
           const cost = netQty.times(l.costRate ?? ZERO());
           totalDirectConsumables = totalDirectConsumables.plus(cost);
           items.push({
@@ -1139,8 +1170,11 @@ export const managementReportsService = {
             category: 'Clinical Consumables',
             voucherRef: `REQ-${r.id.slice(0, 8).toUpperCase()}`,
             department: r.department?.name ?? 'Clinical Department',
-            description: `${l.stockItem.name} (${netQty.toString()} ${l.stockItem.unit})`,
+            description: isMissingCost
+              ? `${l.stockItem.name} (${netQty.toString()} ${l.stockItem.unit}) [INCOMPLETE COST RATE]`
+              : `${l.stockItem.name} (${netQty.toString()} ${l.stockItem.unit})`,
             amount: cost,
+            costStatus: isMissingCost ? 'INCOMPLETE' : 'COMPLETE',
             enteredBy: userName(r.issuedBy) || 'System',
           });
         }
@@ -1225,6 +1259,8 @@ export const managementReportsService = {
         totalCommission,
         totalInventoryOpex,
         rowCount: items.length,
+        hasIncompleteCost,
+        missingCostCount,
       },
       rows: items,
     };

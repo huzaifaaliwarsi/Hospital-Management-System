@@ -51,7 +51,7 @@ export type DepartmentIssueReturnReportQuery = z.infer<typeof departmentIssueRet
 
 export const supplierReportQuerySchema = dateRangeSchema.extend({
   supplierId: z.string().uuid().optional(),
-  transactionType: z.enum(['PURCHASE_CREDIT', 'PAYMENT', 'RETURN', 'CREDIT_NOTE']).optional(),
+  transactionType: z.enum(['PURCHASE_CREDIT', 'PAYMENT', 'RETURN', 'CREDIT_NOTE', 'ADJUSTMENT']).optional(),
 });
 export type SupplierReportQuery = z.infer<typeof supplierReportQuerySchema>;
 
