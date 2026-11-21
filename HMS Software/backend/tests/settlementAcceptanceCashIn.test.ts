@@ -219,8 +219,32 @@ describe('HMS Cash Settlement Acceptance & Multi-Level Custody Transfers', () =>
     });
   });
 
-  describe('Scenario B: Front Desk -> Admin Settlement', () => {
-    it('FD settles 3,000 to Admin -> Admin receives Cash IN 3,000, Super Admin receives 0', async () => {
+  describe('Scenario B: Front Desk -> Admin Settlement & Receiver Authorization', () => {
+    it('rejects review/accept attempt if actor is not the designated receiving Admin', async () => {
+      const mockSettlement = {
+        id: 'set-fd-admin-3000',
+        portalUserId: cashierId,
+        receiverUserId: adminId,
+        moduleScope: 'BILLING',
+        status: 'SUBMITTED',
+        physicalCash: new Decimal(3000),
+        handoverAmount: new Decimal(3000),
+        submittedByUser: cashierUser,
+      };
+      db.accountSettlement.findUnique.mockResolvedValue(mockSettlement);
+
+      // Super Admin attempts to accept a settlement designated to Admin -> Forbidden!
+      await expect(
+        financeControlService.reviewSettlement('set-fd-admin-3000', { action: 'ACCEPT' }, superAdminId),
+      ).rejects.toThrow('Only the designated settlement receiver is authorized to review, accept, or reject this settlement.');
+
+      // Another admin attempts to accept -> Forbidden!
+      await expect(
+        financeControlService.reviewSettlement('set-fd-admin-3000', { action: 'ACCEPT' }, 'other-admin-id'),
+      ).rejects.toThrow('Reviewer portal user not found');
+    });
+
+    it('FD settles 3,000 to Admin -> only designated Admin can accept; Admin receives Cash IN 3,000', async () => {
       const mockSettlement = {
         id: 'set-fd-admin-3000',
         portalUserId: cashierId,
@@ -235,11 +259,12 @@ describe('HMS Cash Settlement Acceptance & Multi-Level Custody Transfers', () =>
       db.accountSettlement.update.mockResolvedValue({
         ...mockSettlement,
         status: 'ACCEPTED',
-        reviewedById: superAdminId,
+        reviewedById: adminId,
         reviewedAt: new Date(),
       });
 
-      await financeControlService.reviewSettlement('set-fd-admin-3000', { action: 'ACCEPT' }, superAdminId);
+      // Designated Admin reviews and accepts
+      await financeControlService.reviewSettlement('set-fd-admin-3000', { action: 'ACCEPT' }, adminId);
 
       // Exactly 1 OUT for Cashier and 1 IN for Admin
       expect(db.userCashBalance.create).toHaveBeenCalledTimes(2);
@@ -285,6 +310,24 @@ describe('HMS Cash Settlement Acceptance & Multi-Level Custody Transfers', () =>
   });
 
   describe('Scenario C: Admin -> Super Admin Onward Settlement', () => {
+    it('rejects review/accept attempt if non-designated admin/super-admin tries to accept onward settlement', async () => {
+      const mockAdminSettlement = {
+        id: 'set-admin-sa-2000',
+        portalUserId: adminId,
+        receiverUserId: superAdminId,
+        moduleScope: 'BILLING',
+        status: 'SUBMITTED',
+        physicalCash: new Decimal(2000),
+        handoverAmount: new Decimal(2000),
+        submittedByUser: adminUser,
+      };
+      db.accountSettlement.findUnique.mockResolvedValue(mockAdminSettlement);
+
+      // Admin or another non-designated user attempts to review -> Forbidden!
+      await expect(
+        financeControlService.reviewSettlement('set-admin-sa-2000', { action: 'ACCEPT' }, adminId),
+      ).rejects.toThrow('Only the designated settlement receiver is authorized to review, accept, or reject this settlement.');
+    });
     it('Admin holding 3,000 settles 2,000 to SA -> Admin remaining 1,000, SA receives 2,000, total combined custody = 3,000', async () => {
       // 1. Admin submits settlement of 2,000 onward to Super Admin
       db.userCashBalance.findMany.mockResolvedValueOnce([

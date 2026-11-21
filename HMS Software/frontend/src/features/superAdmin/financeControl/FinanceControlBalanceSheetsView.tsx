@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Wallet, Loader2 } from 'lucide-react';
 import { EmptyState } from '../../../components/common/StateViews';
 import { useFilterOptions } from '../../../components/reports/reportFilters';
 import { MyBalanceSheetView } from '../../frontDesk/billing/MyBalanceSheetView';
 import { fetchManagementFilterOptions, EMPTY_MANAGEMENT_OPTIONS } from '../../../services/managementReportsService';
+import { useAuth } from '../../../context/AuthContext';
 
 /**
  * Admin / Super Admin Balance Sheets — the exact Front Desk "My Balance Sheet"
@@ -12,11 +13,35 @@ import { fetchManagementFilterOptions, EMPTY_MANAGEMENT_OPTIONS } from '../../..
  * The all-users comparison lives in Reports → Balance Sheet & Settlements.
  */
 export const FinanceControlBalanceSheetsView: React.FC = () => {
+  const { currentUser } = useAuth();
   const options = useFilterOptions(fetchManagementFilterOptions, EMPTY_MANAGEMENT_OPTIONS);
   const optionsLoaded = options !== EMPTY_MANAGEMENT_OPTIONS;
   const { cashUsers } = options;
   const [pickedUserId, setUserId] = useState('');
-  const userId = pickedUserId || cashUsers[0]?.value || '';
+
+  // Default to Super Admin (or the logged-in user if available in cashUsers)
+  const defaultUserId = useMemo(() => {
+    if (!cashUsers.length) return '';
+
+    // If logged-in user is present in cashUsers, default to them
+    if (currentUser?.id) {
+      const match = cashUsers.find((u) => u.value === currentUser.id);
+      if (match) return match.value;
+    }
+
+    // Default to Super Admin account
+    const superAdmin = cashUsers.find(
+      (u) =>
+        u.label.toLowerCase().includes('(super admin)') ||
+        u.label.toLowerCase().includes('superadmin') ||
+        u.label.toLowerCase().includes('super admin')
+    );
+    if (superAdmin) return superAdmin.value;
+
+    return cashUsers[0]?.value || '';
+  }, [cashUsers, currentUser]);
+
+  const userId = pickedUserId || defaultUserId;
 
   const selected = cashUsers.find((u) => u.value === userId);
 

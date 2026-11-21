@@ -1000,6 +1000,19 @@ export const managementReportsService = {
       // Users who hold cash custody (own a Balance Sheet / Account Settlement).
       cashUsers: users
         .filter((u) => CASH_ROLES.includes(u.role))
+        .sort((a, b) => {
+          const ROLE_PRIORITY: Record<string, number> = {
+            SUPER_ADMIN: 1,
+            ADMIN: 2,
+            FRONT_DESK_BILLING: 3,
+            INVENTORY_MANAGEMENT: 4,
+            PHARMACY_SALES_DISPENSING: 5,
+          };
+          const pA = ROLE_PRIORITY[a.role] ?? 99;
+          const pB = ROLE_PRIORITY[b.role] ?? 99;
+          if (pA !== pB) return pA - pB;
+          return (a.displayName || a.username).localeCompare(b.displayName || b.username);
+        })
         .map((u) => ({
           value: u.id,
           label: `${u.displayName || u.username} (${roleLabel(u.role)})`,
