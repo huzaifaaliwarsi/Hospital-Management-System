@@ -7,11 +7,17 @@ import type {
   BalanceSettlementsQuery,
   StaffPayrollQuery,
   InventoryPharmacyQuery,
+  IncomeExpenseLedgerQuery,
 } from './managementReports.schemas';
 
 export const managementReportsController = {
   summary: async (req: Request, res: Response) => {
     res.json({ data: await svc.getSummary(req.query as unknown as ManagementSummaryQuery) });
+  },
+  incomeExpenseLedger: async (req: Request, res: Response) => {
+    res.json({
+      data: await svc.getIncomeExpenseLedger(req.query as unknown as IncomeExpenseLedgerQuery),
+    });
   },
   billingCollection: async (req: Request, res: Response) => {
     res.json({

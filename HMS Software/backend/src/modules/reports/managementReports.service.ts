@@ -9,6 +9,7 @@ import { commissionBalance, commissionPeriodBalance, commissionDepartmentFilter 
 import { salaryBalance } from '@/modules/payroll/payroll.balance';
 import { staffFinanceSummary } from './staffFinanceSummary';
 import { getPositiveBatchBalances } from '@/shared/inventoryBatchBalances';
+import { hospitalClock } from '@/shared/hospitalClock';
 import type {
   ManagementSummaryQuery,
   BillingCollectionQuery,
@@ -16,6 +17,7 @@ import type {
   BalanceSettlementsQuery,
   StaffPayrollQuery,
   InventoryPharmacyQuery,
+  IncomeExpenseLedgerQuery,
 } from './managementReports.schemas';
 
 /**
@@ -1363,4 +1365,834 @@ export const managementReportsService = {
       rows: items,
     };
   },
+
+  /** M01 — Detailed Transaction-wise Income & Expense Ledger with Full Dataset Reconciled Totals */
+  async getIncomeExpenseLedger(query: IncomeExpenseLedgerQuery) {
+    const { start, end, label } = resolveExtendedDateRange(query);
+    const dept = query.departmentId;
+    const user = query.portalUserId;
+    const method = query.method;
+    const status = query.status;
+    const transactionType = query.transactionType;
+    const portal = query.portal;
+    const search = query.search?.trim().toLowerCase();
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.max(1, Math.min(500, Number(query.limit) || 50));
+
+    // Parallel fetch of all source event records and full financial summary
+    const [
+      invoices,
+      receipts,
+      hospitalExpenseRows,
+      inventoryExpenseRows,
+      salarySlips,
+      commissionAccruals,
+      requisitions,
+      settlements,
+      summaryData,
+    ] = await Promise.all([
+      // 1. Hospital Invoices (Earned Revenue)
+      prisma.hospitalInvoice.findMany({
+        where: {
+          createdAt: { gte: start, lte: end },
+          status: { not: 'VOID' },
+          ...(dept
+            ? {
+                OR: [
+                  { departmentId: dept },
+                  { lines: { some: { serviceRate: { departmentId: dept } } } },
+                ],
+              }
+            : {}),
+          ...(user ? { createdById: user } : {}),
+        },
+        include: {
+          department: { select: { id: true, name: true } },
+          createdByUser: { select: { id: true, displayName: true, username: true, role: true } },
+          selfPayEncounter: { select: { id: true, mrNumber: true, fullName: true } },
+          panelPatient: { select: { id: true, fullName: true, corporatePanel: { select: { organizationName: true } } } },
+          admissionRecord: {
+            select: {
+              id: true,
+              admissionNumber: true,
+              selfPayEncounter: { select: { fullName: true } },
+              panelPatient: { select: { fullName: true } },
+              department: { select: { id: true, name: true } },
+            },
+          },
+          lines: {
+            include: {
+              serviceRate: { select: { id: true, name: true, department: { select: { id: true, name: true } } } },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+
+      // 2. Patient / Panel Collections & Refunds
+      prisma.paymentReceipt.findMany({
+        where: {
+          collectedAt: { gte: start, lte: end },
+          ...(method && method !== 'ALL' ? { method: method as any } : {}),
+          ...(user ? { collectedById: user } : {}),
+          ...(dept
+            ? {
+                OR: [
+                  { hospitalInvoice: { departmentId: dept } },
+                  { hospitalInvoice: { lines: { some: { serviceRate: { departmentId: dept } } } } },
+                  { hospitalInvoiceId: null, admissionRecord: { departmentId: dept } },
+                  { hospitalInvoiceId: null, appointment: { departmentId: dept } },
+                ],
+              }
+            : {}),
+        },
+        include: {
+          collectedBy: { select: { id: true, displayName: true, username: true, role: true } },
+          hospitalInvoice: {
+            select: {
+              id: true,
+              invoiceNumber: true,
+              department: { select: { id: true, name: true } },
+              selfPayEncounter: { select: { fullName: true } },
+              panelPatient: { select: { fullName: true } },
+              admissionRecord: {
+                select: {
+                  admissionNumber: true,
+                  selfPayEncounter: { select: { fullName: true } },
+                  panelPatient: { select: { fullName: true } },
+                },
+              },
+            },
+          },
+          admissionRecord: {
+            select: {
+              id: true,
+              admissionNumber: true,
+              selfPayEncounter: { select: { fullName: true } },
+              panelPatient: { select: { fullName: true } },
+            },
+          },
+        },
+        orderBy: { collectedAt: 'desc' },
+      }),
+
+      // 3. Hospital Operating Expenses
+      prisma.expense.findMany({
+        where: {
+          status: 'ACTIVE',
+          expenseDate: {
+            gte: new Date(start.toLocaleDateString('en-CA')),
+            lte: new Date(end.toLocaleDateString('en-CA')),
+          },
+          ...(dept ? { departmentId: dept } : {}),
+          ...(user ? { createdById: user } : {}),
+          ...(method && method !== 'ALL' ? { paymentMethod: method as any } : {}),
+        },
+        include: {
+          department: { select: { id: true, name: true } },
+          createdByUser: { select: { id: true, displayName: true, username: true, role: true } },
+        },
+        orderBy: { expenseDate: 'desc' },
+      }),
+
+      // 4. Inventory Operating Expenses
+      prisma.inventoryExpense.findMany({
+        where: {
+          expenseDate: {
+            gte: new Date(start.toLocaleDateString('en-CA')),
+            lte: new Date(end.toLocaleDateString('en-CA')),
+          },
+          ...(dept ? { id: { in: [] } } : {}),
+          ...(user ? { createdById: user } : {}),
+          ...(method && method !== 'ALL' ? { paymentMethod: method as any } : {}),
+        },
+        include: {
+          createdByUser: { select: { id: true, displayName: true, username: true, role: true } },
+        },
+        orderBy: { expenseDate: 'desc' },
+      }),
+
+      // 5. Staff Payroll Slips
+      prisma.salarySlip.findMany({
+        where: {
+          approvedAt: { gte: start, lte: end },
+          status: { in: ['APPROVED', 'PARTIALLY_PAID', 'PAID'] },
+          ...(dept
+            ? {
+                OR: [
+                  { payrollRun: { departmentId: dept } },
+                  { staff: { staffDepartments: { some: { departmentId: dept } } } },
+                ],
+              }
+            : {}),
+        },
+        include: {
+          staff: {
+            select: {
+              id: true,
+              fullName: true,
+              employeeId: true,
+              department: { select: { id: true, name: true } },
+            },
+          },
+          payrollRun: true,
+          payments: { where: { paidAt: { lte: end } } },
+        },
+        orderBy: { approvedAt: 'desc' },
+      }),
+
+      // 6. Doctor Commissions
+      prisma.doctorCommissionAccrual.findMany({
+        where: {
+          OR: [
+            { collectionEventId: { not: null }, collectionEvent: { occurredAt: { gte: start, lte: end } } },
+            { collectionEventId: null, approvedAt: { gte: start, lte: end }, status: { in: ['APPROVED', 'PARTIALLY_PAID', 'PAID'] } },
+          ],
+          ...(dept ? { invoiceLineItem: commissionDepartmentFilter(dept) } : {}),
+        },
+        include: {
+          doctor: {
+            select: {
+              id: true,
+              fullName: true,
+              employeeId: true,
+              staffDepartments: { select: { department: { select: { id: true, name: true } } }, take: 1 },
+            },
+          },
+          collectionEvent: true,
+          payouts: { where: { paidAt: { lte: end } } },
+          approvedByUser: { select: { id: true, displayName: true, username: true, role: true } },
+          invoiceLineItem: {
+            include: {
+              serviceRate: { include: { department: { select: { id: true, name: true } } } },
+              hospitalInvoice: {
+                include: {
+                  department: { select: { id: true, name: true } },
+                },
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+
+      // 7. Clinical Consumable Stock Issues
+      prisma.departmentRequisition.findMany({
+        where: {
+          issuedAt: { gte: start, lte: end },
+          status: { in: ['ISSUED', 'PARTIALLY_RETURNED', 'CLOSED'] },
+          ...(dept ? { departmentId: dept } : {}),
+        },
+        include: {
+          department: { select: { id: true, name: true, departmentType: true } },
+          issuedBy: { select: { id: true, displayName: true, username: true, role: true } },
+          lines: {
+            include: {
+              stockItem: { select: { id: true, name: true, code: true, unit: true } },
+            },
+          },
+        },
+        orderBy: { issuedAt: 'desc' },
+      }),
+
+      // 8. Internal Cash Settlements
+      prisma.accountSettlement.findMany({
+        where: {
+          submittedAt: { gte: start, lte: end },
+          ...(user ? { OR: [{ portalUserId: user }, { receiverUserId: user }] } : {}),
+        },
+        include: {
+          submittedByUser: { select: { id: true, displayName: true, username: true, role: true } },
+          receiverUser: { select: { id: true, displayName: true, username: true, role: true } },
+        },
+        orderBy: { submittedAt: 'desc' },
+      }),
+
+      // 9. Accrual Executive Summary
+      this.getSummary(query as any),
+    ]);
+
+    const allItems: Array<{
+      id: string;
+      date: string;
+      reference: string;
+      transactionType: 'REVENUE' | 'COLLECTION' | 'EXPENSE' | 'CONSUMABLE' | 'PAYROLL' | 'COMMISSION' | 'REFUND' | 'SETTLEMENT';
+      typeLabel: string;
+      patientPayeeDescription: string;
+      encounterInvoiceRef: string;
+      departmentId?: string;
+      department: string;
+      portalUserId?: string;
+      portalUser: string;
+      portal: string;
+      status: string;
+      statusLabel: string;
+      grossBilling: number;
+      discountCredit: number;
+      tax: number;
+      netRevenue: number;
+      collectionsReceived: number;
+      recognizedExpense: number;
+      expensePaid: number;
+      cashIn: number;
+      cashOut: number;
+      outstandingPayable: number;
+      paymentMethod: string;
+      details?: Record<string, any>;
+    }> = [];
+
+    // Map Invoices (Earned Revenue)
+    for (const inv of invoices) {
+      const pName =
+        inv.selfPayEncounter?.fullName ||
+        inv.panelPatient?.fullName ||
+        inv.admissionRecord?.selfPayEncounter?.fullName ||
+        inv.admissionRecord?.panelPatient?.fullName ||
+        'Walk-in Patient';
+      const dName = inv.department?.name || inv.lines[0]?.serviceRate?.department?.name || 'General Hospital Services';
+      const gross = Number(inv.subtotal);
+      const discount = Number(inv.discountTotal);
+      const net = Number(inv.total);
+      const paid = Number(inv.paidTotal);
+      const tax = Number((inv as any).taxAmount || 0);
+      const outstanding = Math.max(0, net - paid);
+      const isPaid = inv.status === 'PAID';
+      const isPartial = inv.status === 'PARTIALLY_PAID';
+
+      allItems.push({
+        id: `inv-${inv.id}`,
+        date: inv.createdAt.toISOString(),
+        reference: inv.invoiceNumber,
+        transactionType: 'REVENUE',
+        typeLabel: 'Hospital Revenue',
+        patientPayeeDescription: pName,
+        encounterInvoiceRef: inv.selfPayEncounter?.mrNumber || inv.admissionRecord?.admissionNumber || inv.invoiceNumber,
+        departmentId: inv.departmentId ?? undefined,
+        department: dName,
+        portalUserId: inv.createdById ?? undefined,
+        portalUser: userName(inv.createdByUser) || 'Front Desk Billing',
+        portal: 'Front Desk / Billing',
+        status: inv.status,
+        statusLabel: isPaid ? 'Paid' : isPartial ? 'Partially Paid' : inv.status === 'VOID' ? 'Voided' : 'Unpaid',
+        grossBilling: gross,
+        discountCredit: discount,
+        tax,
+        netRevenue: net,
+        collectionsReceived: 0,
+        recognizedExpense: 0,
+        expensePaid: 0,
+        cashIn: 0,
+        cashOut: 0,
+        outstandingPayable: outstanding,
+        paymentMethod: 'N/A',
+        details: {
+          lines: inv.lines.map((l: any) => ({
+            name: l.serviceRate?.name || 'Service',
+            gross: Number(l.lineGross),
+            discount: Number(l.discountAmount),
+            net: Number(l.lineNet),
+            department: l.serviceRate?.department?.name,
+          })),
+        },
+      });
+    }
+
+    // Map Receipts (Collections & Refunds)
+    for (const rec of receipts) {
+      const isRefund = rec.amount.lessThan(0) || rec.isReversed;
+      const absAmount = Math.abs(Number(rec.amount));
+      const pName =
+        rec.hospitalInvoice?.selfPayEncounter?.fullName ||
+        rec.hospitalInvoice?.panelPatient?.fullName ||
+        rec.hospitalInvoice?.admissionRecord?.selfPayEncounter?.fullName ||
+        rec.hospitalInvoice?.admissionRecord?.panelPatient?.fullName ||
+        rec.admissionRecord?.selfPayEncounter?.fullName ||
+        rec.admissionRecord?.panelPatient?.fullName ||
+        'Patient Receipt';
+      const dName = rec.hospitalInvoice?.department?.name || 'Front Desk Billing';
+      const isCash = rec.method === 'CASH';
+
+      if (isRefund) {
+        allItems.push({
+          id: `ref-${rec.id}`,
+          date: rec.collectedAt.toISOString(),
+          reference: rec.receiptNumber,
+          transactionType: 'REFUND',
+          typeLabel: 'Refund / Reversal',
+          patientPayeeDescription: `${pName} (Refund / Credit)`,
+          encounterInvoiceRef: rec.hospitalInvoice?.invoiceNumber || rec.admissionRecord?.admissionNumber || '—',
+          departmentId: rec.hospitalInvoice?.department?.id,
+          department: dName,
+          portalUserId: rec.collectedById,
+          portalUser: userName(rec.collectedBy) || 'Cashier',
+          portal: 'Front Desk / Billing',
+          status: 'REVERSED',
+          statusLabel: 'Refund / Reversed',
+          grossBilling: 0,
+          discountCredit: 0,
+          tax: 0,
+          netRevenue: 0,
+          collectionsReceived: -absAmount,
+          recognizedExpense: 0,
+          expensePaid: 0,
+          cashIn: 0,
+          cashOut: isCash ? absAmount : 0,
+          outstandingPayable: 0,
+          paymentMethod: rec.method,
+        });
+      } else {
+        allItems.push({
+          id: `rec-${rec.id}`,
+          date: rec.collectedAt.toISOString(),
+          reference: rec.receiptNumber,
+          transactionType: 'COLLECTION',
+          typeLabel: 'Collection / Receipt',
+          patientPayeeDescription: pName,
+          encounterInvoiceRef: rec.hospitalInvoice?.invoiceNumber || rec.admissionRecord?.admissionNumber || '—',
+          departmentId: rec.hospitalInvoice?.department?.id,
+          department: dName,
+          portalUserId: rec.collectedById,
+          portalUser: userName(rec.collectedBy) || 'Cashier',
+          portal: 'Front Desk / Billing',
+          status: 'COMPLETED',
+          statusLabel: 'Completed',
+          grossBilling: 0,
+          discountCredit: 0,
+          tax: 0,
+          netRevenue: 0,
+          collectionsReceived: absAmount,
+          recognizedExpense: 0,
+          expensePaid: 0,
+          cashIn: isCash ? absAmount : 0,
+          cashOut: 0,
+          outstandingPayable: 0,
+          paymentMethod: rec.method,
+        });
+      }
+    }
+
+    // Map Hospital Expenses
+    for (const exp of hospitalExpenseRows) {
+      const amt = Number(exp.amount);
+      const isCash = !exp.paymentMethod || exp.paymentMethod === 'CASH';
+      allItems.push({
+        id: `exp-${exp.id}`,
+        date: exp.expenseDate.toISOString(),
+        reference: exp.expenseNumber,
+        transactionType: 'EXPENSE',
+        typeLabel: 'Operating Expense',
+        patientPayeeDescription: [exp.paidTo, exp.description, exp.category].filter(Boolean).join(' — ') || 'Hospital Expense',
+        encounterInvoiceRef: exp.reference || exp.expenseNumber,
+        departmentId: exp.departmentId ?? undefined,
+        department: exp.department?.name || 'Hospital Administration',
+        portalUserId: exp.createdById ?? undefined,
+        portalUser: userName(exp.createdByUser) || 'Administrator',
+        portal: 'Admin',
+        status: exp.status,
+        statusLabel: 'Posted / Approved',
+        grossBilling: 0,
+        discountCredit: 0,
+        tax: 0,
+        netRevenue: 0,
+        collectionsReceived: 0,
+        recognizedExpense: amt,
+        expensePaid: amt,
+        cashIn: 0,
+        cashOut: isCash ? amt : 0,
+        outstandingPayable: 0,
+        paymentMethod: exp.paymentMethod || 'Cash',
+      });
+    }
+
+    // Map Inventory Expenses
+    for (const ie of inventoryExpenseRows) {
+      const amt = Number(ie.amount);
+      const isCash = !ie.paymentMethod || ie.paymentMethod === 'CASH';
+      allItems.push({
+        id: `iexp-${ie.id}`,
+        date: ie.expenseDate.toISOString(),
+        reference: ie.reference || `IE-${ie.id.slice(0, 8).toUpperCase()}`,
+        transactionType: 'EXPENSE',
+        typeLabel: 'Store Expense',
+        patientPayeeDescription: [ie.payee, ie.description, ie.category].filter(Boolean).join(' — ') || 'Store Expense',
+        encounterInvoiceRef: ie.reference || '—',
+        department: 'Inventory / Store',
+        portalUserId: ie.createdById,
+        portalUser: userName(ie.createdByUser) || 'Inventory Manager',
+        portal: 'Inventory Management',
+        status: 'POSTED',
+        statusLabel: 'Posted',
+        grossBilling: 0,
+        discountCredit: 0,
+        tax: 0,
+        netRevenue: 0,
+        collectionsReceived: 0,
+        recognizedExpense: amt,
+        expensePaid: amt,
+        cashIn: 0,
+        cashOut: isCash ? amt : 0,
+        outstandingPayable: 0,
+        paymentMethod: ie.paymentMethod || 'Cash',
+      });
+    }
+
+    // Map Staff Payroll Slips
+    for (const sal of salarySlips) {
+      const payable = Number(sal.generatedAmount);
+      const paid = sal.payments?.reduce((s, p) => s + Number(p.amount), 0) || 0;
+      const remaining = Math.max(0, payable - paid);
+      const cashPayments = sal.payments?.filter((p) => p.method === 'CASH').reduce((s, p) => s + Number(p.amount), 0) || 0;
+      const methodLabel = sal.payments?.[0]?.method || 'Bank / Online';
+
+      allItems.push({
+        id: `sal-${sal.id}`,
+        date: (sal.approvedAt || sal.createdAt).toISOString(),
+        reference: `${sal.periodStart.toISOString().slice(0, 7)} Payroll`,
+        transactionType: 'PAYROLL',
+        typeLabel: 'Staff Payroll',
+        patientPayeeDescription: `${sal.staff.fullName} (${sal.staff.employeeId})`,
+        encounterInvoiceRef: sal.payrollRunId || '—',
+        department: sal.staff.department?.name || 'Administration',
+        portalUser: 'HR / Payroll Officer',
+        portal: 'Admin',
+        status: sal.status,
+        statusLabel: sal.status.replace(/_/g, ' '),
+        grossBilling: 0,
+        discountCredit: 0,
+        tax: 0,
+        netRevenue: 0,
+        collectionsReceived: 0,
+        recognizedExpense: payable,
+        expensePaid: paid,
+        cashIn: 0,
+        cashOut: cashPayments,
+        outstandingPayable: remaining,
+        paymentMethod: methodLabel,
+      });
+    }
+
+    // Map Doctor Commissions
+    for (const com of commissionAccruals) {
+      const amt = Number(com.commissionAmount);
+      const paid = com.payouts?.reduce((s, p) => s + Number(p.amount), 0) || 0;
+      const outstanding = Math.max(0, amt - paid);
+      const invRef = com.invoiceLineItem?.hospitalInvoice?.invoiceNumber || '—';
+      const dName =
+        com.invoiceLineItem?.serviceRate?.department?.name ||
+        com.doctor.staffDepartments?.[0]?.department?.name ||
+        'Clinical Services';
+
+      allItems.push({
+        id: `com-${com.id}`,
+        date: (com.collectionEvent?.occurredAt || com.approvedAt || com.createdAt).toISOString(),
+        reference: `COM-${com.id.slice(0, 8).toUpperCase()}`,
+        transactionType: 'COMMISSION',
+        typeLabel: 'Doctor Commission',
+        patientPayeeDescription: `Dr. ${com.doctor.fullName} (${com.doctor.employeeId})`,
+        encounterInvoiceRef: invRef,
+        department: dName,
+        portalUserId: com.approvedById ?? undefined,
+        portalUser: userName(com.approvedByUser) || 'Finance Control',
+        portal: 'Super Admin',
+        status: com.status,
+        statusLabel: com.status.replace(/_/g, ' '),
+        grossBilling: 0,
+        discountCredit: 0,
+        tax: 0,
+        netRevenue: 0,
+        collectionsReceived: 0,
+        recognizedExpense: amt,
+        expensePaid: paid,
+        cashIn: 0,
+        cashOut: 0,
+        outstandingPayable: outstanding,
+        paymentMethod: 'Bank / Online',
+      });
+    }
+
+    // Map Direct Consumable Stock Issues (Clinical)
+    for (const req of requisitions) {
+      const deptType = req.department?.departmentType;
+      const isDirect = !deptType || ['CLINICAL', 'SURGICAL', 'DIAGNOSTIC', 'EMERGENCY'].includes(deptType);
+      if (!isDirect) continue;
+
+      let cost = 0;
+      for (const line of req.lines || []) {
+        const netQty = Number(line.quantity) - Number(line.returnedQuantity);
+        if (netQty > 0) {
+          cost += netQty * Number(line.costRate || 0);
+        }
+      }
+
+      allItems.push({
+        id: `req-${req.id}`,
+        date: req.issuedAt.toISOString(),
+        reference: `REQ-${req.id.slice(0, 8).toUpperCase()}`,
+        transactionType: 'CONSUMABLE',
+        typeLabel: 'Direct Consumable Cost',
+        patientPayeeDescription: `Consumable Stock Issue to ${req.department?.name || 'Department'}`,
+        encounterInvoiceRef: `REQ-${req.id.slice(0, 8).toUpperCase()}`,
+        departmentId: req.departmentId,
+        department: req.department?.name || 'Store',
+        portalUserId: req.issuedById,
+        portalUser: userName(req.issuedBy) || 'Inventory Manager',
+        portal: 'Inventory Management',
+        status: req.status,
+        statusLabel: req.status.replace(/_/g, ' '),
+        grossBilling: 0,
+        discountCredit: 0,
+        tax: 0,
+        netRevenue: 0,
+        collectionsReceived: 0,
+        recognizedExpense: cost,
+        expensePaid: 0,
+        cashIn: 0,
+        cashOut: 0,
+        outstandingPayable: 0,
+        paymentMethod: 'N/A',
+      });
+    }
+
+    // Map Internal Cash Settlements
+    for (const st of settlements) {
+      const acceptedAmt = Number(st.handoverAmount || st.physicalCash || 0);
+      const isAccepted = st.status === 'ACCEPTED';
+      const senderName = userName(st.submittedByUser) || 'Cashier';
+      const receiverName = userName(st.receiverUser) || 'Administrator';
+
+      allItems.push({
+        id: `set-${st.id}`,
+        date: (st.submittedAt || st.createdAt).toISOString(),
+        reference: `SET-${st.id.slice(0, 8).toUpperCase()}`,
+        transactionType: 'SETTLEMENT',
+        typeLabel: 'Internal Custody Transfer',
+        patientPayeeDescription: `Cash Settlement Handover: ${senderName} → ${receiverName}`,
+        encounterInvoiceRef: '—',
+        department: 'Cash Custody',
+        portalUserId: st.portalUserId,
+        portalUser: senderName,
+        portal: 'Front Desk / Billing',
+        status: st.status,
+        statusLabel: st.status.replace(/_/g, ' '),
+        grossBilling: 0,
+        discountCredit: 0,
+        tax: 0,
+        netRevenue: 0,
+        collectionsReceived: 0,
+        recognizedExpense: 0,
+        expensePaid: 0,
+        cashIn: isAccepted ? acceptedAmt : 0,
+        cashOut: isAccepted ? acceptedAmt : 0,
+        outstandingPayable: 0,
+        paymentMethod: 'Cash',
+      });
+    }
+
+    // Sort chronologically (most recent first)
+    allItems.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    // Apply Filters
+    const filteredItems = allItems.filter((it) => {
+      if (transactionType && transactionType !== 'ALL' && it.transactionType !== transactionType) {
+        return false;
+      }
+      if (dept && it.departmentId && it.departmentId !== dept) {
+        return false;
+      }
+      if (user && it.portalUserId && it.portalUserId !== user) {
+        return false;
+      }
+      if (portal && portal !== 'ALL' && !it.portal.toLowerCase().includes(portal.toLowerCase())) {
+        return false;
+      }
+      if (method && method !== 'ALL' && it.paymentMethod !== 'N/A' && it.paymentMethod.toUpperCase() !== method.toUpperCase()) {
+        return false;
+      }
+      if (status && status !== 'ALL' && it.status.toUpperCase() !== status.toUpperCase()) {
+        return false;
+      }
+      if (search) {
+        const text = [
+          it.reference,
+          it.patientPayeeDescription,
+          it.encounterInvoiceRef,
+          it.department,
+          it.portalUser,
+          it.typeLabel,
+          it.paymentMethod,
+        ]
+          .join(' ')
+          .toLowerCase();
+        if (!text.includes(search)) return false;
+      }
+      return true;
+    });
+
+    // Column-wise totals over the filtered list
+    const columnTotals = {
+      grossBilling: filteredItems.reduce((s, it) => s + it.grossBilling, 0),
+      discountCredit: filteredItems.reduce((s, it) => s + it.discountCredit, 0),
+      tax: filteredItems.reduce((s, it) => s + it.tax, 0),
+      netRevenue: filteredItems.reduce((s, it) => s + it.netRevenue, 0),
+      collectionsReceived: filteredItems.reduce((s, it) => s + it.collectionsReceived, 0),
+      recognizedExpense: filteredItems.reduce((s, it) => s + it.recognizedExpense, 0),
+      expensePaid: filteredItems.reduce((s, it) => s + it.expensePaid, 0),
+      cashIn: filteredItems.reduce((s, it) => s + it.cashIn, 0),
+      cashOut: filteredItems.reduce((s, it) => s + it.cashOut, 0),
+      outstandingPayable: filteredItems.reduce((s, it) => s + it.outstandingPayable, 0),
+    };
+
+    // Executive Reconciled Financial Totals
+    const sum = summaryData.summary;
+    const actualCashIn = filteredItems.filter((it) => it.transactionType === 'COLLECTION').reduce((s, it) => s + it.cashIn, 0);
+    const actualCashOut = filteredItems.filter((it) => it.transactionType !== 'SETTLEMENT').reduce((s, it) => s + it.cashOut, 0);
+    const nonOperatingOutflows = filteredItems.filter((it) => it.transactionType === 'SETTLEMENT').reduce((s, it) => s + it.cashOut, 0);
+
+    const totals = {
+      hospitalRevenue: {
+        grossEarnedBilling: Number(sum.grossBilling),
+        discounts: Number(sum.discounts),
+        netEarnedRevenue: Number(sum.netEarnedRevenue),
+        taxAmount: filteredItems.reduce((s, it) => s + it.tax, 0),
+      },
+      collectionsReceivables: {
+        totalCollections: Number(sum.collections),
+        cashCollections: actualCashIn,
+        cardBankOnlineCollections: Math.max(0, Number(sum.collections) - actualCashIn),
+        refunds: filteredItems.filter((it) => it.transactionType === 'REFUND').reduce((s, it) => s + Math.abs(it.collectionsReceived), 0),
+        netCollections: Number(sum.collections),
+        closingOutstanding: Number(sum.outstanding),
+      },
+      hospitalCosts: {
+        directConsumables: Number(sum.directServiceCosts),
+        staffPayrollRecognized: Number(sum.payrollCost),
+        doctorCommissionEarned: Number(sum.doctorCommissionCost),
+        approvedHospitalExpenses: Number(sum.hospitalExpenses),
+        inventoryOperatingExpenses: Number(sum.expenses),
+        totalOperatingCosts: Number(sum.totalOperatingCosts),
+        hasIncompleteCost: sum.hasIncompleteCost,
+        missingCostCount: sum.missingCostCount,
+      },
+      profit: {
+        grossProfit: Number(sum.grossProfit),
+        operatingProfit: Number(sum.operatingProfit),
+        operatingMargin: Number(sum.operatingMargin),
+      },
+      cashMovement: {
+        totalCustomerCollections: Number(sum.collections),
+        actualPaidOperatingExpenses: Number(sum.hospitalExpenses) + Number(sum.salaryPaid) + Number(sum.commissionPaid),
+        nonOperatingCashOutflows: nonOperatingOutflows,
+        netCashMovement: actualCashIn - actualCashOut,
+        currentRemainingCustomerDues: Number(sum.outstanding),
+      },
+      payables: {
+        payrollPaid: Number(sum.salaryPaid),
+        payrollOutstanding: Number(sum.salaryOutstanding),
+        commissionPaid: Number(sum.commissionPaid),
+        commissionOutstanding: Number(sum.commissionOutstanding),
+        expensePaid: Number(sum.hospitalExpenses),
+        expenseOutstanding: 0,
+      },
+    };
+
+    const totalRecords = filteredItems.length;
+    const totalPages = Math.ceil(totalRecords / limit) || 1;
+    const paginatedItems = filteredItems.slice((page - 1) * limit, page * limit);
+
+    return {
+      period: periodOf(start, end, label),
+      totalRecords,
+      page,
+      limit,
+      totalPages,
+      items: paginatedItems,
+      columnTotals,
+      totals,
+    };
+  },
 };
+
+export function resolveExtendedDateRange(query: {
+  preset?: string;
+  fromDate?: string;
+  toDate?: string;
+}): { start: Date; end: Date; label: string } {
+  const now = new Date();
+  const karachiClock = hospitalClock(now);
+  const todayStr = karachiClock.date; // e.g. "2026-11-21" in Asia/Karachi
+
+  const parseKarachiStart = (dStr: string) => new Date(`${dStr}T00:00:00.000+05:00`);
+  const parseKarachiEnd = (dStr: string) => new Date(`${dStr}T23:59:59.999+05:00`);
+
+  if (query.preset === 'all_time') {
+    return {
+      start: new Date('2020-01-01T00:00:00.000+05:00'),
+      end: parseKarachiEnd(todayStr),
+      label: 'All Time',
+    };
+  }
+
+  if (query.preset === 'custom' && query.fromDate && query.toDate) {
+    return {
+      start: parseKarachiStart(query.fromDate),
+      end: parseKarachiEnd(query.toDate),
+      label: `Custom (${query.fromDate} to ${query.toDate})`,
+    };
+  }
+
+  if (query.preset === 'yesterday') {
+    const todayDate = new Date(`${todayStr}T12:00:00+05:00`);
+    todayDate.setDate(todayDate.getDate() - 1);
+    const yesterdayStr = todayDate.toISOString().slice(0, 10);
+    return {
+      start: parseKarachiStart(yesterdayStr),
+      end: parseKarachiEnd(yesterdayStr),
+      label: 'Yesterday',
+    };
+  }
+
+  if (query.preset === 'this_week') {
+    const todayDate = new Date(`${todayStr}T12:00:00+05:00`);
+    const day = todayDate.getDay();
+    const diff = todayDate.getDate() - day + (day === 0 ? -6 : 1);
+    todayDate.setDate(diff);
+    const startOfWeekStr = todayDate.toISOString().slice(0, 10);
+    return {
+      start: parseKarachiStart(startOfWeekStr),
+      end: parseKarachiEnd(todayStr),
+      label: 'This Week',
+    };
+  }
+
+  if (query.preset === 'this_month') {
+    const [y = '2026', m = '11'] = todayStr.split('-');
+    const startOfMonthStr = `${y}-${m}-01`;
+    return {
+      start: parseKarachiStart(startOfMonthStr),
+      end: parseKarachiEnd(todayStr),
+      label: 'This Month',
+    };
+  }
+
+  if (query.preset === 'last_month') {
+    const [yNum = 2026, mNum = 11] = todayStr.split('-').map(Number);
+    const lastMonthY = mNum === 1 ? yNum - 1 : yNum;
+    const lastMonthM = mNum === 1 ? 12 : mNum - 1;
+    const mStr = String(lastMonthM).padStart(2, '0');
+    const startOfLastMonth = `${lastMonthY}-${mStr}-01`;
+    const lastDay = new Date(lastMonthY, lastMonthM, 0).getDate();
+    const endOfLastMonth = `${lastMonthY}-${mStr}-${String(lastDay).padStart(2, '0')}`;
+    return {
+      start: parseKarachiStart(startOfLastMonth),
+      end: parseKarachiEnd(endOfLastMonth),
+      label: 'Last Month',
+    };
+  }
+
+  // Default: Today
+  return {
+    start: parseKarachiStart(todayStr),
+    end: parseKarachiEnd(todayStr),
+    label: `Today (${todayStr})`,
+  };
+}

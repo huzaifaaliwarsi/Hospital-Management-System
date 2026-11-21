@@ -81,3 +81,23 @@ export const inventoryPharmacyQuerySchema = dateRangeSchema.extend({
   status: z.enum(['ALERTS']).optional(),
 });
 export type InventoryPharmacyQuery = z.infer<typeof inventoryPharmacyQuerySchema>;
+
+/** M01 — Detailed Income & Expense Ledger Query Schema (Chronological Transaction View) */
+export const incomeExpenseLedgerQuerySchema = z.object({
+  preset: z
+    .enum(['today', 'yesterday', 'this_week', 'this_month', 'last_month', 'custom', 'all_time'])
+    .default('today'),
+  fromDate: z.string().optional(),
+  toDate: z.string().optional(),
+  departmentId: uuid,
+  portal: z.string().optional(),
+  portalUserId: uuid,
+  transactionType: z.string().optional(),
+  method: z.enum(['CASH', 'CARD', 'BANK', 'ONLINE', 'ALL']).optional(),
+  status: z.string().optional(),
+  search: z.string().optional(),
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(500).default(50),
+});
+export type IncomeExpenseLedgerQuery = z.infer<typeof incomeExpenseLedgerQuerySchema>;
+

@@ -6,6 +6,7 @@ import { useReportFilters, useFilterOptions, FilterSelect, opts } from '../../..
 import { InvoiceDetailModal } from '../../frontDesk/billing/InvoiceDetailModal';
 import { AdmissionSummaryView } from '../../admission/AdmissionSimpleReports';
 import { StaffFinancialSources } from './StaffFinancialSources';
+import { IncomeExpenseLedgerView } from './IncomeExpenseLedgerView';
 import { fetchPharmacyRequestFulfillment, PharmacyRequestFulfillmentRow } from '../../../services/admissionReportsService';
 import {
   fetchExpenses,
@@ -111,34 +112,10 @@ const InvoiceLink: React.FC<{ number: string; onClick: () => void }> = ({ number
   </button>
 );
 
-// ── #1 Management Summary ─────────────────────────────────────────────────
+// ── #1 Management Summary (M01 Income & Expense Ledger) ───────────────────
 
 export const ManagementSummaryReport: React.FC = () => {
-  const options = useOptions();
-  const { filters, bind, reset } = useReportFilters({ departmentId: '', portalUserId: '', method: '' });
-  return (
-    <GenericReportView<SummaryRecord>
-      title="Income & Expense"
-      subtitle="Accrual Net Revenue − Direct Consumables − Staff Salaries − Doctor Commissions − Operating Expenses = Operating Profit. Collections and outstanding are tracked separately."
-      icon={BarChart2}
-      filenamePrefix="Income_Expense"
-      tableZoom={1.2}
-      compact
-      fetchReport={(range) => fetchManagementSummary(range, filters)}
-      onResetExtraFilters={reset}
-      extraFilters={
-        <>
-          <FilterSelect label="Department" options={options.departments} {...bind('departmentId')} />
-          <FilterSelect label="Portal / User" options={options.users} {...bind('portalUserId')} />
-          <FilterSelect label="Payment Method" options={PAYMENT_METHOD} {...bind('method')} />
-        </>
-      }
-      rowKey={(r) => r.key}
-      noTotalColumns={['Value']}
-      emptyMessage="No billing or admissions in this period."
-      columns={SUMMARY_COLUMNS}
-    />
-  );
+  return <IncomeExpenseLedgerView />;
 };
 
 // ── #2 Billing & Collection ───────────────────────────────────────────────

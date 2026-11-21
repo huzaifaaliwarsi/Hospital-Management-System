@@ -19,17 +19,11 @@ export const FinanceControlBalanceSheetsView: React.FC = () => {
   const { cashUsers } = options;
   const [pickedUserId, setUserId] = useState('');
 
-  // Default to Super Admin (or the logged-in user if available in cashUsers)
+  // Default to Super Admin account
   const defaultUserId = useMemo(() => {
     if (!cashUsers.length) return '';
 
-    // If logged-in user is present in cashUsers, default to them
-    if (currentUser?.id) {
-      const match = cashUsers.find((u) => u.value === currentUser.id);
-      if (match) return match.value;
-    }
-
-    // Default to Super Admin account
+    // 1. Always prioritize Super Admin account first (§Default Super Admin custody)
     const superAdmin = cashUsers.find(
       (u) =>
         u.label.toLowerCase().includes('(super admin)') ||
@@ -37,6 +31,12 @@ export const FinanceControlBalanceSheetsView: React.FC = () => {
         u.label.toLowerCase().includes('super admin')
     );
     if (superAdmin) return superAdmin.value;
+
+    // 2. If logged-in user is present in cashUsers, default to them
+    if (currentUser?.id) {
+      const match = cashUsers.find((u) => u.value === currentUser.id);
+      if (match) return match.value;
+    }
 
     return cashUsers[0]?.value || '';
   }, [cashUsers, currentUser]);

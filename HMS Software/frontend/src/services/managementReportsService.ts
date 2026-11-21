@@ -77,6 +77,131 @@ const record = (section: string, metric: string, value: unknown, isAmount: boole
 
 // ── #1 Management Summary ─────────────────────────────────────────────────
 
+export interface IncomeExpenseLedgerRow {
+  id: string;
+  date: string;
+  reference: string;
+  transactionType: 'REVENUE' | 'COLLECTION' | 'EXPENSE' | 'CONSUMABLE' | 'PAYROLL' | 'COMMISSION' | 'REFUND' | 'SETTLEMENT';
+  typeLabel: string;
+  patientPayeeDescription: string;
+  encounterInvoiceRef: string;
+  departmentId?: string;
+  department: string;
+  portalUserId?: string;
+  portalUser: string;
+  portal: string;
+  status: string;
+  statusLabel: string;
+  grossBilling: number;
+  discountCredit: number;
+  tax: number;
+  netRevenue: number;
+  collectionsReceived: number;
+  recognizedExpense: number;
+  expensePaid: number;
+  cashIn: number;
+  cashOut: number;
+  outstandingPayable: number;
+  paymentMethod: string;
+  details?: Record<string, any>;
+}
+
+export interface IncomeExpenseLedgerColumnTotals {
+  grossBilling: number;
+  discountCredit: number;
+  tax: number;
+  netRevenue: number;
+  collectionsReceived: number;
+  recognizedExpense: number;
+  expensePaid: number;
+  cashIn: number;
+  cashOut: number;
+  outstandingPayable: number;
+}
+
+export interface IncomeExpenseLedgerExecutiveTotals {
+  hospitalRevenue: {
+    grossEarnedBilling: number;
+    discounts: number;
+    netEarnedRevenue: number;
+    taxAmount: number;
+  };
+  collectionsReceivables: {
+    totalCollections: number;
+    cashCollections: number;
+    cardBankOnlineCollections: number;
+    refunds: number;
+    netCollections: number;
+    closingOutstanding: number;
+  };
+  hospitalCosts: {
+    directConsumables: number;
+    staffPayrollRecognized: number;
+    doctorCommissionEarned: number;
+    approvedHospitalExpenses: number;
+    inventoryOperatingExpenses: number;
+    totalOperatingCosts: number;
+    hasIncompleteCost: boolean;
+    missingCostCount: number;
+  };
+  profit: {
+    grossProfit: number;
+    operatingProfit: number;
+    operatingMargin: number;
+  };
+  cashMovement: {
+    totalCustomerCollections: number;
+    actualPaidOperatingExpenses: number;
+    nonOperatingCashOutflows: number;
+    netCashMovement: number;
+    currentRemainingCustomerDues: number;
+  };
+  payables: {
+    payrollPaid: number;
+    payrollOutstanding: number;
+    commissionPaid: number;
+    commissionOutstanding: number;
+    expensePaid: number;
+    expenseOutstanding: number;
+  };
+}
+
+export interface IncomeExpenseLedgerResponse {
+  period: { label: string; start: string; end: string };
+  totalRecords: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  items: IncomeExpenseLedgerRow[];
+  columnTotals: IncomeExpenseLedgerColumnTotals;
+  totals: IncomeExpenseLedgerExecutiveTotals;
+}
+
+export interface IncomeExpenseLedgerFilters {
+  departmentId?: string;
+  portal?: string;
+  portalUserId?: string;
+  transactionType?: string;
+  method?: string;
+  status?: string;
+  search?: string;
+}
+
+export async function fetchIncomeExpenseLedger(
+  range: RangeParams | null,
+  filters?: IncomeExpenseLedgerFilters,
+  page = 1,
+  limit = 50,
+): Promise<IncomeExpenseLedgerResponse> {
+  const query = {
+    ...params(range, filters as ReportFilters),
+    page,
+    limit,
+    search: filters?.search,
+  };
+  return await get<IncomeExpenseLedgerResponse>('income-expense-ledger', query);
+}
+
 export async function fetchManagementSummary(range: RangeParams, filters?: ReportFilters): Promise<ReportResult<SummaryRecord>> {
   const d = await get<any>('summary', params(range, filters));
   const s = d.summary;

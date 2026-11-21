@@ -40817,6 +40817,7 @@ var DevicesService = class {
       take: 100,
       select: { id: true, staffId: true, punchAt: true }
     });
+    if (rows.length === 0) return { processed: 0, failed: 0, scanned: 0 };
     const profile = await prisma.hospitalProfile.findFirst({ select: { timezone: true } });
     const timezone = profile?.timezone || "Asia/Karachi";
     let processed = 0, failed = 0;
@@ -54778,11 +54779,13 @@ var cashService = {
       select: { role: true }
     });
     const moduleScope = resolveCashModuleScope(targetUser.role);
+    const isManager = targetUser.role === "ADMIN" || targetUser.role === "SUPER_ADMIN";
+    const scopeFilter = isManager ? {} : { moduleScope };
     const [transactions, previousSettlement, periodSettlements] = await Promise.all([
       prisma.userCashBalance.findMany({
         where: {
           portalUserId,
-          moduleScope,
+          ...scopeFilter,
           ...range ? { occurredAt: { gte: range.start, lte: range.end } } : { isSettled: false }
         },
         include: {
@@ -54797,12 +54800,12 @@ var cashService = {
         orderBy: { occurredAt: "desc" }
       }),
       isShift ? prisma.accountSettlement.findFirst({
-        where: { portalUserId, moduleScope, status: { not: "REVERSED" } },
+        where: { portalUserId, ...scopeFilter, status: { not: "REVERSED" } },
         orderBy: { createdAt: "desc" },
         select: { carryForwardAmount: true }
       }) : Promise.resolve(null),
       range ? prisma.accountSettlement.findMany({
-        where: { portalUserId, moduleScope, status: { not: "REVERSED" }, createdAt: { gte: range.start, lte: range.end } },
+        where: { portalUserId, ...scopeFilter, status: { not: "REVERSED" }, createdAt: { gte: range.start, lte: range.end } },
         select: { physicalCash: true, variance: true }
       }) : Promise.resolve([])
     ]);
@@ -54815,6 +54818,8 @@ var cashService = {
     let cashCollections = new import_library26.Decimal(0);
     let cashExpenses = new import_library26.Decimal(0);
     let cashRefunds = new import_library26.Decimal(0);
+    let settlementCashIn = new import_library26.Decimal(0);
+    let settlementCashOut = new import_library26.Decimal(0);
     let settledNet = new import_library26.Decimal(0);
     let remainingNet = new import_library26.Decimal(0);
     for (const tx of transactions) {
@@ -54828,13 +54833,21 @@ var cashService = {
           if (tx.category === "COLLECTION") {
             totalCollections = totalCollections.plus(tx.amount);
             cashCollections = cashCollections.plus(tx.amount);
-          } else if (tx.category === "PETTY_CASH_ISSUE") pettyCash = pettyCash.plus(tx.amount);
+          } else if (tx.category === "PETTY_CASH_ISSUE") {
+            pettyCash = pettyCash.plus(tx.amount);
+          } else if (tx.category === "RECOVERY") {
+            settlementCashIn = settlementCashIn.plus(tx.amount);
+          }
         } else {
           physicalCashOut = physicalCashOut.plus(tx.amount);
           if (tx.category === "REFUND") {
             totalRefunds = totalRefunds.plus(tx.amount);
             cashRefunds = cashRefunds.plus(tx.amount);
-          } else if (tx.category === "EXPENSE") cashExpenses = cashExpenses.plus(tx.amount);
+          } else if (tx.category === "EXPENSE") {
+            cashExpenses = cashExpenses.plus(tx.amount);
+          } else if (tx.category === "RECOVERY") {
+            settlementCashOut = settlementCashOut.plus(tx.amount);
+          }
         }
       } else {
         nonPhysicalTotal = nonPhysicalTotal.plus(tx.direction === "IN" ? tx.amount : tx.amount.negated());
@@ -54860,6 +54873,8 @@ var cashService = {
         cashCollections,
         cashExpenses,
         cashRefunds,
+        settlementCashIn,
+        settlementCashOut,
         settledAmount: settledNet,
         remainingAmount: remainingNet.plus(carriedForwardAmount),
         // Only meaningful for a historical period — the counted cash and
@@ -54877,7 +54892,7 @@ var cashService = {
         isSettled: t.isSettled,
         occurredAt: t.occurredAt,
         paymentAccount: t.paymentReceipt?.paymentAccount ?? null,
-        receiptNumber: t.paymentReceipt?.receiptNumber ?? null,
+        receiptNumber: t.paymentReceipt?.receiptNumber ?? (t.category === "RECOVERY" ? "SETTLEMENT" : null),
         invoiceNumber: t.paymentReceipt?.hospitalInvoice?.invoiceNumber ?? null,
         paymentMethod: t.paymentReceipt?.method ?? (t.isPhysicalCash ? "CASH" : "NON_CASH"),
         note: t.note
@@ -54889,6 +54904,31 @@ var cashService = {
 // src/modules/cash/settlement.service.ts
 var import_library27 = require("@prisma/client/runtime/library");
 var settlementService = {
+  /**
+   * Returns active, authorized receiver accounts that the given submitter can settle to:
+   * - Front Desk / Staff -> Admin OR Super Admin
+   * - Admin -> Super Admin
+   */
+  async getEligibleReceivers(portalUserId) {
+    const targetUser = await prisma.portalUser.findUniqueOrThrow({
+      where: { id: portalUserId },
+      select: { role: true }
+    });
+    const targetRoles = targetUser.role === "ADMIN" ? ["SUPER_ADMIN"] : ["ADMIN", "SUPER_ADMIN"];
+    return prisma.portalUser.findMany({
+      where: {
+        role: { in: targetRoles },
+        status: "ACTIVE"
+      },
+      select: {
+        id: true,
+        username: true,
+        displayName: true,
+        role: true
+      },
+      orderBy: [{ role: "asc" }, { displayName: "asc" }]
+    });
+  },
   async submitSettlement(portalUserId, body) {
     return prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`settlement:${portalUserId}`}))`;
@@ -54897,9 +54937,34 @@ var settlementService = {
         select: { role: true }
       });
       const moduleScope = resolveCashModuleScope(targetUser.role);
+      const isManager = targetUser.role === "ADMIN" || targetUser.role === "SUPER_ADMIN";
+      const scopeFilter = isManager ? {} : { moduleScope };
+      let resolvedReceiverId = null;
+      if (body.receiverUserId) {
+        const receiver = await tx.portalUser.findUnique({
+          where: { id: body.receiverUserId },
+          select: { id: true, role: true, status: true }
+        });
+        if (!receiver || receiver.status !== "ACTIVE") {
+          throw new ValidationError("Selected settlement receiver was not found or is inactive.");
+        }
+        if (targetUser.role === "ADMIN" && receiver.role !== "SUPER_ADMIN") {
+          throw new ValidationError("Admin can only settle cash onward to a Super Admin.");
+        }
+        if (!["ADMIN", "SUPER_ADMIN"].includes(receiver.role)) {
+          throw new ValidationError("Settlement receiver must hold an Admin or Super Admin role.");
+        }
+        resolvedReceiverId = receiver.id;
+      } else {
+        const defaultReceiver = typeof tx.portalUser.findFirst === "function" ? await tx.portalUser.findFirst({
+          where: { role: "SUPER_ADMIN", status: "ACTIVE" },
+          select: { id: true }
+        }) : null;
+        resolvedReceiverId = defaultReceiver?.id ?? null;
+      }
       const [unsettled, previousSettlement] = await Promise.all([
         tx.userCashBalance.findMany({
-          where: { portalUserId, moduleScope, isSettled: false },
+          where: { portalUserId, ...scopeFilter, isSettled: false },
           orderBy: { occurredAt: "asc" }
         }),
         // The most recent non-reversed settlement carries this user's
@@ -54907,7 +54972,7 @@ var settlementService = {
         // re-opens its linked rows (`financeControlService.reverseSettlement`),
         // so a reversed settlement's carry-forward must never be counted.
         tx.accountSettlement.findFirst({
-          where: { portalUserId, moduleScope, status: { not: "REVERSED" } },
+          where: { portalUserId, ...scopeFilter, status: { not: "REVERSED" } },
           orderBy: { createdAt: "desc" },
           select: { carryForwardAmount: true }
         })
@@ -54940,6 +55005,7 @@ var settlementService = {
       const settlement = await tx.accountSettlement.create({
         data: {
           portalUserId,
+          receiverUserId: resolvedReceiverId,
           moduleScope,
           periodStart,
           periodEnd,
@@ -54973,13 +55039,20 @@ var settlementService = {
       select: { role: true }
     });
     const moduleScope = resolveCashModuleScope(targetUser.role);
+    const isManager = targetUser.role === "ADMIN" || targetUser.role === "SUPER_ADMIN";
+    const scopeFilter = isManager ? {} : { moduleScope };
     const range = query && query.preset !== "all" ? resolveDateRange({ preset: query.preset, fromDate: query.fromDate, toDate: query.toDate }) : null;
     return prisma.accountSettlement.findMany({
       where: {
         portalUserId,
-        moduleScope,
+        ...scopeFilter,
         ...range ? { createdAt: { gte: range.start, lte: range.end } } : {},
         ...query?.status ? { status: query.status } : {}
+      },
+      include: {
+        receiverUser: {
+          select: { id: true, username: true, displayName: true, role: true }
+        }
       },
       orderBy: { createdAt: "desc" },
       take: range || query?.status ? 500 : 50
@@ -55115,6 +55188,7 @@ var financeControlService = {
       },
       include: {
         submittedByUser: { select: userSummarySelect },
+        receiverUser: { select: userSummarySelect },
         reviewedByUser: { select: userSummarySelect },
         reversedByUser: { select: userSummarySelect }
       },
@@ -55125,28 +55199,68 @@ var financeControlService = {
     return { period, settlements: rows };
   },
   async reviewSettlement(id, body, reviewerPortalUserId) {
+    const reviewerUser = await prisma.portalUser.findUnique({
+      where: { id: reviewerPortalUserId },
+      select: userSummarySelect
+    });
+    if (!reviewerUser) throw new NotFoundError("Reviewer portal user not found");
     const settlement = await prisma.accountSettlement.findUnique({
       where: { id },
-      include: { submittedByUser: { select: userSummarySelect } }
+      include: {
+        submittedByUser: { select: userSummarySelect },
+        receiverUser: { select: userSummarySelect }
+      }
     });
     if (!settlement) throw new NotFoundError("Settlement not found");
     if (settlement.status !== "SUBMITTED") {
       throw new BusinessRuleError(`Only a SUBMITTED settlement can be reviewed (current status: ${settlement.status}).`);
+    }
+    if (settlement.receiverUserId && settlement.receiverUserId !== reviewerPortalUserId) {
+      throw new AuthorizationError(
+        "Only the designated settlement receiver is authorized to review, accept, or reject this settlement."
+      );
+    }
+    const actualReceiverId = settlement.receiverUserId ?? body.receiverPortalUserId ?? reviewerPortalUserId;
+    const receiverUser = await prisma.portalUser.findUnique({
+      where: { id: actualReceiverId },
+      select: userSummarySelect
+    });
+    if (!receiverUser) throw new NotFoundError("Receiver portal user not found");
+    if (!["ADMIN", "SUPER_ADMIN"].includes(receiverUser.role)) {
+      throw new ValidationError("Settlement receiver must hold an Admin or Super Admin role.");
     }
     const newStatus = REVIEW_ACTION_TO_STATUS[body.action];
     return prisma.$transaction(async (tx) => {
       await lockMainFund(tx);
       const current = await tx.accountSettlement.findUnique({ where: { id } });
       if (current?.status !== "SUBMITTED") throw new BusinessRuleError("Only a submitted settlement can be reviewed.");
+      if (current.receiverUserId && current.receiverUserId !== reviewerPortalUserId) {
+        throw new AuthorizationError(
+          "Only the designated settlement receiver is authorized to review, accept, or reject this settlement."
+        );
+      }
       const reviewed = await tx.accountSettlement.update({
         where: { id },
         data: {
           status: newStatus,
+          receiverUserId: actualReceiverId,
           reviewedById: reviewerPortalUserId,
           reviewedAt: /* @__PURE__ */ new Date(),
           ...body.remarks?.trim() ? { remarks: body.remarks.trim() } : {}
         }
       });
+      if (newStatus === "REJECTED" || newStatus === "RETURNED") {
+        const links = await tx.settlementTransaction.findMany({
+          where: { accountSettlementId: id },
+          select: { userCashBalanceId: true }
+        });
+        if (links.length > 0) {
+          await tx.userCashBalance.updateMany({
+            where: { id: { in: links.map((l) => l.userCashBalanceId) } },
+            data: { isSettled: false }
+          });
+        }
+      }
       if (newStatus === "ACCEPTED" || newStatus === "PARTIALLY_ACCEPTED") {
         const returnedAmount = reviewed.handoverAmount ?? reviewed.physicalCash;
         if (returnedAmount.greaterThan(0)) {
@@ -55158,6 +55272,39 @@ var financeControlService = {
               note: `Settlement handover from ${settlement.submittedByUser.displayName || settlement.submittedByUser.username}`,
               performedById: reviewerPortalUserId,
               relatedAccountSettlementId: reviewed.id
+            }
+          });
+          const occurredAt = reviewed.reviewedAt ?? /* @__PURE__ */ new Date();
+          const senderName = settlement.submittedByUser.displayName || settlement.submittedByUser.username;
+          const receiverName = receiverUser.displayName || receiverUser.username;
+          const approverName = reviewerUser.displayName || reviewerUser.username;
+          await tx.userCashBalance.create({
+            data: {
+              portalUserId: settlement.portalUserId,
+              moduleScope: settlement.moduleScope,
+              direction: "OUT",
+              amount: returnedAmount,
+              category: "RECOVERY",
+              isPhysicalCash: true,
+              isSettled: true,
+              issuedById: reviewerPortalUserId,
+              note: `Settlement handover to ${receiverName} [settlement:${reviewed.id}]`,
+              occurredAt
+            }
+          });
+          const receiverScope = resolveCashModuleScope(receiverUser.role);
+          await tx.userCashBalance.create({
+            data: {
+              portalUserId: actualReceiverId,
+              moduleScope: receiverScope,
+              direction: "IN",
+              amount: returnedAmount,
+              category: "RECOVERY",
+              isPhysicalCash: true,
+              isSettled: false,
+              issuedById: settlement.portalUserId,
+              note: `Settlement received from ${senderName} (Approved by ${approverName}) [settlement:${reviewed.id}]`,
+              occurredAt
             }
           });
         }
@@ -55190,6 +55337,12 @@ var financeControlService = {
           reversalReason: body.reason.trim(),
           reversedById: actorPortalUserId,
           reversedAt: /* @__PURE__ */ new Date()
+        }
+      });
+      await tx.userCashBalance.deleteMany({
+        where: {
+          category: "RECOVERY",
+          note: { contains: `[settlement:${id}]` }
         }
       });
       const links = await tx.settlementTransaction.findMany({
@@ -55457,6 +55610,10 @@ var cashController = {
     const settlement = await settlementService.submitSettlement(actorId14(req), req.body);
     res.status(201).json({ data: settlement });
   },
+  getEligibleReceivers: async (req, res) => {
+    const receivers = await settlementService.getEligibleReceivers(actorId14(req));
+    res.json({ data: receivers });
+  },
   listMySettlements: async (req, res) => {
     const settlements = await settlementService.listMySettlements(actorId14(req), req.query);
     res.json({ data: settlements });
@@ -55522,7 +55679,8 @@ var submitSettlementSchema = external_exports.object({
   physicalCash: external_exports.coerce.number().nonnegative("Counted physical cash cannot be negative"),
   handoverAmount: external_exports.coerce.number().nonnegative().optional(),
   varianceReason: external_exports.string().optional(),
-  remarks: external_exports.string().optional()
+  remarks: external_exports.string().optional(),
+  receiverUserId: external_exports.string().uuid().optional()
 });
 
 // src/modules/cash/financeControl.schemas.ts
@@ -55556,7 +55714,8 @@ var financeKpisQuerySchema = dateRangeSchema;
 var settlementIdParamsSchema = external_exports.object({ id: external_exports.string().uuid() });
 var reviewSettlementBodySchema = external_exports.object({
   action: external_exports.enum(["ACCEPT", "PARTIALLY_ACCEPT", "RETURN", "REJECT"]),
-  remarks: external_exports.string().optional()
+  remarks: external_exports.string().optional(),
+  receiverPortalUserId: external_exports.string().uuid().optional()
 }).refine((body) => body.action === "RETURN" || body.action === "REJECT" ? !!body.remarks?.trim() : true, {
   message: "Remarks are required when returning or rejecting a settlement.",
   path: ["remarks"]
@@ -55593,6 +55752,7 @@ var approve4 = authorize("cash", "approve");
 var oversee = authorize("cash", "approve");
 router20.get("/balance-sheet", view15, validate({ query: myBalanceSheetQuerySchema }), asyncHandler(cashController.getMyBalanceSheet));
 router20.get("/balance-sheet/:userId", oversee, validate({ query: myBalanceSheetQuerySchema }), asyncHandler(cashController.getUserBalanceSheet));
+router20.get("/eligible-receivers", view15, asyncHandler(cashController.getEligibleReceivers));
 router20.get("/settlements", view15, validate({ query: mySettlementsQuerySchema }), asyncHandler(cashController.listMySettlements));
 router20.post("/settlements", create14, validate({ body: submitSettlementSchema }), asyncHandler(cashController.submitMySettlement));
 router20.get("/finance-control/balance-sheets", oversee, validate({ query: listBalanceSheetsQuerySchema }), asyncHandler(cashController.listBalanceSheets));
@@ -57877,7 +58037,9 @@ var CASH_ROLES = [
   "FRONT_DESK_BILLING",
   "INVENTORY_MANAGEMENT",
   "PHARMACY_MANAGER",
-  "PHARMACY_SALES_DISPENSING"
+  "PHARMACY_SALES_DISPENSING",
+  "ADMIN",
+  "SUPER_ADMIN"
 ];
 var PORTAL_LABEL = {
   BILLING: "Front Desk / Billing",
@@ -57902,7 +58064,8 @@ var managementReportsService = {
       pendingSettlements,
       hospitalExpenses,
       staffFinance,
-      panelCollections
+      panelCollections,
+      departmentIssues
     ] = await Promise.all([
       prisma.hospitalInvoice.findMany({
         where: {
@@ -57985,7 +58148,24 @@ var managementReportsService = {
       }),
       expensesService.totalBetween(start, end, dept, method),
       staffFinanceSummary(start, end, dept, user, method),
-      panelCollectionLedger(prisma, end, { start, departmentId: dept, method, userId: user })
+      panelCollectionLedger(prisma, end, { start, departmentId: dept, method, userId: user }),
+      prisma.departmentRequisition.findMany({
+        where: {
+          issuedAt: { gte: start, lte: end },
+          status: { in: ["ISSUED", "PARTIALLY_RETURNED", "CLOSED"] },
+          ...dept ? { departmentId: dept } : {}
+        },
+        include: {
+          department: { select: { id: true, name: true, departmentType: true } },
+          lines: {
+            select: {
+              quantity: true,
+              returnedQuantity: true,
+              costRate: true
+            }
+          }
+        }
+      })
     ]);
     const rows = /* @__PURE__ */ new Map();
     const rowFor = (name) => {
@@ -58080,21 +58260,56 @@ var managementReportsService = {
     const table = Array.from(rows.values()).sort(
       (a, b) => a.department.localeCompare(b.department)
     );
-    const operatingCosts = hospitalExpenses.plus(expenses._sum.amount ?? ZERO()).plus(staffFinance.salaryGenerated).plus(staffFinance.commissionGenerated);
+    let directServiceCosts = ZERO();
+    let hasIncompleteCost = false;
+    let missingCostCount = 0;
+    for (const req of departmentIssues || []) {
+      const deptType = req.department?.departmentType;
+      const isDirectServiceConsumption = !deptType || ["CLINICAL", "SURGICAL", "DIAGNOSTIC", "EMERGENCY"].includes(deptType);
+      if (!isDirectServiceConsumption) continue;
+      for (const line of req.lines || []) {
+        const netQty = line.quantity.minus(line.returnedQuantity);
+        if (netQty.greaterThan(0)) {
+          if (line.costRate === null || line.costRate === void 0 || line.costRate.isZero()) {
+            hasIncompleteCost = true;
+            missingCostCount++;
+          }
+          directServiceCosts = directServiceCosts.plus(netQty.times(line.costRate ?? ZERO()));
+        }
+      }
+    }
+    const grossBilling = sumOf(table, (r) => r.gross);
+    const discounts = sumOf(table, (r) => r.discount);
+    const netEarnedRevenue = sumOf(table, (r) => r.net);
+    const grossProfit = netEarnedRevenue.minus(directServiceCosts);
+    const otherOperatingExpenses = hospitalExpenses.plus(expenses._sum.amount ?? ZERO());
+    const totalOperatingCosts = directServiceCosts.plus(staffFinance.salaryGenerated).plus(staffFinance.commissionGenerated).plus(otherOperatingExpenses);
+    const operatingProfit = grossProfit.minus(staffFinance.salaryGenerated).minus(staffFinance.commissionGenerated).minus(otherOperatingExpenses);
     const collectedIncome = sumOf(table, (r) => r.collected);
+    const operatingMargin = netEarnedRevenue.isZero() ? ZERO() : operatingProfit.dividedBy(netEarnedRevenue).times(100);
     return {
       period: periodOf(start, end, label),
       summary: {
         ...staffFinance,
-        totalOperatingCosts: operatingCosts,
-        operatingResult: collectedIncome.minus(operatingCosts),
+        grossBilling,
+        discounts,
+        totalBilling: netEarnedRevenue,
+        netEarnedRevenue,
+        directServiceCosts,
+        grossProfit,
+        payrollCost: staffFinance.salaryGenerated,
+        doctorCommissionCost: staffFinance.commissionGenerated,
+        otherOperatingExpenses,
+        totalOperatingCosts,
+        operatingProfit,
+        operatingResult: operatingProfit,
+        // Accrual-based Operating Profit (replaces collectedIncome - costs)
+        operatingMargin,
+        hasIncompleteCost,
+        missingCostCount,
+        collections: collectedIncome,
         collectedIncome,
-        grossBilling: sumOf(table, (r) => r.gross),
-        discounts: sumOf(table, (r) => r.discount),
-        totalBilling: sumOf(table, (r) => r.net),
-        collections: sumOf(table, (r) => r.collected),
         outstanding: sumOf(table, (r) => r.outstanding),
-        // Expense Management entries (Super Admin / Admin) — separate from cashier drawer outflows below.
         hospitalExpenses,
         expenses: expenses._sum.amount ?? ZERO(),
         activeAdmissions: table.reduce((s, r) => s + r.activeAdmissions, 0),
@@ -58162,10 +58377,12 @@ var managementReportsService = {
       where: {
         createdAt: { lte: end },
         status: { not: "VOID" },
-        ...query.departmentId ? { OR: [
-          { departmentId: query.departmentId },
-          { lines: { some: { serviceRate: { departmentId: query.departmentId } } } }
-        ] } : {},
+        ...query.departmentId ? {
+          OR: [
+            { departmentId: query.departmentId },
+            { lines: { some: { serviceRate: { departmentId: query.departmentId } } } }
+          ]
+        } : {},
         ...query.corporatePanelId ? { corporatePanelId: query.corporatePanelId } : {},
         ...query.payerType === "PANEL" ? { corporatePanelId: { not: null } } : {},
         ...query.payerType === "SELF_PAY" ? { corporatePanelId: null } : {}
@@ -58262,6 +58479,8 @@ var managementReportsService = {
           opening: ZERO(),
           pettyCash: ZERO(),
           cashCollections: ZERO(),
+          settlementIn: ZERO(),
+          settlementOut: ZERO(),
           expenses: ZERO(),
           refunds: ZERO(),
           nonCash: ZERO(),
@@ -58292,11 +58511,18 @@ var managementReportsService = {
           continue;
         }
         if (e.category === "PETTY_CASH_ISSUE") r.pettyCash = r.pettyCash.plus(e.amount);
+        else if (e.category === "RECOVERY") r.settlementIn = r.settlementIn.plus(e.amount);
         else r.cashCollections = r.cashCollections.plus(e.amount);
       } else {
-        r.physicalOut = r.physicalOut.plus(e.amount);
-        if (e.category === "REFUND") r.refunds = r.refunds.plus(e.amount);
-        else r.expenses = r.expenses.plus(e.amount);
+        if (e.category === "RECOVERY") {
+          r.settlementOut = r.settlementOut.plus(e.amount);
+        } else if (e.category === "REFUND") {
+          r.physicalOut = r.physicalOut.plus(e.amount);
+          r.refunds = r.refunds.plus(e.amount);
+        } else {
+          r.physicalOut = r.physicalOut.plus(e.amount);
+          r.expenses = r.expenses.plus(e.amount);
+        }
       }
     }
     for (const s of settlements) {
@@ -58305,11 +58531,9 @@ var managementReportsService = {
       const wasAccepted = ACCEPTED_SETTLEMENT.includes(s.status) || s.status === "REVERSED" && !!s.reversedAt && !!s.reviewedAt;
       if (wasAccepted && acceptedAt && acceptedAt <= end) {
         const amount = s.handoverAmount ?? s.physicalCash;
-        if (acceptedAt < start) r.opening = r.opening.minus(amount);
-        else r.accepted = r.accepted.plus(amount);
-        if (s.reversedAt && s.reversedAt <= end) {
-          if (s.reversedAt < start) r.opening = r.opening.plus(amount);
-          else r.accepted = r.accepted.minus(amount);
+        if (acceptedAt >= start) r.accepted = r.accepted.plus(amount);
+        if (s.reversedAt && s.reversedAt <= end && s.reversedAt >= start) {
+          r.accepted = r.accepted.minus(amount);
         }
       }
       if (!s.submittedAt || s.submittedAt < start) continue;
@@ -58319,8 +58543,18 @@ var managementReportsService = {
       r.variance = r.variance.plus(s.variance);
     }
     const result = Array.from(rows.values()).filter((r) => !query.settlementStatus || r.settlementStatus === query.settlementStatus).map(({ physicalOut, ...r }) => {
-      const expectedCash = r.opening.plus(r.pettyCash).plus(r.cashCollections).minus(physicalOut);
-      return { ...r, cashCollections: r.cashCollections.minus(r.refunds), expectedCash, remaining: expectedCash.minus(r.accepted) };
+      const acceptedOut = import_library36.Decimal.max(r.settlementOut, r.accepted);
+      const netCashCollections = r.cashCollections.minus(r.refunds);
+      const expectedCash = r.opening.plus(r.pettyCash).plus(netCashCollections).plus(r.settlementIn).minus(r.expenses);
+      const remaining = expectedCash.minus(acceptedOut);
+      return {
+        ...r,
+        cashCollections: netCashCollections,
+        settlementOut: acceptedOut,
+        accepted: acceptedOut,
+        expectedCash,
+        remaining
+      };
     }).sort((a, b) => a.user.localeCompare(b.user) || a.portal.localeCompare(b.portal));
     return { period: periodOf(start, end, label), rows: result };
   },
@@ -58334,10 +58568,12 @@ var managementReportsService = {
     const inMonth = { gte: start, lte: end };
     const staff = await prisma.staff.findMany({
       where: {
-        ...query.departmentId ? { OR: [
-          { staffDepartments: { some: { departmentId: query.departmentId } } },
-          { commissionAccruals: { some: { periodStart: { lte: end }, invoiceLineItem: commissionDepartmentFilter(query.departmentId) } } }
-        ] } : {},
+        ...query.departmentId ? {
+          OR: [
+            { staffDepartments: { some: { departmentId: query.departmentId } } },
+            { commissionAccruals: { some: { periodStart: { lte: end }, invoiceLineItem: commissionDepartmentFilter(query.departmentId) } } }
+          ]
+        } : {},
         ...query.staffId ? { id: query.staffId } : {}
       },
       select: {
@@ -58357,18 +58593,21 @@ var managementReportsService = {
           where: { periodStart: { lte: end }, periodEnd: { gte: start } },
           select: { id: true, payrollRunId: true, generatedAmount: true, status: true, payments: true, correctionEntries: true }
         },
-        commissionAccruals: { where: { periodStart: { lte: end }, ...query.departmentId ? { invoiceLineItem: commissionDepartmentFilter(query.departmentId) } : {} }, select: {
-          id: true,
-          periodStart: true,
-          collectionEvent: true,
-          commissionRunId: true,
-          commissionAmount: true,
-          ruleSnapshot: true,
-          status: true,
-          payouts: { where: { paidAt: { lte: end } } },
-          reversals: { where: { reversedAt: { lte: end } } },
-          adjustments: { where: { createdAt: { lte: end } } }
-        } }
+        commissionAccruals: {
+          where: { periodStart: { lte: end }, ...query.departmentId ? { invoiceLineItem: commissionDepartmentFilter(query.departmentId) } : {} },
+          select: {
+            id: true,
+            periodStart: true,
+            collectionEvent: true,
+            commissionRunId: true,
+            commissionAmount: true,
+            ruleSnapshot: true,
+            status: true,
+            payouts: { where: { paidAt: { lte: end } } },
+            reversals: { where: { reversedAt: { lte: end } } },
+            adjustments: { where: { createdAt: { lte: end } } }
+          }
+        }
       },
       orderBy: { fullName: "asc" }
     });
@@ -58640,7 +58879,19 @@ var managementReportsService = {
       })),
       cashiers: users.filter((u) => ["FRONT_DESK_BILLING", "ADMIN", "SUPER_ADMIN"].includes(u.role)).map((u) => ({ value: u.id, label: u.displayName || u.username })),
       // Users who hold cash custody (own a Balance Sheet / Account Settlement).
-      cashUsers: users.filter((u) => CASH_ROLES.includes(u.role)).map((u) => ({
+      cashUsers: users.filter((u) => CASH_ROLES.includes(u.role)).sort((a, b) => {
+        const ROLE_PRIORITY = {
+          SUPER_ADMIN: 1,
+          ADMIN: 2,
+          FRONT_DESK_BILLING: 3,
+          INVENTORY_MANAGEMENT: 4,
+          PHARMACY_SALES_DISPENSING: 5
+        };
+        const pA = ROLE_PRIORITY[a.role] ?? 99;
+        const pB = ROLE_PRIORITY[b.role] ?? 99;
+        if (pA !== pB) return pA - pB;
+        return (a.displayName || a.username).localeCompare(b.displayName || b.username);
+      }).map((u) => ({
         value: u.id,
         label: `${u.displayName || u.username} (${roleLabel(u.role)})`
       })),
@@ -58648,13 +58899,1035 @@ var managementReportsService = {
       staff: staff.map((s) => ({ value: s.id, label: `${s.fullName} (${s.employeeId})` })),
       stockCategories: categories.map((c) => ({ value: c.category, label: c.category }))
     };
+  },
+  /** M04 Operating Profit (P&L) — Revenue - Direct Cost - Gross Profit - Payroll - Commission - Opex. */
+  async getOperatingProfit(query) {
+    const summaryData = await this.getSummary(query);
+    const { summary, period, rows } = summaryData;
+    return {
+      period,
+      summary: {
+        revenue: summary.netEarnedRevenue,
+        grossBilling: summary.grossBilling,
+        discounts: summary.discounts,
+        directCost: summary.directServiceCosts,
+        grossProfit: summary.grossProfit,
+        payroll: summary.payrollCost,
+        doctorCommission: summary.doctorCommissionCost,
+        otherOperatingExpenses: summary.otherOperatingExpenses,
+        totalCosts: summary.totalOperatingCosts,
+        operatingProfit: summary.operatingProfit,
+        marginPercentage: summary.operatingMargin,
+        collections: summary.collections,
+        outstanding: summary.outstanding,
+        hasIncompleteCost: summary.hasIncompleteCost,
+        missingCostCount: summary.missingCostCount
+      },
+      rows: rows.map((r) => ({
+        department: r.department,
+        invoices: r.invoices,
+        gross: r.gross,
+        discount: r.discount,
+        revenue: r.net,
+        collected: r.collected,
+        outstanding: r.outstanding
+      }))
+    };
+  },
+  /** M03 Detailed Expense — Itemized hospital expenses, consumables, payroll, and commissions. */
+  async getDetailedExpenses(query) {
+    const { start, end, label } = resolveDateRange(query);
+    const dept = query.departmentId;
+    const [
+      hospitalExpenseRows,
+      deptRequisitions,
+      salarySlips,
+      commissionAccruals,
+      inventoryExpenseRows
+    ] = await Promise.all([
+      prisma.expense.findMany({
+        where: {
+          status: "ACTIVE",
+          expenseDate: {
+            gte: new Date(start.toLocaleDateString("en-CA")),
+            lte: new Date(end.toLocaleDateString("en-CA"))
+          },
+          ...dept ? { departmentId: dept } : {}
+        },
+        include: {
+          department: { select: { id: true, name: true } },
+          createdByUser: { select: { id: true, displayName: true, username: true, role: true } }
+        },
+        orderBy: { expenseDate: "desc" }
+      }),
+      prisma.departmentRequisition.findMany({
+        where: {
+          issuedAt: { gte: start, lte: end },
+          status: { in: ["ISSUED", "PARTIALLY_RETURNED", "CLOSED"] },
+          ...dept ? { departmentId: dept } : {}
+        },
+        include: {
+          department: { select: { id: true, name: true } },
+          issuedBy: { select: { id: true, displayName: true, username: true, role: true } },
+          lines: {
+            include: {
+              stockItem: { select: { id: true, name: true, code: true, unit: true } }
+            }
+          }
+        },
+        orderBy: { issuedAt: "desc" }
+      }),
+      prisma.salarySlip.findMany({
+        where: {
+          approvedAt: { gte: start, lte: end },
+          status: { in: ["APPROVED", "PARTIALLY_PAID", "PAID"] },
+          ...dept ? {
+            OR: [
+              { payrollRun: { departmentId: dept } },
+              { staff: { staffDepartments: { some: { departmentId: dept } } } }
+            ]
+          } : {}
+        },
+        include: {
+          staff: {
+            select: {
+              id: true,
+              fullName: true,
+              employeeId: true,
+              department: { select: { id: true, name: true } }
+            }
+          },
+          payrollRun: { include: { department: { select: { id: true, name: true } } } },
+          payments: { where: { paidAt: { lte: end } } },
+          correctionEntries: { where: { createdAt: { lte: end } } }
+        },
+        orderBy: { approvedAt: "desc" }
+      }),
+      prisma.doctorCommissionAccrual.findMany({
+        where: {
+          OR: [
+            { collectionEventId: { not: null }, collectionEvent: { occurredAt: { gte: start, lte: end } } },
+            { collectionEventId: null, approvedAt: { gte: start, lte: end }, status: { in: ["APPROVED", "PARTIALLY_PAID", "PAID"] } }
+          ],
+          ...dept ? { invoiceLineItem: commissionDepartmentFilter(dept) } : {}
+        },
+        include: {
+          doctor: {
+            select: {
+              id: true,
+              fullName: true,
+              employeeId: true,
+              staffDepartments: { select: { department: { select: { id: true, name: true } } }, take: 1 }
+            }
+          },
+          collectionEvent: true,
+          payouts: { where: { paidAt: { lte: end } } },
+          reversals: { where: { reversedAt: { lte: end } } },
+          adjustments: { where: { createdAt: { lte: end } } },
+          approvedByUser: { select: { id: true, displayName: true, username: true, role: true } },
+          commissionRun: true,
+          invoiceLineItem: {
+            include: {
+              serviceRate: { include: { department: { select: { id: true, name: true } } } },
+              hospitalInvoice: {
+                include: {
+                  department: { select: { id: true, name: true } },
+                  paymentReceipts: {
+                    where: { isReversed: false },
+                    include: { collectedBy: { select: { id: true, displayName: true, username: true } } },
+                    take: 1,
+                    orderBy: { collectedAt: "desc" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }),
+      prisma.inventoryExpense.findMany({
+        where: {
+          expenseDate: {
+            gte: new Date(start.toLocaleDateString("en-CA")),
+            lte: new Date(end.toLocaleDateString("en-CA"))
+          },
+          ...dept ? { id: { in: [] } } : {}
+        },
+        include: {
+          createdByUser: { select: { id: true, displayName: true, username: true, role: true } }
+        },
+        orderBy: { expenseDate: "desc" }
+      })
+    ]);
+    const items = [];
+    let totalHospitalExpenses = ZERO();
+    for (const h of hospitalExpenseRows) {
+      totalHospitalExpenses = totalHospitalExpenses.plus(h.amount);
+      items.push({
+        id: `hosp-${h.id}`,
+        date: h.expenseDate.toISOString().slice(0, 10),
+        source: "Hospital Voucher",
+        category: h.category,
+        voucherRef: h.expenseNumber,
+        department: h.department?.name ?? "Hospital-Wide",
+        description: [h.paidTo, h.description].filter(Boolean).join(" \u2014 ") || "Operating Expense",
+        amount: h.amount,
+        paidAmount: h.amount,
+        outstandingAmount: ZERO(),
+        costStatus: "COMPLETE",
+        enteredBy: userName2(h.createdByUser) || "System"
+      });
+    }
+    let totalDirectConsumables = ZERO();
+    let hasIncompleteCost = false;
+    let missingCostCount = 0;
+    for (const r of deptRequisitions) {
+      for (const l of r.lines) {
+        const netQty = l.quantity.minus(l.returnedQuantity);
+        if (netQty.greaterThan(0)) {
+          const isMissingCost = l.costRate === null || l.costRate === void 0 || l.costRate.isZero();
+          if (isMissingCost) {
+            hasIncompleteCost = true;
+            missingCostCount++;
+          }
+          const cost = netQty.times(l.costRate ?? ZERO());
+          totalDirectConsumables = totalDirectConsumables.plus(cost);
+          items.push({
+            id: `req-${l.id}`,
+            date: r.issuedAt.toISOString().slice(0, 10),
+            source: "Inventory Consumption",
+            category: "Clinical Consumables",
+            voucherRef: `REQ-${r.id.slice(0, 8).toUpperCase()}`,
+            department: r.department?.name ?? "Clinical Department",
+            description: isMissingCost ? `${l.stockItem.name} (${netQty.toString()} ${l.stockItem.unit}) [INCOMPLETE COST RATE]` : `${l.stockItem.name} (${netQty.toString()} ${l.stockItem.unit})`,
+            amount: cost,
+            paidAmount: ZERO(),
+            outstandingAmount: ZERO(),
+            costStatus: isMissingCost ? "INCOMPLETE" : "COMPLETE",
+            enteredBy: userName2(r.issuedBy) || "System"
+          });
+        }
+      }
+    }
+    let totalPayroll = ZERO();
+    for (const s of salarySlips) {
+      const balance = salaryBalance(s);
+      const before = (s.approvedAt ?? s.createdAt) < start ? salaryBalance({ ...s, correctionEntries: s.correctionEntries.filter((a) => a.createdAt < start) }).payable : ZERO();
+      const recognized = balance.payable.minus(before);
+      if (recognized.greaterThan(0)) {
+        totalPayroll = totalPayroll.plus(recognized);
+        items.push({
+          id: `sal-${s.id}`,
+          date: (s.approvedAt ?? s.createdAt).toISOString().slice(0, 10),
+          source: "Staff Payroll",
+          category: "Salaries & Wages",
+          voucherRef: `SLIP-${s.id.slice(0, 8).toUpperCase()}`,
+          department: s.payrollRun?.department?.name ?? s.staff.department?.name ?? "Hospital Staff",
+          description: `Salary: ${s.staff.fullName} (${s.staff.employeeId})`,
+          amount: recognized,
+          paidAmount: balance.paid,
+          outstandingAmount: balance.remaining,
+          enteredBy: "Payroll System"
+        });
+      }
+    }
+    let totalCommission = ZERO();
+    let totalCommissionPaid = ZERO();
+    let totalCommissionOutstanding = ZERO();
+    for (const c of commissionAccruals) {
+      const balance = commissionBalance(c);
+      const before = (c.collectionEvent?.occurredAt ?? c.approvedAt ?? c.createdAt) < start ? commissionBalance({ ...c, reversals: c.reversals.filter((r) => r.reversedAt < start), adjustments: c.adjustments.filter((a) => a.createdAt < start) }).payable : ZERO();
+      const recognized = balance.payable.minus(before);
+      if (recognized.greaterThan(0)) {
+        totalCommission = totalCommission.plus(recognized);
+        totalCommissionPaid = totalCommissionPaid.plus(balance.paid);
+        totalCommissionOutstanding = totalCommissionOutstanding.plus(balance.remaining);
+        const deptName = c.invoiceLineItem?.serviceRate?.department?.name ?? c.invoiceLineItem?.hospitalInvoice?.department?.name ?? c.doctor?.staffDepartments?.[0]?.department?.name ?? "Unassigned";
+        const collectorUser = c.invoiceLineItem?.hospitalInvoice?.paymentReceipts?.[0]?.collectedBy;
+        const collectorName = userName2(collectorUser);
+        const approverName = userName2(c.approvedByUser);
+        const enteredBy = collectorName || approverName || "System (Generated)";
+        items.push({
+          id: `comm-${c.id}`,
+          date: (c.collectionEvent?.occurredAt ?? c.approvedAt ?? c.createdAt).toISOString().slice(0, 10),
+          source: "Doctor Commission",
+          category: "Doctor Commissions",
+          voucherRef: `COMM-${c.id.slice(0, 8).toUpperCase()}`,
+          department: deptName,
+          description: `Commission: Dr. ${c.doctor.fullName} (${c.doctor.employeeId})`,
+          amount: recognized,
+          paidAmount: balance.paid,
+          outstandingAmount: balance.remaining,
+          enteredBy
+        });
+      }
+    }
+    let totalInventoryOpex = ZERO();
+    for (const ie of inventoryExpenseRows) {
+      totalInventoryOpex = totalInventoryOpex.plus(ie.amount);
+      items.push({
+        id: `inve-${ie.id}`,
+        date: ie.expenseDate.toISOString().slice(0, 10),
+        source: "Inventory Opex",
+        category: ie.category,
+        voucherRef: ie.reference || `INV-EXP-${ie.id.slice(0, 8).toUpperCase()}`,
+        department: "Inventory / Stores",
+        description: ie.description ?? "Store Operating Expense",
+        amount: ie.amount,
+        paidAmount: ie.amount,
+        outstandingAmount: ZERO(),
+        enteredBy: userName2(ie.createdByUser) || "System"
+      });
+    }
+    const totalOperatingCosts = totalHospitalExpenses.plus(totalDirectConsumables).plus(totalPayroll).plus(totalCommission).plus(totalInventoryOpex);
+    return {
+      period: periodOf(start, end, label),
+      summary: {
+        totalOperatingCosts,
+        totalHospitalExpenses,
+        totalDirectConsumables,
+        totalPayroll,
+        totalCommission,
+        totalCommissionPaid,
+        totalCommissionOutstanding,
+        totalInventoryOpex,
+        rowCount: items.length,
+        hasIncompleteCost,
+        missingCostCount
+      },
+      rows: items
+    };
+  },
+  /** M01 — Detailed Transaction-wise Income & Expense Ledger with Full Dataset Reconciled Totals */
+  async getIncomeExpenseLedger(query) {
+    const { start, end, label } = resolveExtendedDateRange(query);
+    const dept = query.departmentId;
+    const user = query.portalUserId;
+    const method = query.method;
+    const status = query.status;
+    const transactionType = query.transactionType;
+    const portal = query.portal;
+    const search = query.search?.trim().toLowerCase();
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.max(1, Math.min(500, Number(query.limit) || 50));
+    const [
+      invoices,
+      receipts,
+      hospitalExpenseRows,
+      inventoryExpenseRows,
+      salarySlips,
+      commissionAccruals,
+      requisitions,
+      settlements,
+      summaryData
+    ] = await Promise.all([
+      // 1. Hospital Invoices (Earned Revenue)
+      prisma.hospitalInvoice.findMany({
+        where: {
+          createdAt: { gte: start, lte: end },
+          status: { not: "VOID" },
+          ...dept ? {
+            OR: [
+              { departmentId: dept },
+              { lines: { some: { serviceRate: { departmentId: dept } } } }
+            ]
+          } : {},
+          ...user ? { createdById: user } : {}
+        },
+        include: {
+          department: { select: { id: true, name: true } },
+          createdByUser: { select: { id: true, displayName: true, username: true, role: true } },
+          selfPayEncounter: { select: { id: true, mrNumber: true, fullName: true } },
+          panelPatient: { select: { id: true, fullName: true, corporatePanel: { select: { organizationName: true } } } },
+          admissionRecord: {
+            select: {
+              id: true,
+              admissionNumber: true,
+              selfPayEncounter: { select: { fullName: true } },
+              panelPatient: { select: { fullName: true } },
+              department: { select: { id: true, name: true } }
+            }
+          },
+          lines: {
+            include: {
+              serviceRate: { select: { id: true, name: true, department: { select: { id: true, name: true } } } }
+            }
+          }
+        },
+        orderBy: { createdAt: "desc" }
+      }),
+      // 2. Patient / Panel Collections & Refunds
+      prisma.paymentReceipt.findMany({
+        where: {
+          collectedAt: { gte: start, lte: end },
+          ...method && method !== "ALL" ? { method } : {},
+          ...user ? { collectedById: user } : {},
+          ...dept ? {
+            OR: [
+              { hospitalInvoice: { departmentId: dept } },
+              { hospitalInvoice: { lines: { some: { serviceRate: { departmentId: dept } } } } },
+              { hospitalInvoiceId: null, admissionRecord: { departmentId: dept } },
+              { hospitalInvoiceId: null, appointment: { departmentId: dept } }
+            ]
+          } : {}
+        },
+        include: {
+          collectedBy: { select: { id: true, displayName: true, username: true, role: true } },
+          hospitalInvoice: {
+            select: {
+              id: true,
+              invoiceNumber: true,
+              department: { select: { id: true, name: true } },
+              selfPayEncounter: { select: { fullName: true } },
+              panelPatient: { select: { fullName: true } },
+              admissionRecord: {
+                select: {
+                  admissionNumber: true,
+                  selfPayEncounter: { select: { fullName: true } },
+                  panelPatient: { select: { fullName: true } }
+                }
+              }
+            }
+          },
+          admissionRecord: {
+            select: {
+              id: true,
+              admissionNumber: true,
+              selfPayEncounter: { select: { fullName: true } },
+              panelPatient: { select: { fullName: true } }
+            }
+          }
+        },
+        orderBy: { collectedAt: "desc" }
+      }),
+      // 3. Hospital Operating Expenses
+      prisma.expense.findMany({
+        where: {
+          status: "ACTIVE",
+          expenseDate: {
+            gte: new Date(start.toLocaleDateString("en-CA")),
+            lte: new Date(end.toLocaleDateString("en-CA"))
+          },
+          ...dept ? { departmentId: dept } : {},
+          ...user ? { createdById: user } : {},
+          ...method && method !== "ALL" ? { paymentMethod: method } : {}
+        },
+        include: {
+          department: { select: { id: true, name: true } },
+          createdByUser: { select: { id: true, displayName: true, username: true, role: true } }
+        },
+        orderBy: { expenseDate: "desc" }
+      }),
+      // 4. Inventory Operating Expenses
+      prisma.inventoryExpense.findMany({
+        where: {
+          expenseDate: {
+            gte: new Date(start.toLocaleDateString("en-CA")),
+            lte: new Date(end.toLocaleDateString("en-CA"))
+          },
+          ...dept ? { id: { in: [] } } : {},
+          ...user ? { createdById: user } : {},
+          ...method && method !== "ALL" ? { paymentMethod: method } : {}
+        },
+        include: {
+          createdByUser: { select: { id: true, displayName: true, username: true, role: true } }
+        },
+        orderBy: { expenseDate: "desc" }
+      }),
+      // 5. Staff Payroll Slips
+      prisma.salarySlip.findMany({
+        where: {
+          approvedAt: { gte: start, lte: end },
+          status: { in: ["APPROVED", "PARTIALLY_PAID", "PAID"] },
+          ...dept ? {
+            OR: [
+              { payrollRun: { departmentId: dept } },
+              { staff: { staffDepartments: { some: { departmentId: dept } } } }
+            ]
+          } : {}
+        },
+        include: {
+          staff: {
+            select: {
+              id: true,
+              fullName: true,
+              employeeId: true,
+              department: { select: { id: true, name: true } }
+            }
+          },
+          payrollRun: true,
+          payments: { where: { paidAt: { lte: end } } }
+        },
+        orderBy: { approvedAt: "desc" }
+      }),
+      // 6. Doctor Commissions
+      prisma.doctorCommissionAccrual.findMany({
+        where: {
+          OR: [
+            { collectionEventId: { not: null }, collectionEvent: { occurredAt: { gte: start, lte: end } } },
+            { collectionEventId: null, approvedAt: { gte: start, lte: end }, status: { in: ["APPROVED", "PARTIALLY_PAID", "PAID"] } }
+          ],
+          ...dept ? { invoiceLineItem: commissionDepartmentFilter(dept) } : {}
+        },
+        include: {
+          doctor: {
+            select: {
+              id: true,
+              fullName: true,
+              employeeId: true,
+              staffDepartments: { select: { department: { select: { id: true, name: true } } }, take: 1 }
+            }
+          },
+          collectionEvent: true,
+          payouts: { where: { paidAt: { lte: end } } },
+          approvedByUser: { select: { id: true, displayName: true, username: true, role: true } },
+          invoiceLineItem: {
+            include: {
+              serviceRate: { include: { department: { select: { id: true, name: true } } } },
+              hospitalInvoice: {
+                include: {
+                  department: { select: { id: true, name: true } }
+                }
+              }
+            }
+          }
+        },
+        orderBy: { createdAt: "desc" }
+      }),
+      // 7. Clinical Consumable Stock Issues
+      prisma.departmentRequisition.findMany({
+        where: {
+          issuedAt: { gte: start, lte: end },
+          status: { in: ["ISSUED", "PARTIALLY_RETURNED", "CLOSED"] },
+          ...dept ? { departmentId: dept } : {}
+        },
+        include: {
+          department: { select: { id: true, name: true, departmentType: true } },
+          issuedBy: { select: { id: true, displayName: true, username: true, role: true } },
+          lines: {
+            include: {
+              stockItem: { select: { id: true, name: true, code: true, unit: true } }
+            }
+          }
+        },
+        orderBy: { issuedAt: "desc" }
+      }),
+      // 8. Internal Cash Settlements
+      prisma.accountSettlement.findMany({
+        where: {
+          submittedAt: { gte: start, lte: end },
+          ...user ? { OR: [{ portalUserId: user }, { receiverUserId: user }] } : {}
+        },
+        include: {
+          submittedByUser: { select: { id: true, displayName: true, username: true, role: true } },
+          receiverUser: { select: { id: true, displayName: true, username: true, role: true } }
+        },
+        orderBy: { submittedAt: "desc" }
+      }),
+      // 9. Accrual Executive Summary
+      this.getSummary(query)
+    ]);
+    const allItems = [];
+    for (const inv of invoices) {
+      const pName = inv.selfPayEncounter?.fullName || inv.panelPatient?.fullName || inv.admissionRecord?.selfPayEncounter?.fullName || inv.admissionRecord?.panelPatient?.fullName || "Walk-in Patient";
+      const dName = inv.department?.name || inv.lines[0]?.serviceRate?.department?.name || "General Hospital Services";
+      const gross = Number(inv.subtotal);
+      const discount = Number(inv.discountTotal);
+      const net = Number(inv.total);
+      const paid = Number(inv.paidTotal);
+      const tax = Number(inv.taxAmount || 0);
+      const outstanding = Math.max(0, net - paid);
+      const isPaid = inv.status === "PAID";
+      const isPartial = inv.status === "PARTIALLY_PAID";
+      allItems.push({
+        id: `inv-${inv.id}`,
+        date: inv.createdAt.toISOString(),
+        reference: inv.invoiceNumber,
+        transactionType: "REVENUE",
+        typeLabel: "Hospital Revenue",
+        patientPayeeDescription: pName,
+        encounterInvoiceRef: inv.selfPayEncounter?.mrNumber || inv.admissionRecord?.admissionNumber || inv.invoiceNumber,
+        departmentId: inv.departmentId ?? void 0,
+        department: dName,
+        portalUserId: inv.createdById ?? void 0,
+        portalUser: userName2(inv.createdByUser) || "Front Desk Billing",
+        portal: "Front Desk / Billing",
+        status: inv.status,
+        statusLabel: isPaid ? "Paid" : isPartial ? "Partially Paid" : inv.status === "VOID" ? "Voided" : "Unpaid",
+        grossBilling: gross,
+        discountCredit: discount,
+        tax,
+        netRevenue: net,
+        collectionsReceived: 0,
+        recognizedExpense: 0,
+        expensePaid: 0,
+        cashIn: 0,
+        cashOut: 0,
+        outstandingPayable: outstanding,
+        paymentMethod: "N/A",
+        details: {
+          lines: inv.lines.map((l) => ({
+            name: l.serviceRate?.name || "Service",
+            gross: Number(l.lineGross),
+            discount: Number(l.discountAmount),
+            net: Number(l.lineNet),
+            department: l.serviceRate?.department?.name
+          }))
+        }
+      });
+    }
+    for (const rec of receipts) {
+      const isRefund = rec.amount.lessThan(0) || rec.isReversed;
+      const absAmount = Math.abs(Number(rec.amount));
+      const pName = rec.hospitalInvoice?.selfPayEncounter?.fullName || rec.hospitalInvoice?.panelPatient?.fullName || rec.hospitalInvoice?.admissionRecord?.selfPayEncounter?.fullName || rec.hospitalInvoice?.admissionRecord?.panelPatient?.fullName || rec.admissionRecord?.selfPayEncounter?.fullName || rec.admissionRecord?.panelPatient?.fullName || "Patient Receipt";
+      const dName = rec.hospitalInvoice?.department?.name || "Front Desk Billing";
+      const isCash = rec.method === "CASH";
+      if (isRefund) {
+        allItems.push({
+          id: `ref-${rec.id}`,
+          date: rec.collectedAt.toISOString(),
+          reference: rec.receiptNumber,
+          transactionType: "REFUND",
+          typeLabel: "Refund / Reversal",
+          patientPayeeDescription: `${pName} (Refund / Credit)`,
+          encounterInvoiceRef: rec.hospitalInvoice?.invoiceNumber || rec.admissionRecord?.admissionNumber || "\u2014",
+          departmentId: rec.hospitalInvoice?.department?.id,
+          department: dName,
+          portalUserId: rec.collectedById,
+          portalUser: userName2(rec.collectedBy) || "Cashier",
+          portal: "Front Desk / Billing",
+          status: "REVERSED",
+          statusLabel: "Refund / Reversed",
+          grossBilling: 0,
+          discountCredit: 0,
+          tax: 0,
+          netRevenue: 0,
+          collectionsReceived: -absAmount,
+          recognizedExpense: 0,
+          expensePaid: 0,
+          cashIn: 0,
+          cashOut: isCash ? absAmount : 0,
+          outstandingPayable: 0,
+          paymentMethod: rec.method
+        });
+      } else {
+        allItems.push({
+          id: `rec-${rec.id}`,
+          date: rec.collectedAt.toISOString(),
+          reference: rec.receiptNumber,
+          transactionType: "COLLECTION",
+          typeLabel: "Collection / Receipt",
+          patientPayeeDescription: pName,
+          encounterInvoiceRef: rec.hospitalInvoice?.invoiceNumber || rec.admissionRecord?.admissionNumber || "\u2014",
+          departmentId: rec.hospitalInvoice?.department?.id,
+          department: dName,
+          portalUserId: rec.collectedById,
+          portalUser: userName2(rec.collectedBy) || "Cashier",
+          portal: "Front Desk / Billing",
+          status: "COMPLETED",
+          statusLabel: "Completed",
+          grossBilling: 0,
+          discountCredit: 0,
+          tax: 0,
+          netRevenue: 0,
+          collectionsReceived: absAmount,
+          recognizedExpense: 0,
+          expensePaid: 0,
+          cashIn: isCash ? absAmount : 0,
+          cashOut: 0,
+          outstandingPayable: 0,
+          paymentMethod: rec.method
+        });
+      }
+    }
+    for (const exp of hospitalExpenseRows) {
+      const amt = Number(exp.amount);
+      const isCash = !exp.paymentMethod || exp.paymentMethod === "CASH";
+      allItems.push({
+        id: `exp-${exp.id}`,
+        date: exp.expenseDate.toISOString(),
+        reference: exp.expenseNumber,
+        transactionType: "EXPENSE",
+        typeLabel: "Operating Expense",
+        patientPayeeDescription: [exp.paidTo, exp.description, exp.category].filter(Boolean).join(" \u2014 ") || "Hospital Expense",
+        encounterInvoiceRef: exp.reference || exp.expenseNumber,
+        departmentId: exp.departmentId ?? void 0,
+        department: exp.department?.name || "Hospital Administration",
+        portalUserId: exp.createdById ?? void 0,
+        portalUser: userName2(exp.createdByUser) || "Administrator",
+        portal: "Admin",
+        status: exp.status,
+        statusLabel: "Posted / Approved",
+        grossBilling: 0,
+        discountCredit: 0,
+        tax: 0,
+        netRevenue: 0,
+        collectionsReceived: 0,
+        recognizedExpense: amt,
+        expensePaid: amt,
+        cashIn: 0,
+        cashOut: isCash ? amt : 0,
+        outstandingPayable: 0,
+        paymentMethod: exp.paymentMethod || "Cash"
+      });
+    }
+    for (const ie of inventoryExpenseRows) {
+      const amt = Number(ie.amount);
+      const isCash = !ie.paymentMethod || ie.paymentMethod === "CASH";
+      allItems.push({
+        id: `iexp-${ie.id}`,
+        date: ie.expenseDate.toISOString(),
+        reference: ie.reference || `IE-${ie.id.slice(0, 8).toUpperCase()}`,
+        transactionType: "EXPENSE",
+        typeLabel: "Store Expense",
+        patientPayeeDescription: [ie.payee, ie.description, ie.category].filter(Boolean).join(" \u2014 ") || "Store Expense",
+        encounterInvoiceRef: ie.reference || "\u2014",
+        department: "Inventory / Store",
+        portalUserId: ie.createdById,
+        portalUser: userName2(ie.createdByUser) || "Inventory Manager",
+        portal: "Inventory Management",
+        status: "POSTED",
+        statusLabel: "Posted",
+        grossBilling: 0,
+        discountCredit: 0,
+        tax: 0,
+        netRevenue: 0,
+        collectionsReceived: 0,
+        recognizedExpense: amt,
+        expensePaid: amt,
+        cashIn: 0,
+        cashOut: isCash ? amt : 0,
+        outstandingPayable: 0,
+        paymentMethod: ie.paymentMethod || "Cash"
+      });
+    }
+    for (const sal of salarySlips) {
+      const payable = Number(sal.generatedAmount);
+      const paid = sal.payments?.reduce((s, p) => s + Number(p.amount), 0) || 0;
+      const remaining = Math.max(0, payable - paid);
+      const cashPayments = sal.payments?.filter((p) => p.method === "CASH").reduce((s, p) => s + Number(p.amount), 0) || 0;
+      const methodLabel = sal.payments?.[0]?.method || "Bank / Online";
+      allItems.push({
+        id: `sal-${sal.id}`,
+        date: (sal.approvedAt || sal.createdAt).toISOString(),
+        reference: `${sal.periodStart.toISOString().slice(0, 7)} Payroll`,
+        transactionType: "PAYROLL",
+        typeLabel: "Staff Payroll",
+        patientPayeeDescription: `${sal.staff.fullName} (${sal.staff.employeeId})`,
+        encounterInvoiceRef: sal.payrollRunId || "\u2014",
+        department: sal.staff.department?.name || "Administration",
+        portalUser: "HR / Payroll Officer",
+        portal: "Admin",
+        status: sal.status,
+        statusLabel: sal.status.replace(/_/g, " "),
+        grossBilling: 0,
+        discountCredit: 0,
+        tax: 0,
+        netRevenue: 0,
+        collectionsReceived: 0,
+        recognizedExpense: payable,
+        expensePaid: paid,
+        cashIn: 0,
+        cashOut: cashPayments,
+        outstandingPayable: remaining,
+        paymentMethod: methodLabel
+      });
+    }
+    for (const com of commissionAccruals) {
+      const amt = Number(com.commissionAmount);
+      const paid = com.payouts?.reduce((s, p) => s + Number(p.amount), 0) || 0;
+      const outstanding = Math.max(0, amt - paid);
+      const invRef = com.invoiceLineItem?.hospitalInvoice?.invoiceNumber || "\u2014";
+      const dName = com.invoiceLineItem?.serviceRate?.department?.name || com.doctor.staffDepartments?.[0]?.department?.name || "Clinical Services";
+      allItems.push({
+        id: `com-${com.id}`,
+        date: (com.collectionEvent?.occurredAt || com.approvedAt || com.createdAt).toISOString(),
+        reference: `COM-${com.id.slice(0, 8).toUpperCase()}`,
+        transactionType: "COMMISSION",
+        typeLabel: "Doctor Commission",
+        patientPayeeDescription: `Dr. ${com.doctor.fullName} (${com.doctor.employeeId})`,
+        encounterInvoiceRef: invRef,
+        department: dName,
+        portalUserId: com.approvedById ?? void 0,
+        portalUser: userName2(com.approvedByUser) || "Finance Control",
+        portal: "Super Admin",
+        status: com.status,
+        statusLabel: com.status.replace(/_/g, " "),
+        grossBilling: 0,
+        discountCredit: 0,
+        tax: 0,
+        netRevenue: 0,
+        collectionsReceived: 0,
+        recognizedExpense: amt,
+        expensePaid: paid,
+        cashIn: 0,
+        cashOut: 0,
+        outstandingPayable: outstanding,
+        paymentMethod: "Bank / Online"
+      });
+    }
+    for (const req of requisitions) {
+      const deptType = req.department?.departmentType;
+      const isDirect = !deptType || ["CLINICAL", "SURGICAL", "DIAGNOSTIC", "EMERGENCY"].includes(deptType);
+      if (!isDirect) continue;
+      let cost = 0;
+      for (const line of req.lines || []) {
+        const netQty = Number(line.quantity) - Number(line.returnedQuantity);
+        if (netQty > 0) {
+          cost += netQty * Number(line.costRate || 0);
+        }
+      }
+      allItems.push({
+        id: `req-${req.id}`,
+        date: req.issuedAt.toISOString(),
+        reference: `REQ-${req.id.slice(0, 8).toUpperCase()}`,
+        transactionType: "CONSUMABLE",
+        typeLabel: "Direct Consumable Cost",
+        patientPayeeDescription: `Consumable Stock Issue to ${req.department?.name || "Department"}`,
+        encounterInvoiceRef: `REQ-${req.id.slice(0, 8).toUpperCase()}`,
+        departmentId: req.departmentId,
+        department: req.department?.name || "Store",
+        portalUserId: req.issuedById,
+        portalUser: userName2(req.issuedBy) || "Inventory Manager",
+        portal: "Inventory Management",
+        status: req.status,
+        statusLabel: req.status.replace(/_/g, " "),
+        grossBilling: 0,
+        discountCredit: 0,
+        tax: 0,
+        netRevenue: 0,
+        collectionsReceived: 0,
+        recognizedExpense: cost,
+        expensePaid: 0,
+        cashIn: 0,
+        cashOut: 0,
+        outstandingPayable: 0,
+        paymentMethod: "N/A"
+      });
+    }
+    for (const st of settlements) {
+      const acceptedAmt = Number(st.handoverAmount || st.physicalCash || 0);
+      const isAccepted = st.status === "ACCEPTED";
+      const senderName = userName2(st.submittedByUser) || "Cashier";
+      const receiverName = userName2(st.receiverUser) || "Administrator";
+      allItems.push({
+        id: `set-${st.id}`,
+        date: (st.submittedAt || st.createdAt).toISOString(),
+        reference: `SET-${st.id.slice(0, 8).toUpperCase()}`,
+        transactionType: "SETTLEMENT",
+        typeLabel: "Internal Custody Transfer",
+        patientPayeeDescription: `Cash Settlement Handover: ${senderName} \u2192 ${receiverName}`,
+        encounterInvoiceRef: "\u2014",
+        department: "Cash Custody",
+        portalUserId: st.portalUserId,
+        portalUser: senderName,
+        portal: "Front Desk / Billing",
+        status: st.status,
+        statusLabel: st.status.replace(/_/g, " "),
+        grossBilling: 0,
+        discountCredit: 0,
+        tax: 0,
+        netRevenue: 0,
+        collectionsReceived: 0,
+        recognizedExpense: 0,
+        expensePaid: 0,
+        cashIn: isAccepted ? acceptedAmt : 0,
+        cashOut: isAccepted ? acceptedAmt : 0,
+        outstandingPayable: 0,
+        paymentMethod: "Cash"
+      });
+    }
+    allItems.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const filteredItems = allItems.filter((it) => {
+      if (transactionType && transactionType !== "ALL" && it.transactionType !== transactionType) {
+        return false;
+      }
+      if (dept && it.departmentId && it.departmentId !== dept) {
+        return false;
+      }
+      if (user && it.portalUserId && it.portalUserId !== user) {
+        return false;
+      }
+      if (portal && portal !== "ALL" && !it.portal.toLowerCase().includes(portal.toLowerCase())) {
+        return false;
+      }
+      if (method && method !== "ALL" && it.paymentMethod !== "N/A" && it.paymentMethod.toUpperCase() !== method.toUpperCase()) {
+        return false;
+      }
+      if (status && status !== "ALL" && it.status.toUpperCase() !== status.toUpperCase()) {
+        return false;
+      }
+      if (search) {
+        const text2 = [
+          it.reference,
+          it.patientPayeeDescription,
+          it.encounterInvoiceRef,
+          it.department,
+          it.portalUser,
+          it.typeLabel,
+          it.paymentMethod
+        ].join(" ").toLowerCase();
+        if (!text2.includes(search)) return false;
+      }
+      return true;
+    });
+    const columnTotals = {
+      grossBilling: filteredItems.reduce((s, it) => s + it.grossBilling, 0),
+      discountCredit: filteredItems.reduce((s, it) => s + it.discountCredit, 0),
+      tax: filteredItems.reduce((s, it) => s + it.tax, 0),
+      netRevenue: filteredItems.reduce((s, it) => s + it.netRevenue, 0),
+      collectionsReceived: filteredItems.reduce((s, it) => s + it.collectionsReceived, 0),
+      recognizedExpense: filteredItems.reduce((s, it) => s + it.recognizedExpense, 0),
+      expensePaid: filteredItems.reduce((s, it) => s + it.expensePaid, 0),
+      cashIn: filteredItems.reduce((s, it) => s + it.cashIn, 0),
+      cashOut: filteredItems.reduce((s, it) => s + it.cashOut, 0),
+      outstandingPayable: filteredItems.reduce((s, it) => s + it.outstandingPayable, 0)
+    };
+    const sum = summaryData.summary;
+    const actualCashIn = filteredItems.filter((it) => it.transactionType === "COLLECTION").reduce((s, it) => s + it.cashIn, 0);
+    const actualCashOut = filteredItems.filter((it) => it.transactionType !== "SETTLEMENT").reduce((s, it) => s + it.cashOut, 0);
+    const nonOperatingOutflows = filteredItems.filter((it) => it.transactionType === "SETTLEMENT").reduce((s, it) => s + it.cashOut, 0);
+    const totals = {
+      hospitalRevenue: {
+        grossEarnedBilling: Number(sum.grossBilling),
+        discounts: Number(sum.discounts),
+        netEarnedRevenue: Number(sum.netEarnedRevenue),
+        taxAmount: filteredItems.reduce((s, it) => s + it.tax, 0)
+      },
+      collectionsReceivables: {
+        totalCollections: Number(sum.collections),
+        cashCollections: actualCashIn,
+        cardBankOnlineCollections: Math.max(0, Number(sum.collections) - actualCashIn),
+        refunds: filteredItems.filter((it) => it.transactionType === "REFUND").reduce((s, it) => s + Math.abs(it.collectionsReceived), 0),
+        netCollections: Number(sum.collections),
+        closingOutstanding: Number(sum.outstanding)
+      },
+      hospitalCosts: {
+        directConsumables: Number(sum.directServiceCosts),
+        staffPayrollRecognized: Number(sum.payrollCost),
+        doctorCommissionEarned: Number(sum.doctorCommissionCost),
+        approvedHospitalExpenses: Number(sum.hospitalExpenses),
+        inventoryOperatingExpenses: Number(sum.expenses),
+        totalOperatingCosts: Number(sum.totalOperatingCosts),
+        hasIncompleteCost: sum.hasIncompleteCost,
+        missingCostCount: sum.missingCostCount
+      },
+      profit: {
+        grossProfit: Number(sum.grossProfit),
+        operatingProfit: Number(sum.operatingProfit),
+        operatingMargin: Number(sum.operatingMargin)
+      },
+      cashMovement: {
+        totalCustomerCollections: Number(sum.collections),
+        actualPaidOperatingExpenses: Number(sum.hospitalExpenses) + Number(sum.salaryPaid) + Number(sum.commissionPaid),
+        nonOperatingCashOutflows: nonOperatingOutflows,
+        netCashMovement: actualCashIn - actualCashOut,
+        currentRemainingCustomerDues: Number(sum.outstanding)
+      },
+      payables: {
+        payrollPaid: Number(sum.salaryPaid),
+        payrollOutstanding: Number(sum.salaryOutstanding),
+        commissionPaid: Number(sum.commissionPaid),
+        commissionOutstanding: Number(sum.commissionOutstanding),
+        expensePaid: Number(sum.hospitalExpenses),
+        expenseOutstanding: 0
+      }
+    };
+    const totalRecords = filteredItems.length;
+    const totalPages = Math.ceil(totalRecords / limit) || 1;
+    const paginatedItems = filteredItems.slice((page - 1) * limit, page * limit);
+    return {
+      period: periodOf(start, end, label),
+      totalRecords,
+      page,
+      limit,
+      totalPages,
+      items: paginatedItems,
+      columnTotals,
+      totals
+    };
   }
 };
+function resolveExtendedDateRange(query) {
+  const now = /* @__PURE__ */ new Date();
+  const karachiClock = hospitalClock(now);
+  const todayStr = karachiClock.date;
+  const parseKarachiStart = (dStr) => /* @__PURE__ */ new Date(`${dStr}T00:00:00.000+05:00`);
+  const parseKarachiEnd = (dStr) => /* @__PURE__ */ new Date(`${dStr}T23:59:59.999+05:00`);
+  if (query.preset === "all_time") {
+    return {
+      start: /* @__PURE__ */ new Date("2020-01-01T00:00:00.000+05:00"),
+      end: parseKarachiEnd(todayStr),
+      label: "All Time"
+    };
+  }
+  if (query.preset === "custom" && query.fromDate && query.toDate) {
+    return {
+      start: parseKarachiStart(query.fromDate),
+      end: parseKarachiEnd(query.toDate),
+      label: `Custom (${query.fromDate} to ${query.toDate})`
+    };
+  }
+  if (query.preset === "yesterday") {
+    const todayDate = /* @__PURE__ */ new Date(`${todayStr}T12:00:00+05:00`);
+    todayDate.setDate(todayDate.getDate() - 1);
+    const yesterdayStr = todayDate.toISOString().slice(0, 10);
+    return {
+      start: parseKarachiStart(yesterdayStr),
+      end: parseKarachiEnd(yesterdayStr),
+      label: "Yesterday"
+    };
+  }
+  if (query.preset === "this_week") {
+    const todayDate = /* @__PURE__ */ new Date(`${todayStr}T12:00:00+05:00`);
+    const day2 = todayDate.getDay();
+    const diff = todayDate.getDate() - day2 + (day2 === 0 ? -6 : 1);
+    todayDate.setDate(diff);
+    const startOfWeekStr = todayDate.toISOString().slice(0, 10);
+    return {
+      start: parseKarachiStart(startOfWeekStr),
+      end: parseKarachiEnd(todayStr),
+      label: "This Week"
+    };
+  }
+  if (query.preset === "this_month") {
+    const [y = "2026", m = "11"] = todayStr.split("-");
+    const startOfMonthStr = `${y}-${m}-01`;
+    return {
+      start: parseKarachiStart(startOfMonthStr),
+      end: parseKarachiEnd(todayStr),
+      label: "This Month"
+    };
+  }
+  if (query.preset === "last_month") {
+    const [yNum = 2026, mNum = 11] = todayStr.split("-").map(Number);
+    const lastMonthY = mNum === 1 ? yNum - 1 : yNum;
+    const lastMonthM = mNum === 1 ? 12 : mNum - 1;
+    const mStr = String(lastMonthM).padStart(2, "0");
+    const startOfLastMonth = `${lastMonthY}-${mStr}-01`;
+    const lastDay = new Date(lastMonthY, lastMonthM, 0).getDate();
+    const endOfLastMonth = `${lastMonthY}-${mStr}-${String(lastDay).padStart(2, "0")}`;
+    return {
+      start: parseKarachiStart(startOfLastMonth),
+      end: parseKarachiEnd(endOfLastMonth),
+      label: "Last Month"
+    };
+  }
+  return {
+    start: parseKarachiStart(todayStr),
+    end: parseKarachiEnd(todayStr),
+    label: `Today (${todayStr})`
+  };
+}
 
 // src/modules/reports/managementReports.controller.ts
 var managementReportsController = {
   summary: async (req, res) => {
     res.json({ data: await managementReportsService.getSummary(req.query) });
+  },
+  incomeExpenseLedger: async (req, res) => {
+    res.json({
+      data: await managementReportsService.getIncomeExpenseLedger(req.query)
+    });
   },
   billingCollection: async (req, res) => {
     res.json({
@@ -58679,6 +59952,16 @@ var managementReportsController = {
   inventoryPharmacy: async (req, res) => {
     res.json({
       data: await managementReportsService.getInventoryPharmacy(req.query)
+    });
+  },
+  operatingProfit: async (req, res) => {
+    res.json({
+      data: await managementReportsService.getOperatingProfit(req.query)
+    });
+  },
+  detailedExpenses: async (req, res) => {
+    res.json({
+      data: await managementReportsService.getDetailedExpenses(req.query)
     });
   },
   filterOptions: async (_req, res) => {
@@ -58738,6 +60021,20 @@ var inventoryPharmacyQuerySchema = dateRangeSchema6.extend({
   /** ALERTS = only figures that need attention (low stock, expiry, pending requests). */
   status: external_exports.enum(["ALERTS"]).optional()
 });
+var incomeExpenseLedgerQuerySchema = external_exports.object({
+  preset: external_exports.enum(["today", "yesterday", "this_week", "this_month", "last_month", "custom", "all_time"]).default("today"),
+  fromDate: external_exports.string().optional(),
+  toDate: external_exports.string().optional(),
+  departmentId: uuid,
+  portal: external_exports.string().optional(),
+  portalUserId: uuid,
+  transactionType: external_exports.string().optional(),
+  method: external_exports.enum(["CASH", "CARD", "BANK", "ONLINE", "ALL"]).optional(),
+  status: external_exports.string().optional(),
+  search: external_exports.string().optional(),
+  page: external_exports.coerce.number().int().positive().default(1),
+  limit: external_exports.coerce.number().int().positive().max(500).default(50)
+});
 
 // src/modules/reports/inventoryReports.service.ts
 var import_library37 = require("@prisma/client/runtime/library");
@@ -58755,7 +60052,10 @@ var inventoryReportsService = {
     const [items, purchasesInRange, movementsInRange, supplierLedgerAll, nearExpiryBatches] = await Promise.all([
       prisma.stockItem.findMany({
         where: { isActive: true, ...query.category ? { category: query.category } : {} },
-        include: { stockLedgerEntries: { select: { quantityDelta: true } }, purchaseOrderLines: { select: { rate: true }, take: 1, orderBy: { id: "desc" } } }
+        include: {
+          stockLedgerEntries: { select: { quantityDelta: true, batchNo: true, expiryDate: true, createdAt: true } },
+          purchaseOrderLines: { select: { batchNo: true, rate: true }, orderBy: { id: "desc" } }
+        }
       }),
       prisma.purchaseOrder.findMany({
         where: range ? { createdAt: { gte: range.start, lte: range.end } } : {},
@@ -58773,8 +60073,33 @@ var inventoryReportsService = {
     let outOfStockCount = 0;
     for (const item of items) {
       const currentStock = item.stockLedgerEntries.reduce((sum, e) => sum.plus(e.quantityDelta), new import_library37.Decimal(0));
-      const lastRate = item.purchaseOrderLines[0]?.rate ?? new import_library37.Decimal(0);
-      totalStockValue = totalStockValue.plus(currentStock.mul(lastRate));
+      const defaultRate = item.purchaseOrderLines.length > 0 && item.purchaseOrderLines[0] ? new import_library37.Decimal(item.purchaseOrderLines[0].rate) : new import_library37.Decimal(0);
+      const batchMap = /* @__PURE__ */ new Map();
+      for (const entry of item.stockLedgerEntries) {
+        const bNo = entry.batchNo?.trim() || null;
+        const key = bNo ?? "__UNBATCHED__";
+        const existing = batchMap.get(key);
+        const delta = new import_library37.Decimal(entry.quantityDelta);
+        if (!existing) {
+          batchMap.set(key, { batchNo: bNo, available: delta });
+        } else {
+          existing.available = existing.available.plus(delta);
+        }
+      }
+      for (const b of batchMap.values()) {
+        if (b.available.greaterThan(0)) {
+          let batchRate = defaultRate;
+          if (b.batchNo) {
+            const matched = item.purchaseOrderLines.find(
+              (pol) => pol.batchNo?.trim().toLowerCase() === b.batchNo.trim().toLowerCase()
+            );
+            if (matched) {
+              batchRate = new import_library37.Decimal(matched.rate);
+            }
+          }
+          totalStockValue = totalStockValue.plus(b.available.mul(batchRate));
+        }
+      }
       if (currentStock.lessThanOrEqualTo(0)) outOfStockCount += 1;
       else if (currentStock.lessThanOrEqualTo(item.reorderLevel)) lowStockCount += 1;
     }
@@ -58794,8 +60119,7 @@ var inventoryReportsService = {
     return {
       period: range ? { label: range.label, start: range.start.toISOString(), end: range.end.toISOString() } : ALL_TIME_PERIOD,
       totalItems: items.length,
-      // Approximated from each item's most recent purchase rate — this repo
-      // has no persisted weighted-average/FIFO cost yet.
+      // Valued using actual historical lot/batch purchase rates
       totalStockValue,
       lowStockCount,
       outOfStockCount,
@@ -58830,7 +60154,7 @@ var inventoryReportsService = {
       rows
     };
   },
-  /** Report 3 — Purchase / Stock In: GRN/purchase details, supplier, totals, paid/due. */
+  /** Report 3 — Purchase / Stock In: GRN/purchase details, supplier, totals, paid/due accounting for returns and payments. */
   async getPurchaseReport(query) {
     const range = resolveRangeOrAll(query);
     const where = {
@@ -58858,15 +60182,61 @@ var inventoryReportsService = {
       orderBy: { createdAt: "desc" },
       take: 500
     });
-    const totalAmount = rows.reduce((s, r) => s.plus(r.totalAmount), new import_library37.Decimal(0));
-    const totalDue = rows.reduce((s, r) => r.paymentMethod === "CREDIT" ? s.plus(r.totalAmount) : s, new import_library37.Decimal(0));
+    const poIds = rows.map((r) => r.id);
+    const poLedgerEntries = poIds.length > 0 ? await prisma.supplierLedger.findMany({
+      where: {
+        referenceTable: "purchase_orders",
+        referenceId: { in: poIds }
+      },
+      select: { referenceId: true, entryType: true, amount: true }
+    }) : [];
+    const ledgerByPo = /* @__PURE__ */ new Map();
+    for (const e of poLedgerEntries) {
+      if (!e.referenceId) continue;
+      const cur = ledgerByPo.get(e.referenceId) ?? { returns: new import_library37.Decimal(0), payments: new import_library37.Decimal(0) };
+      if (e.entryType === "RETURN" || e.entryType === "CREDIT_NOTE") {
+        cur.returns = cur.returns.plus(e.amount);
+      } else if (e.entryType === "PAYMENT") {
+        cur.payments = cur.payments.plus(e.amount);
+      }
+      ledgerByPo.set(e.referenceId, cur);
+    }
+    let totalAmount = new import_library37.Decimal(0);
+    let totalPaid = new import_library37.Decimal(0);
+    let totalDue = new import_library37.Decimal(0);
+    let totalReturned = new import_library37.Decimal(0);
+    const enrichedRows = rows.map((r) => {
+      const linked = ledgerByPo.get(r.id) ?? { returns: new import_library37.Decimal(0), payments: new import_library37.Decimal(0) };
+      totalAmount = totalAmount.plus(r.totalAmount);
+      const returnedAmount = linked.returns;
+      const netPayable = import_library37.Decimal.max(new import_library37.Decimal(0), r.totalAmount.minus(returnedAmount));
+      let paidAmount = new import_library37.Decimal(0);
+      let dueAmount = new import_library37.Decimal(0);
+      if (r.paymentMethod !== "CREDIT") {
+        paidAmount = netPayable;
+        dueAmount = new import_library37.Decimal(0);
+      } else {
+        paidAmount = import_library37.Decimal.min(netPayable, linked.payments);
+        dueAmount = import_library37.Decimal.max(new import_library37.Decimal(0), netPayable.minus(paidAmount));
+      }
+      totalPaid = totalPaid.plus(paidAmount);
+      totalDue = totalDue.plus(dueAmount);
+      totalReturned = totalReturned.plus(returnedAmount);
+      return {
+        ...r,
+        paidAmount,
+        dueAmount,
+        returnedAmount
+      };
+    });
     return {
       period: range ? { label: range.label, start: range.start.toISOString(), end: range.end.toISOString() } : ALL_TIME_PERIOD,
       totalPurchases: rows.length,
       totalAmount,
-      totalPaid: totalAmount.minus(totalDue),
+      totalPaid,
       totalDue,
-      rows
+      totalReturned,
+      rows: enrichedRows
     };
   },
   /** Report 4 — Department Issue & Return: issued, returned and net quantity per requisition. */
@@ -58913,31 +60283,91 @@ var inventoryReportsService = {
       }))
     };
   },
-  /** Report 5 — Supplier Report: ledger statement / outstanding per supplier. */
+  /** Report 5 — Supplier Report: ledger statement with Opening Balance, Purchases, Payments, Returns, Running Balance & Closing. */
   async getSupplierReport(query) {
     const range = resolveRangeOrAll(query);
+    const supplierFilter = query.supplierId ? { supplierId: query.supplierId } : {};
+    const typeFilter = query.transactionType ? { entryType: query.transactionType } : {};
+    let openingBalance = new import_library37.Decimal(0);
+    if (range) {
+      const priorEntries = await prisma.supplierLedger.findMany({
+        where: {
+          createdAt: { lt: range.start },
+          ...supplierFilter
+        },
+        select: { entryType: true, amount: true }
+      });
+      openingBalance = priorEntries.reduce((acc, e) => {
+        const amt = new import_library37.Decimal(e.amount);
+        if (e.entryType === "PURCHASE_CREDIT") return acc.plus(amt);
+        if (e.entryType === "ADJUSTMENT") return acc.plus(amt);
+        return acc.minus(amt);
+      }, new import_library37.Decimal(0));
+    }
     const where = {
       ...range ? { createdAt: { gte: range.start, lte: range.end } } : {},
-      ...query.supplierId ? { supplierId: query.supplierId } : {},
-      ...query.transactionType ? { entryType: query.transactionType } : {}
+      ...supplierFilter,
+      ...typeFilter
     };
-    const rows = await prisma.supplierLedger.findMany({
+    const inRangeEntries = await prisma.supplierLedger.findMany({
       where,
-      include: { supplier: { select: { id: true, name: true } }, actor: { select: userSummarySelect5 } },
-      orderBy: { createdAt: "desc" },
+      include: {
+        supplier: { select: { id: true, name: true } },
+        actor: { select: userSummarySelect5 }
+      },
+      orderBy: { createdAt: "asc" },
       take: 1e3
     });
-    const totalPurchaseCredit = rows.reduce((s, r) => r.entryType === "PURCHASE_CREDIT" ? s.plus(r.amount) : s, new import_library37.Decimal(0));
-    const totalPaymentsAndReturns = rows.reduce(
-      (s, r) => r.entryType !== "PURCHASE_CREDIT" ? s.plus(r.amount) : s,
-      new import_library37.Decimal(0)
-    );
+    let running = new import_library37.Decimal(openingBalance);
+    let totalPurchases = new import_library37.Decimal(0);
+    let totalPayments = new import_library37.Decimal(0);
+    let totalReturns = new import_library37.Decimal(0);
+    const rowsWithBalance = inRangeEntries.map((e) => {
+      const amt = new import_library37.Decimal(e.amount);
+      let debit = new import_library37.Decimal(0);
+      let credit = new import_library37.Decimal(0);
+      if (e.entryType === "PURCHASE_CREDIT") {
+        credit = amt;
+        totalPurchases = totalPurchases.plus(amt);
+        running = running.plus(amt);
+      } else if (e.entryType === "PAYMENT") {
+        debit = amt;
+        totalPayments = totalPayments.plus(amt);
+        running = running.minus(amt);
+      } else if (e.entryType === "RETURN" || e.entryType === "CREDIT_NOTE") {
+        debit = amt;
+        totalReturns = totalReturns.plus(amt);
+        running = running.minus(amt);
+      } else if (e.entryType === "ADJUSTMENT") {
+        if (amt.greaterThanOrEqualTo(0)) {
+          credit = amt;
+          totalPurchases = totalPurchases.plus(amt);
+          running = running.plus(amt);
+        } else {
+          debit = amt.abs();
+          totalReturns = totalReturns.plus(amt.abs());
+          running = running.minus(amt.abs());
+        }
+      }
+      return {
+        ...e,
+        debit,
+        credit,
+        runningBalance: running
+      };
+    });
+    const rows = [...rowsWithBalance].reverse();
+    const closingPayable = running;
+    const netMovement = totalPurchases.minus(totalPayments).minus(totalReturns);
     return {
       period: range ? { label: range.label, start: range.start.toISOString(), end: range.end.toISOString() } : ALL_TIME_PERIOD,
       totalEntries: rows.length,
-      totalPurchaseCredit,
-      totalPaymentsAndReturns,
-      netMovement: totalPurchaseCredit.minus(totalPaymentsAndReturns),
+      openingBalance,
+      totalPurchases,
+      totalPayments,
+      totalReturns,
+      netMovement,
+      closingPayable,
       rows
     };
   },
@@ -59099,7 +60529,7 @@ var departmentIssueReturnReportQuerySchema = dateRangeSchema7.extend({
 });
 var supplierReportQuerySchema = dateRangeSchema7.extend({
   supplierId: external_exports.string().uuid().optional(),
-  transactionType: external_exports.enum(["PURCHASE_CREDIT", "PAYMENT", "RETURN", "CREDIT_NOTE"]).optional()
+  transactionType: external_exports.enum(["PURCHASE_CREDIT", "PAYMENT", "RETURN", "CREDIT_NOTE", "ADJUSTMENT"]).optional()
 });
 var inventoryExpenseReportQuerySchema = dateRangeSchema7.extend({
   category: external_exports.enum(EXPENSE_CATEGORIES).optional(),
@@ -59177,6 +60607,9 @@ router21.get("/admission/medicine-fulfillment", view16, validate({ query: medici
 router21.get("/admission/high-value-approvals", view16, validate({ query: highValueApprovalQuerySchema }), asyncHandler(admissionPharmacyReportsController.highValueApproval));
 router21.get("/admission/pharmacy-clearance-status", view16, validate({ query: pharmacyClearanceStatusQuerySchema }), asyncHandler(admissionPharmacyReportsController.clearanceStatus));
 router21.get("/management/summary", viewManagement, validate({ query: managementSummaryQuerySchema }), asyncHandler(managementReportsController.summary));
+router21.get("/management/income-expense-ledger", viewManagement, validate({ query: incomeExpenseLedgerQuerySchema }), asyncHandler(managementReportsController.incomeExpenseLedger));
+router21.get("/management/operating-profit", viewManagement, validate({ query: managementSummaryQuerySchema }), asyncHandler(managementReportsController.operatingProfit));
+router21.get("/management/detailed-expenses", viewManagement, validate({ query: managementSummaryQuerySchema }), asyncHandler(managementReportsController.detailedExpenses));
 router21.get("/management/billing-collection", viewManagement, validate({ query: billingCollectionQuerySchema }), asyncHandler(managementReportsController.billingCollection));
 router21.get("/management/outstanding-panel", viewManagement, validate({ query: outstandingPanelQuerySchema }), asyncHandler(managementReportsController.outstandingPanel));
 router21.get("/management/balance-settlements", viewManagement, validate({ query: balanceSettlementsQuerySchema }), asyncHandler(managementReportsController.balanceSettlements));
@@ -59409,7 +60842,22 @@ router24.get("/biometric/unmapped-punches", authorize("attendance", "view"), asy
 router24.post("/biometric/reprocess", authorize("attendance", "config"), asyncHandler(devicesController.reprocess));
 var devices_routes_default = router24;
 
+// src/shared/singleFlight.ts
+function singleFlight(run) {
+  let active;
+  return () => {
+    if (!active) {
+      active = Promise.resolve().then(run).finally(() => {
+        active = void 0;
+      });
+    }
+    return active;
+  };
+}
+
 // src/app.ts
+var runRoomChargeCron = singleFlight(() => admissionService.runScheduledRoomCharges());
+var runBiometricCron = singleFlight(() => devicesService.processPending());
 function createApp() {
   const app2 = (0, import_express26.default)();
   app2.set("trust proxy", 1);
@@ -59447,7 +60895,7 @@ function createApp() {
       return;
     }
     res.setHeader("Cache-Control", "no-store");
-    res.json({ data: await admissionService.runScheduledRoomCharges() });
+    res.json({ data: await runRoomChargeCron() });
   }));
   app2.get("/api/cron/biometric-reprocess", asyncHandler(async (req, res) => {
     if (!process.env.CRON_SECRET || req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -59455,7 +60903,7 @@ function createApp() {
       return;
     }
     res.setHeader("Cache-Control", "no-store");
-    res.json({ data: await devicesService.processPending() });
+    res.json({ data: await runBiometricCron() });
   }));
   app2.use("/api/v1", authenticate, blockIfMustResetPassword, auditLog);
   app2.use("/api/v1/staff", identity_routes_default);
