@@ -1110,11 +1110,11 @@ export const managementReportsService = {
           status: { in: ['APPROVED', 'PARTIALLY_PAID', 'PAID'] },
           ...(dept
             ? {
-                OR: [
-                  { payrollRun: { departmentId: dept } },
-                  { staff: { staffDepartments: { some: { departmentId: dept } } } },
-                ],
-              }
+              OR: [
+                { payrollRun: { departmentId: dept } },
+                { staff: { staffDepartments: { some: { departmentId: dept } } } },
+              ],
+            }
             : {}),
         },
         include: {
@@ -1398,11 +1398,11 @@ export const managementReportsService = {
           status: { not: 'VOID' },
           ...(dept
             ? {
-                OR: [
-                  { departmentId: dept },
-                  { lines: { some: { serviceRate: { departmentId: dept } } } },
-                ],
-              }
+              OR: [
+                { departmentId: dept },
+                { lines: { some: { serviceRate: { departmentId: dept } } } },
+              ],
+            }
             : {}),
           ...(user ? { createdById: user } : {}),
         },
@@ -1437,13 +1437,13 @@ export const managementReportsService = {
           ...(user ? { collectedById: user } : {}),
           ...(dept
             ? {
-                OR: [
-                  { hospitalInvoice: { departmentId: dept } },
-                  { hospitalInvoice: { lines: { some: { serviceRate: { departmentId: dept } } } } },
-                  { hospitalInvoiceId: null, admissionRecord: { departmentId: dept } },
-                  { hospitalInvoiceId: null, appointment: { departmentId: dept } },
-                ],
-              }
+              OR: [
+                { hospitalInvoice: { departmentId: dept } },
+                { hospitalInvoice: { lines: { some: { serviceRate: { departmentId: dept } } } } },
+                { hospitalInvoiceId: null, admissionRecord: { departmentId: dept } },
+                { hospitalInvoiceId: null, appointment: { departmentId: dept } },
+              ],
+            }
             : {}),
         },
         include: {
@@ -1519,11 +1519,11 @@ export const managementReportsService = {
           status: { in: ['APPROVED', 'PARTIALLY_PAID', 'PAID'] },
           ...(dept
             ? {
-                OR: [
-                  { payrollRun: { departmentId: dept } },
-                  { staff: { staffDepartments: { some: { departmentId: dept } } } },
-                ],
-              }
+              OR: [
+                { payrollRun: { departmentId: dept } },
+                { staff: { staffDepartments: { some: { departmentId: dept } } } },
+              ],
+            }
             : {}),
         },
         include: {
@@ -1874,13 +1874,18 @@ export const managementReportsService = {
     // Map Doctor Commissions
     for (const com of commissionAccruals) {
       const amt = Number(com.commissionAmount);
-      const paid = com.payouts?.reduce((s, p) => s + Number(p.amount), 0) || 0;
-      const outstanding = Math.max(0, amt - paid);
+      const periodPayouts = com.payouts?.filter((p) => p.paidAt >= start && p.paidAt <= end && !p.reversalOfId) || [];
+      const paid = periodPayouts.reduce((s, p) => s + Number(p.amount), 0);
+      const cashPayouts = periodPayouts.filter((p) => p.method === 'CASH').reduce((s, p) => s + Number(p.amount), 0);
+      const totalPaidEver = com.payouts?.filter((p) => !p.reversalOfId).reduce((s, p) => s + Number(p.amount), 0) || 0;
+      const outstanding = Math.max(0, amt - totalPaidEver);
       const invRef = com.invoiceLineItem?.hospitalInvoice?.invoiceNumber || '—';
       const dName =
         com.invoiceLineItem?.serviceRate?.department?.name ||
         com.doctor.staffDepartments?.[0]?.department?.name ||
         'Clinical Services';
+      const payoutMethods = unique(periodPayouts.map((p) => p.method));
+      const methodLabel = payoutMethods.length > 0 ? payoutMethods.join(', ') : 'Accrued (N/A)';
 
       allItems.push({
         id: `com-${com.id}`,
@@ -1904,9 +1909,9 @@ export const managementReportsService = {
         recognizedExpense: amt,
         expensePaid: paid,
         cashIn: 0,
-        cashOut: 0,
+        cashOut: cashPayouts,
         outstandingPayable: outstanding,
-        paymentMethod: 'Bank / Online',
+        paymentMethod: methodLabel,
       });
     }
 
@@ -1960,6 +1965,20 @@ export const managementReportsService = {
       const senderName = userName(st.submittedByUser) || 'Cashier';
       const receiverName = userName(st.receiverUser) || 'Administrator';
 
+      // Internal custody settlements net to zero at the hospital-wide level.
+      // When filtered by a specific user drawer:
+      // - Sender: cashOut = acceptedAmt (custody handed over out of drawer)
+      // - Receiver: cashIn = acceptedAmt (custody received into drawer)
+      let stCashIn = 0;
+      let stCashOut = 0;
+      if (isAccepted && user) {
+        if (st.portalUserId === user) {
+          stCashOut = acceptedAmt;
+        } else if (st.receiverUserId === user) {
+          stCashIn = acceptedAmt;
+        }
+      }
+
       allItems.push({
         id: `set-${st.id}`,
         date: (st.submittedAt || st.createdAt).toISOString(),
@@ -1981,10 +2000,17 @@ export const managementReportsService = {
         collectionsReceived: 0,
         recognizedExpense: 0,
         expensePaid: 0,
-        cashIn: isAccepted ? acceptedAmt : 0,
-        cashOut: isAccepted ? acceptedAmt : 0,
+        cashIn: stCashIn,
+        cashOut: stCashOut,
         outstandingPayable: 0,
         paymentMethod: 'Cash',
+        details: {
+          handoverAmount: acceptedAmt,
+          sender: senderName,
+          receiver: receiverName,
+          senderUserId: st.portalUserId,
+          receiverUserId: st.receiverUserId,
+        },
       });
     }
 
@@ -2044,9 +2070,42 @@ export const managementReportsService = {
 
     // Executive Reconciled Financial Totals
     const sum = summaryData.summary;
-    const actualCashIn = filteredItems.filter((it) => it.transactionType === 'COLLECTION').reduce((s, it) => s + it.cashIn, 0);
-    const actualCashOut = filteredItems.filter((it) => it.transactionType !== 'SETTLEMENT').reduce((s, it) => s + it.cashOut, 0);
-    const nonOperatingOutflows = filteredItems.filter((it) => it.transactionType === 'SETTLEMENT').reduce((s, it) => s + it.cashOut, 0);
+
+    // External Customer Collections:
+    // Physical cash collections from receipts (excluding refunds and reversals)
+    const actualCashCollections = filteredItems
+      .filter((it) => it.transactionType === 'COLLECTION')
+      .reduce((s, it) => s + it.cashIn, 0);
+
+    const totalRefunds = filteredItems
+      .filter((it) => it.transactionType === 'REFUND')
+      .reduce((s, it) => s + Math.abs(it.collectionsReceived), 0);
+
+    // Actual Paid Operating Expenses:
+    // Recognized paid expenses across all payment channels (Bank, Cash, etc.)
+    const totalPaidOperatingExpenses = Number(sum.hospitalExpenses) + Number(sum.salaryPaid) + Number(sum.commissionPaid);
+
+    // Physical Cash-Paid Operating Expenses:
+    // Operating expenses paid specifically in physical cash (excluding bank transfers/cards)
+    const cashPaidExpenses = filteredItems
+      .filter((it) => ['EXPENSE', 'PAYROLL', 'COMMISSION'].includes(it.transactionType))
+      .reduce((s, it) => s + it.cashOut, 0);
+
+    const nonCashPaidOperatingExpenses = Math.max(0, totalPaidOperatingExpenses - cashPaidExpenses);
+
+    // Non-Operating Cash Outflows:
+    // Internal settlements net to zero at the hospital-wide level.
+    // If scoped to a specific user drawer, count custody transfers out of that user's drawer.
+    let nonOperatingOutflows = 0;
+    if (user) {
+      nonOperatingOutflows = filteredItems
+        .filter((it) => it.transactionType === 'SETTLEMENT')
+        .reduce((s, it) => s + it.cashOut, 0);
+    }
+
+    // Net Physical Cash Movement:
+    // External physical cash collections - physical cash paid for expenses - external non-operating cash outflows
+    const netPhysicalCashMovement = actualCashCollections - cashPaidExpenses - nonOperatingOutflows;
 
     const totals = {
       hospitalRevenue: {
@@ -2057,9 +2116,9 @@ export const managementReportsService = {
       },
       collectionsReceivables: {
         totalCollections: Number(sum.collections),
-        cashCollections: actualCashIn,
-        cardBankOnlineCollections: Math.max(0, Number(sum.collections) - actualCashIn),
-        refunds: filteredItems.filter((it) => it.transactionType === 'REFUND').reduce((s, it) => s + Math.abs(it.collectionsReceived), 0),
+        cashCollections: actualCashCollections,
+        cardBankOnlineCollections: Math.max(0, Number(sum.collections) - actualCashCollections),
+        refunds: totalRefunds,
         netCollections: Number(sum.collections),
         closingOutstanding: Number(sum.outstanding),
       },
@@ -2080,9 +2139,15 @@ export const managementReportsService = {
       },
       cashMovement: {
         totalCustomerCollections: Number(sum.collections),
-        actualPaidOperatingExpenses: Number(sum.hospitalExpenses) + Number(sum.salaryPaid) + Number(sum.commissionPaid),
+        cashCollections: actualCashCollections,
+        cardBankOnlineCollections: Math.max(0, Number(sum.collections) - actualCashCollections),
+        actualPaidOperatingExpenses: totalPaidOperatingExpenses,
+        cashPaidOperatingExpenses: cashPaidExpenses,
+        nonCashPaidOperatingExpenses: nonCashPaidOperatingExpenses,
         nonOperatingCashOutflows: nonOperatingOutflows,
-        netCashMovement: actualCashIn - actualCashOut,
+        netPhysicalCashMovement,
+        netCashMovement: netPhysicalCashMovement,
+        netTotalFundsMovement: Number(sum.collections) - totalPaidOperatingExpenses - nonOperatingOutflows,
         currentRemainingCustomerDues: Number(sum.outstanding),
       },
       payables: {

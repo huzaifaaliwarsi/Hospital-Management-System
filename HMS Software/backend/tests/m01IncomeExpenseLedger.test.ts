@@ -78,4 +78,29 @@ describe('M01: Income & Expense Ledger Backend Integration', () => {
     expect(profit.grossProfit).toBeCloseTo(hospitalRevenue.netEarnedRevenue - hospitalCosts.directConsumables, 2);
     expect(profit.operatingProfit).toBeCloseTo(profit.grossProfit - hospitalCosts.totalOperatingCosts, 2);
   });
+
+  it('reconciles physical cash movement and internal settlement netting at hospital level', async () => {
+    const res = await managementReportsService.getIncomeExpenseLedger({ preset: 'today' });
+    const { cashMovement, collectionsReceivables } = res.totals;
+
+    // Internal custody settlements net to 0 at hospital level
+    expect(cashMovement.nonOperatingCashOutflows).toBe(0);
+
+    // Customer collections match external cash inflows
+    expect(cashMovement.totalCustomerCollections).toBeGreaterThanOrEqual(0);
+    expect(collectionsReceivables.cashCollections).toBe(cashMovement.totalCustomerCollections);
+
+    // Mathematical consistency: netPhysicalCashMovement = cashCollections - cashPaidOperatingExpenses - nonOperatingCashOutflows
+    const expectedNet = collectionsReceivables.cashCollections - (cashMovement.cashPaidOperatingExpenses ?? 0) - cashMovement.nonOperatingCashOutflows;
+    expect(cashMovement.netPhysicalCashMovement).toBe(expectedNet);
+    expect(cashMovement.netCashMovement).toBe(expectedNet);
+
+    // Settlement rows at hospital level have net zero impact
+    const settlements = res.items.filter((it) => it.transactionType === 'SETTLEMENT');
+    for (const st of settlements) {
+      expect(st.cashIn).toBe(0);
+      expect(st.cashOut).toBe(0);
+      expect(st.details).toBeDefined();
+    }
+  });
 });

@@ -151,9 +151,15 @@ export interface IncomeExpenseLedgerExecutiveTotals {
   };
   cashMovement: {
     totalCustomerCollections: number;
+    cashCollections?: number;
+    cardBankOnlineCollections?: number;
     actualPaidOperatingExpenses: number;
+    cashPaidOperatingExpenses?: number;
+    nonCashPaidOperatingExpenses?: number;
     nonOperatingCashOutflows: number;
     netCashMovement: number;
+    netPhysicalCashMovement?: number;
+    netTotalFundsMovement?: number;
     currentRemainingCustomerDues: number;
   };
   payables: {

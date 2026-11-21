@@ -241,6 +241,11 @@ export const IncomeExpenseLedgerView: React.FC = () => {
         header: 'Received / Paid',
         align: 'right',
         cell: (r) => {
+          if (r.transactionType === 'SETTLEMENT') {
+            if (r.cashIn > 0) return `+${formatPKR(r.cashIn)}`;
+            if (r.cashOut > 0) return `-${formatPKR(r.cashOut)}`;
+            return 'Net 0.00';
+          }
           if (r.collectionsReceived > 0) return `+${formatPKR(r.collectionsReceived)}`;
           if (r.collectionsReceived < 0) return `-${formatPKR(Math.abs(r.collectionsReceived))}`;
           if (r.expensePaid > 0) return `-${formatPKR(r.expensePaid)}`;
@@ -248,9 +253,15 @@ export const IncomeExpenseLedgerView: React.FC = () => {
           if (r.cashOut > 0) return `-${formatPKR(r.cashOut)}`;
           return '—';
         },
-        excelValue: (r) =>
-          (r.collectionsReceived || r.cashIn || 0) -
-          (r.expensePaid || r.cashOut || (r.collectionsReceived < 0 ? Math.abs(r.collectionsReceived) : 0)),
+        excelValue: (r) => {
+          if (r.transactionType === 'SETTLEMENT') {
+            return (r.cashIn || 0) - (r.cashOut || 0);
+          }
+          return (
+            (r.collectionsReceived || r.cashIn || 0) -
+            (r.expensePaid || r.cashOut || (r.collectionsReceived < 0 ? Math.abs(r.collectionsReceived) : 0))
+          );
+        },
       },
       {
         header: 'Outstanding',
@@ -297,6 +308,23 @@ export const IncomeExpenseLedgerView: React.FC = () => {
   };
 
   const getReceivedPaidContent = (r: IncomeExpenseLedgerRow) => {
+    if (r.transactionType === 'SETTLEMENT') {
+      if (r.cashIn > 0) {
+        return <span className="font-bold text-emerald-600">+{formatNum(r.cashIn)}</span>;
+      }
+      if (r.cashOut > 0) {
+        return <span className="font-bold text-rose-600">-{formatNum(r.cashOut)}</span>;
+      }
+      const handover = r.details?.handoverAmount || 0;
+      return (
+        <span
+          className="font-semibold text-slate-500 text-xs"
+          title="Internal Cash Custody Handover — Net Zero at Hospital Level"
+        >
+          {handover > 0 ? `Net 0.00 (±${formatNum(handover)})` : 'Net 0.00'}
+        </span>
+      );
+    }
     if (r.collectionsReceived > 0) {
       return <span className="font-bold text-emerald-600">+{formatNum(r.collectionsReceived)}</span>;
     }
@@ -616,376 +644,411 @@ export const IncomeExpenseLedgerView: React.FC = () => {
           </div>
         ) : (
           <div className="overflow-x-auto">
-              <table className="w-full text-xs border-collapse">
-                <thead>
-                    <tr className="border-b border-slate-200 bg-slate-50/90 text-slate-600 text-[11px] font-bold uppercase tracking-wider sticky top-0 z-10 whitespace-nowrap">
-                      <th className="py-3 px-2.5 text-center w-12 border-r border-slate-200">#</th>
-                      <th className="py-3 px-3 text-left border-r border-slate-200">Date &amp; Time</th>
-                      <th className="py-3 px-3 text-left border-r border-slate-200">Reference ID</th>
-                      <th className="py-3 px-3 text-left border-r border-slate-200">Transaction Type</th>
-                      <th className="py-3 px-3.5 text-left border-r border-slate-200">Patient / Payee / Description</th>
-                      <th className="py-3 px-3 text-left border-r border-slate-200">Department</th>
-                      <th className="py-3 px-3 text-left border-r border-slate-200">Status</th>
-                      <th className="py-3 px-3.5 text-right border-r border-slate-200">Gross Bill</th>
-                      <th className="py-3 px-3.5 text-right border-r border-slate-200">Received / Paid</th>
-                      <th className="py-3 px-3.5 text-right border-r border-slate-200">Outstanding</th>
-                      <th className="py-3 px-3 text-left border-r border-slate-200">Payment Method</th>
-                      <th className="py-3 px-2.5 text-center w-12">View</th>
-                    </tr>
-                </thead>
-                  <tbody className="bg-white">
-                    {data.items.map((r, idx) => (
-                      <tr
-                        key={r.id}
-                        className="border-b border-slate-200 hover:bg-slate-50/80 transition-colors cursor-pointer text-slate-800"
-                        onClick={() => setDetailRow(r)}
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50/90 text-slate-600 text-[11px] font-bold uppercase tracking-wider sticky top-0 z-10 whitespace-nowrap">
+                  <th className="py-3 px-2.5 text-center w-12 border-r border-slate-200">#</th>
+                  <th className="py-3 px-3 text-left border-r border-slate-200">Date &amp; Time</th>
+                  <th className="py-3 px-3 text-left border-r border-slate-200">Reference ID</th>
+                  <th className="py-3 px-3 text-left border-r border-slate-200">Transaction Type</th>
+                  <th className="py-3 px-3.5 text-left border-r border-slate-200">Patient / Payee / Description</th>
+                  <th className="py-3 px-3 text-left border-r border-slate-200">Department</th>
+                  <th className="py-3 px-3 text-left border-r border-slate-200">Status</th>
+                  <th className="py-3 px-3.5 text-right border-r border-slate-200">Gross Bill</th>
+                  <th className="py-3 px-3.5 text-right border-r border-slate-200">Received / Paid</th>
+                  <th className="py-3 px-3.5 text-right border-r border-slate-200">Outstanding</th>
+                  <th className="py-3 px-3 text-left border-r border-slate-200">Payment Method</th>
+                  <th className="py-3 px-2.5 text-center w-12">View</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white">
+                {data.items.map((r, idx) => (
+                  <tr
+                    key={r.id}
+                    className="border-b border-slate-200 hover:bg-slate-50/80 transition-colors cursor-pointer text-slate-800"
+                    onClick={() => setDetailRow(r)}
+                  >
+                    <td className="py-3 px-2.5 text-center text-slate-400 font-normal border-r border-slate-200">
+                      {(page - 1) * limit + idx + 1}
+                    </td>
+                    <td className="py-3 px-3 whitespace-nowrap text-slate-500 text-xs border-r border-slate-200">
+                      {formatDateTimeDDMMYYYY(r.date)}
+                    </td>
+                    <td className="py-3 px-3 whitespace-nowrap font-bold text-slate-900 hover:text-[#08775A] transition-colors border-r border-slate-200">
+                      {r.reference}
+                    </td>
+                    <td className="py-3 px-3 whitespace-nowrap text-xs border-r border-slate-200">
+                      {renderTransactionType(r.transactionType, r.typeLabel)}
+                    </td>
+                    <td className="py-3 px-3.5 max-w-sm truncate border-r border-slate-200" title={r.patientPayeeDescription}>
+                      <div className="font-bold text-slate-900 text-xs">{r.patientPayeeDescription}</div>
+                      {r.encounterInvoiceRef && (
+                        <div className="text-[11px] text-slate-400 font-normal mt-0.5">{r.encounterInvoiceRef}</div>
+                      )}
+                    </td>
+                    <td className="py-3 px-3 whitespace-nowrap text-slate-600 text-xs border-r border-slate-200">
+                      {r.department}
+                    </td>
+                    <td className="py-3 px-3 whitespace-nowrap text-xs border-r border-slate-200">
+                      {renderStatus(r.status, r.statusLabel)}
+                    </td>
+                    <td className="py-3 px-3.5 text-right whitespace-nowrap text-xs border-r border-slate-200">
+                      {getGrossBillContent(r)}
+                    </td>
+                    <td className="py-3 px-3.5 text-right whitespace-nowrap text-xs border-r border-slate-200">
+                      {getReceivedPaidContent(r)}
+                    </td>
+                    <td className="py-3 px-3.5 text-right whitespace-nowrap text-xs border-r border-slate-200">
+                      {getOutstandingContent(r)}
+                    </td>
+                    <td className="py-3 px-3 whitespace-nowrap text-slate-600 text-xs border-r border-slate-200">
+                      {r.paymentMethod || '—'}
+                    </td>
+                    <td className="py-3 px-2.5 text-center">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDetailRow(r);
+                        }}
+                        className="p-1 rounded text-slate-400 hover:text-[#08775A] hover:bg-emerald-50 transition-colors"
+                        title="View details"
                       >
-                          <td className="py-3 px-2.5 text-center text-slate-400 font-normal border-r border-slate-200">
-                            {(page - 1) * limit + idx + 1}
-                          </td>
-                            <td className="py-3 px-3 whitespace-nowrap text-slate-500 text-xs border-r border-slate-200">
-                              {formatDateTimeDDMMYYYY(r.date)}
-                            </td>
-                              <td className="py-3 px-3 whitespace-nowrap font-bold text-slate-900 hover:text-[#08775A] transition-colors border-r border-slate-200">
-                                {r.reference}
-                              </td>
-                                <td className="py-3 px-3 whitespace-nowrap text-xs border-r border-slate-200">
-                                  {renderTransactionType(r.transactionType, r.typeLabel)}
-                                </td>
-                                  <td className="py-3 px-3.5 max-w-sm truncate border-r border-slate-200" title={r.patientPayeeDescription}>
-                                    <div className="font-bold text-slate-900 text-xs">{r.patientPayeeDescription}</div>
-                                    {r.encounterInvoiceRef && (
-                                      <div className="text-[11px] text-slate-400 font-normal mt-0.5">{r.encounterInvoiceRef}</div>
-                                    )}
-                                  </td>
-                                    <td className="py-3 px-3 whitespace-nowrap text-slate-600 text-xs border-r border-slate-200">
-                                      {r.department}
-                                    </td>
-                                      <td className="py-3 px-3 whitespace-nowrap text-xs border-r border-slate-200">
-                                        {renderStatus(r.status, r.statusLabel)}
-                                      </td>
-                                        <td className="py-3 px-3.5 text-right whitespace-nowrap text-xs border-r border-slate-200">
-                                          {getGrossBillContent(r)}
-                                        </td>
-                                          <td className="py-3 px-3.5 text-right whitespace-nowrap text-xs border-r border-slate-200">
-                                            {getReceivedPaidContent(r)}
-                                          </td>
-                                            <td className="py-3 px-3.5 text-right whitespace-nowrap text-xs border-r border-slate-200">
-                                              {getOutstandingContent(r)}
-                                            </td>
-                                              <td className="py-3 px-3 whitespace-nowrap text-slate-600 text-xs border-r border-slate-200">
-                                                {r.paymentMethod || '—'}
-                                              </td>
-                                                <td className="py-3 px-2.5 text-center">
-                                                  <button
-                                                    type="button"
-                                                    onClick={(e) => {
-                                                      e.stopPropagation();
-                                                      setDetailRow(r);
-                                                    }}
-                                                    className="p-1 rounded text-slate-400 hover:text-[#08775A] hover:bg-emerald-50 transition-colors"
-                                                    title="View details"
-                                                  >
-                                                    <Eye className="h-4 w-4" />
-                                                  </button>
-                                                </td>
-                                              </tr>
+                        <Eye className="h-4 w-4" />
+                      </button>
+                    </td>
+                  </tr>
                 ))}
-                                            </tbody>
+              </tbody>
 
-                                            {/* ── Table Column-Wise Totals Row ── */}
-                                            <tfoot>
-                                                  <tr className="bg-slate-50 font-bold text-slate-800 border-t-2 border-slate-300 text-xs whitespace-nowrap">
-                                                    <td colSpan={7} className="py-3 px-3.5 text-right uppercase tracking-wider text-slate-600 text-[11px] font-bold border-r border-slate-200">
-                                                      Transaction Subtotals:
-                                                    </td>
-                                                      <td className="py-3 px-3.5 text-right font-bold text-slate-900 border-r border-slate-200">
-                                                        {formatNum(data.columnTotals.grossBilling)}
-                                                      </td>
-                                                        <td className="py-3 px-3.5 text-right font-bold border-r border-slate-200">
-                                                          {(() => {
-                                                            const netMovement = data.columnTotals.collectionsReceived - data.columnTotals.expensePaid;
-                                                            return (
-                                                              <span className={netMovement >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
-                                                                {netMovement >= 0 ? '+' : ''}
-                                                                {formatNum(netMovement)}
-                                                              </span>
-                                                            );
-                                                          })()}
-                                                        </td>
-                                                          <td className="py-3 px-3.5 text-right font-bold text-amber-700 border-r border-slate-200">
-                                                            {formatNum(data.columnTotals.outstandingPayable)}
-                                                          </td>
-                                                            <td colSpan={2} className="py-3 px-3 text-center text-slate-400 font-normal">
-                                                              —
-                                                            </td>
-                                                          </tr>
-                                                        </tfoot>
-                                                      </table>
-                                                    </div>
+              {/* ── Table Column-Wise Totals Row ── */}
+              <tfoot>
+                <tr className="bg-slate-50 font-bold text-slate-800 border-t-2 border-slate-300 text-xs whitespace-nowrap">
+                  <td colSpan={7} className="py-3 px-3.5 text-right uppercase tracking-wider text-slate-600 text-[11px] font-bold border-r border-slate-200">
+                    Transaction Subtotals:
+                  </td>
+                  <td className="py-3 px-3.5 text-right font-bold text-slate-900 border-r border-slate-200">
+                    {formatNum(data.columnTotals.grossBilling)}
+                  </td>
+                  <td className="py-3 px-3.5 text-right font-bold border-r border-slate-200">
+                    {(() => {
+                      const netMovement = data.columnTotals.collectionsReceived - data.columnTotals.expensePaid;
+                      return (
+                        <span className={netMovement >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
+                          {netMovement >= 0 ? '+' : ''}
+                          {formatNum(netMovement)}
+                        </span>
+                      );
+                    })()}
+                  </td>
+                  <td className="py-3 px-3.5 text-right font-bold text-amber-700 border-r border-slate-200">
+                    {formatNum(data.columnTotals.outstandingPayable)}
+                  </td>
+                  <td colSpan={2} className="py-3 px-3 text-center text-slate-400 font-normal">
+                    —
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
         )}
 
-                                                    {/* ── Bottom Summary Rows (Clean ERP Reconciliation Table — No Cards) ── */}
-                                                    {data && (
-                                                      <div className="border-t border-slate-200 bg-white">
-                                                        <div className="bg-slate-50/60 px-6 py-2.5 border-b border-slate-100 flex items-center justify-between">
-                                                          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                                                            Financial Movement &amp; Reconciliation Summary
-                                                          </span>
-                                                          <span className="text-[11px] text-slate-400 font-medium">
-                                                            Period: <span className="font-semibold text-slate-600">{data.period?.label ?? 'Today'}</span>
-                                                          </span>
-                                                        </div>
-                                                        <div className="divide-y divide-slate-100 text-xs">
-                                                          <div className="flex items-center justify-between px-6 py-3 hover:bg-slate-50/60 transition-colors">
-                                                            <span className="font-medium text-slate-700">Total Customer Collections (Net of Customer Refunds)</span>
-                                                            <span className="font-bold text-emerald-600 text-sm">
-                                                              +{formatPKR(data.totals.cashMovement.totalCustomerCollections)}
-                                                            </span>
-                                                          </div>
-                                                          <div className="flex items-center justify-between px-6 py-3 hover:bg-slate-50/60 transition-colors">
-                                                            <span className="font-medium text-slate-700">
-                                                              Actual Paid Operating Expenses (Including Salary and Commission Payouts)
-                                                            </span>
-                                                            <span className="font-bold text-rose-600 text-sm">
-                                                              -{formatPKR(data.totals.cashMovement.actualPaidOperatingExpenses)}
-                                                            </span>
-                                                          </div>
-                                                          <div className="flex items-center justify-between px-6 py-3 hover:bg-slate-50/60 transition-colors">
-                                                            <span className="font-medium text-slate-700">Other Non-Operating Cash Outflows (Net of Reversals)</span>
-                                                            <span className="font-bold text-slate-700 text-sm">
-                                                              -{formatPKR(data.totals.cashMovement.nonOperatingCashOutflows)}
-                                                            </span>
-                                                          </div>
-                                                          <div className="flex items-center justify-between px-6 py-3.5 bg-emerald-50/50 border-t border-b border-emerald-100">
-                                                            <span className="font-bold text-[#08775A] uppercase tracking-wide">Net Physical Cash Movement</span>
-                                                            <span
-                                                              className={`font-black text-base ${data.totals.cashMovement.netCashMovement >= 0 ? 'text-[#08775A]' : 'text-rose-600'
-                                                                }`}
-                                                            >
-                                                              {data.totals.cashMovement.netCashMovement >= 0 ? '+' : ''}
-                                                              {formatPKR(data.totals.cashMovement.netCashMovement)}
-                                                            </span>
-                                                          </div>
-                                                          <div className="flex items-center justify-between px-6 py-3 hover:bg-slate-50/60 transition-colors">
-                                                            <span className="font-medium text-slate-700">Current Remaining Customer Dues (As-of Selected End Date)</span>
-                                                            <span className="font-bold text-amber-600 text-sm">
-                                                              {formatPKR(data.totals.cashMovement.currentRemainingCustomerDues)}
-                                                            </span>
-                                                          </div>
-                                                        </div>
-                                                      </div>
-                                                    )}
+        {/* ── Bottom Summary Rows (Clean ERP Reconciliation Table — No Cards) ── */}
+        {data && (
+          <div className="border-t border-slate-200 bg-white">
+            <div className="bg-slate-50/60 px-6 py-2.5 border-b border-slate-100 flex items-center justify-between">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                Financial Movement &amp; Reconciliation Summary
+              </span>
+              <span className="text-[11px] text-slate-400 font-medium">
+                Period: <span className="font-semibold text-slate-600">{data.period?.label ?? 'Today'}</span>
+              </span>
+            </div>
+            <div className="divide-y divide-slate-100 text-xs">
+              <div className="flex items-center justify-between px-6 py-3 hover:bg-slate-50/60 transition-colors">
+                <div>
+                  <span className="font-medium text-slate-700 block">Total Customer Collections (Net of Customer Refunds)</span>
+                  <span className="text-[11px] text-slate-400">
+                    Physical Cash: {formatPKR(data.totals.collectionsReceivables.cashCollections)} · Bank/Card: {formatPKR(data.totals.collectionsReceivables.cardBankOnlineCollections)}
+                  </span>
+                </div>
+                <span className="font-bold text-emerald-600 text-sm">
+                  +{formatPKR(data.totals.cashMovement.totalCustomerCollections)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between px-6 py-3 hover:bg-slate-50/60 transition-colors">
+                <div>
+                  <span className="font-medium text-slate-700 block">
+                    Actual Paid Operating Expenses (Cash-Disbursed)
+                  </span>
+                  <span className="text-[11px] text-slate-400">
+                    Total Paid Across Channels: {formatPKR(data.totals.cashMovement.actualPaidOperatingExpenses)} · Cash Portion: {formatPKR(data.totals.cashMovement.cashPaidOperatingExpenses ?? data.totals.cashMovement.actualPaidOperatingExpenses)} · Bank/Online: {formatPKR(data.totals.cashMovement.nonCashPaidOperatingExpenses ?? 0)}
+                  </span>
+                </div>
+                <span className="font-bold text-rose-600 text-sm">
+                  -{formatPKR(data.totals.cashMovement.cashPaidOperatingExpenses ?? data.totals.cashMovement.actualPaidOperatingExpenses)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between px-6 py-3 hover:bg-slate-50/60 transition-colors">
+                  <div>
+                    <span className="font-medium text-slate-700 block">Other Non-Operating Cash Outflows (Net of Reversals)</span>
+                    <span className="text-[11px] text-slate-400">
+                      Internal custody settlements net to zero at hospital level
+                    </span>
+                  </div>
+                  <span className="font-bold text-slate-600 text-sm">
+                    -{formatPKR(data.totals.cashMovement.nonOperatingCashOutflows)}
+                  </span>
+              </div>
+              <div className="flex items-center justify-between px-6 py-3.5 bg-emerald-50/50 border-t border-b border-emerald-100">
+                <div>
+                  <span className="font-bold text-[#08775A] uppercase tracking-wide block">Net Physical Cash Movement</span>
+                  <span className="text-[11px] text-emerald-700 font-medium">
+                    Cash Collections (+{formatPKR(data.totals.collectionsReceivables.cashCollections)}) – Cash Expenses (-{formatPKR(data.totals.cashMovement.cashPaidOperatingExpenses ?? data.totals.cashMovement.actualPaidOperatingExpenses)}) – Non-Operating Outflows (-{formatPKR(data.totals.cashMovement.nonOperatingCashOutflows)})
+                  </span>
+                </div>
+                <span
+                                                              className={`font-black text-base ${(data.totals.cashMovement.netPhysicalCashMovement ?? data.totals.cashMovement.netCashMovement) >= 0 ? 'text-[#08775A]' : 'text-rose-600'
+                    }`}
+                >
+                  {(data.totals.cashMovement.netPhysicalCashMovement ?? data.totals.cashMovement.netCashMovement) >= 0 ? '+' : ''}
+                  {formatPKR(data.totals.cashMovement.netPhysicalCashMovement ?? data.totals.cashMovement.netCashMovement)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between px-6 py-3 hover:bg-slate-50/60 transition-colors">
+                <div>
+                  <span className="font-medium text-slate-700 block">Current Remaining Customer Dues (As-of Selected End Date)</span>
+                  <span className="text-[11px] text-slate-400">Uncollected patient &amp; panel receivables</span>
+                </div>
+                <span className="font-bold text-amber-600 text-sm">
+                  {formatPKR(data.totals.cashMovement.currentRemainingCustomerDues)}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
 
-                                                    {/* ── Pagination Footer Bar (Default 25 Rows) ── */}
-                                                    {data && data.totalRecords > 0 && (
-                                                      <div className="p-3 border-t border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-600">
-                                                        <div className="flex items-center gap-2">
-                                                          <span>Show</span>
-                                                          <select
-                                                            value={limit}
-                                                            onChange={(e) => {
-                                                              setLimit(Number(e.target.value));
-                                                              setPage(1);
-                                                            }}
-                                                            className="h-7 px-2 rounded border border-slate-200 bg-white font-semibold text-slate-800"
-                                                          >
-                                                            <option value={25}>25</option>
-                                                            <option value={50}>50</option>
-                                                            <option value={100}>100</option>
-                                                            <option value={200}>200</option>
-                                                          </select>
-                                                          <span>records per page</span>
-                                                        </div>
+        {/* ── Pagination Footer Bar (Default 25 Rows) ── */}
+        {data && data.totalRecords > 0 && (
+          <div className="p-3 border-t border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-600">
+            <div className="flex items-center gap-2">
+              <span>Show</span>
+              <select
+                value={limit}
+                onChange={(e) => {
+                  setLimit(Number(e.target.value));
+                  setPage(1);
+                }}
+                className="h-7 px-2 rounded border border-slate-200 bg-white font-semibold text-slate-800"
+              >
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={200}>200</option>
+              </select>
+              <span>records per page</span>
+            </div>
 
-                                                        <div className="flex items-center gap-2">
-                                                          <span>
-                                                            Page <span className="font-bold text-slate-800">{page}</span> of{' '}
-                                                            <span className="font-bold text-slate-800">{data.totalPages}</span> ({data.totalRecords} total items)
-                                                          </span>
-                                                          <div className="flex items-center gap-1">
-                                                            <button
-                                                              type="button"
-                                                              disabled={page <= 1}
-                                                              onClick={() => setPage((p) => Math.max(1, p - 1))}
-                                                              className="h-7 w-7 rounded border border-slate-200 bg-white hover:bg-slate-50 flex items-center justify-center disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed shadow-2xs"
-                                                            >
-                                                              <ChevronLeft className="h-4 w-4" />
-                                                            </button>
-                                                            <button
-                                                              type="button"
-                                                              disabled={page >= data.totalPages}
-                                                              onClick={() => setPage((p) => Math.min(data.totalPages, p + 1))}
-                                                              className="h-7 w-7 rounded border border-slate-200 bg-white hover:bg-slate-50 flex items-center justify-center disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed shadow-2xs"
-                                                            >
-                                                              <ChevronRight className="h-4 w-4" />
-                                                            </button>
-                                                          </div>
-                                                        </div>
-                                                      </div>
-                                                    )}
-                                                  </div>
+            <div className="flex items-center gap-2">
+              <span>
+                Page <span className="font-bold text-slate-800">{page}</span> of{' '}
+                <span className="font-bold text-slate-800">{data.totalPages}</span> ({data.totalRecords} total items)
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  className="h-7 w-7 rounded border border-slate-200 bg-white hover:bg-slate-50 flex items-center justify-center disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed shadow-2xs"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  disabled={page >= data.totalPages}
+                  onClick={() => setPage((p) => Math.min(data.totalPages, p + 1))}
+                  className="h-7 w-7 rounded border border-slate-200 bg-white hover:bg-slate-50 flex items-center justify-center disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed shadow-2xs"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
 
-                                                  {/* ── Transaction Row Detail Modal ── */}
-                                                  {detailRow && (
-                                                    <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-                                                      <div className="bg-white rounded-xl shadow-xl border border-slate-200 max-w-xl w-full overflow-hidden animate-in fade-in duration-200">
-                                                        <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-                                                          <div>
-                                                            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                                                              <span>Transaction Details:</span>
-                                                              <span className="text-[#08775A]">{detailRow.reference}</span>
-                                                            </h3>
-                                                            <p className="text-xs text-slate-500 mt-0.5">{detailRow.typeLabel}</p>
-                                                          </div>
-                                                          <button
-                                                            type="button"
-                                                            onClick={() => setDetailRow(null)}
-                                                            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 transition-colors"
-                                                          >
-                                                            <X className="h-4 w-4" />
-                                                          </button>
-                                                        </div>
+      {/* ── Transaction Row Detail Modal ── */}
+      {detailRow && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200 max-w-xl w-full overflow-hidden animate-in fade-in duration-200">
+            <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <span>Transaction Details:</span>
+                  <span className="text-[#08775A]">{detailRow.reference}</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">{detailRow.typeLabel}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDetailRow(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 transition-colors"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
 
-                                                        <div className="p-4 space-y-3.5 text-xs text-slate-700 max-h-[75vh] overflow-y-auto">
-                                                          <div className="grid grid-cols-2 gap-3 pb-3 border-b border-slate-100">
-                                                            <div>
-                                                              <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block">Date &amp; Time</span>
-                                                              <span className="font-semibold text-slate-800">{formatDateTimeDDMMYYYY(detailRow.date)}</span>
-                                                            </div>
-                                                            <div>
-                                                              <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block">Status</span>
-                                                              <div>{renderStatus(detailRow.status, detailRow.statusLabel)}</div>
-                                                            </div>
-                                                            <div>
-                                                              <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block">Patient / Payee</span>
-                                                              <span className="font-semibold text-slate-800">{detailRow.patientPayeeDescription}</span>
-                                                            </div>
-                                                            <div>
-                                                              <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block">Encounter / Reference</span>
-                                                              <span className="font-semibold text-slate-800">{detailRow.encounterInvoiceRef}</span>
-                                                            </div>
-                                                            <div>
-                                                              <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block">Department</span>
-                                                              <span className="font-semibold text-slate-800">{detailRow.department}</span>
-                                                            </div>
-                                                            <div>
-                                                              <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block">Responsible User</span>
-                                                              <span className="font-semibold text-slate-800">{detailRow.portalUser}</span>
-                                                            </div>
-                                                          </div>
+            <div className="p-4 space-y-3.5 text-xs text-slate-700 max-h-[75vh] overflow-y-auto">
+              <div className="grid grid-cols-2 gap-3 pb-3 border-b border-slate-100">
+                <div>
+                  <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block">Date &amp; Time</span>
+                  <span className="font-semibold text-slate-800">{formatDateTimeDDMMYYYY(detailRow.date)}</span>
+                </div>
+                <div>
+                  <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block">Status</span>
+                  <div>{renderStatus(detailRow.status, detailRow.statusLabel)}</div>
+                </div>
+                <div>
+                  <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block">Patient / Payee</span>
+                  <span className="font-semibold text-slate-800">{detailRow.patientPayeeDescription}</span>
+                </div>
+                <div>
+                  <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block">Encounter / Reference</span>
+                  <span className="font-semibold text-slate-800">{detailRow.encounterInvoiceRef}</span>
+                </div>
+                <div>
+                  <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block">Department</span>
+                  <span className="font-semibold text-slate-800">{detailRow.department}</span>
+                </div>
+                <div>
+                  <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block">Responsible User</span>
+                  <span className="font-semibold text-slate-800">{detailRow.portalUser}</span>
+                </div>
+              </div>
 
-                                                          {/* Financial Breakdowns */}
-                                                          <div className="bg-slate-50 rounded-lg p-3 space-y-2 border border-slate-200/80">
-                                                            <span className="text-[11px] font-bold text-slate-800 uppercase tracking-wider block pb-1 border-b border-slate-200">
-                                                              Financial Breakdown
-                                                            </span>
-                                                            {detailRow.grossBilling > 0 && (
-                                                              <div className="flex justify-between">
-                                                                <span>Gross Billing:</span>
-                                                                <span className="font-semibold">{formatPKR(detailRow.grossBilling)}</span>
-                                                              </div>
-                                                            )}
-                                                            {detailRow.discountCredit > 0 && (
-                                                              <div className="flex justify-between text-rose-600">
-                                                                <span>Discount / Credit:</span>
-                                                                <span className="font-semibold">-{formatPKR(detailRow.discountCredit)}</span>
-                                                              </div>
-                                                            )}
-                                                            {detailRow.tax > 0 && (
-                                                              <div className="flex justify-between text-slate-500">
-                                                                <span>Applicable Tax:</span>
-                                                                <span>{formatPKR(detailRow.tax)}</span>
-                                                              </div>
-                                                            )}
-                                                            {detailRow.netRevenue > 0 && (
-                                                              <div className="flex justify-between font-bold text-[#08775A] border-t border-slate-200 pt-1">
-                                                                <span>Net Earned Revenue:</span>
-                                                                <span>{formatPKR(detailRow.netRevenue)}</span>
-                                                              </div>
-                                                            )}
-                                                            {detailRow.collectionsReceived !== 0 && (
-                                                              <div className="flex justify-between font-bold text-emerald-700">
-                                                                <span>Collections Received:</span>
-                                                                <span>{formatPKR(detailRow.collectionsReceived)}</span>
-                                                              </div>
-                                                            )}
-                                                            {detailRow.recognizedExpense > 0 && (
-                                                              <div className="flex justify-between font-bold text-amber-900">
-                                                                <span>Recognized Expense / Cost:</span>
-                                                                <span>{formatPKR(detailRow.recognizedExpense)}</span>
-                                                              </div>
-                                                            )}
-                                                            {detailRow.expensePaid > 0 && (
-                                                              <div className="flex justify-between">
-                                                                <span>Expense Actually Paid:</span>
-                                                                <span className="font-semibold">{formatPKR(detailRow.expensePaid)}</span>
-                                                              </div>
-                                                            )}
-                                                            {detailRow.cashIn > 0 && (
-                                                              <div className="flex justify-between font-bold text-emerald-700">
-                                                                <span>Physical Cash IN:</span>
-                                                                <span>+{formatPKR(detailRow.cashIn)}</span>
-                                                              </div>
-                                                            )}
-                                                            {detailRow.cashOut > 0 && (
-                                                              <div className="flex justify-between font-bold text-rose-700">
-                                                                <span>Physical Cash OUT:</span>
-                                                                <span>-{formatPKR(detailRow.cashOut)}</span>
-                                                              </div>
-                                                            )}
-                                                            {detailRow.outstandingPayable > 0 && (
-                                                              <div className="flex justify-between font-bold text-amber-800">
-                                                                <span>Remaining Outstanding / Payable:</span>
-                                                                <span>{formatPKR(detailRow.outstandingPayable)}</span>
-                                                              </div>
-                                                            )}
-                                                            <div className="flex justify-between text-slate-500 border-t border-slate-200 pt-1">
-                                                              <span>Payment Method:</span>
-                                                              <span className="font-semibold text-slate-800">{detailRow.paymentMethod}</span>
-                                                            </div>
-                                                          </div>
+              {/* Financial Breakdowns */}
+              <div className="bg-slate-50 rounded-lg p-3 space-y-2 border border-slate-200/80">
+                <span className="text-[11px] font-bold text-slate-800 uppercase tracking-wider block pb-1 border-b border-slate-200">
+                  Financial Breakdown
+                </span>
+                {detailRow.grossBilling > 0 && (
+                  <div className="flex justify-between">
+                    <span>Gross Billing:</span>
+                    <span className="font-semibold">{formatPKR(detailRow.grossBilling)}</span>
+                  </div>
+                )}
+                {detailRow.discountCredit > 0 && (
+                  <div className="flex justify-between text-rose-600">
+                    <span>Discount / Credit:</span>
+                    <span className="font-semibold">-{formatPKR(detailRow.discountCredit)}</span>
+                  </div>
+                )}
+                {detailRow.tax > 0 && (
+                  <div className="flex justify-between text-slate-500">
+                    <span>Applicable Tax:</span>
+                    <span>{formatPKR(detailRow.tax)}</span>
+                  </div>
+                )}
+                {detailRow.netRevenue > 0 && (
+                  <div className="flex justify-between font-bold text-[#08775A] border-t border-slate-200 pt-1">
+                    <span>Net Earned Revenue:</span>
+                    <span>{formatPKR(detailRow.netRevenue)}</span>
+                  </div>
+                )}
+                {detailRow.collectionsReceived !== 0 && (
+                  <div className="flex justify-between font-bold text-emerald-700">
+                    <span>Collections Received:</span>
+                    <span>{formatPKR(detailRow.collectionsReceived)}</span>
+                  </div>
+                )}
+                {detailRow.recognizedExpense > 0 && (
+                  <div className="flex justify-between font-bold text-amber-900">
+                    <span>Recognized Expense / Cost:</span>
+                    <span>{formatPKR(detailRow.recognizedExpense)}</span>
+                  </div>
+                )}
+                {detailRow.expensePaid > 0 && (
+                  <div className="flex justify-between">
+                    <span>Expense Actually Paid:</span>
+                    <span className="font-semibold">{formatPKR(detailRow.expensePaid)}</span>
+                  </div>
+                )}
+                {detailRow.transactionType === 'SETTLEMENT' && (
+                  <div className="flex justify-between font-bold text-slate-800">
+                    <span>Internal Handover Amount:</span>
+                    <span>{formatPKR(detailRow.details?.handoverAmount || 0)}</span>
+                  </div>
+                )}
+                {detailRow.cashIn > 0 && (
+                  <div className="flex justify-between font-bold text-emerald-700">
+                    <span>Physical Cash IN:</span>
+                    <span>+{formatPKR(detailRow.cashIn)}</span>
+                  </div>
+                )}
+                {detailRow.cashOut > 0 && (
+                  <div className="flex justify-between font-bold text-rose-700">
+                    <span>Physical Cash OUT:</span>
+                    <span>-{formatPKR(detailRow.cashOut)}</span>
+                  </div>
+                )}
+                {detailRow.transactionType === 'SETTLEMENT' && detailRow.cashIn === 0 && detailRow.cashOut === 0 && (
+                  <div className="flex justify-between text-slate-500 italic">
+                    <span>Hospital-Wide Impact:</span>
+                    <span className="font-semibold text-slate-700 not-italic">Net PKR 0.00 (Custody Transfer)</span>
+                  </div>
+                )}
+                {detailRow.outstandingPayable > 0 && (
+                  <div className="flex justify-between font-bold text-amber-800">
+                    <span>Remaining Outstanding / Payable:</span>
+                    <span>{formatPKR(detailRow.outstandingPayable)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-slate-500 border-t border-slate-200 pt-1">
+                  <span>Payment Method:</span>
+                  <span className="font-semibold text-slate-800">{detailRow.paymentMethod}</span>
+                </div>
+              </div>
 
-                                                          {/* Line Items If available */}
-                                                          {detailRow.details?.lines && detailRow.details.lines.length > 0 && (
-                                                            <div className="space-y-1.5">
-                                                              <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block">Service Line Items</span>
-                                                              <div className="border border-slate-200 rounded-lg overflow-hidden">
-                                                                <table className="w-full text-[11px]">
-                                                                  <thead className="bg-slate-100 text-slate-600 font-bold border-b border-slate-200">
-                                                                    <tr>
-                                                                      <th className="py-1.5 px-2 text-left">Item / Service</th>
-                                                                      <th className="py-1.5 px-2 text-left">Department</th>
-                                                                      <th className="py-1.5 px-2 text-right">Net</th>
-                                                                    </tr>
-                                                                  </thead>
-                                                                  <tbody className="divide-y divide-slate-100">
-                                                                    {detailRow.details.lines.map((l: any, i: number) => (
-                                                                      <tr key={i}>
-                                                                        <td className="py-1.5 px-2 font-medium">{l.name}</td>
-                                                                        <td className="py-1.5 px-2 text-slate-500">{l.department || '—'}</td>
-                                                                        <td className="py-1.5 px-2 text-right font-bold text-slate-800">{formatPKR(l.net)}</td>
-                                                                      </tr>
-                                                                    ))}
-                                                                  </tbody>
-                                                                </table>
-                                                              </div>
-                                                            </div>
-                                                          )}
-                                                        </div>
+              {/* Line Items If available */}
+              {detailRow.details?.lines && detailRow.details.lines.length > 0 && (
+                <div className="space-y-1.5">
+                  <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block">Service Line Items</span>
+                  <div className="border border-slate-200 rounded-lg overflow-hidden">
+                    <table className="w-full text-[11px]">
+                      <thead className="bg-slate-100 text-slate-600 font-bold border-b border-slate-200">
+                        <tr>
+                          <th className="py-1.5 px-2 text-left">Item / Service</th>
+                          <th className="py-1.5 px-2 text-left">Department</th>
+                          <th className="py-1.5 px-2 text-right">Net</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {detailRow.details.lines.map((l: any, i: number) => (
+                          <tr key={i}>
+                            <td className="py-1.5 px-2 font-medium">{l.name}</td>
+                            <td className="py-1.5 px-2 text-slate-500">{l.department || '—'}</td>
+                            <td className="py-1.5 px-2 text-right font-bold text-slate-800">{formatPKR(l.net)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
 
-                                                        <div className="p-3 bg-slate-50 border-t border-slate-200 flex justify-end">
-                                                          <button
-                                                            type="button"
-                                                            onClick={() => setDetailRow(null)}
-                                                            className="px-4 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-800 font-semibold text-xs transition-colors cursor-pointer"
-                                                          >
-                                                            Close
-                                                          </button>
-                                                        </div>
-                                                      </div>
-                                                    </div>
-                                                  )}
-                                                </div>
-                                                );
+            <div className="p-3 bg-slate-50 border-t border-slate-200 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setDetailRow(null)}
+                className="px-4 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-800 font-semibold text-xs transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 };
