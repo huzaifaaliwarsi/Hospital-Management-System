@@ -9,30 +9,28 @@ type Ledger = Awaited<ReturnType<typeof managementReportsService.getIncomeExpens
 type Range = { start: Date; end: Date; label: string };
 export type StatementEntry = { id: string; date: string; reference: string; category: string; department: string; description: string; actor: string; revenue: number; cost: number; status: string; details: Record<string, unknown> };
 export const statementCategories = [
-  ['opd','Hospital Operating Revenue','OPD Services Revenue','Revenue'],
-  ['emergency','Hospital Operating Revenue','Emergency Services Revenue','Revenue'],
-  ['observation','Hospital Operating Revenue','Observation Services Revenue','Revenue'],
-  ['admission','Hospital Operating Revenue','Admission / Inpatient Hospital Services Revenue','Revenue'],
-  ['otherRevenue','Hospital Operating Revenue','Other Valid Hospital Services Revenue','Revenue'],
-  ['discounts','Hospital Operating Revenue','Less: Approved Discounts','Revenue'],
-  ['serviceCredits','Hospital Operating Revenue','Less: Valid Service Credits / Reversals','Revenue'],
-  ['netRevenue','Hospital Operating Revenue','TOTAL NET EARNED HOSPITAL REVENUE','Subtotal'],
-  ['consumables','Direct Service Costs','Clinical Consumables / Materials Used','Direct Cost'],
-  ['procedure','Direct Service Costs','Procedure / Treatment Direct Consumable Costs','Direct Cost'],
-  ['otherDirect','Direct Service Costs','Other Valid Direct Service Costs','Direct Cost'],
-  ['directReturns','Direct Service Costs','Less: Valid Direct Cost Reversals / Returns','Direct Cost'],
-  ['directTotal','Direct Service Costs','TOTAL DIRECT SERVICE COSTS','Subtotal'],
-  ['grossProfit','Gross Profit','Gross Profit','Subtotal'],
-  ['grossMargin','Gross Profit','Gross Profit Margin %','Subtotal'],
-  ['payroll','Operating Expenses & Overheads','Staff Salaries / Payroll Recognized','Expense'],
-  ['commission','Operating Expenses & Overheads','Doctor Commission Earned / Recognized','Expense'],
-  ['hospitalOpex','Operating Expenses & Overheads','Hospital Operating Expenses','Expense'],
-  ['inventoryOpex','Operating Expenses & Overheads','Inventory Operating Expenses','Expense'],
-  ['otherOpex','Operating Expenses & Overheads','Other Valid Operating Overheads','Expense'],
-  ['expenseCredits','Operating Expenses & Overheads','Less: Valid Expense Reversals / Credits','Expense'],
-  ['opexTotal','Operating Expenses & Overheads','TOTAL OPERATING EXPENSES','Subtotal'],
-  ['operatingProfit','Net Operating Profit / Loss','Net Operating Profit / Loss','Result'],
-  ['operatingMargin','Net Operating Profit / Loss','Operating Profit Margin %','Result'],
+  ['opd','1. HOSPITAL OPERATING REVENUE','OPD Services Revenue','REVENUE'],
+  ['emergency','1. HOSPITAL OPERATING REVENUE','Emergency Services Revenue','REVENUE'],
+  ['observation','1. HOSPITAL OPERATING REVENUE','Observation Services Revenue','REVENUE'],
+  ['admission','1. HOSPITAL OPERATING REVENUE','Admission / Inpatient Hospital Services Revenue','REVENUE'],
+  ['otherRevenue','1. HOSPITAL OPERATING REVENUE','Other Valid Hospital Services Revenue','REVENUE'],
+  ['discounts','1. HOSPITAL OPERATING REVENUE','Less: Approved Discounts','REVENUE'],
+  ['serviceCredits','1. HOSPITAL OPERATING REVENUE','Less: Valid Service Credits / Reversals','REVENUE'],
+  ['netRevenue','1. HOSPITAL OPERATING REVENUE','TOTAL NET EARNED HOSPITAL REVENUE','SUBTOTAL'],
+  ['consumables','2. DIRECT SERVICE COSTS','Clinical Consumables / Materials Used','COST'],
+  ['procedure','2. DIRECT SERVICE COSTS','Procedure / Treatment Direct Consumable Costs','COST'],
+  ['otherDirect','2. DIRECT SERVICE COSTS','Other Valid Direct Service Costs','COST'],
+  ['directReturns','2. DIRECT SERVICE COSTS','Less: Valid Direct Cost Reversals / Returns','COST'],
+  ['directTotal','2. DIRECT SERVICE COSTS','TOTAL DIRECT SERVICE COSTS','SUBTOTAL'],
+  ['grossProfit','3. GROSS PROFIT (GROSS MARGIN)','GROSS PROFIT (GROSS MARGIN)','SUBTOTAL'],
+  ['payroll','4. OPERATING OVERHEADS & EXPENSES','Staff Salaries / Payroll Recognized','EXPENSE'],
+  ['commission','4. OPERATING OVERHEADS & EXPENSES','Doctor Commission Earned / Recognized','EXPENSE'],
+  ['hospitalOpex','4. OPERATING OVERHEADS & EXPENSES','Hospital Operating Expenses','EXPENSE'],
+  ['inventoryOpex','4. OPERATING OVERHEADS & EXPENSES','Inventory Operating Expenses','EXPENSE'],
+  ['otherOpex','4. OPERATING OVERHEADS & EXPENSES','Other Valid Operating Overheads','EXPENSE'],
+  ['expenseCredits','4. OPERATING OVERHEADS & EXPENSES','Less: Valid Expense Reversals / Credits','EXPENSE'],
+  ['opexTotal','4. OPERATING OVERHEADS & EXPENSES','TOTAL OPERATING EXPENSES','SUBTOTAL'],
+  ['operatingProfit','5. NET OPERATING PROFIT / (LOSS)','NET OPERATING PROFIT / (LOSS)','NET RESULT'],
 ] as const;
 const revenueKeys = ['opd','emergency','observation','admission','otherRevenue','discounts','serviceCredits'];
 const directKeys = ['consumables','procedure','otherDirect','directReturns'];
@@ -118,5 +116,34 @@ export async function buildOperatingStatement(query: OperatingProfitQuery, range
   const page=query.page||1,limit=query.limit||25;
   const warnings=[...current.warnings,...(prior?.warnings.map(w=>`Prior period: ${w}`)||[])];
   if(query.preset==='all_time' && query.comparison==='previous') warnings.push('Comparison is disabled for All Time.');
-  return {period:{start:range.start.toISOString(),end:range.end.toISOString(),label:range.label},priorPeriod:priorRange?{start:priorRange.start.toISOString(),end:priorRange.end.toISOString(),label:`${hospitalClock(priorRange.start).date} to ${hospitalClock(priorRange.end).date}`}:null,rows,warnings,incomplete:current.incomplete,ledger:{items:query.exportAll?matching:matching.slice((page-1)*limit,page*limit),page,limit,totalRecords:matching.length,totalPages:Math.max(1,Math.ceil(matching.length/limit)),recognizedRevenue:matching.reduce((s,e)=>s+e.revenue,0),recognizedCost:matching.reduce((s,e)=>s+e.cost,0)}};
+  return {
+    period: { start: range.start.toISOString(), end: range.end.toISOString(), label: range.label },
+    priorPeriod: priorRange ? { start: priorRange.start.toISOString(), end: priorRange.end.toISOString(), label: `${hospitalClock(priorRange.start).date} to ${hospitalClock(priorRange.end).date}` } : null,
+    rows,
+    warnings,
+    incomplete: current.incomplete,
+    ledger: {
+      items: query.exportAll ? matching : matching.slice((page - 1) * limit, page * limit),
+      page,
+      limit,
+      totalRecords: matching.length,
+      totalPages: Math.max(1, Math.ceil(matching.length / limit)),
+      recognizedRevenue: matching.reduce((s, e) => s + e.revenue, 0),
+      recognizedCost: matching.reduce((s, e) => s + e.cost, 0),
+    },
+    summary: {
+      revenue: current.amounts.netRevenue ?? 0,
+      grossBilling: current.amounts.netRevenue ?? 0,
+      discounts: current.amounts.discounts ?? 0,
+      directCost: current.amounts.directTotal ?? 0,
+      grossProfit: current.amounts.grossProfit ?? 0,
+      payroll: current.amounts.payroll ?? 0,
+      doctorCommission: current.amounts.commission ?? 0,
+      otherOperatingExpenses: current.amounts.opexTotal ?? 0,
+      totalCosts: (current.amounts.directTotal ?? 0) + (current.amounts.opexTotal ?? 0),
+      operatingProfit: current.amounts.operatingProfit ?? 0,
+      marginPercentage: current.amounts.operatingMargin ?? 0,
+      hasIncompleteCost: current.incomplete,
+    },
+  };
 }

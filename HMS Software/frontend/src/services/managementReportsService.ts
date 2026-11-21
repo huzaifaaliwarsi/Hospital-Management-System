@@ -412,12 +412,88 @@ export interface OperatingProfitRecord {
   note: string;
 }
 
+export interface OperatingProfitStatementRow {
+  key: string;
+  section: string;
+  label: string;
+  type: string;
+  unit: 'percent' | 'currency';
+  current: number | null;
+  prior: number | null;
+  percentOfRevenue: number | null;
+  variance: number | null;
+  sourceCount: number;
+}
+
+export interface StatementLedgerEntry {
+  id: string;
+  date: string;
+  reference: string;
+  category: string;
+  department: string;
+  description: string;
+  actor: string;
+  revenue: number;
+  cost: number;
+  status: string;
+  details: Record<string, any>;
+}
+
+export interface OperatingProfitStatementResponse {
+  period: { start: string; end: string; label: string };
+  priorPeriod: { start: string; end: string; label: string } | null;
+  rows: OperatingProfitStatementRow[];
+  warnings: string[];
+  incomplete: boolean;
+  ledger: {
+    items: StatementLedgerEntry[];
+    page: number;
+    limit: number;
+    totalRecords: number;
+    totalPages: number;
+    recognizedRevenue: number;
+    recognizedCost: number;
+  };
+}
+
+export interface OperatingProfitFilters {
+  preset?: string;
+  fromDate?: string;
+  toDate?: string;
+  departmentId?: string;
+  comparison?: 'previous' | 'none';
+  view?: 'statement' | 'ledger';
+  category?: string;
+  page?: number;
+  limit?: number;
+  exportAll?: boolean;
+}
+
+export async function fetchOperatingProfitStatement(
+  filters: OperatingProfitFilters
+): Promise<OperatingProfitStatementResponse> {
+  const q: Record<string, any> = {
+    preset: filters.preset || 'today',
+    comparison: filters.comparison || 'previous',
+    view: filters.view || 'statement',
+    page: filters.page || 1,
+    limit: filters.limit || 25,
+  };
+  if (filters.fromDate) q.fromDate = filters.fromDate;
+  if (filters.toDate) q.toDate = filters.toDate;
+  if (filters.departmentId) q.departmentId = filters.departmentId;
+  if (filters.category) q.category = filters.category;
+  if (filters.exportAll) q.exportAll = 'true';
+
+  return get<OperatingProfitStatementResponse>('operating-profit', q);
+}
+
 export async function fetchOperatingProfit(range: RangeParams, filters?: ReportFilters): Promise<ReportResult<OperatingProfitRecord>> {
   const d = await get<any>('operating-profit', params(range, filters));
-  const s = d.summary;
+  const s = d?.summary || {};
   const n = (v: any) => Number(v ?? 0);
   return {
-    periodLabel: d.period.label,
+    periodLabel: d?.period?.label || 'Current Period',
     rows: [
       { key: 'revenue', item: '1. Net Earned Hospital Revenue', amount: n(s.revenue), note: 'Gross billing minus approved discounts (Accrual)' },
       { key: 'directCost', item: '2. Less: Direct Consumable Costs', amount: n(s.directCost), note: s.hasIncompleteCost ? `Clinical consumables issued to departments [INCOMPLETE: ${s.missingCostCount} items missing cost rate]` : 'Clinical consumables issued to departments at historical cost' },

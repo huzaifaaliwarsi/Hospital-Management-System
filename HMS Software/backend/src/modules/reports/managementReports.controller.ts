@@ -47,7 +47,7 @@ export const managementReportsController = {
   },
   operatingProfit: async (req: Request, res: Response) => {
     res.json({
-      data: await svc.getOperatingProfit(req.query as unknown as ManagementSummaryQuery),
+      data: await svc.getOperatingProfitStatement(req.query as unknown as any),
     });
   },
   detailedExpenses: async (req: Request, res: Response) => {

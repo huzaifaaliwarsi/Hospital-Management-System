@@ -88,7 +88,7 @@ router.get('/admission/pharmacy-clearance-status', view, validate({ query: apds.
 // #4 Admission & Bed Summary uses /admission/summary; #5 Expense Report uses /expenses.
 router.get('/management/summary', viewManagement, validate({ query: mgs.managementSummaryQuerySchema }), asyncHandler(mgmt.summary));
 router.get('/management/income-expense-ledger', viewManagement, validate({ query: mgs.incomeExpenseLedgerQuerySchema }), asyncHandler(mgmt.incomeExpenseLedger));
-router.get('/management/operating-profit', viewManagement, validate({ query: mgs.managementSummaryQuerySchema }), asyncHandler(mgmt.operatingProfit));
+router.get('/management/operating-profit', viewManagement, validate({ query: mgs.operatingProfitQuerySchema }), asyncHandler(mgmt.operatingProfit));
 router.get('/management/detailed-expenses', viewManagement, validate({ query: mgs.managementSummaryQuerySchema }), asyncHandler(mgmt.detailedExpenses));
 router.get('/management/billing-collection', viewManagement, validate({ query: mgs.billingCollectionQuerySchema }), asyncHandler(mgmt.billingCollection));
 router.get('/management/outstanding-panel', viewManagement, validate({ query: mgs.outstandingPanelQuerySchema }), asyncHandler(mgmt.outstandingPanel));

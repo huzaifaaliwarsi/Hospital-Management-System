@@ -1,4 +1,5 @@
 import { operatingPerformance } from './operatingPerformance';
+import { buildOperatingStatement } from './operatingProfitStatement';
 
 
 import { projectM01Invoice } from './m01InvoiceProjection';
@@ -22,6 +23,7 @@ import type {
   StaffPayrollQuery,
   InventoryPharmacyQuery,
   IncomeExpenseLedgerQuery,
+  OperatingProfitQuery,
 } from './managementReports.schemas';
 
 /**
@@ -1062,6 +1064,12 @@ export const managementReportsService = {
         outstanding: r.outstanding,
       })),
     };
+  },
+
+  /** M04 Operating Profit Statement & Detailed Ledger — Complete Professional Financial Statement */
+  async getOperatingProfitStatement(query: OperatingProfitQuery) {
+    const range = resolveExtendedDateRange(query);
+    return buildOperatingStatement(query, range, (q) => this.getIncomeExpenseLedger(q));
   },
 
   /** M03 Detailed Expense — Itemized hospital expenses, consumables, payroll, and commissions. */

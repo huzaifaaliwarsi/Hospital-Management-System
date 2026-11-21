@@ -7,6 +7,7 @@ import { InvoiceDetailModal } from '../../frontDesk/billing/InvoiceDetailModal';
 import { AdmissionSummaryView } from '../../admission/AdmissionSimpleReports';
 import { StaffFinancialSources } from './StaffFinancialSources';
 import { IncomeExpenseLedgerView } from './IncomeExpenseLedgerView';
+import { OperatingProfitStatementView } from './OperatingProfitStatementView';
 import { fetchPharmacyRequestFulfillment, PharmacyRequestFulfillmentRow } from '../../../services/admissionReportsService';
 import {
   fetchExpenses,
@@ -86,7 +87,7 @@ const PAYROLL_STATUS = opts(
 const labelOf = (options: { value: string; label: string }[], value: string) =>
   options.find((o) => o.value === value)?.label ?? value;
 
-const ALERT_STATUS =opts(['ALERTS', 'Alerts only (needs attention)']);
+const ALERT_STATUS = opts(['ALERTS', 'Alerts only (needs attention)']);
 
 /** Columns for the summary reports, where each row is one figure. */
 const SUMMARY_COLUMNS = [
@@ -127,7 +128,7 @@ export const BillingCollectionReport: React.FC = () => {
   return (
     <>
       <GenericReportView<BillingCollectionRow>
-        title="Billing & Collection"
+        title="Detailed Income"
         subtitle="Original invoices with billing and collections in the selected period. Outstanding is calculated at period end."
         icon={Receipt}
         filenamePrefix="Billing_Collection"
@@ -165,7 +166,7 @@ export const BillingCollectionReport: React.FC = () => {
         ]}
         renderCell={(col, row) => (col.header === 'Invoice #' ? <InvoiceLink number={row.invoiceNumber} onClick={() => setInvoiceId(row.id)} /> : col.cell(row))}
       />
-      {invoiceId && <InvoiceDetailModal invoiceId={invoiceId} onClose={() => setInvoiceId(null)} onChanged={() => {}} />}
+      {invoiceId && <InvoiceDetailModal invoiceId={invoiceId} onClose={() => setInvoiceId(null)} onChanged={() => { }} />}
     </>
   );
 };
@@ -212,7 +213,7 @@ export const OutstandingPanelReport: React.FC = () => {
         ]}
         renderCell={(col, row) => (col.header === 'Invoice #' ? <InvoiceLink number={row.invoiceNumber} onClick={() => setInvoiceId(row.id)} /> : col.cell(row))}
       />
-      {invoiceId && <InvoiceDetailModal invoiceId={invoiceId} onClose={() => setInvoiceId(null)} onChanged={() => {}} />}
+      {invoiceId && <InvoiceDetailModal invoiceId={invoiceId} onClose={() => setInvoiceId(null)} onChanged={() => { }} />}
     </>
   );
 };
@@ -266,30 +267,7 @@ export const ExpenseReport: React.FC = () => {
 // ── #4 Operating Profit (P&L) ─────────────────────────────────────────────
 
 export const OperatingProfitReport: React.FC = () => {
-  const options = useOptions();
-  const { filters, bind, reset } = useReportFilters({ departmentId: '' });
-  return (
-    <GenericReportView<OperatingProfitRecord>
-      title="Operating Profit (P&L)"
-      subtitle="Accrual Operating Profit: Net Earned Revenue − Direct Consumables − Staff Salaries − Doctor Commissions − Operating Expenses. Independent of collection installments."
-      icon={TrendingUp}
-      filenamePrefix="Operating_Profit_PL"
-      fetchReport={(range) => fetchOperatingProfit(range, filters)}
-      onResetExtraFilters={reset}
-      extraFilters={
-        <>
-          <FilterSelect label="Department" options={options.departments} {...bind('departmentId')} />
-        </>
-      }
-      rowKey={(r) => r.key}
-      noTotalColumns={['Amount (PKR)']}
-      columns={[
-        { header: 'P&L Line Item', cell: (r) => r.item },
-        money('Amount', (r) => r.amount),
-        { header: 'Basis / Audit Note', cell: (r) => r.note },
-      ]}
-    />
-  );
+  return <OperatingProfitStatementView />;
 };
 
 // ── #6 Balance Sheet & Account Settlements ────────────────────────────────
