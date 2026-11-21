@@ -292,6 +292,9 @@ export interface DetailedExpenseRow {
   department: string;
   description: string;
   amount: number;
+  paidAmount?: number;
+  outstandingAmount?: number;
+  costStatus?: string;
   enteredBy: string;
 }
 
@@ -299,6 +302,6 @@ export async function fetchDetailedExpenses(range: RangeParams, filters?: Report
   const d = await get<any>('detailed-expenses', params(range, filters));
   return {
     periodLabel: d.period.label,
-    rows: d.rows.map((r: any) => toNumbers<DetailedExpenseRow>(r, ['amount'])),
+    rows: d.rows.map((r: any) => toNumbers<DetailedExpenseRow>(r, ['amount', 'paidAmount', 'outstandingAmount'])),
   };
 }

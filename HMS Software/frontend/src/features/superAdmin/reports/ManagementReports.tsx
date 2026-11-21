@@ -276,7 +276,9 @@ export const ExpenseReport: React.FC = () => {
         { header: 'Category', cell: (r) => r.category },
         { header: 'Voucher / Ref', cell: (r) => r.voucherRef },
         { header: 'Department', cell: (r) => r.department },
-        money('Amount', (r) => r.amount),
+        money('Expense (Recognized)', (r) => r.amount),
+        money('Paid', (r) => r.paidAmount ?? 0),
+        money('Outstanding', (r) => r.outstandingAmount ?? 0),
         { header: 'Description / Payee', cell: (r) => r.description },
         { header: 'Entered By', cell: (r) => r.enteredBy },
       ]}

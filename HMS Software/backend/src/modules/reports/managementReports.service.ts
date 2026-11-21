@@ -1096,11 +1096,36 @@ export const managementReportsService = {
           ...(dept ? { invoiceLineItem: commissionDepartmentFilter(dept) } : {}),
         },
         include: {
-          doctor: { select: { id: true, fullName: true, employeeId: true } },
+          doctor: {
+            select: {
+              id: true,
+              fullName: true,
+              employeeId: true,
+              staffDepartments: { select: { department: { select: { id: true, name: true } } }, take: 1 },
+            },
+          },
           collectionEvent: true,
           payouts: { where: { paidAt: { lte: end } } },
           reversals: { where: { reversedAt: { lte: end } } },
           adjustments: { where: { createdAt: { lte: end } } },
+          approvedByUser: { select: { id: true, displayName: true, username: true, role: true } },
+          commissionRun: true,
+          invoiceLineItem: {
+            include: {
+              serviceRate: { include: { department: { select: { id: true, name: true } } } },
+              hospitalInvoice: {
+                include: {
+                  department: { select: { id: true, name: true } },
+                  paymentReceipts: {
+                    where: { isReversed: false },
+                    include: { collectedBy: { select: { id: true, displayName: true, username: true } } },
+                    take: 1,
+                    orderBy: { collectedAt: 'desc' },
+                  },
+                },
+              },
+            },
+          },
         },
       }),
       prisma.inventoryExpense.findMany({
@@ -1127,6 +1152,8 @@ export const managementReportsService = {
       department: string;
       description: string;
       amount: Decimal;
+      paidAmount: Decimal;
+      outstandingAmount: Decimal;
       costStatus?: 'COMPLETE' | 'INCOMPLETE';
       enteredBy: string;
     }> = [];
@@ -1143,6 +1170,8 @@ export const managementReportsService = {
         department: h.department?.name ?? 'Hospital-Wide',
         description: [h.paidTo, h.description].filter(Boolean).join(' — ') || 'Operating Expense',
         amount: h.amount,
+        paidAmount: h.amount,
+        outstandingAmount: ZERO(),
         costStatus: 'COMPLETE',
         enteredBy: userName(h.createdByUser) || 'System',
       });
@@ -1174,6 +1203,8 @@ export const managementReportsService = {
               ? `${l.stockItem.name} (${netQty.toString()} ${l.stockItem.unit}) [INCOMPLETE COST RATE]`
               : `${l.stockItem.name} (${netQty.toString()} ${l.stockItem.unit})`,
             amount: cost,
+            paidAmount: ZERO(),
+            outstandingAmount: ZERO(),
             costStatus: isMissingCost ? 'INCOMPLETE' : 'COMPLETE',
             enteredBy: userName(r.issuedBy) || 'System',
           });
@@ -1199,12 +1230,16 @@ export const managementReportsService = {
           department: s.payrollRun?.department?.name ?? 'Hospital Staff',
           description: `Salary: ${s.staff.fullName} (${s.staff.employeeId})`,
           amount: recognized,
+          paidAmount: balance.paid,
+          outstandingAmount: balance.remaining,
           enteredBy: 'Payroll System',
         });
       }
     }
 
     let totalCommission = ZERO();
+    let totalCommissionPaid = ZERO();
+    let totalCommissionOutstanding = ZERO();
     for (const c of commissionAccruals) {
       const balance = commissionBalance(c);
       const before = (c.collectionEvent?.occurredAt ?? c.approvedAt ?? c.createdAt) < start
@@ -1213,16 +1248,32 @@ export const managementReportsService = {
       const recognized = balance.payable.minus(before);
       if (recognized.greaterThan(0)) {
         totalCommission = totalCommission.plus(recognized);
+        totalCommissionPaid = totalCommissionPaid.plus(balance.paid);
+        totalCommissionOutstanding = totalCommissionOutstanding.plus(balance.remaining);
+
+        const deptName =
+          c.invoiceLineItem?.serviceRate?.department?.name ??
+          c.invoiceLineItem?.hospitalInvoice?.department?.name ??
+          c.doctor?.staffDepartments?.[0]?.department?.name ??
+          'Unassigned';
+
+        const collectorUser = c.invoiceLineItem?.hospitalInvoice?.paymentReceipts?.[0]?.collectedBy;
+        const collectorName = userName(collectorUser);
+        const approverName = userName(c.approvedByUser);
+        const enteredBy = collectorName || approverName || 'System (Generated)';
+
         items.push({
           id: `comm-${c.id}`,
           date: (c.collectionEvent?.occurredAt ?? c.approvedAt ?? c.createdAt).toISOString().slice(0, 10),
           source: 'Doctor Commission',
           category: 'Doctor Commissions',
           voucherRef: `COMM-${c.id.slice(0, 8).toUpperCase()}`,
-          department: 'Medical Services',
+          department: deptName,
           description: `Commission: Dr. ${c.doctor.fullName} (${c.doctor.employeeId})`,
           amount: recognized,
-          enteredBy: 'Billing Collection Event',
+          paidAmount: balance.paid,
+          outstandingAmount: balance.remaining,
+          enteredBy,
         });
       }
     }
@@ -1239,6 +1290,8 @@ export const managementReportsService = {
         department: 'Inventory / Stores',
         description: ie.description ?? 'Store Operating Expense',
         amount: ie.amount,
+        paidAmount: ie.amount,
+        outstandingAmount: ZERO(),
         enteredBy: userName(ie.createdByUser) || 'System',
       });
     }
@@ -1257,6 +1310,8 @@ export const managementReportsService = {
         totalDirectConsumables,
         totalPayroll,
         totalCommission,
+        totalCommissionPaid,
+        totalCommissionOutstanding,
         totalInventoryOpex,
         rowCount: items.length,
         hasIncompleteCost,

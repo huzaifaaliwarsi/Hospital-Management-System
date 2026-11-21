@@ -308,5 +308,118 @@ describe('HMS Batch 1: Revenue, Income & Expense, Operating Profit (P&L)', () =>
       expect(detailed.summary.totalOperatingCosts.toNumber()).toBe(5000 + 2500 + 8000 + 1500); // 17,000
       expect(detailed.rows).toHaveLength(5); // 2 hospital + 1 consumable + 1 salary + 1 commission
     });
+
+    it('Detailed Expense: Commission Earned, Paid, Outstanding, dynamic department and user attribution', async () => {
+      db.expense.findMany.mockResolvedValue([]);
+      db.departmentRequisition.findMany.mockResolvedValue([]);
+      db.salarySlip.findMany.mockResolvedValue([]);
+      db.inventoryExpense.findMany.mockResolvedValue([]);
+
+      db.doctorCommissionAccrual.findMany.mockResolvedValue([
+        {
+          id: 'comm-1',
+          collectionEventId: 'ce-1',
+          collectionEvent: { occurredAt: new Date('2026-11-15T14:00:00Z') },
+          commissionAmount: new Decimal(100),
+          ruleSnapshot: { collectionBased: true },
+          doctor: { id: 'doc1', fullName: 'Dr. Ahmad', employeeId: 'DOC-01', staffDepartments: [{ department: { id: 'd-doc', name: 'General Medicine' } }] },
+          payouts: [{ amount: new Decimal(40) }],
+          reversals: [],
+          adjustments: [],
+          invoiceLineItem: {
+            serviceRate: { department: { id: 'd-cardio', name: 'Cardiology' } },
+            hospitalInvoice: {
+              department: { id: 'd-opd', name: 'OPD General' },
+              paymentReceipts: [{ collectedBy: { id: 'u-cashier', displayName: 'Cashier Bilal', username: 'bilal' } }],
+            },
+          },
+        },
+        {
+          id: 'comm-2',
+          collectionEventId: 'ce-2',
+          collectionEvent: { occurredAt: new Date('2026-11-16T10:00:00Z') },
+          commissionAmount: new Decimal(200),
+          ruleSnapshot: { collectionBased: true },
+          doctor: { id: 'doc2', fullName: 'Dr. Fatima', employeeId: 'DOC-02', staffDepartments: [] },
+          payouts: [],
+          reversals: [],
+          adjustments: [],
+          approvedByUser: { id: 'u-admin', displayName: 'Admin Tariq', username: 'admin' },
+          invoiceLineItem: {
+            serviceRate: null,
+            hospitalInvoice: {
+              department: { id: 'd-ent', name: 'ENT' },
+              paymentReceipts: [],
+            },
+          },
+        },
+        {
+          id: 'comm-3',
+          collectionEventId: 'ce-3',
+          collectionEvent: { occurredAt: new Date('2026-11-17T11:00:00Z') },
+          commissionAmount: new Decimal(300),
+          ruleSnapshot: { collectionBased: true },
+          doctor: { id: 'doc3', fullName: 'Dr. Usman', employeeId: 'DOC-03', staffDepartments: [{ department: { id: 'd-ortho', name: 'Orthopedics' } }] },
+          payouts: [],
+          reversals: [],
+          adjustments: [],
+          approvedByUser: { id: 'u-fin', displayName: 'Finance Officer', username: 'finance', role: 'ACCOUNTANT' },
+          invoiceLineItem: null,
+        },
+        {
+          id: 'comm-4',
+          collectionEventId: 'ce-4',
+          collectionEvent: { occurredAt: new Date('2026-11-18T12:00:00Z') },
+          commissionAmount: new Decimal(50),
+          ruleSnapshot: { collectionBased: true },
+          doctor: { id: 'doc4', fullName: 'Dr. Sara', employeeId: 'DOC-04', staffDepartments: [] },
+          payouts: [],
+          reversals: [],
+          adjustments: [],
+          invoiceLineItem: null,
+        },
+      ]);
+
+      const detailed = await managementReportsService.getDetailedExpenses({
+        preset: 'this_month',
+      });
+
+      expect(detailed.summary.totalCommission.toNumber()).toBe(650); // 100 + 200 + 300 + 50
+      expect(detailed.summary.totalCommissionPaid.toNumber()).toBe(40);
+      expect(detailed.summary.totalCommissionOutstanding.toNumber()).toBe(610); // 60 + 200 + 300 + 50
+      expect(detailed.rows).toHaveLength(4);
+
+      // Row 1: Earned 100, Paid 40, Outstanding 60, Department Cardiology, EnteredBy Cashier Bilal
+      const r1 = detailed.rows.find((r) => r.id === 'comm-comm-1')!;
+      expect(r1.amount.toNumber()).toBe(100);
+      expect(r1.paidAmount.toNumber()).toBe(40);
+      expect(r1.outstandingAmount.toNumber()).toBe(60);
+      expect(r1.department).toBe('Cardiology');
+      expect(r1.enteredBy).toBe('Cashier Bilal');
+
+      // Row 2: Earned 200, Paid 0, Outstanding 200, Department ENT (from hospitalInvoice), EnteredBy Admin Tariq
+      const r2 = detailed.rows.find((r) => r.id === 'comm-comm-2')!;
+      expect(r2.amount.toNumber()).toBe(200);
+      expect(r2.paidAmount.toNumber()).toBe(0);
+      expect(r2.outstandingAmount.toNumber()).toBe(200);
+      expect(r2.department).toBe('ENT');
+      expect(r2.enteredBy).toBe('Admin Tariq');
+
+      // Row 3: Earned 300, Paid 0, Outstanding 300, Department Orthopedics (from doctor staffDepartment), EnteredBy Finance Officer
+      const r3 = detailed.rows.find((r) => r.id === 'comm-comm-3')!;
+      expect(r3.amount.toNumber()).toBe(300);
+      expect(r3.paidAmount.toNumber()).toBe(0);
+      expect(r3.outstandingAmount.toNumber()).toBe(300);
+      expect(r3.department).toBe('Orthopedics');
+      expect(r3.enteredBy).toBe('Finance Officer');
+
+      // Row 4: Earned 50, Paid 0, Outstanding 50, Department Unassigned, EnteredBy System (Generated)
+      const r4 = detailed.rows.find((r) => r.id === 'comm-comm-4')!;
+      expect(r4.amount.toNumber()).toBe(50);
+      expect(r4.paidAmount.toNumber()).toBe(0);
+      expect(r4.outstandingAmount.toNumber()).toBe(50);
+      expect(r4.department).toBe('Unassigned');
+      expect(r4.enteredBy).toBe('System (Generated)');
+    });
   });
 });
