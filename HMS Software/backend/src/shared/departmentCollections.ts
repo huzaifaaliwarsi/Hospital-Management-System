@@ -4,7 +4,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 const department = { select: { id: true, name: true } } as const;
 export const collectionInvoiceSelect = {
   departmentId: true, department,
-  lines: { select: { lineNet: true, patientShare: true, panelReceivable: true, serviceRate: { select: { department } } } },
+  lines: { select: { billingSource: true, lineNet: true, patientShare: true, panelReceivable: true, serviceRate: { select: { department } } } },
 } satisfies Prisma.HospitalInvoiceSelect;
 export const collectionSelect = {
   amount: true, collectedAt: true,
@@ -14,8 +14,14 @@ export const collectionSelect = {
 } satisfies Prisma.PaymentReceiptSelect;
 
 type Receipt = Prisma.PaymentReceiptGetPayload<{ select: typeof collectionSelect }>;
-type Invoice = Prisma.HospitalInvoiceGetPayload<{ select: typeof collectionInvoiceSelect }>;
+type SelectedInvoice = Prisma.HospitalInvoiceGetPayload<{ select: typeof collectionInvoiceSelect }>;
+// Ordinary billing callers need not select stream classification. Payable readers always do.
+type Invoice = Omit<SelectedInvoice, 'lines'> & {
+  lines: (Omit<SelectedInvoice['lines'][number], 'billingSource'> & { billingSource?: string })[];
+};
 type Basis = 'lineNet' | 'patientShare' | 'panelReceivable';
+type AllocationOptions = { excludePharmacy?: boolean };
+type DepartmentAllocation = { departmentId: string | null; name: string; amount: Decimal };
 
 /** Shared cent allocation for department totals and their service-line children. */
 export function allocateWeightedAmount<T extends { weight: Decimal }>(amount: Decimal, rows: T[]) {
@@ -43,18 +49,36 @@ export function allocateInvoiceLines(amount: Decimal, invoice: Omit<Invoice, 'li
 }
 
 /** Signed receipt amounts, apportioned in cents; totals always reconcile. */
-export function allocateCollection(receipt: Receipt) {
+export function allocateCollection(receipt: Receipt, options: AllocationOptions = {}) {
   const invoice = receipt.hospitalInvoice;
-  if (invoice) return allocateInvoiceAmount(receipt.amount, invoice, 'patientShare');
+  if (invoice) return allocateInvoiceAmount(receipt.amount, invoice, 'patientShare', options);
   const d = receipt.admissionRecord?.department ?? receipt.appointment?.department;
   return [{ departmentId: d?.id ?? null, name: d?.name ?? 'Unassigned', amount: receipt.amount }];
 }
 
-export function allocateInvoiceAmount(amount: Decimal, invoice: Invoice, basis: Basis) {
+export function allocateInvoiceAmount(amount: Decimal, invoice: Invoice, basis: Basis, options: AllocationOptions = {}): DepartmentAllocation[] {
   const weights = new Map<string, { departmentId: string | null; name: string; weight: Decimal }>();
   // Older invoices may predate coverage snapshots. Preserve their net-value allocation.
   const hasCoverage = (invoice.lines ?? []).some(line => new Decimal(line[basis] ?? 0).gt(0))
     && (basis !== 'patientShare' || invoice.lines.some(line => new Decimal(line.panelReceivable ?? 0).gt(0)));
+  if (options.excludePharmacy && invoice.lines.some(l => l.billingSource === 'PHARMACY')) {
+    if (!invoice.lines.some(l => new Decimal(hasCoverage ? l[basis] : l.lineNet).gt(0))) return [];
+    // First preserve the existing department allocations (including their cent rounding).
+    // Split out Pharmacy only afterwards; never redistribute its cash to other departments.
+    return allocateInvoiceAmount(amount, invoice, basis).flatMap(allocation => {
+      const lines = invoice.lines.filter(l => (l.serviceRate?.department?.id ?? invoice.department?.id ?? null) === allocation.departmentId);
+      if (!lines.some(l => l.billingSource === 'PHARMACY')) return [allocation];
+      let eligible = new Decimal(0), pharmacy = new Decimal(0);
+      for (const line of lines) {
+        const weight = Decimal.max(hasCoverage ? line[basis] : line.lineNet, 0);
+        if (line.billingSource === 'PHARMACY') pharmacy = pharmacy.plus(weight);
+        else eligible = eligible.plus(weight);
+      }
+      if (!eligible.gt(0)) return [];
+      const [share] = allocateWeightedAmount(allocation.amount, [{ weight: eligible }, { weight: pharmacy }]);
+      return [{ ...allocation, amount: share!.amount }];
+    });
+  }
   for (const line of invoice?.lines ?? []) {
     const d = line.serviceRate?.department ?? invoice?.department;
     const key = d?.id ?? '';
@@ -103,7 +127,7 @@ type PanelReader = { panelRemittanceAllocation: {
 } };
 
 export async function panelCollectionLedger(db: PanelReader, end: Date, filters: {
-  start?: Date; departmentId?: string; method?: string; userId?: string;
+  start?: Date; departmentId?: string; method?: string; userId?: string; excludePharmacy?: boolean;
 } = {}) {
   const allocations = await db.panelRemittanceAllocation.findMany({
     where: {
@@ -116,7 +140,7 @@ export async function panelCollectionLedger(db: PanelReader, end: Date, filters:
     },
     select: panelCollectionSelect,
   });
-  return allocations.flatMap(a => allocateInvoiceAmount(a.allocatedAmount, a.hospitalInvoice, 'panelReceivable')
+  return allocations.flatMap(a => allocateInvoiceAmount(a.allocatedAmount, a.hospitalInvoice, 'panelReceivable', filters)
     .map(row => ({ ...row, collectedAt: a.panelRemittance.receivedAt })));
 }
 export const signedReceiptWhere: Prisma.PaymentReceiptWhereInput = {
@@ -142,6 +166,6 @@ export async function departmentCollectionLedger(db: CollectionReader, end: Date
     select: collectionSelect,
   });
   return receipts.flatMap(receipt =>
-    allocateCollection(receipt).map(row => ({ ...row, collectedAt: receipt.collectedAt })),
-  ).concat(await panelCollectionLedger(db, end, { departmentId }));
+    allocateCollection(receipt, { excludePharmacy: true }).map(row => ({ ...row, collectedAt: receipt.collectedAt })),
+  ).concat(await panelCollectionLedger(db, end, { departmentId, excludePharmacy: true }));
 }

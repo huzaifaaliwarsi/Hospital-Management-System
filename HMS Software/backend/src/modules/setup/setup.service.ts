@@ -1704,6 +1704,7 @@ export const setupService = {
 
     const invoiceLines = await prisma.invoiceLineItem.findMany({
       where: {
+        billingSource: { not: 'PHARMACY' },
         hospitalInvoice: {
           status: { not: 'VOID' },
           createdAt: { gte: start, lte: end },

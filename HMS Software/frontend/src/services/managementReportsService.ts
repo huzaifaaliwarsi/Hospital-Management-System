@@ -216,7 +216,7 @@ export async function fetchManagementSummary(range: RangeParams, filters?: Repor
   const hospital = [
     record('Billing', 'Gross Billing', s.grossBilling, true),
     record('Billing', 'Discounts', s.discounts, true),
-    record('Billing', 'Net Billing (Earned Revenue)', s.totalBilling, true),
+    record('Billing', 'Net Patient Billing (All Streams)', s.totalBilling, true),
     record('Billing', 'Actual Collections', s.collections, true),
     record('Billing', 'Outstanding', s.outstanding, true),
     record('Expenses', 'Hospital Expenses (Expense Management)', s.hospitalExpenses, true),

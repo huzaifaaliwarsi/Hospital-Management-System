@@ -3,6 +3,7 @@ import { hospitalClock } from '@/shared/hospitalClock';
 import { staffFinanceSummary } from './staffFinanceSummary';
 import { operatingPerformance } from './operatingPerformance';
 import { setupService } from '@/modules/setup/setup.service';
+import { hospitalServiceDepartment, isOutsourcedService, isInternalHospitalEarning } from '@/shared/hospitalRevenueRecognition';
 import type { IncomeExpenseLedgerQuery, OperatingProfitQuery } from './managementReports.schemas';
 import type { managementReportsService } from './managementReports.service';
 
@@ -138,7 +139,7 @@ async function readPeriod(range: Range, departmentId: string | undefined, readLe
 
   for (const line of lines) {
     const inv = line.hospitalInvoice;
-    const department = line.serviceRate?.department ?? inv.department ?? inv.appointment?.department ?? inv.admissionRecord?.department;
+    const department = hospitalServiceDepartment(line, inv);
     if (departmentId && department?.id !== departmentId) continue;
 
     const base = {
@@ -162,10 +163,7 @@ async function readPeriod(range: Range, departmentId: string | undefined, readLe
     };
 
     // Dynamic classification based on actual configured department ownership and provider type
-    const isOutsourced =
-      department?.fulfillmentOwnership === 'OUTSOURCED' ||
-      line.serviceRate?.providerType === 'OUTSOURCED' ||
-      line.billingSource === 'OUTSOURCED_SERVICE';
+    const isOutsourced = isOutsourcedService(line, inv);
 
     if (isOutsourced) {
       const net = Number(line.lineNet);
@@ -184,6 +182,7 @@ async function readPeriod(range: Range, departmentId: string | undefined, readLe
     }
 
     // Internal Hospital Service:
+    if (!isInternalHospitalEarning(line, inv)) continue;
     const type = inv.encounterType || inv.sourceType;
     const category = inv.admissionRecordId ? 'admission' : ({ OPD: 'opd', EMERGENCY: 'emergency', ER: 'emergency', OBSERVATION: 'observation', OBSV: 'observation', ADMISSION: 'admission' } as Record<string, string>)[type] || 'otherRevenue';
     entries.push({ ...base, id: line.id, category, revenue: Number(line.lineGross), cost: 0 });
@@ -295,7 +294,7 @@ async function readPeriod(range: Range, departmentId: string | undefined, readLe
   }
 
   const net = sum(entries, revenueKeys, 'revenue');
-  const expectedHospitalRevenue = ledger.totals.hospitalRevenue.netEarnedRevenue - totalOutsourcedBilling;
+  const expectedHospitalRevenue = ledger.totals.hospitalRevenue.netEarnedRevenue;
   if (Math.abs(net - expectedHospitalRevenue) > 0.01) {
     warnings.push('Hospital revenue includes completed internal hospital service lines only; outsourced services and pharmacy are excluded.');
   }

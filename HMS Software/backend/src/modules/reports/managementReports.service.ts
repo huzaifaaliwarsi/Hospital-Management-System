@@ -15,6 +15,7 @@ import { salaryBalance } from '@/modules/payroll/payroll.balance';
 import { staffFinanceSummary } from './staffFinanceSummary';
 import { getPositiveBatchBalances } from '@/shared/inventoryBatchBalances';
 import { hospitalClock } from '@/shared/hospitalClock';
+import { financialDepartmentSelect, hospitalServiceDepartment, isInternalHospitalEarning } from '@/shared/hospitalRevenueRecognition';
 import type {
   ManagementSummaryQuery,
   BillingCollectionQuery,
@@ -106,6 +107,8 @@ export const managementReportsService = {
               OR: [
                 { departmentId: dept },
                 { lines: { some: { serviceRate: { departmentId: dept } } } },
+                { appointment: { departmentId: dept } },
+                { admissionRecord: { departmentId: dept } },
               ],
             }
             : {}),
@@ -114,6 +117,7 @@ export const managementReportsService = {
         select: {
           id: true,
           createdAt: true,
+          status: true,
           paymentReceipts: { where: { ...signedReceiptWhere, collectedAt: { lte: end } }, select: { amount: true } },
           subtotal: true,
           discountTotal: true,
@@ -122,9 +126,14 @@ export const managementReportsService = {
           panelReceivable: true,
           panelRemittanceAllocations: { where: { panelRemittance: { receivedAt: { lte: end } } }, select: { allocatedAmount: true } },
           departmentId: true,
-          department: { select: { id: true, name: true } },
+          department: { select: financialDepartmentSelect },
+          appointment: { select: { department: { select: financialDepartmentSelect } } },
+          admissionRecord: { select: { department: { select: financialDepartmentSelect } } },
           lines: {
             select: {
+              createdAt: true,
+              isCompleted: true,
+              billingSource: true,
               lineGross: true,
               discountAmount: true,
               lineNet: true,
@@ -133,7 +142,8 @@ export const managementReportsService = {
               serviceRate: {
                 select: {
                   departmentId: true,
-                  department: { select: { id: true, name: true } },
+                  providerType: true,
+                  department: { select: financialDepartmentSelect },
                 },
               },
             },
@@ -232,8 +242,15 @@ export const managementReportsService = {
     };
 
     const countedInvoicesPerDept = new Map<string, Set<string>>();
+    let netEarnedRevenue = ZERO();
 
     for (const i of invoices) {
+      for (const line of i.lines) {
+        if (line.createdAt >= start && line.createdAt <= end && isInternalHospitalEarning(line, i)
+          && (!dept || hospitalServiceDepartment(line, i)?.id === dept)) {
+          netEarnedRevenue = netEarnedRevenue.plus(line.lineNet);
+        }
+      }
       if (i.createdAt >= start) {
         if (i.lines && i.lines.length > 0) {
           for (const l of i.lines) {
@@ -340,7 +357,7 @@ export const managementReportsService = {
 
     const grossBilling = sumOf(table, (r) => r.gross);
     const discounts = sumOf(table, (r) => r.discount);
-    const netEarnedRevenue = sumOf(table, (r) => r.net);
+    const totalBilling = sumOf(table, (r) => r.net);
     const grossProfit = netEarnedRevenue.minus(directServiceCosts);
     const otherOperatingExpenses = hospitalExpenses.plus(expenses._sum.amount ?? ZERO());
     const totalOperatingCosts = directServiceCosts
@@ -360,7 +377,7 @@ export const managementReportsService = {
         ...staffFinance,
         grossBilling,
         discounts,
-        totalBilling: netEarnedRevenue,
+        totalBilling,
         netEarnedRevenue,
         directServiceCosts,
         grossProfit,
@@ -1411,10 +1428,10 @@ export const managementReportsService = {
         },
         include: {
           doctor: { select: { fullName: true } },
-          appointment: { select: { department: { select: { id: true, name: true } } } },
+          appointment: { select: { department: { select: financialDepartmentSelect } } },
           paymentReceipts: { where: { ...signedReceiptWhere, collectedAt: { lte: end } }, include: { collectedBy: userSelect } },
           panelRemittanceAllocations: { where: { panelRemittance: { receivedAt: { lte: end } } }, include: { panelRemittance: { include: { receivedByUser: userSelect } } } },
-          department: { select: { id: true, name: true } },
+          department: { select: financialDepartmentSelect },
           createdByUser: { select: { id: true, displayName: true, username: true, role: true } },
           selfPayEncounter: { select: { id: true, mrNumber: true, fullName: true } },
           panelPatient: { select: { id: true, fullName: true, corporatePanel: { select: { organizationName: true } } } },
@@ -1424,12 +1441,12 @@ export const managementReportsService = {
               admissionNumber: true,
               selfPayEncounter: { select: { fullName: true } },
               panelPatient: { select: { fullName: true } },
-              department: { select: { id: true, name: true } },
+              department: { select: financialDepartmentSelect },
             },
           },
           lines: {
             include: {
-              serviceRate: { select: { id: true, name: true, department: { select: { id: true, name: true } } } },
+              serviceRate: { select: { id: true, name: true, providerType: true, department: { select: financialDepartmentSelect } } },
             },
           },
         },
@@ -2079,8 +2096,8 @@ export const managementReportsService = {
     const operatingProfit = performance.operatingProfit;
     const totals = {
       hospitalRevenue: {
-        grossEarnedBilling: financialInvoices.reduce((s, p) => s + (p.row?.grossBilling ?? 0), 0),
-        discounts: financialInvoices.reduce((s, p) => s + (p.row?.discountCredit ?? 0), 0),
+        grossEarnedBilling: financialInvoices.reduce((s, p) => s + (p.row?.details.hospitalGrossBilling ?? 0), 0),
+        discounts: financialInvoices.reduce((s, p) => s + (p.row?.details.hospitalDiscounts ?? 0), 0),
         netEarnedRevenue: earnedRevenue,
         taxAmount: filteredItems.reduce((s, it) => s + it.tax, 0),
       },
