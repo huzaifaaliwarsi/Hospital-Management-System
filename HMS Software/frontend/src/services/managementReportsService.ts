@@ -439,6 +439,25 @@ export interface StatementLedgerEntry {
   details: Record<string, any>;
 }
 
+export interface OutsourcedStreamEntry {
+  departmentId: string;
+  departmentName: string;
+  departmentCode: string;
+  providerName: string | null;
+  currentBilling: number;
+  currentPayable: number;
+  priorBilling: number | null;
+  priorPayable: number | null;
+  billingVariance?: number | null;
+  payableVariance?: number | null;
+}
+
+export interface PharmacyStreamEntry {
+  currentBilling: number | null;
+  priorBilling: number | null;
+  available: boolean;
+}
+
 export interface OperatingProfitStatementResponse {
   period: { start: string; end: string; label: string };
   priorPeriod: { start: string; end: string; label: string } | null;
@@ -454,6 +473,25 @@ export interface OperatingProfitStatementResponse {
     recognizedRevenue: number;
     recognizedCost: number;
   };
+  summary?: {
+    revenue: number;
+    grossBilling: number;
+    discounts: number;
+    directCost: number;
+    grossProfit: number;
+    payroll: number;
+    doctorCommission: number;
+    otherOperatingExpenses: number;
+    totalCosts: number;
+    operatingProfit: number;
+    marginPercentage: number;
+    hasIncompleteCost: boolean;
+    totalOutsourcedBilling?: number;
+    totalOutsourcedPayable?: number;
+    pharmacyBilling?: number | null;
+  };
+  outsourcedStreams?: OutsourcedStreamEntry[];
+  pharmacyStream?: PharmacyStreamEntry;
 }
 
 export interface OperatingProfitFilters {
