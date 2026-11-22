@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { allocateInvoiceAmount } from '@/shared/departmentCollections';
 import { invoiceAsOf } from '@/shared/invoiceAsOf';
 import { hospitalServiceDepartment, isInternalHospitalEarning } from '@/shared/hospitalRevenueRecognition';
+import { hospitalClock } from '@/shared/hospitalClock';
 
 type Invoice = Prisma.HospitalInvoiceGetPayload<{ include: {
   department: true; doctor: true; createdByUser: true; selfPayEncounter: true; panelPatient: true;
@@ -53,9 +54,9 @@ export function projectM01Invoice(source: Source, start: Date, end: Date, filter
   const earnedLines = inv.lines.filter(l => l.createdAt >= start);
   const earned = earnedLines.length > 0 || (!source.lines.length && inv.createdAt >= start);
   const departments = allocateInvoiceAmount(inv.total, inv, 'lineNet');
-  if ((filters.departmentId && !departments.some(d => d.departmentId === filters.departmentId)) || (!earned && !periodPayments.length)) return { outstanding, row: null };
+  if ((filters.departmentId && !departments.some(d => d.departmentId === filters.departmentId)) || (!earned && !periodPayments.length)) return { outstanding, row: null, collectionRows: [] };
   const earnedAmount = (key: 'lineGross' | 'discountAmount' | 'lineNet', fallback: Decimal) => source.lines.length
-    ? earnedLines.filter(l => !filters.departmentId || (l.serviceRate?.department?.id ?? inv.department?.id) === filters.departmentId).reduce((s, l) => s + Number(l[key]), 0)
+    ? earnedLines.filter(l => !filters.departmentId || hospitalServiceDepartment(l, source)?.id === filters.departmentId).reduce((s, l) => s + Number(l[key]), 0)
     : earned ? scoped(fallback, 'lineNet') : 0;
   // Billing remains complete; only explicitly completed internal lines earn Hospital revenue.
   const hospitalLines = earnedLines.filter(l => isInternalHospitalEarning(l, source)
@@ -82,7 +83,32 @@ export function projectM01Invoice(source: Source, start: Date, end: Date, filter
       cutoff: end.toISOString(), totalAppliedPayments: payments.reduce((s, p) => s + p.amount, 0), netInvoiceAmount: scoped(inv.total, 'lineNet'), payments,
       actorIds: periodPayments.map(p => p.actorId), actorPortals: periodPayments.map(p => p.portal), receiptReferences: payments.map(p => p.reference).join(' '),
       departments: departments.map(d => ({ ...d, amount: Number(d.amount) })),
-      lines: inv.lines.map(l => ({ name: l.descriptionSnapshot || l.serviceRate?.name || 'Service', quantity: Number(l.quantity), rate: Number(l.rateSnapshot), gross: Number(l.lineGross), discount: Number(l.discountAmount), net: Number(l.lineNet), department: l.serviceRate?.department?.name || inv.department?.name || 'Unassigned' })) },
+      lines: inv.lines.map(l => ({ name: l.descriptionSnapshot || l.serviceRate?.name || 'Service', quantity: Number(l.quantity), rate: Number(l.rateSnapshot), gross: Number(l.lineGross), discount: Number(l.discountAmount), net: Number(l.lineNet), department: hospitalServiceDepartment(l, source)?.name || 'Unassigned' })) },
   };
-  return { outstanding, row };
+  // Report-only receipt entries. Keep the consolidated invoice and canonical totals intact.
+  // A later-day first payment and subsequent installments both collect an existing balance.
+  const firstPayment = payments.find(p => p.amount > 0);
+  const invoiceDay = hospitalClock(inv.createdAt).date;
+  const collectionRows = periodPayments.filter(p => p.amount !== 0 && (!earned
+    || hospitalClock(new Date(p.date)).date > invoiceDay
+    || (firstPayment && p.id !== firstPayment.id))).map(p => ({
+    ...row,
+    id: `invoice-collection-${inv.id}-${p.id}`,
+    date: p.date,
+    reference: p.reference,
+    encounterInvoiceRef: inv.invoiceNumber,
+    transactionType: 'COLLECTION' as const,
+    typeLabel: 'Outstanding Invoice Collection',
+    portalUserId: p.actorId,
+    portalUser: p.collectedBy,
+    portal: p.portal,
+    grossBilling: 0, discountCredit: 0, tax: 0, netRevenue: 0,
+    collectionsReceived: p.amount,
+    cashIn: p.method === 'CASH' ? p.amount : 0,
+    paymentMethod: p.method,
+    details: { ...row.details, isCollectionEvent: true, paymentId: p.id,
+      hospitalGrossBilling: 0, hospitalDiscounts: 0,
+      actorIds: [p.actorId, ...(inv.createdById ? [inv.createdById] : [])], actorPortals: [p.portal], receiptReferences: p.reference },
+  }));
+  return { outstanding, row, collectionRows };
 }

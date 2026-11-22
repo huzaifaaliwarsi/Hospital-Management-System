@@ -5,7 +5,7 @@ const db = vi.hoisted(() => Object.fromEntries([
   'hospitalInvoice', 'invoiceLineItem', 'paymentReceipt', 'panelRemittanceAllocation',
   'department', 'providerSettlement', 'hmsPharmacyCharge', 'expense', 'inventoryExpense',
   'salarySlip', 'salaryPayment', 'commissionPayout', 'doctorCommissionAccrual',
-  'departmentRequisition', 'accountSettlement', 'admissionRecord', 'bed',
+  'departmentRequisition', 'accountSettlement', 'hmsPharmacySettlementRelease', 'admissionRecord', 'bed',
 ].map(k => [k, { findMany: vi.fn(), aggregate: vi.fn(), count: vi.fn(), groupBy: vi.fn() }])));
 vi.mock('@/db/client', () => ({ prisma: db }));
 vi.mock('@/modules/expenses/expenses.service', () => ({ expensesService: { totalBetween: async () => new Decimal(0) } }));
@@ -113,13 +113,65 @@ it.each(['ownership', 'providerType', 'billingSource', 'appointment', 'admission
   if (route === 'ownership') l.serviceRate = { department: dept, providerType: 'INTERNAL' };
   if (route === 'providerType') l.serviceRate.providerType = 'OUTSOURCED';
   if (route === 'billingSource') l.billingSource = 'OUTSOURCED_SERVICE';
-  if (route === 'appointment' || route === 'admission') { l.serviceRate = null; header = null; }
+  if (route === 'appointment' || route === 'admission') { l.serviceRate = null; l.billingSource = 'OUTSOURCED_SERVICE'; header = null; }
   const inv = invoice([l], header);
   if (route === 'appointment') inv.appointment = { department: dept } as any;
   if (route === 'admission') inv.admissionRecord = { department: dept, admissionNumber: 'ADM-fixture' } as any;
   expectEarnings(await allReports(), 0);
   dept.name = 'Renamed without changing identity';
   expectEarnings(await allReports(dept.id), 0);
+});
+
+it.each([2500, 1000, 500])('keeps department-less internal services out of an outsourced invoice header for a %s collection', async amount => {
+  const dept = outsourced('configured-provider-department'); departments.push(dept);
+  const inv = invoice([
+    line(1500, { serviceRate: { providerType: 'INTERNAL', department: null } }),
+    line(1000, { billingSource: 'OUTSOURCED_SERVICE', serviceRate: { providerType: 'OUTSOURCED', department: dept } }),
+  ], dept);
+  pay(inv, amount);
+  const result = await allReports(); expectEarnings(result, 1500);
+  expect(result.m04.summary.totalOutsourcedBilling).toBe(1000);
+  expect(result.m04.summary.totalOutsourcedPayable).toBe(amount * 0.4);
+  expect(result.m01.totals.collectionsReceivables).toMatchObject({ totalCollections: amount, closingOutstanding: 2500 - amount });
+  expect(result.m01.items[0]).toMatchObject({ grossBilling: 2500, netRevenue: 1500, collectionsReceived: amount, outstandingPayable: 2500 - amount });
+  const payable = (await setupService.getDepartmentPayablesSummary(query)).departments.find(d => d.departmentId === dept.id)!;
+  expect(payable).toMatchObject({ servicesCount: 1, periodBilled: 1000, periodRealized: amount * 0.4, remainingPayable: amount * 0.4 });
+  const scoped = await allReports(dept.id); expectEarnings(scoped, 0);
+  expect(scoped.m01.columnTotals.grossBilling).toBe(1000);
+  expect(scoped.m01.totals.collectionsReceivables.totalCollections).toBe(amount * 0.4);
+  expect(inv.total.toNumber()).toBe(2500); expect(inv.paymentReceipts).toHaveLength(1);
+});
+
+it('splits refunds and future receipts by line without reassigning internal money to the provider', async () => {
+  const dept = outsourced('arbitrary-refund-department'); departments.push(dept);
+  const inv = invoice([line(1500, { serviceRate: { providerType: 'INTERNAL', department: null } }),
+    line(1000, { billingSource: 'OUTSOURCED_SERVICE', serviceRate: { providerType: 'OUTSOURCED', department: dept } })], dept);
+  pay(inv, 1000); pay(inv, -250); pay(inv, 1750, new Date('2026-11-23T10:00:00Z'));
+  expect((await allReports()).m04.summary.totalOutsourcedPayable).toBe(300);
+  const next = await setupService.getDepartmentPayablesSummary({ preset: 'custom', fromDate: '2026-11-23', toDate: '2026-11-23' });
+  expect(next.departments.find(d => d.departmentId === dept.id)).toMatchObject({ openingBalance: 300, periodRealized: 700, remainingPayable: 1000 });
+});
+
+it('separates multiple dynamic providers and a department-less internal line on one invoice', async () => {
+  const a = outsourced('provider-a'), b = outsourced('provider-b'); departments.push(a, b);
+  const inv = invoice([line(1500, { serviceRate: { providerType: 'INTERNAL', department: null } }),
+    line(1000, { billingSource: 'OUTSOURCED_SERVICE', serviceRate: { providerType: 'OUTSOURCED', department: a } }),
+    line(2000, { billingSource: 'OUTSOURCED_SERVICE', serviceRate: { providerType: 'OUTSOURCED', department: b } })], a);
+  pay(inv, 2250);
+  expectEarnings(await allReports(), 1500);
+  const payable = await setupService.getDepartmentPayablesSummary(query);
+  expect(payable.departments.find(d => d.departmentId === a.id)).toMatchObject({ periodBilled: 1000, remainingPayable: 500 });
+  expect(payable.departments.find(d => d.departmentId === b.id)).toMatchObject({ periodBilled: 2000, remainingPayable: 1000 });
+  a.name = 'Renamed provider'; b.name = 'Another new name';
+  expectEarnings(await allReports(), 1500);
+});
+
+it('does not turn a direct internal charge into outsourcing when no service rate is linked', async () => {
+  const dept = outsourced('header-only'); departments.push(dept);
+  const inv = invoice([line(1500, { serviceRate: null, billingSource: 'HOSPITAL_SERVICE' })], dept); pay(inv, 1500);
+  const result = await allReports(); expectEarnings(result, 1500);
+  expect(result.m04.summary.totalOutsourcedBilling).toBe(0);
+  expect(result.m04.summary.totalOutsourcedPayable).toBe(0);
 });
 
 it('earns a later completed line on its own date and does not rebook old earnings for a new collection', async () => {

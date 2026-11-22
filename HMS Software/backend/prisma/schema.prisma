@@ -289,6 +289,7 @@ enum CashDirection {
 }
 
 enum CashCategory {
+  PHARMACY_SETTLEMENT
   SALARY_PAYMENT
   COMMISSION_PAYMENT
   COLLECTION
@@ -689,6 +690,7 @@ model PortalUser {
   fulfilledPharmacyClearances PharmacyClearance[]       @relation("PharmacyClearanceFulfilledBy")
   collectedPharmacyCharges    HmsPharmacyCharge[]       @relation("PharmacyChargeCollectedBy")
   releasedPharmacySettlements HmsPharmacySettlement[]   @relation("PharmacySettlementReleasedBy")
+  pharmacySettlementReleases HmsPharmacySettlementRelease[]
   importedRawPunches          BiometricRawPunch[]       @relation("RawPunchImportedBy")
   approvedAttendance          AttendanceRecord[]        @relation("AttendanceApprovedBy")
   markedAttendance            AttendanceRecord[]        @relation("AttendanceMarkedBy")
@@ -1614,6 +1616,7 @@ model PaymentReceipt {
 /// balance for a user/period is computed by summing rows at query time,
 /// never stored as a mutable total (avoids write-time race conditions).
 model UserCashBalance {
+  pharmacySettlementRelease HmsPharmacySettlementRelease?
   salaryPayment SalaryPayment?
   commissionPayout CommissionPayout?
   id               String          @id @default(uuid())
@@ -2410,6 +2413,7 @@ model HmsPharmacyCharge {
 }
 
 model HmsPharmacySettlement {
+  releases              HmsPharmacySettlementRelease[]
   id                    String                   @id @default(uuid())
   settlementNumber      String                   @unique @map("settlement_number")
   pharmacyChargeId      String                   @map("pharmacy_charge_id")
@@ -2435,6 +2439,33 @@ model HmsPharmacySettlement {
   releasedAt            DateTime?                @map("released_at")
 
   @@map("hms_pharmacy_settlements")
+}
+
+/// Completed payments only. Financial fields are immutable; bridge delivery metadata may change.
+model HmsPharmacySettlementRelease {
+  id                 String @id @default(uuid())
+  settlementId       String @map("settlement_id")
+  settlement         HmsPharmacySettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  amount             Decimal @db.Decimal(14, 2)
+  paymentMethod      PaymentMethod @map("payment_method")
+  paymentReference   String? @map("payment_reference")
+  idempotencyKey     String @unique @map("idempotency_key")
+  releasedAt         DateTime @default(now()) @map("released_at")
+  releasedById       String @map("released_by_id")
+  releasedByUser     PortalUser @relation(fields: [releasedById], references: [id], onDelete: Restrict)
+  cashEntryId        String? @unique @map("cash_entry_id")
+  cashEntry          UserCashBalance? @relation(fields: [cashEntryId], references: [id], onDelete: Restrict)
+  /// Only populated by reviewed historical reconciliation, never guessed from voucher text.
+  legacyExpenseId    String? @unique @map("legacy_expense_id")
+  legacyExpense      Expense? @relation(fields: [legacyExpenseId], references: [id], onDelete: Restrict)
+  reconciliationEvidence String? @map("reconciliation_evidence")
+  remarks            String?
+  bridgeStatus       String @default("RECONCILIATION_REQUIRED") @map("bridge_status")
+  bridgeDeliveredAt  DateTime? @map("bridge_delivered_at")
+
+  @@unique([settlementId, paymentReference])
+  @@index([releasedAt])
+  @@map("hms_pharmacy_settlement_releases")
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -2908,6 +2939,7 @@ enum ExpenseStatus {
 }
 
 model Expense {
+  pharmacySettlementRelease HmsPharmacySettlementRelease?
   id            String          @id @default(uuid())
   expenseNumber String          @unique @map("expense_number") // EXP-26-0001
   expenseDate   DateTime        @map("expense_date") @db.Date

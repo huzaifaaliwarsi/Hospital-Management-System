@@ -1,10 +1,12 @@
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
+import { financialDepartmentSelect, hospitalServiceDepartment, type FinancialDepartment } from './hospitalRevenueRecognition';
 
-const department = { select: { id: true, name: true } } as const;
+const department = { select: financialDepartmentSelect } as const;
 export const collectionInvoiceSelect = {
   departmentId: true, department,
-  lines: { select: { billingSource: true, lineNet: true, patientShare: true, panelReceivable: true, serviceRate: { select: { department } } } },
+  appointment: { select: { department } }, admissionRecord: { select: { department } },
+  lines: { select: { billingSource: true, lineNet: true, patientShare: true, panelReceivable: true, serviceRate: { select: { providerType: true, department } } } },
 } satisfies Prisma.HospitalInvoiceSelect;
 export const collectionSelect = {
   amount: true, collectedAt: true,
@@ -14,10 +16,14 @@ export const collectionSelect = {
 } satisfies Prisma.PaymentReceiptSelect;
 
 type Receipt = Prisma.PaymentReceiptGetPayload<{ select: typeof collectionSelect }>;
-type SelectedInvoice = Prisma.HospitalInvoiceGetPayload<{ select: typeof collectionInvoiceSelect }>;
 // Ordinary billing callers need not select stream classification. Payable readers always do.
-type Invoice = Omit<SelectedInvoice, 'lines'> & {
-  lines: (Omit<SelectedInvoice['lines'][number], 'billingSource'> & { billingSource?: string })[];
+type Invoice = {
+  departmentId?: string | null;
+  department?: FinancialDepartment | null;
+  appointment?: { department?: FinancialDepartment | null } | null;
+  admissionRecord?: { department?: FinancialDepartment | null } | null;
+  lines: { billingSource?: string; lineNet: Decimal; patientShare: Decimal; panelReceivable: Decimal;
+    serviceRate?: { providerType?: string; department?: FinancialDepartment | null } | null }[];
 };
 type Basis = 'lineNet' | 'patientShare' | 'panelReceivable';
 type AllocationOptions = { excludePharmacy?: boolean };
@@ -41,7 +47,7 @@ export function allocateInvoiceLines(amount: Decimal, invoice: Omit<Invoice, 'li
   const hasCoverage = invoice.lines.some(line => new Decimal(line[basis] ?? 0).gt(0))
     && (basis !== 'patientShare' || invoice.lines.some(line => new Decimal(line.panelReceivable ?? 0).gt(0)));
   return allocateInvoiceAmount(amount, invoice, basis).flatMap(dept => {
-    const lines = invoice.lines.filter(line => (line.serviceRate?.department?.id ?? invoice.department?.id ?? null) === dept.departmentId)
+    const lines = invoice.lines.filter(line => (hospitalServiceDepartment(line, invoice)?.id ?? null) === dept.departmentId)
       .map(line => ({ id: line.id, weight: Decimal.max(hasCoverage ? line[basis] : line.lineNet, 0) }))
       .sort((a, b) => a.id.localeCompare(b.id));
     return allocateWeightedAmount(dept.amount, lines);
@@ -66,7 +72,7 @@ export function allocateInvoiceAmount(amount: Decimal, invoice: Invoice, basis: 
     // First preserve the existing department allocations (including their cent rounding).
     // Split out Pharmacy only afterwards; never redistribute its cash to other departments.
     return allocateInvoiceAmount(amount, invoice, basis).flatMap(allocation => {
-      const lines = invoice.lines.filter(l => (l.serviceRate?.department?.id ?? invoice.department?.id ?? null) === allocation.departmentId);
+      const lines = invoice.lines.filter(l => (hospitalServiceDepartment(l, invoice)?.id ?? null) === allocation.departmentId);
       if (!lines.some(l => l.billingSource === 'PHARMACY')) return [allocation];
       let eligible = new Decimal(0), pharmacy = new Decimal(0);
       for (const line of lines) {
@@ -80,7 +86,7 @@ export function allocateInvoiceAmount(amount: Decimal, invoice: Invoice, basis: 
     });
   }
   for (const line of invoice?.lines ?? []) {
-    const d = line.serviceRate?.department ?? invoice?.department;
+    const d = hospitalServiceDepartment(line, invoice);
     const key = d?.id ?? '';
     const row = weights.get(key) ?? { departmentId: d?.id ?? null, name: d?.name ?? 'Unassigned', weight: new Decimal(0) };
     row.weight = row.weight.plus(Decimal.max(hasCoverage ? line[basis] : line.lineNet, 0));

@@ -254,9 +254,9 @@ export const managementReportsService = {
       if (i.createdAt >= start) {
         if (i.lines && i.lines.length > 0) {
           for (const l of i.lines) {
-            const lineDept = l.serviceRate?.department;
-            const targetDeptId = lineDept?.id ?? i.departmentId ?? null;
-            const targetDeptName = lineDept?.name ?? i.department?.name ?? 'General Hospital Services';
+            const lineDept = hospitalServiceDepartment(l, i);
+            const targetDeptId = lineDept?.id ?? null;
+            const targetDeptName = lineDept?.name ?? 'General Hospital Services';
 
             if (dept && targetDeptId !== dept) {
               continue;
@@ -559,6 +559,7 @@ export const managementReportsService = {
       cashCollections: Decimal;
       settlementIn: Decimal;
       settlementOut: Decimal;
+      pharmacySettlementOut: Decimal;
       expenses: Decimal;
       refunds: Decimal;
       nonCash: Decimal;
@@ -586,6 +587,7 @@ export const managementReportsService = {
           cashCollections: ZERO(),
           settlementIn: ZERO(),
           settlementOut: ZERO(),
+          pharmacySettlementOut: ZERO(),
           expenses: ZERO(),
           refunds: ZERO(),
           nonCash: ZERO(),
@@ -620,7 +622,10 @@ export const managementReportsService = {
         else if (e.category === 'RECOVERY') r.settlementIn = r.settlementIn.plus(e.amount);
         else r.cashCollections = r.cashCollections.plus(e.amount);
       } else {
-        if (e.category === 'RECOVERY') {
+        if (e.category === 'PHARMACY_SETTLEMENT') {
+          r.pharmacySettlementOut = r.pharmacySettlementOut.plus(e.amount);
+          r.physicalOut = r.physicalOut.plus(e.amount);
+        } else if (e.category === 'RECOVERY') {
           // Accepted settlement handover OUT — pure custody transfer, NOT an operating expense
           r.settlementOut = r.settlementOut.plus(e.amount);
         } else if (e.category === 'REFUND') {
@@ -661,7 +666,8 @@ export const managementReportsService = {
           .plus(r.pettyCash)
           .plus(netCashCollections)
           .plus(r.settlementIn)
-          .minus(r.expenses);
+          .minus(r.expenses)
+          .minus(r.pharmacySettlementOut);
         // Post-settlement remaining cash in custody
         const remaining = expectedCash.minus(acceptedOut);
         return {
@@ -1104,6 +1110,7 @@ export const managementReportsService = {
       prisma.expense.findMany({
         where: {
           status: 'ACTIVE',
+          pharmacySettlementRelease: { is: null },
           expenseDate: {
             gte: new Date(start.toLocaleDateString('en-CA')),
             lte: new Date(end.toLocaleDateString('en-CA')),
@@ -1419,6 +1426,7 @@ export const managementReportsService = {
       requisitions,
       settlements,
       summaryData,
+      pharmacyReleases,
     ] = await Promise.all([
       // 1. Hospital Invoices (Earned Revenue)
       prisma.hospitalInvoice.findMany({
@@ -1506,6 +1514,7 @@ export const managementReportsService = {
       prisma.expense.findMany({
         where: {
           status: 'ACTIVE',
+          pharmacySettlementRelease: { is: null },
           expenseDate: {
             gte: new Date(hospitalClock(start).date),
             lte: new Date(hospitalClock(end).date),
@@ -1637,6 +1646,13 @@ export const managementReportsService = {
 
       // 9. Accrual Executive Summary
       this.getSummary({ ...query, portalUserId: undefined, method: undefined } as any, { start, end, label }),
+      prisma.hmsPharmacySettlementRelease.findMany({
+        where: { releasedAt: { gte: start, lte: end },
+          ...(dept ? { settlement: { pharmacyCharge: { admissionRecord: { departmentId: dept } } } } : {}) },
+        include: { releasedByUser: { select: { id: true, displayName: true, username: true, role: true } },
+          settlement: { select: { settlementNumber: true, pharmacyInvoiceNumber: true,
+            pharmacyCharge: { select: { admissionRecord: { select: { department: { select: { id: true, name: true } } } } } } } } },
+      }),
     ]);
 
     const allItems: Array<{
@@ -1672,7 +1688,8 @@ export const managementReportsService = {
     const financialInvoices = invoices.map(inv => projectM01Invoice(inv, start, end, { departmentId: dept }));
     const invoiceProjections = invoices.map(inv => projectM01Invoice(inv, start, end, query));
     for (const projection of invoiceProjections) {
-      if (projection.row) allItems.push(projection.row);
+      if (projection.row && (projection.row.transactionType === 'REVENUE' || !projection.collectionRows.length)) allItems.push(projection.row);
+      allItems.push(...projection.collectionRows);
     }
 
     // Map Receipts (Collections & Refunds)
@@ -2004,7 +2021,29 @@ export const managementReportsService = {
     }
 
     // Sort chronologically (most recent first)
-    allItems.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime() || a.id.localeCompare(b.id));
+    for (const release of pharmacyReleases) {
+      const department = release.settlement.pharmacyCharge.admissionRecord.department;
+      allItems.push({
+        id: 'pharmacy-release-' + release.id, date: release.releasedAt.toISOString(), reference: release.id,
+        transactionType: 'SETTLEMENT', typeLabel: 'Pharmacy Settlement',
+        patientPayeeDescription: 'Pharmacy settlement ' + release.settlement.settlementNumber + ' / PKR ' + release.amount.toFixed(2),
+        encounterInvoiceRef: release.settlement.pharmacyInvoiceNumber,
+        departmentId: department.id, department: department.name,
+        portalUserId: release.releasedById, portalUser: userName(release.releasedByUser) || 'Admin',
+        portal: release.releasedByUser.role === 'SUPER_ADMIN' ? 'Super Admin' : 'Admin',
+        status: 'SETTLED', statusLabel: 'Paid',
+        grossBilling: 0, discountCredit: 0, tax: 0, netRevenue: 0, collectionsReceived: 0,
+        recognizedExpense: 0, expensePaid: 0, cashIn: 0,
+        cashOut: release.paymentMethod === 'CASH' ? Number(release.amount) : 0,
+        outstandingPayable: 0, paymentMethod: release.paymentMethod,
+        details: { pharmacySettlementOutflow: Number(release.amount), paymentReference: release.paymentReference,
+          cashEntryId: release.cashEntryId, bridgeStatus: release.bridgeStatus, legacyExpenseId: release.legacyExpenseId },
+      });
+    }
+
+    allItems.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+      || Number(Boolean(b.details?.isCollectionEvent)) - Number(Boolean(a.details?.isCollectionEvent))
+      || a.id.localeCompare(b.id));
 
     // Apply Filters
     const filteredItems = allItems.filter((it) => {
@@ -2044,18 +2083,29 @@ export const managementReportsService = {
       return true;
     });
 
-    // Column-wise totals over the filtered list
+    // Receipt entries are additional views of the same invoice's payment history.
+    // Count their money only when the consolidated invoice is not in the filtered result.
+    const displayedInvoices = new Set(filteredItems.filter(it => it.details?.invoiceId && !it.details?.isCollectionEvent).map(it => it.details!.invoiceId));
+    const totalItems = filteredItems.filter(it => !it.details?.isCollectionEvent || !displayedInvoices.has(it.details.invoiceId));
+    const outstandingInvoices = new Set<string>();
+    const columnOutstanding = totalItems.reduce((sum, it) => {
+      const invoiceId = it.details?.invoiceId;
+      if (invoiceId && outstandingInvoices.has(invoiceId)) return sum;
+      if (invoiceId) outstandingInvoices.add(invoiceId);
+      return sum + it.outstandingPayable;
+    }, 0);
+    // Totals remain over the full filtered result, before pagination.
     const columnTotals = {
-      grossBilling: filteredItems.reduce((s, it) => s + it.grossBilling, 0),
-      discountCredit: filteredItems.reduce((s, it) => s + it.discountCredit, 0),
-      tax: filteredItems.reduce((s, it) => s + it.tax, 0),
-      netRevenue: filteredItems.reduce((s, it) => s + it.netRevenue, 0),
-      collectionsReceived: filteredItems.reduce((s, it) => s + it.collectionsReceived, 0),
-      recognizedExpense: filteredItems.reduce((s, it) => s + it.recognizedExpense, 0),
-      expensePaid: filteredItems.reduce((s, it) => s + it.expensePaid, 0),
-      cashIn: filteredItems.reduce((s, it) => s + it.cashIn, 0),
-      cashOut: filteredItems.reduce((s, it) => s + it.cashOut, 0),
-      outstandingPayable: filteredItems.reduce((s, it) => s + it.outstandingPayable, 0),
+      grossBilling: totalItems.reduce((s, it) => s + it.grossBilling, 0),
+      discountCredit: totalItems.reduce((s, it) => s + it.discountCredit, 0),
+      tax: totalItems.reduce((s, it) => s + it.tax, 0),
+      netRevenue: totalItems.reduce((s, it) => s + it.netRevenue, 0),
+      collectionsReceived: totalItems.reduce((s, it) => s + it.collectionsReceived, 0),
+      recognizedExpense: totalItems.reduce((s, it) => s + it.recognizedExpense, 0),
+      expensePaid: totalItems.reduce((s, it) => s + it.expensePaid, 0),
+      cashIn: totalItems.reduce((s, it) => s + it.cashIn, 0),
+      cashOut: totalItems.reduce((s, it) => s + it.cashOut, 0),
+      outstandingPayable: columnOutstanding,
     };
 
     // Executive Reconciled Financial Totals
@@ -2083,8 +2133,8 @@ export const managementReportsService = {
 
     // Non-Operating Cash Outflows:
     // Internal settlements net to zero at the hospital-wide level.
-    // Only external refunds belong here; custody transfers are excluded.
-    const nonOperatingOutflows = allItems.filter(it => it.transactionType === 'REFUND').reduce((s, it) => s + it.cashOut, 0);
+    // External refunds and Pharmacy payments leave HMS; internal handovers net to zero.
+    const nonOperatingOutflows = allItems.filter(it => (it.transactionType === 'REFUND' || it.details?.pharmacySettlementOutflow !== undefined)).reduce((s, it) => s + it.cashOut, 0);
 
     // Net Physical Cash Movement:
     // External physical cash collections - physical cash paid for expenses - external non-operating cash outflows
@@ -2134,7 +2184,8 @@ export const managementReportsService = {
         nonOperatingCashOutflows: nonOperatingOutflows,
         netPhysicalCashMovement,
         netCashMovement: netPhysicalCashMovement,
-        netTotalFundsMovement: collections - totalPaidOperatingExpenses,
+        pharmacySettlementOutflows: pharmacyReleases.reduce((sum, r) => sum + Number(r.amount), 0),
+        netTotalFundsMovement: collections - totalPaidOperatingExpenses - pharmacyReleases.reduce((sum, r) => sum + Number(r.amount), 0),
         currentRemainingCustomerDues: financialInvoices.reduce((s, p) => s + p.outstanding, 0),
       },
       payables: {
