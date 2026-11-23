@@ -355,11 +355,6 @@ export const ReportView: React.FC<Props> = ({ type, title, subtitle, onNavigate,
         <p className="text-xs text-slate-500 mt-1">{subtitle}</p><p className="text-xs text-slate-500 mt-1">{reportPeriod}</p>
       </div>
 
-      {(type === 'SALES_COLLECTION' || isStatement) && totals && <div className="p-3 bg-emerald-50 rounded-lg text-sm">
-        <p>Recognized Revenue: {formatPKR(totals.recognizedRevenue ?? 0)} | COGS: {formatPKR(totals.recognizedCogs ?? totals.medicineCogs ?? 0)} | Operating Expenses: {formatPKR(totals.operatingExpenses ?? 0)} | Operating Profit / Loss: {totals.operatingProfit == null ? 'Unavailable: incomplete history' : formatPKR(totals.operatingProfit)}</p>
-        <p>Revenue is recognized only on full payment. Collections follow payment dates; outstanding includes earlier invoices. Tax and stock purchases are excluded from revenue/profit.</p>
-        {!!totals.incompleteInvoices && <p role="alert">{totals.incompleteInvoices} invoices need dated collection/return or historical cost evidence. Revenue includes verified amounts only.</p>}
-      </div>}
       {/* Filter Toolbar — date range only; the report type is this page's identity, not a dropdown anymore */}
       <div className="bg-white p-3 rounded-xl border border-slate-300/80 shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-wrap items-center justify-between gap-2.5">
         <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-[280px]">
