@@ -1,29 +1,21 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  TrendingUp,
   RotateCcw,
   Eye,
   Filter,
-  Calendar,
-  DollarSign,
-  AlertCircle,
   FileSpreadsheet,
   Download,
   Printer,
   X,
-  Layers,
-  ArrowUpRight,
-  ArrowDownRight,
   Search,
   ChevronLeft,
   ChevronRight,
-  HelpCircle,
-  Percent,
+  Receipt,
 } from 'lucide-react';
 import apiClient from '../services/apiClient';
 import { useAuth } from '../context/AuthContext';
-import { formatPKR, formatDateTime, formatDate, formatNumber } from '../utils/format';
+import { formatPKR, formatDateTime } from '../utils/format';
 import { exportToCSV, exportToExcel, printFinancialReport } from '../utils/reportExportUtils';
 import { ALL_REPORTS_LIST } from '../components/ReportView';
 
@@ -474,6 +466,7 @@ export const PharmacyOperatingProfitReportPage: React.FC<Props> = ({ onNavigate 
         grossProfit: gp,
         collections: Number(inv.collections || 0),
         outstanding: Number(inv.outstanding || 0),
+        expenseAmount: 0,
         actor: inv.collectedBy || inv.soldBy || 'Staff',
         status: inv.status || 'POSTED',
         raw: inv,
@@ -525,6 +518,23 @@ export const PharmacyOperatingProfitReportPage: React.FC<Props> = ({ onNavigate 
     return filteredLedger.slice(start, start + limit);
   }, [filteredLedger, page, limit]);
 
+  // Totals for detailed ledger footer
+  const ledgerTotals = useMemo(() => {
+    let rev = 0;
+    let cogs = 0;
+    let gp = 0;
+    let exp = 0;
+    let col = 0;
+    filteredLedger.forEach((it) => {
+      rev += it.revenue;
+      cogs += it.cogs;
+      gp += it.grossProfit;
+      exp += it.expenseAmount;
+      col += it.collections;
+    });
+    return { rev, cogs, gp, exp, col };
+  }, [filteredLedger]);
+
   // Export Handler
   const handleExport = (format: 'excel' | 'csv' | 'print') => {
     const periodLabel = `${appliedFilters.fromDate} to ${appliedFilters.toDate}`;
@@ -572,7 +582,7 @@ export const PharmacyOperatingProfitReportPage: React.FC<Props> = ({ onNavigate 
         { header: 'Date & Time', format: (r: any) => formatDateTime(r.date) },
         { header: 'Reference ID', key: 'reference' },
         { header: 'Category', key: 'category' },
-        { header: 'Description / Customer / Payee', key: 'description' },
+        { header: 'Description / Payee', key: 'description' },
         { header: 'Recognized Revenue (PKR)', format: (r: any) => (r.revenue > 0 ? formatPKR(r.revenue) : '—'), numeric: true },
         { header: 'Recognized COGS (PKR)', format: (r: any) => (r.cogs > 0 ? formatPKR(r.cogs) : '—'), numeric: true },
         { header: 'Gross Profit (PKR)', format: (r: any) => (r.revenue > 0 ? formatPKR(r.grossProfit) : '—'), numeric: true },
@@ -600,7 +610,7 @@ export const PharmacyOperatingProfitReportPage: React.FC<Props> = ({ onNavigate 
   };
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 space-y-5 max-w-[1700px] mx-auto">
+    <div className="min-w-0 max-w-full space-y-4 p-4 sm:p-6 lg:p-8 max-w-[1700px] mx-auto">
       {/* ── Top Report Switcher Tabs ─────────────────────────────────── */}
       {onNavigate && !isSales && (
         <div className="flex items-center gap-1.5 overflow-x-auto pb-2 border-b border-slate-200 -mt-1">
@@ -613,7 +623,7 @@ export const PharmacyOperatingProfitReportPage: React.FC<Props> = ({ onNavigate 
                 onClick={() => onNavigate(tab.page)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition cursor-pointer ${
                   isActive
-                    ? 'bg-[#0f766e] text-white shadow-xs'
+                    ? 'bg-[#0c6b50] text-white shadow-xs'
                     : 'bg-white text-slate-600 hover:text-slate-900 hover:bg-slate-100 border border-slate-200'
                 }`}
               >
@@ -624,99 +634,36 @@ export const PharmacyOperatingProfitReportPage: React.FC<Props> = ({ onNavigate 
         </div>
       )}
 
-      {/* ── Page Header ────────────────────────────────────────────── */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <TrendingUp className="h-5 w-5 text-[#0f766e]" />
-              <h1 className="text-xl font-bold text-slate-900 tracking-tight">Pharmacy Operating Profit (P&L)</h1>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200">
-                ACCRUAL STATEMENT
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 mt-1">
-              Financial statement measuring recognized medicine sales, matched batch COGS, and operating overheads.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => handleExport('excel')}
-              className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 shadow-xs cursor-pointer"
-            >
-              <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" />
-              <span>Excel</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleExport('csv')}
-              className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 shadow-xs cursor-pointer"
-            >
-              <Download className="h-3.5 w-3.5 text-blue-600" />
-              <span>CSV</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleExport('print')}
-              className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 shadow-xs cursor-pointer"
-            >
-              <Printer className="h-3.5 w-3.5 text-slate-600" />
-              <span>Print / PDF</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Toolbar & View Toggle (Statement vs Detailed Ledger) ─────── */}
-      <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+      {/* ── Page Header (Exact HMS-Style Simple Heading & Subtitle) ── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-1 border-b border-slate-200">
         <div>
-          <h2 className="text-sm font-bold text-slate-900 tracking-tight">
-            {activeView === 'statement' ? 'Accrual Financial Statement (P&L)' : 'Itemized Transaction Ledger'}
-          </h2>
-          <div className="text-[11px] text-slate-500">
-            Current: {appliedFilters.fromDate} to {appliedFilters.toDate}
-            {priorRange ? ` · Comparison: ${priorRange.label}` : ''}
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-bold text-slate-900 tracking-tight">Operating Profit (P&L)</h1>
+            <span className="text-xs text-slate-400 font-semibold uppercase tracking-wider">
+              (Accrual Statement)
+            </span>
           </div>
-        </div>
-
-        <div className="inline-flex rounded-lg border border-slate-200 p-0.5 bg-slate-100">
-          <button
-            type="button"
-            onClick={() => setActiveView('statement')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition cursor-pointer ${
-              activeView === 'statement'
-                ? 'bg-[#0f766e] text-white shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            Statement View
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveView('ledger')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition cursor-pointer ${
-              activeView === 'ledger'
-                ? 'bg-[#0f766e] text-white shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            Detailed Ledger ({ledgerItems.length})
-          </button>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Consolidated pharmacy earned revenue, matched batch COGS, recognized operating expenses and net margin.
+          </p>
         </div>
       </div>
 
-      {/* ── Filter Bar ──────────────────────────────────────────────── */}
-      <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-xs">
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5">
-          {/* Preset */}
+      {/* ── Advanced Filter Panel (Compact Bordered Card) ── */}
+      <div className="bg-white rounded-xl border border-slate-200 p-3 shadow-xs space-y-2.5">
+        <div className="flex items-center gap-2 text-xs font-bold text-slate-700 pb-1.5 border-b border-slate-100">
+          <Filter className="h-3.5 w-3.5 text-[#0c6b50]" />
+          <span>Statement Filters</span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+          {/* 1. Period Preset */}
           <div>
-            <label className="block text-[11px] font-semibold text-slate-700 mb-1">Period Preset</label>
+            <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">Period</label>
             <select
               value={preset}
               onChange={(e) => handlePresetChange(e.target.value as PeriodPreset)}
-              className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0f766e]"
+              className="w-full h-8.5 px-2.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-800 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#0c6b50]"
             >
               {PERIOD_OPTIONS.map((p) => (
                 <option key={p.value} value={p.value}>{p.label}</option>
@@ -724,61 +671,59 @@ export const PharmacyOperatingProfitReportPage: React.FC<Props> = ({ onNavigate 
             </select>
           </div>
 
-          {/* From Date */}
+          {/* 2. From Date */}
           <div>
-            <label className="block text-[11px] font-semibold text-slate-700 mb-1">From Date</label>
+            <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">From Date</label>
             <input
               type="date"
               value={fromDate}
-              onChange={(e) => {
-                setFromDate(e.target.value);
-                setPreset('custom');
-              }}
-              className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0f766e]"
+              disabled={preset !== 'custom'}
+              onChange={(e) => setFromDate(e.target.value)}
+              className="w-full h-8.5 px-2.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-800 bg-slate-50 disabled:bg-slate-100 disabled:text-slate-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#0c6b50]"
             />
           </div>
 
-          {/* To Date */}
+          {/* 3. To Date */}
           <div>
-            <label className="block text-[11px] font-semibold text-slate-700 mb-1">To Date</label>
+            <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">To Date</label>
             <input
               type="date"
               value={toDate}
-              onChange={(e) => {
-                setToDate(e.target.value);
-                setPreset('custom');
-              }}
-              className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0f766e]"
+              disabled={preset !== 'custom'}
+              onChange={(e) => setToDate(e.target.value)}
+              className="w-full h-8.5 px-2.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-800 bg-slate-50 disabled:bg-slate-100 disabled:text-slate-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#0c6b50]"
             />
           </div>
 
-          {/* Comparison Period */}
+          {/* 4. Prior Period Comparison */}
           <div>
-            <label className="block text-[11px] font-semibold text-slate-700 mb-1">Prior Period Comparison</label>
+            <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">Prior Period Comparison</label>
             <select
               value={comparison}
               onChange={(e) => setComparison(e.target.value as 'previous' | 'none')}
-              className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0f766e]"
+              className="w-full h-8.5 px-2.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-800 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#0c6b50]"
             >
-              <option value="previous">Previous Period (Comparison On)</option>
+              <option value="previous">Previous Equivalent Period</option>
               <option value="none">None (Current Period Only)</option>
             </select>
           </div>
         </div>
 
-        <div className="flex justify-end gap-2 mt-3 pt-3 border-t border-slate-200">
+        {/* Action Buttons Row */}
+        <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-100">
           <button
             type="button"
             onClick={handleReset}
-            className="px-3 py-2 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 flex items-center gap-1.5 cursor-pointer"
+            title="Reset filters"
+            className="h-8 px-3 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-xs"
           >
-            <RotateCcw className="h-3.5 w-3.5 text-slate-500" />
+            <RotateCcw className="h-3.5 w-3.5" />
             <span>Reset</span>
           </button>
           <button
             type="button"
             onClick={handleApply}
-            className="px-4 py-2 text-xs font-bold rounded-lg bg-[#0f766e] text-white hover:bg-[#115e59] shadow-xs flex items-center gap-1.5 cursor-pointer"
+            className="h-8 px-4 rounded-lg bg-[#0c6b50] hover:bg-[#09523d] text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer"
           >
             <Filter className="h-3.5 w-3.5" />
             <span>Generate Statement</span>
@@ -786,11 +731,79 @@ export const PharmacyOperatingProfitReportPage: React.FC<Props> = ({ onNavigate 
         </div>
       </div>
 
-      {/* ── Content View ────────────────────────────────────────────── */}
+      {/* ── Statement Toolbar & View Toggle (Exact HMS M04 Layout) ── */}
+      <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+        {/* Left side: Statement title and View Toggle */}
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+          <div>
+            <h2 className="text-sm font-bold text-slate-900 tracking-tight">Accounting P&L Statement (Accrual)</h2>
+            <div className="text-[11px] text-slate-500 font-normal">
+              Period: {appliedFilters.fromDate} to {appliedFilters.toDate}
+              {priorRange ? ` · Prior: ${priorRange.label}` : ''}
+            </div>
+          </div>
+
+          {/* Toggle Buttons matching HMS structural reference */}
+          <div className="inline-flex rounded-lg border border-slate-300 p-0.5 bg-slate-100">
+            <button
+              type="button"
+              onClick={() => setActiveView('statement')}
+              className={`px-3 py-1 text-xs font-semibold rounded-md transition cursor-pointer ${
+                activeView === 'statement'
+                  ? 'bg-[#0c6b50] text-white shadow-xs'
+                  : 'text-slate-700 hover:text-slate-900'
+              }`}
+            >
+              Statement View
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveView('ledger')}
+              className={`px-3 py-1 text-xs font-semibold rounded-md transition cursor-pointer ${
+                activeView === 'ledger'
+                  ? 'bg-[#0c6b50] text-white shadow-xs'
+                  : 'text-slate-700 hover:text-slate-900'
+              }`}
+            >
+              Detailed Ledger ({ledgerItems.length})
+            </button>
+          </div>
+        </div>
+
+        {/* Right side: Export buttons on same statement toolbar */}
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => handleExport('excel')}
+            className="h-8 px-2.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 shadow-xs cursor-pointer"
+          >
+            <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" />
+            <span>Excel</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleExport('csv')}
+            className="h-8 px-2.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 shadow-xs cursor-pointer"
+          >
+            <Download className="h-3.5 w-3.5 text-blue-600" />
+            <span>CSV</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleExport('print')}
+            className="h-8 px-2.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 shadow-xs cursor-pointer"
+          >
+            <Printer className="h-3.5 w-3.5 text-slate-600" />
+            <span>Print / PDF</span>
+          </button>
+        </div>
+      </div>
+
+      {/* ── Content View ── */}
       {loading ? (
         <div className="bg-white border border-slate-200 rounded-xl p-12 text-center shadow-xs">
-          <div className="inline-block h-8 w-8 animate-spin rounded-full border-3 border-solid border-[#0f766e] border-r-transparent" />
-          <div className="text-xs font-medium text-slate-500 mt-2">Computing Financial P&L Statement...</div>
+          <div className="inline-block h-8 w-8 animate-spin rounded-full border-3 border-solid border-[#0c6b50] border-r-transparent" />
+          <div className="text-xs font-medium text-slate-500 mt-2">Computing Financial P&amp;L Statement...</div>
         </div>
       ) : error ? (
         <div className="bg-white border border-rose-200 rounded-xl p-8 text-center text-rose-600 text-xs shadow-xs">
@@ -805,7 +818,7 @@ export const PharmacyOperatingProfitReportPage: React.FC<Props> = ({ onNavigate 
             <table className="w-full text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-300 text-slate-700 font-bold uppercase tracking-wider text-[11px]">
-                  <th className="py-2.5 px-3 text-left border-r border-slate-200 min-w-[300px]">
+                  <th className="py-2.5 px-3 text-left border-r border-slate-200 min-w-[280px]">
                     Financial Line Item
                   </th>
                   <th className="py-2.5 px-3 text-center border-r border-slate-200 w-[120px]">
@@ -846,7 +859,7 @@ export const PharmacyOperatingProfitReportPage: React.FC<Props> = ({ onNavigate 
 
                       if (isNetResult) {
                         rowClass = 'bg-emerald-50/70 border-t-2 border-b-2 border-emerald-300 font-bold';
-                        textClass = 'text-[#0f766e] font-bold text-[13px]';
+                        textClass = 'text-[#0c6b50] font-bold text-[13px]';
                       } else if (isSubtotal) {
                         rowClass = 'bg-slate-50/90 border-t border-b border-slate-300 font-bold';
                         textClass = 'text-slate-900 font-bold';
@@ -879,7 +892,7 @@ export const PharmacyOperatingProfitReportPage: React.FC<Props> = ({ onNavigate 
 
                           {/* Current Period (PKR) */}
                           <td className={`py-2 px-3 text-right border-r border-slate-200 font-mono ${textClass}`}>
-                            {row.current !== 0 ? formatPKR(row.current) : '0'}
+                            {row.current !== 0 ? formatPKR(row.current) : '0.00'}
                           </td>
 
                           {/* % of Revenue */}
@@ -895,7 +908,7 @@ export const PharmacyOperatingProfitReportPage: React.FC<Props> = ({ onNavigate 
 
                           {/* Prior Period (PKR) */}
                           <td className="py-2 px-3 text-right border-r border-slate-200 font-mono text-slate-600">
-                            {row.prior != null ? (row.prior !== 0 ? formatPKR(row.prior) : '0') : 'N/A'}
+                            {row.prior != null ? (row.prior !== 0 ? formatPKR(row.prior) : '0.00') : 'N/A'}
                           </td>
 
                           {/* Variance / Growth */}
@@ -946,7 +959,7 @@ export const PharmacyOperatingProfitReportPage: React.FC<Props> = ({ onNavigate 
                   setPage(1);
                 }}
                 placeholder="Search invoice #, customer, payee..."
-                className="w-full text-xs pl-8 pr-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0f766e]"
+                className="w-full text-xs pl-8 pr-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0c6b50]"
               />
             </div>
 
@@ -968,7 +981,7 @@ export const PharmacyOperatingProfitReportPage: React.FC<Props> = ({ onNavigate 
             </div>
           </div>
 
-          <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
+          <div className="bg-white rounded-xl border border-slate-300 shadow-xs overflow-hidden">
             {paginatedLedger.length === 0 ? (
               <div className="p-12 text-center text-slate-500 text-xs">
                 No matching transactions found in detailed ledger.
@@ -977,73 +990,72 @@ export const PharmacyOperatingProfitReportPage: React.FC<Props> = ({ onNavigate 
               <div className="overflow-x-auto">
                 <table className="w-full text-xs border-collapse">
                   <thead>
-                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold uppercase tracking-wider text-[11px]">
-                      <th className="py-2.5 px-3 text-left border-r border-slate-200 whitespace-nowrap">Date & Time</th>
-                      <th className="py-2.5 px-3 text-left border-r border-slate-200 whitespace-nowrap">Reference ID</th>
-                      <th className="py-2.5 px-3 text-center border-r border-slate-200 whitespace-nowrap">Category</th>
-                      <th className="py-2.5 px-3 text-left border-r border-slate-200 min-w-[200px]">Description / Payee</th>
-                      <th className="py-2.5 px-3 text-right border-r border-slate-200 whitespace-nowrap">Net Revenue</th>
-                      <th className="py-2.5 px-3 text-right border-r border-slate-200 whitespace-nowrap">Matched COGS</th>
-                      <th className="py-2.5 px-3 text-right border-r border-slate-200 whitespace-nowrap">Gross Profit</th>
-                      <th className="py-2.5 px-3 text-right border-r border-slate-200 whitespace-nowrap">Operating Expense</th>
-                      <th className="py-2.5 px-3 text-right border-r border-slate-200 whitespace-nowrap">Collections</th>
-                      <th className="py-2.5 px-3 text-left border-r border-slate-200 whitespace-nowrap">Staff</th>
+                    <tr className="bg-[#f1f5f9] border-b border-slate-300 text-slate-800 text-[11px] font-bold uppercase tracking-wider sticky top-0 z-10 whitespace-nowrap">
+                      <th className="w-12 py-2.5 px-3 text-center border-r border-slate-300 font-bold text-slate-700">#</th>
+                      <th className="py-2.5 px-3 text-left border-r border-slate-300 whitespace-nowrap">Date &amp; Time</th>
+                      <th className="py-2.5 px-3 text-left border-r border-slate-300 whitespace-nowrap">Reference ID</th>
+                      <th className="py-2.5 px-3 text-center border-r border-slate-300 whitespace-nowrap">Category</th>
+                      <th className="py-2.5 px-3 text-left border-r border-slate-300 min-w-[200px]">Description / Payee</th>
+                      <th className="py-2.5 px-3 text-right border-r border-slate-300 whitespace-nowrap">Net Revenue</th>
+                      <th className="py-2.5 px-3 text-right border-r border-slate-300 whitespace-nowrap">Matched COGS</th>
+                      <th className="py-2.5 px-3 text-right border-r border-slate-300 whitespace-nowrap">Gross Profit</th>
+                      <th className="py-2.5 px-3 text-right border-r border-slate-300 whitespace-nowrap">Operating Expense</th>
+                      <th className="py-2.5 px-3 text-right border-r border-slate-300 whitespace-nowrap">Collections</th>
+                      <th className="py-2.5 px-3 text-left border-r border-slate-300 whitespace-nowrap">Staff</th>
                       <th className="py-2.5 px-3 text-center w-12">Action</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-150">
-                    {paginatedLedger.map((row) => (
-                      <tr key={row.id} className="hover:bg-slate-50/70 transition">
-                        <td className="py-2 px-3 text-slate-600 border-r border-slate-200 whitespace-nowrap">
+                  <tbody className="divide-y divide-slate-150 text-slate-800">
+                    {paginatedLedger.map((row, idx) => (
+                      <tr
+                        key={row.id}
+                        className="hover:bg-slate-50/70 transition cursor-pointer"
+                        onClick={() => setDetailEntry(row)}
+                      >
+                        <td className="py-2 px-3 text-center border-r border-slate-200 text-slate-500 font-mono text-[11px] bg-slate-50/60 whitespace-nowrap">
+                          {(page - 1) * limit + idx + 1}
+                        </td>
+                        <td className="py-2 px-3 text-slate-600 border-r border-slate-200 whitespace-nowrap font-mono">
                           {formatDateTime(row.date)}
                         </td>
-                        <td className="py-2 px-3 border-r border-slate-200 font-mono font-medium text-slate-900 whitespace-nowrap">
+                        <td className="py-2 px-3 border-r border-slate-200 font-mono font-medium text-[#0c6b50] whitespace-nowrap">
                           {row.reference}
                         </td>
                         <td className="py-2 px-3 text-center border-r border-slate-200 whitespace-nowrap">
-                          {row.category === 'HMS Dispense' ? (
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                              HMS Presc
-                            </span>
-                          ) : row.category === 'Retail POS' ? (
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                              Retail POS
-                            </span>
-                          ) : (
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                              Expense
-                            </span>
-                          )}
+                          <span className="font-semibold text-slate-700">{row.category}</span>
                         </td>
-                        <td className="py-2 px-3 border-r border-slate-200 text-slate-800">
-                          <div className="truncate max-w-[260px]" title={row.description}>
-                            {row.description}
-                          </div>
+                        <td className="py-2 px-3 border-r border-slate-200 text-slate-800 max-w-[240px] truncate" title={row.description}>
+                          {row.description}
                         </td>
-                        <td className="py-2 px-3 text-right border-r border-slate-200 font-mono text-slate-900 whitespace-nowrap">
+                        <td className="py-2 px-3 text-right border-r border-slate-200 font-mono whitespace-nowrap">
                           {row.revenue > 0 ? formatPKR(row.revenue) : '—'}
                         </td>
-                        <td className="py-2 px-3 text-right border-r border-slate-200 font-mono text-rose-700 whitespace-nowrap">
+                        <td className="py-2 px-3 text-right border-r border-slate-200 font-mono whitespace-nowrap text-slate-600">
                           {row.cogs > 0 ? formatPKR(row.cogs) : '—'}
                         </td>
-                        <td className="py-2 px-3 text-right border-r border-slate-200 font-mono font-bold text-emerald-700 whitespace-nowrap">
+                        <td className={`py-2 px-3 text-right border-r border-slate-200 font-mono font-bold whitespace-nowrap ${
+                          row.grossProfit >= 0 ? 'text-emerald-700' : 'text-rose-700'
+                        }`}>
                           {row.revenue > 0 ? formatPKR(row.grossProfit) : '—'}
                         </td>
                         <td className="py-2 px-3 text-right border-r border-slate-200 font-mono font-bold text-rose-700 whitespace-nowrap">
                           {row.expenseAmount > 0 ? formatPKR(row.expenseAmount) : '—'}
                         </td>
-                        <td className="py-2 px-3 text-right border-r border-slate-200 font-mono text-emerald-800 whitespace-nowrap">
+                        <td className="py-2 px-3 text-right border-r border-slate-200 font-mono text-emerald-700 whitespace-nowrap">
                           {row.collections > 0 ? formatPKR(row.collections) : '—'}
                         </td>
-                        <td className="py-2 px-3 border-r border-slate-200 text-slate-700 whitespace-nowrap">
+                        <td className="py-2 px-3 text-left border-r border-slate-200 text-slate-600 whitespace-nowrap">
                           {row.actor}
                         </td>
                         <td className="py-2 px-3 text-center">
                           <button
                             type="button"
-                            onClick={() => setDetailEntry(row)}
-                            className="p-1 rounded text-slate-500 hover:text-[#0f766e] hover:bg-slate-100 cursor-pointer transition"
-                            title="View Transaction"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDetailEntry(row);
+                            }}
+                            className="p-1 rounded text-slate-400 hover:text-[#0c6b50] hover:bg-emerald-50 cursor-pointer transition"
+                            title="View Transaction Details"
                           >
                             <Eye className="h-4 w-4" />
                           </button>
@@ -1051,62 +1063,93 @@ export const PharmacyOperatingProfitReportPage: React.FC<Props> = ({ onNavigate 
                       </tr>
                     ))}
                   </tbody>
+
+                  {/* ── Table Totals Row ── */}
+                  <tfoot>
+                    <tr className="bg-[#f1f5f9] font-bold text-slate-900 border-t-2 border-slate-300 text-xs whitespace-nowrap">
+                      <td colSpan={5} className="py-2.5 px-3 text-right uppercase tracking-wider text-slate-700 text-[10.5px] font-bold border-r border-slate-300">
+                        Matching Report Rows:
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono border-r border-slate-300 text-slate-900">
+                        {formatPKR(ledgerTotals.rev)}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono border-r border-slate-300 text-slate-700">
+                        {formatPKR(ledgerTotals.cogs)}
+                      </td>
+                      <td className={`py-2.5 px-3 text-right font-mono border-r border-slate-300 ${
+                        ledgerTotals.gp >= 0 ? 'text-emerald-700' : 'text-rose-700'
+                      }`}>
+                        {formatPKR(ledgerTotals.gp)}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono border-r border-slate-300 text-rose-700">
+                        {formatPKR(ledgerTotals.exp)}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono border-r border-slate-300 text-emerald-700">
+                        {formatPKR(ledgerTotals.col)}
+                      </td>
+                      <td colSpan={2} className="py-2.5 px-3 text-center text-slate-400 font-normal">
+                        —
+                      </td>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             )}
 
             {/* Pagination */}
-            <div className="p-3 border-t border-slate-200 bg-slate-50 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-600">
-              <div className="flex items-center gap-2">
-                <span>Show</span>
-                <select
-                  value={limit}
-                  onChange={(e) => {
-                    setLimit(Number(e.target.value));
-                    setPage(1);
-                  }}
-                  className="border border-slate-300 rounded p-1 bg-white text-slate-800 text-xs"
-                >
-                  <option value={25}>25</option>
-                  <option value={50}>50</option>
-                  <option value={100}>100</option>
-                </select>
-                <span>entries · Page {page} of {totalLedgerPages} ({totalLedgerRecords} records)</span>
-              </div>
+            {totalLedgerRecords > 0 && (
+              <div className="p-3 border-t border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-600">
+                <div className="flex items-center gap-2">
+                  <span>Show</span>
+                  <select
+                    value={limit}
+                    onChange={(e) => {
+                      setLimit(Number(e.target.value));
+                      setPage(1);
+                    }}
+                    className="h-7 px-2 rounded border border-slate-200 bg-white font-semibold text-slate-800"
+                  >
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                  </select>
+                  <span>entries · Page {page} of {totalLedgerPages} ({totalLedgerRecords} records)</span>
+                </div>
 
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  disabled={page <= 1}
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  className="px-2 py-1 rounded border border-slate-200 bg-white text-slate-700 disabled:opacity-40 hover:bg-slate-100 flex items-center gap-1 cursor-pointer"
-                >
-                  <ChevronLeft className="h-3.5 w-3.5" />
-                  <span>Previous</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={page >= totalLedgerPages}
-                  onClick={() => setPage((p) => Math.min(totalLedgerPages, p + 1))}
-                  className="px-2 py-1 rounded border border-slate-200 bg-white text-slate-700 disabled:opacity-40 hover:bg-slate-100 flex items-center gap-1 cursor-pointer"
-                >
-                  <span>Next</span>
-                  <ChevronRight className="h-3.5 w-3.5" />
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    disabled={page <= 1}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    className="px-2.5 py-1 rounded border border-slate-200 bg-white text-slate-700 font-semibold disabled:opacity-40 hover:bg-slate-100 flex items-center gap-1 cursor-pointer transition"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                    <span>Previous</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={page >= totalLedgerPages}
+                    onClick={() => setPage((p) => Math.min(totalLedgerPages, p + 1))}
+                    className="px-2.5 py-1 rounded border border-slate-200 bg-white text-slate-700 font-semibold disabled:opacity-40 hover:bg-slate-100 flex items-center gap-1 cursor-pointer transition"
+                  >
+                    <span>Next</span>
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       )}
 
-      {/* ── Transaction Detail Modal ──────────────────────────────────── */}
+      {/* ── Detailed Entry Modal ── */}
       {detailEntry && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-lg w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
             <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <TrendingUp className="h-4 w-4 text-[#0f766e]" />
-                <h3 className="font-bold text-sm text-slate-900">P&L Transaction Breakdown</h3>
+                <Receipt className="h-4 w-4 text-[#0c6b50]" />
+                <h3 className="font-bold text-sm text-slate-900">Ledger Entry Details</h3>
                 <span className="font-mono text-xs px-2 py-0.5 rounded bg-slate-200 text-slate-800">
                   {detailEntry.reference}
                 </span>
@@ -1123,7 +1166,7 @@ export const PharmacyOperatingProfitReportPage: React.FC<Props> = ({ onNavigate 
             <div className="p-5 space-y-4 text-xs">
               <div className="grid grid-cols-2 gap-3 pb-3 border-b border-slate-150">
                 <div>
-                  <span className="text-slate-500 block text-[11px]">Date & Time</span>
+                  <span className="text-slate-500 block text-[11px]">Date &amp; Time</span>
                   <span className="font-medium text-slate-900">{formatDateTime(detailEntry.date)}</span>
                 </div>
                 <div>
@@ -1135,7 +1178,7 @@ export const PharmacyOperatingProfitReportPage: React.FC<Props> = ({ onNavigate 
                   <span className="font-medium text-slate-900">{detailEntry.description}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block text-[11px]">Handled By</span>
+                  <span className="text-slate-500 block text-[11px]">Staff / Actor</span>
                   <span className="font-medium text-slate-900">{detailEntry.actor}</span>
                 </div>
               </div>
@@ -1144,23 +1187,23 @@ export const PharmacyOperatingProfitReportPage: React.FC<Props> = ({ onNavigate 
                 <div className="space-y-2 bg-slate-50 p-3 rounded-lg border border-slate-200">
                   <div className="flex justify-between">
                     <span className="text-slate-600">Net Recognized Revenue:</span>
-                    <span className="font-mono font-bold text-slate-900">{formatPKR(detailEntry.revenue)}</span>
+                    <span className="font-mono font-medium">{formatPKR(detailEntry.revenue)}</span>
                   </div>
-                  <div className="flex justify-between text-rose-700">
-                    <span>Matched Medicine COGS:</span>
-                    <span className="font-mono font-medium">−{formatPKR(detailEntry.cogs)}</span>
+                  <div className="flex justify-between text-slate-600">
+                    <span>Recognized Batch COGS:</span>
+                    <span className="font-mono">−{formatPKR(detailEntry.cogs)}</span>
                   </div>
-                  <div className="flex justify-between border-t border-slate-200 pt-1.5 font-bold text-emerald-700 text-sm">
-                    <span>Gross Profit:</span>
+                  <div className="flex justify-between border-t border-slate-200 pt-1.5 font-bold text-emerald-700">
+                    <span>Gross Profit / Margin:</span>
                     <span className="font-mono">{formatPKR(detailEntry.grossProfit)}</span>
                   </div>
-                  <div className="flex justify-between text-slate-600 pt-1 border-t border-slate-200">
+                  <div className="flex justify-between text-slate-700 border-t border-slate-200 pt-1.5">
                     <span>Actual Collections:</span>
                     <span className="font-mono">{formatPKR(detailEntry.collections)}</span>
                   </div>
                   {detailEntry.outstanding > 0 && (
-                    <div className="flex justify-between text-amber-700">
-                      <span>Remaining Balance:</span>
+                    <div className="flex justify-between text-amber-700 font-semibold">
+                      <span>Uncollected Outstanding:</span>
                       <span className="font-mono">{formatPKR(detailEntry.outstanding)}</span>
                     </div>
                   )}
@@ -1168,11 +1211,15 @@ export const PharmacyOperatingProfitReportPage: React.FC<Props> = ({ onNavigate 
               ) : (
                 <div className="space-y-2 bg-slate-50 p-3 rounded-lg border border-slate-200">
                   <div className="flex justify-between">
-                    <span className="text-slate-600">Expense Type:</span>
-                    <span className="font-medium">{detailEntry.raw?.category || 'Operating Expense'}</span>
+                    <span className="text-slate-600">Expense Category:</span>
+                    <span className="font-semibold text-slate-900">{detailEntry.raw?.category || 'Operating Expense'}</span>
                   </div>
-                  <div className="flex justify-between font-bold text-rose-700 border-t border-slate-200 pt-1.5">
-                    <span>Recognized Operating Cost:</span>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">Payee / Vendor:</span>
+                    <span className="font-medium">{detailEntry.raw?.payeeOrVendor || '—'}</span>
+                  </div>
+                  <div className="flex justify-between border-t border-slate-200 pt-1.5 font-bold text-rose-700">
+                    <span>Approved Operating Expense:</span>
                     <span className="font-mono">{formatPKR(detailEntry.expenseAmount)}</span>
                   </div>
                 </div>

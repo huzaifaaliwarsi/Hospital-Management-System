@@ -6,28 +6,17 @@ import {
   RotateCcw,
   Eye,
   Filter,
-  Calendar,
-  CreditCard,
-  Building2,
-  User as UserIcon,
   ChevronLeft,
   ChevronRight,
-  TrendingUp,
-  DollarSign,
   AlertCircle,
   FileSpreadsheet,
   Download,
   Printer,
   X,
-  Layers,
-  ArrowUpRight,
-  ArrowDownRight,
-  Clock,
-  CheckCircle2,
 } from 'lucide-react';
 import apiClient from '../services/apiClient';
 import { useAuth } from '../context/AuthContext';
-import { formatPKR, formatDateTime, formatDate } from '../utils/format';
+import { formatPKR, formatDateTime } from '../utils/format';
 import { exportToCSV, exportToExcel, printFinancialReport } from '../utils/reportExportUtils';
 import { ALL_REPORTS_LIST } from '../components/ReportView';
 
@@ -217,7 +206,6 @@ export const PharmacyIncomeExpenseReportPage: React.FC<Props> = ({ onNavigate })
   });
 
   const totals = queryData?.totals;
-  const breakdown = queryData?.breakdown;
   const rawInvoices: any[] = queryData?.invoices || [];
   const rawExpenses: any[] = queryData?.expenses || [];
 
@@ -336,8 +324,8 @@ export const PharmacyIncomeExpenseReportPage: React.FC<Props> = ({ onNavigate })
     const columns = [
       { header: 'Date & Time', format: (r: UnifiedLedgerRow) => formatDateTime(r.date) },
       { header: 'Reference ID', key: 'reference' },
-      { header: 'Type / Channel', key: 'channel' },
-      { header: 'Description / Payee', key: 'description' },
+      { header: 'Channel / Type', key: 'channel' },
+      { header: 'Description / Customer / Payee', key: 'description' },
       { header: 'Recognized Income (PKR)', format: (r: UnifiedLedgerRow) => (r.income > 0 ? formatPKR(r.income) : '—'), numeric: true },
       { header: 'Actual Collections (PKR)', format: (r: UnifiedLedgerRow) => (r.collections > 0 ? formatPKR(r.collections) : '—'), numeric: true },
       { header: 'Operating Expenses (PKR)', format: (r: UnifiedLedgerRow) => (r.expenses > 0 ? formatPKR(r.expenses) : '—'), numeric: true },
@@ -349,11 +337,10 @@ export const PharmacyIncomeExpenseReportPage: React.FC<Props> = ({ onNavigate })
 
     const periodLabel = `${appliedFilters.fromDate} to ${appliedFilters.toDate}`;
     const summaryRows = [
-      { label: 'Total Recognized Sales / Income', value: formatPKR(totals?.netBilling || filteredTotals.income) },
-      { label: 'Actual Collections Received', value: formatPKR(totals?.collections || filteredTotals.collections) },
-      { label: 'Operating Expenses', value: formatPKR(totals?.operatingExpenses || filteredTotals.expenses) },
-      { label: 'Net Cash Movement (Collections − Expenses)', value: formatPKR((Number(totals?.collections || 0) - Number(totals?.operatingExpenses || 0))) },
-      { label: 'Outstanding Receivables', value: formatPKR(totals?.outstanding || filteredTotals.outstanding) },
+      { label: 'Total Customer Collections (Net of Customer Returns & Reversals)', value: formatPKR(totals?.collections ?? filteredTotals.collections) },
+      { label: 'Actual Paid Operating Expenses (Utilities, Rent, Consumables & Overheads)', value: formatPKR(totals?.operatingExpenses ?? filteredTotals.expenses) },
+      { label: 'Net Cash Movement (Collections − Expenses)', value: formatPKR(Number(totals?.collections ?? filteredTotals.collections) - Number(totals?.operatingExpenses ?? filteredTotals.expenses)) },
+      { label: 'Current Remaining Customer Dues (Outstanding Receivables)', value: formatPKR(totals?.outstanding ?? filteredTotals.outstanding) },
     ];
 
     const opts = {
@@ -373,7 +360,7 @@ export const PharmacyIncomeExpenseReportPage: React.FC<Props> = ({ onNavigate })
   };
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 space-y-5 max-w-[1700px] mx-auto">
+    <div className="min-w-0 max-w-full space-y-4 p-4 sm:p-6 lg:p-8 max-w-[1700px] mx-auto">
       {/* ── Top Report Switcher Tabs (Management/Admins) ─────────────── */}
       {onNavigate && !isSales && (
         <div className="flex items-center gap-1.5 overflow-x-auto pb-2 border-b border-slate-200 -mt-1">
@@ -386,7 +373,7 @@ export const PharmacyIncomeExpenseReportPage: React.FC<Props> = ({ onNavigate })
                 onClick={() => onNavigate(tab.page)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition cursor-pointer ${
                   isActive
-                    ? 'bg-[#0f766e] text-white shadow-xs'
+                    ? 'bg-[#0c6b50] text-white shadow-xs'
                     : 'bg-white text-slate-600 hover:text-slate-900 hover:bg-slate-100 border border-slate-200'
                 }`}
               >
@@ -397,364 +384,342 @@ export const PharmacyIncomeExpenseReportPage: React.FC<Props> = ({ onNavigate })
         </div>
       )}
 
-      {/* ── Page Header ────────────────────────────────────────────── */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <Receipt className="h-5 w-5 text-[#0f766e]" />
-              <h1 className="text-xl font-bold text-slate-900 tracking-tight">Pharmacy Income & Expense</h1>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-teal-50 text-teal-800 border border-teal-200">
-                ERP LEDGER
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 mt-1">
-              Complete transactional ledger of recognized medicine sales, collections, and operating expenses.
-            </p>
+      {/* ── Page Header (Exact HMS-Style Simple Heading & Subtitle) ── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-1 border-b border-slate-200">
+        <div>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-bold text-slate-900 tracking-tight">Income &amp; Expense</h1>
+            <span className="text-xs text-slate-400 font-semibold uppercase tracking-wider">
+              (Accrual &amp; Cash)
+            </span>
           </div>
-
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => handleExport('excel')}
-              className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 shadow-xs cursor-pointer"
-            >
-              <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" />
-              <span>Excel</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleExport('csv')}
-              className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 shadow-xs cursor-pointer"
-            >
-              <Download className="h-3.5 w-3.5 text-blue-600" />
-              <span>CSV</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleExport('print')}
-              className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 shadow-xs cursor-pointer"
-            >
-              <Printer className="h-3.5 w-3.5 text-slate-600" />
-              <span>Print / PDF</span>
-            </button>
-          </div>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Consolidated pharmacy medicine sales, collections, recognized expenses, payments and outstanding balances.
+          </p>
         </div>
       </div>
 
-      {/* ── Financial Summary KPI Banner ────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        {/* Total Sales / Income */}
-        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-xs">
-          <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-[11px] font-bold uppercase tracking-wider">Recognized Income</span>
-            <DollarSign className="h-4 w-4 text-teal-600" />
-          </div>
-          <div className="text-base font-bold text-slate-900 font-mono">
-            {formatPKR(totals?.netBilling ?? filteredTotals.income)}
-          </div>
-          <div className="text-[10px] text-slate-500 mt-0.5">
-            Gross: {formatPKR(totals?.grossSales ?? 0)}
-          </div>
+      {/* ── Advanced Filter Panel (Compact Bordered Card) ── */}
+      <div className="bg-white rounded-xl border border-slate-200 p-3 shadow-xs space-y-2.5">
+        <div className="flex items-center gap-2 text-xs font-bold text-slate-700 pb-1.5 border-b border-slate-100">
+          <Filter className="h-3.5 w-3.5 text-[#0c6b50]" />
+          <span>Advanced Ledger Filters</span>
         </div>
 
-        {/* Actual Collections */}
-        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-xs">
-          <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-[11px] font-bold uppercase tracking-wider">Actual Collections</span>
-            <ArrowUpRight className="h-4 w-4 text-emerald-600" />
-          </div>
-          <div className="text-base font-bold text-emerald-700 font-mono">
-            {formatPKR(totals?.collections ?? filteredTotals.collections)}
-          </div>
-          <div className="text-[10px] text-slate-500 mt-0.5">
-            Cash in hand & digital
-          </div>
-        </div>
-
-        {/* Operating Expenses */}
-        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-xs">
-          <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-[11px] font-bold uppercase tracking-wider">Operating Expenses</span>
-            <ArrowDownRight className="h-4 w-4 text-rose-600" />
-          </div>
-          <div className="text-base font-bold text-rose-700 font-mono">
-            {formatPKR(totals?.operatingExpenses ?? filteredTotals.expenses)}
-          </div>
-          <div className="text-[10px] text-slate-500 mt-0.5">
-            Overhead & operational
-          </div>
-        </div>
-
-        {/* Net Cash Movement */}
-        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-xs">
-          <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-[11px] font-bold uppercase tracking-wider">Net Cash Flow</span>
-            <TrendingUp className="h-4 w-4 text-[#0f766e]" />
-          </div>
-          <div className={`text-base font-bold font-mono ${
-            (Number(totals?.collections || filteredTotals.collections) - Number(totals?.operatingExpenses || filteredTotals.expenses)) >= 0
-              ? 'text-[#0f766e]'
-              : 'text-rose-600'
-          }`}>
-            {formatPKR(Number(totals?.collections ?? filteredTotals.collections) - Number(totals?.operatingExpenses ?? filteredTotals.expenses))}
-          </div>
-          <div className="text-[10px] text-slate-500 mt-0.5">
-            Collections − Expenses
-          </div>
-        </div>
-
-        {/* Outstanding Receivables */}
-        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-xs col-span-2 sm:col-span-1">
-          <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-[11px] font-bold uppercase tracking-wider">Outstanding</span>
-            <AlertCircle className="h-4 w-4 text-amber-600" />
-          </div>
-          <div className="text-base font-bold text-amber-700 font-mono">
-            {formatPKR(totals?.outstanding ?? filteredTotals.outstanding)}
-          </div>
-          <div className="text-[10px] text-slate-500 mt-0.5">
-            Uncollected balance
-          </div>
-        </div>
-      </div>
-
-      {/* ── Compact Filter Bar ──────────────────────────────────────── */}
-      <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-xs">
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5">
-          {/* Preset */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          {/* 1. Period Preset */}
           <div>
-            <label className="block text-[11px] font-semibold text-slate-700 mb-1">Period Preset</label>
+            <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">Period</label>
             <select
               value={preset}
               onChange={(e) => handlePresetChange(e.target.value as PeriodPreset)}
-              className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0f766e]"
+              className="w-full h-8.5 px-2.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-800 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#0c6b50]"
             >
               {PERIOD_OPTIONS.map((p) => (
-                <option key={p.value} value={p.value}>{p.label}</option>
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
               ))}
             </select>
           </div>
 
-          {/* From Date */}
+          {/* 2. From Date */}
           <div>
-            <label className="block text-[11px] font-semibold text-slate-700 mb-1">From Date</label>
+            <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">From Date</label>
             <input
               type="date"
               value={fromDate}
-              onChange={(e) => {
-                setFromDate(e.target.value);
-                setPreset('custom');
-              }}
-              className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0f766e]"
+              disabled={preset !== 'custom'}
+              onChange={(e) => setFromDate(e.target.value)}
+              className="w-full h-8.5 px-2.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-800 bg-slate-50 disabled:bg-slate-100 disabled:text-slate-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#0c6b50]"
             />
           </div>
 
-          {/* To Date */}
+          {/* 3. To Date */}
           <div>
-            <label className="block text-[11px] font-semibold text-slate-700 mb-1">To Date</label>
+            <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">To Date</label>
             <input
               type="date"
               value={toDate}
-              onChange={(e) => {
-                setToDate(e.target.value);
-                setPreset('custom');
-              }}
-              className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0f766e]"
+              disabled={preset !== 'custom'}
+              onChange={(e) => setToDate(e.target.value)}
+              className="w-full h-8.5 px-2.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-800 bg-slate-50 disabled:bg-slate-100 disabled:text-slate-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#0c6b50]"
             />
           </div>
 
-          {/* Type Filter */}
+          {/* 4. Transaction Type */}
           <div>
-            <label className="block text-[11px] font-semibold text-slate-700 mb-1">Transaction Type</label>
+            <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">Transaction Type</label>
             <select
               value={typeFilter}
               onChange={(e) => setTypeFilter(e.target.value)}
-              className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0f766e]"
+              className="w-full h-8.5 px-2.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-800 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#0c6b50]"
             >
               {TYPE_OPTIONS.map((t) => (
-                <option key={t.value} value={t.value}>{t.label}</option>
+                <option key={t.value} value={t.value}>
+                  {t.label}
+                </option>
               ))}
             </select>
           </div>
 
-          {/* Channel Filter */}
+          {/* 5. Channel / Source */}
           <div>
-            <label className="block text-[11px] font-semibold text-slate-700 mb-1">Channel / Source</label>
+            <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">Channel / Source</label>
             <select
               value={channelFilter}
               onChange={(e) => setChannelFilter(e.target.value)}
-              className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0f766e]"
+              className="w-full h-8.5 px-2.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-800 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#0c6b50]"
             >
               {CHANNEL_OPTIONS.map((c) => (
-                <option key={c.value} value={c.value}>{c.label}</option>
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
               ))}
             </select>
           </div>
 
-          {/* Payment Method */}
+          {/* 6. Payment Method */}
           <div>
-            <label className="block text-[11px] font-semibold text-slate-700 mb-1">Payment Method</label>
+            <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">Payment Method</label>
             <select
               value={methodFilter}
               onChange={(e) => setMethodFilter(e.target.value)}
-              className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0f766e]"
+              className="w-full h-8.5 px-2.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-800 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#0c6b50]"
             >
               {PAYMENT_METHODS.map((m) => (
-                <option key={m.value} value={m.value}>{m.label}</option>
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
               ))}
             </select>
           </div>
         </div>
 
-        {/* Second Row: Search and Action Buttons */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-3 pt-3 border-t border-slate-200">
-          <div className="relative w-full sm:w-80">
-            <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-slate-400" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleApply()}
-              placeholder="Search reference #, customer, payee, staff..."
-              className="w-full text-xs pl-8 pr-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0f766e]"
-            />
-          </div>
-
-          <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-            <button
-              type="button"
-              onClick={handleReset}
-              className="px-3 py-2 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 flex items-center gap-1.5 cursor-pointer"
-            >
-              <RotateCcw className="h-3.5 w-3.5 text-slate-500" />
-              <span>Reset</span>
-            </button>
-            <button
-              type="button"
-              onClick={handleApply}
-              className="px-4 py-2 text-xs font-bold rounded-lg bg-[#0f766e] text-white hover:bg-[#115e59] shadow-xs flex items-center gap-1.5 cursor-pointer"
-            >
-              <Filter className="h-3.5 w-3.5" />
-              <span>Apply Filters</span>
-            </button>
-          </div>
+        {/* Action Buttons Row */}
+        <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-100">
+          <button
+            type="button"
+            onClick={handleReset}
+            title="Reset all filters"
+            className="h-8 px-3 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            <span>Reset</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleApply}
+            className="h-8 px-4 rounded-lg bg-[#0c6b50] hover:bg-[#09523d] text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+          >
+            <Filter className="h-3.5 w-3.5" />
+            <span>Apply Filters</span>
+          </button>
         </div>
       </div>
 
-      {/* ── Main ERP Financial Table ─────────────────────────────────── */}
-      <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
+      {/* ── ERP Table Container Card ── */}
+      <div className="bg-white rounded-xl border border-slate-300 shadow-xs overflow-hidden">
+        {/* Table Subheader Bar with Search & Export Buttons (matching HMS) */}
+        <div className="p-3.5 border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-50/80">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h2 className="text-sm font-bold text-slate-900 tracking-tight">Income &amp; Expense Ledger</h2>
+            <span className="text-xs text-slate-500 font-medium">
+              ({totalRecords} records)
+            </span>
+            <span className="text-xs text-slate-400 font-medium border-l border-slate-200 pl-2">
+              Period: <span className="font-semibold text-slate-700">{appliedFilters.fromDate} to {appliedFilters.toDate}</span>
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Search Input */}
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search reference, customer, payee…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleApply()}
+                className="w-64 h-8 pl-8 pr-3 rounded-lg border border-slate-200 text-xs font-medium text-slate-800 bg-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-[#0c6b50]"
+              />
+            </div>
+
+            {/* Export Buttons */}
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => handleExport('excel')}
+                disabled={filteredRows.length === 0}
+                className="h-8 px-2.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50"
+              >
+                <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" />
+                <span>Excel</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleExport('csv')}
+                disabled={filteredRows.length === 0}
+                className="h-8 px-2.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50"
+              >
+                <Download className="h-3.5 w-3.5 text-blue-600" />
+                <span>CSV</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleExport('print')}
+                disabled={filteredRows.length === 0}
+                className="h-8 px-2.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50"
+              >
+                <Printer className="h-3.5 w-3.5 text-slate-600" />
+                <span>Print / PDF</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Table View */}
         {isLoading ? (
-          <div className="p-12 text-center">
-            <div className="inline-block h-8 w-8 animate-spin rounded-full border-3 border-solid border-[#0f766e] border-r-transparent" />
-            <div className="text-xs font-medium text-slate-500 mt-2">Loading financial transactions...</div>
+          <div className="py-24 flex flex-col items-center justify-center gap-3 text-slate-500">
+            <div className="h-8 w-8 border-2 border-[#0c6b50] border-t-transparent rounded-full animate-spin" />
+            <p className="text-xs font-semibold">Loading daily income &amp; expense transactions…</p>
           </div>
         ) : error ? (
-          <div className="p-8 text-center text-rose-600 text-xs">
-            Failed to load Income & Expense data.
+          <div className="py-16 text-center">
+            <AlertCircle className="h-8 w-8 text-rose-500 mx-auto mb-2" />
+            <p className="text-xs font-bold text-slate-800">Failed to load Income &amp; Expense data.</p>
           </div>
-        ) : paginatedRows.length === 0 ? (
-          <div className="p-12 text-center text-slate-500 text-xs">
-            No transactions found for the selected period and filters.
+        ) : filteredRows.length === 0 ? (
+          <div className="py-20 text-center">
+            <Receipt className="h-10 w-10 text-slate-300 mx-auto mb-2" />
+            <p className="text-xs font-bold text-slate-700">No transactions found for the selected filters.</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">Try adjusting the period, channel, or transaction type.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs border-collapse">
+          <div className="w-full min-w-0 max-w-full overflow-x-auto" role="region" aria-label="Income and expense transactions" tabIndex={0}>
+            <table className="w-full min-w-[1300px] table-fixed border-collapse text-left text-xs [&_td]:align-middle [&_th]:align-middle [&_th]:whitespace-normal [&_th]:break-normal [&_th]:leading-4">
+              <colgroup>
+                <col style={{ width: 44 }} />
+                <col style={{ width: 140 }} />
+                <col style={{ width: 130 }} />
+                <col style={{ width: 120 }} />
+                <col style={{ width: 240 }} />
+                <col style={{ width: 100 }} />
+                <col style={{ width: 120 }} />
+                <col style={{ width: 120 }} />
+                <col style={{ width: 120 }} />
+                <col style={{ width: 110 }} />
+                <col style={{ width: 110 }} />
+                <col style={{ width: 120 }} />
+                <col style={{ width: 44 }} />
+              </colgroup>
               <thead>
-                <tr className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold uppercase tracking-wider text-[11px]">
-                  <th className="py-2.5 px-3 text-left border-r border-slate-200 whitespace-nowrap">Date & Time</th>
-                  <th className="py-2.5 px-3 text-left border-r border-slate-200 whitespace-nowrap">Reference #</th>
-                  <th className="py-2.5 px-3 text-center border-r border-slate-200 whitespace-nowrap">Channel / Type</th>
-                  <th className="py-2.5 px-3 text-left border-r border-slate-200 min-w-[200px]">Description / Customer / Payee</th>
-                  <th className="py-2.5 px-3 text-right border-r border-slate-200 whitespace-nowrap">Recognized Income</th>
-                  <th className="py-2.5 px-3 text-right border-r border-slate-200 whitespace-nowrap">Collections</th>
-                  <th className="py-2.5 px-3 text-right border-r border-slate-200 whitespace-nowrap">Expenses</th>
-                  <th className="py-2.5 px-3 text-center border-r border-slate-200 whitespace-nowrap">Method</th>
-                  <th className="py-2.5 px-3 text-right border-r border-slate-200 whitespace-nowrap">Outstanding</th>
-                  <th className="py-2.5 px-3 text-left border-r border-slate-200 whitespace-nowrap">Staff / Collector</th>
-                  <th className="py-2.5 px-3 text-center w-12">Action</th>
+                <tr className="bg-[#f1f5f9] border-b border-slate-300 text-slate-800 text-[11px] font-bold uppercase tracking-wider sticky top-0 z-10 whitespace-nowrap">
+                  <th className="w-12 py-2.5 px-3 text-center border-r border-slate-300 font-bold text-slate-700">#</th>
+                  <th className="py-2.5 px-3 text-left border-r border-slate-300">Date &amp; Time</th>
+                  <th className="py-2.5 px-3 text-left border-r border-slate-300">Reference ID</th>
+                  <th className="py-2.5 px-3 text-left border-r border-slate-300">Channel / Type</th>
+                  <th className="py-2.5 px-3 text-left border-r border-slate-300">Description / Payee</th>
+                  <th className="py-2.5 px-3 text-left border-r border-slate-300">Status</th>
+                  <th className="py-2.5 px-3 text-right border-r border-slate-300">Recognized Income</th>
+                  <th className="py-2.5 px-3 text-right border-r border-slate-300">Collections</th>
+                  <th className="py-2.5 px-3 text-right border-r border-slate-300">Expenses</th>
+                  <th className="py-2.5 px-3 text-left border-r border-slate-300">Payment Method</th>
+                  <th className="py-2.5 px-3 text-right border-r border-slate-300">Outstanding</th>
+                  <th className="py-2.5 px-3 text-left border-r border-slate-300">Staff / Collector</th>
+                  <th className="py-2.5 px-2 text-center w-12">View</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-150">
-                {paginatedRows.map((row) => (
-                  <tr key={row.id} className="hover:bg-slate-50/70 transition">
-                    {/* Date */}
-                    <td className="py-2 px-3 text-slate-600 border-r border-slate-200 whitespace-nowrap">
+              <tbody className="text-slate-800 font-medium">
+                {paginatedRows.map((row, idx) => (
+                  <tr
+                    key={row.id}
+                    className="border-b border-slate-200 hover:bg-slate-50/90 transition-colors cursor-pointer text-slate-800 last:border-b-0"
+                    onClick={() => setDetailRow(row)}
+                  >
+                    {/* Serial Number */}
+                    <td className="py-2.5 px-3 text-center border-r border-slate-200 text-slate-500 font-mono text-[11px] bg-slate-50/60 whitespace-nowrap">
+                      {(page - 1) * limit + idx + 1}
+                    </td>
+
+                    {/* Date & Time */}
+                    <td className="py-2.5 px-3 whitespace-nowrap font-mono text-slate-700 text-[11.5px] border-r border-slate-200">
                       {formatDateTime(row.date)}
                     </td>
 
-                    {/* Reference */}
-                    <td className="py-2 px-3 border-r border-slate-200 font-mono font-medium text-slate-900 whitespace-nowrap">
+                    {/* Reference ID */}
+                    <td className="py-2.5 px-3 whitespace-normal font-mono font-semibold text-[#0c6b50] text-[11.5px] hover:underline border-r border-slate-200">
                       {row.reference}
                     </td>
 
-                    {/* Type / Channel */}
-                    <td className="py-2 px-3 text-center border-r border-slate-200 whitespace-nowrap">
+                    {/* Channel / Type */}
+                    <td className="py-2.5 px-3 whitespace-normal text-xs border-r border-slate-200">
                       {row.channel === 'HMS' ? (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                          HMS Presc
-                        </span>
+                        <span className="font-bold text-indigo-700">HMS Dispense</span>
                       ) : row.channel === 'RETAIL' ? (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                          Retail POS
-                        </span>
+                        <span className="font-bold text-[#0c6b50]">Retail POS</span>
                       ) : (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                          Expense
-                        </span>
+                        <span className="font-bold text-amber-700">Expense</span>
                       )}
                     </td>
 
-                    {/* Description */}
-                    <td className="py-2 px-3 border-r border-slate-200 text-slate-800">
-                      <div className="truncate max-w-[260px]" title={row.description}>
-                        {row.description}
-                      </div>
+                    {/* Description / Customer / Payee */}
+                    <td className="py-2.5 px-3 max-w-[240px] truncate border-r border-slate-200 overflow-hidden" title={row.description}>
+                      <div className="font-bold text-slate-900 text-xs truncate block">{row.description}</div>
+                    </td>
+
+                    {/* Status */}
+                    <td className="py-2.5 px-3 whitespace-normal text-xs border-r border-slate-200">
+                      {row.status.toUpperCase() === 'PAID' || row.status.toUpperCase() === 'COMPLETED' || row.status.toUpperCase() === 'APPROVED' ? (
+                        <span className="font-bold text-emerald-600">{row.status}</span>
+                      ) : row.status.toUpperCase() === 'PARTIALLY_PAID' || row.status.toUpperCase() === 'PARTIAL' ? (
+                        <span className="font-bold text-amber-600">{row.status}</span>
+                      ) : (
+                        <span className="font-semibold text-slate-500">{row.status}</span>
+                      )}
                     </td>
 
                     {/* Recognized Income */}
-                    <td className="py-2 px-3 text-right border-r border-slate-200 font-mono text-slate-900 whitespace-nowrap">
-                      {row.income > 0 ? formatPKR(row.income) : '—'}
+                    <td className="py-2.5 px-3 text-right whitespace-nowrap text-xs font-mono font-semibold border-r border-slate-200 text-slate-900">
+                      {row.income > 0 ? formatPKR(row.income) : <span className="text-slate-400 font-normal">—</span>}
                     </td>
 
                     {/* Collections */}
-                    <td className="py-2 px-3 text-right border-r border-slate-200 font-mono font-bold text-emerald-700 whitespace-nowrap">
-                      {row.collections > 0 ? formatPKR(row.collections) : '—'}
+                    <td className="py-2.5 px-3 text-right whitespace-nowrap text-xs font-mono font-semibold border-r border-slate-200 text-emerald-700">
+                      {row.collections > 0 ? `+${formatPKR(row.collections)}` : <span className="text-slate-400 font-normal">—</span>}
                     </td>
 
-                    {/* Operating Expenses */}
-                    <td className="py-2 px-3 text-right border-r border-slate-200 font-mono font-bold text-rose-700 whitespace-nowrap">
-                      {row.expenses > 0 ? formatPKR(row.expenses) : '—'}
+                    {/* Expenses */}
+                    <td className="py-2.5 px-3 text-right whitespace-nowrap text-xs font-mono font-semibold border-r border-slate-200 text-rose-700">
+                      {row.expenses > 0 ? `-${formatPKR(row.expenses)}` : <span className="text-slate-400 font-normal">—</span>}
                     </td>
 
                     {/* Payment Method */}
-                    <td className="py-2 px-3 text-center border-r border-slate-200 text-[10px] font-medium text-slate-600 whitespace-nowrap">
-                      <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">
-                        {row.paymentMethod}
-                      </span>
+                    <td className="py-2.5 px-3 whitespace-normal text-slate-700 text-xs border-r border-slate-200">
+                      {row.paymentMethod || '—'}
                     </td>
 
                     {/* Outstanding */}
-                    <td className="py-2 px-3 text-right border-r border-slate-200 font-mono whitespace-nowrap">
-                      {row.outstanding > 0 ? (
-                        <span className="text-amber-700 font-semibold">{formatPKR(row.outstanding)}</span>
-                      ) : (
-                        <span className="text-slate-400">0</span>
-                      )}
+                    <td className="py-2.5 px-3 text-right whitespace-nowrap text-xs font-mono font-semibold border-r border-slate-200 text-amber-700">
+                      {row.outstanding > 0 ? formatPKR(row.outstanding) : <span className="text-slate-400 font-normal">0.00</span>}
                     </td>
 
-                    {/* User */}
-                    <td className="py-2 px-3 border-r border-slate-200 text-slate-700 whitespace-nowrap">
+                    {/* Staff / Collector */}
+                    <td className="py-2.5 px-3 whitespace-normal text-slate-700 text-xs border-r border-slate-200 truncate" title={row.user}>
                       {row.user}
                     </td>
 
-                    {/* Action */}
-                    <td className="py-2 px-3 text-center">
+                    {/* View Action */}
+                    <td className="py-2.5 px-2 text-center">
                       <button
                         type="button"
-                        onClick={() => setDetailRow(row)}
-                        className="p-1 rounded text-slate-500 hover:text-[#0f766e] hover:bg-slate-100 cursor-pointer transition"
-                        title="View Details"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDetailRow(row);
+                        }}
+                        className="p-1 rounded text-slate-400 hover:text-[#0c6b50] hover:bg-emerald-50 transition-colors cursor-pointer"
+                        title="View details"
                       >
                         <Eye className="h-4 w-4" />
                       </button>
@@ -763,29 +728,29 @@ export const PharmacyIncomeExpenseReportPage: React.FC<Props> = ({ onNavigate })
                 ))}
               </tbody>
 
-              {/* ── Sticky Summary Footer Row ──────────────────────── */}
+              {/* ── Table Column-Wise Totals Row (Matching HMS tfoot) ── */}
               <tfoot>
-                <tr className="bg-slate-100 border-t-2 border-slate-300 font-bold text-slate-900 text-xs">
-                  <td colSpan={4} className="py-2.5 px-3 text-right uppercase tracking-wider border-r border-slate-200">
-                    Totals (Filtered Period)
+                <tr className="bg-[#f1f5f9] font-bold text-slate-900 border-t-2 border-slate-300 text-xs whitespace-nowrap sticky bottom-0">
+                  <td colSpan={6} className="py-2.5 px-3 text-right uppercase tracking-wider text-slate-700 text-[10.5px] font-bold border-r border-slate-300">
+                    Matching Report Rows:
                   </td>
-                  <td className="py-2.5 px-3 text-right font-mono border-r border-slate-200 text-slate-900">
+                  <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900 border-r border-slate-300">
                     {formatPKR(filteredTotals.income)}
                   </td>
-                  <td className="py-2.5 px-3 text-right font-mono border-r border-slate-200 text-emerald-800">
-                    {formatPKR(filteredTotals.collections)}
+                  <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-700 border-r border-slate-300">
+                    {filteredTotals.collections > 0 ? `+${formatPKR(filteredTotals.collections)}` : formatPKR(0)}
                   </td>
-                  <td className="py-2.5 px-3 text-right font-mono border-r border-slate-200 text-rose-800">
-                    {formatPKR(filteredTotals.expenses)}
+                  <td className="py-2.5 px-3 text-right font-mono font-bold text-rose-700 border-r border-slate-300">
+                    {filteredTotals.expenses > 0 ? `-${formatPKR(filteredTotals.expenses)}` : formatPKR(0)}
                   </td>
-                  <td className="py-2.5 px-3 text-center border-r border-slate-200 text-[10px] text-slate-500 font-normal">
-                    Net: {formatPKR(filteredTotals.netCash)}
+                  <td className="py-2.5 px-3 text-center border-r border-slate-300 text-slate-400 font-normal">
+                    —
                   </td>
-                  <td className="py-2.5 px-3 text-right font-mono border-r border-slate-200 text-amber-800">
+                  <td className="py-2.5 px-3 text-right font-mono font-bold text-amber-700 border-r border-slate-300">
                     {formatPKR(filteredTotals.outstanding)}
                   </td>
-                  <td colSpan={2} className="py-2.5 px-3 text-slate-500 text-[11px] font-normal">
-                    {filteredRows.length} record{filteredRows.length === 1 ? '' : 's'}
+                  <td colSpan={2} className="py-2.5 px-3 text-center text-slate-400 font-normal">
+                    —
                   </td>
                 </tr>
               </tfoot>
@@ -793,55 +758,95 @@ export const PharmacyIncomeExpenseReportPage: React.FC<Props> = ({ onNavigate })
           </div>
         )}
 
-        {/* ── Pagination Controls ───────────────────────────────────── */}
-        <div className="p-3 border-t border-slate-200 bg-slate-50 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-600">
-          <div className="flex items-center gap-2">
-            <span>Show</span>
-            <select
-              value={limit}
-              onChange={(e) => {
-                setLimit(Number(e.target.value));
-                setPage(1);
-              }}
-              className="border border-slate-300 rounded p-1 bg-white text-slate-800 text-xs"
-            >
-              <option value={25}>25</option>
-              <option value={50}>50</option>
-              <option value={100}>100</option>
-            </select>
-            <span>entries · Page {page} of {totalPages} ({totalRecords} total transactions)</span>
-          </div>
+        {/* ── Financial Summary (Compact Full-Width Rows, matching HMS M01) ── */}
+        <table className="w-full border-collapse bg-white text-xs border-t border-slate-200" aria-label="Income and expense summary footer">
+          <tbody>
+            <tr className="text-slate-700 hover:bg-slate-50/50">
+              <th scope="row" className="border border-slate-200 px-4 py-2 text-left font-semibold">
+                Total Customer Collections (Net of Customer Returns &amp; Reversals)
+              </th>
+              <td className="w-48 whitespace-nowrap border border-slate-200 px-4 py-2 text-right font-mono font-bold tabular-nums text-slate-900">
+                {formatPKR(totals?.collections ?? filteredTotals.collections)}
+              </td>
+            </tr>
+            <tr className="text-slate-700 hover:bg-slate-50/50">
+              <th scope="row" className="border border-slate-200 px-4 py-2 text-left font-semibold">
+                Actual Paid Operating Expenses (Utilities, Rent, Consumables &amp; Overheads)
+              </th>
+              <td className="w-48 whitespace-nowrap border border-slate-200 px-4 py-2 text-right font-mono font-bold tabular-nums text-slate-900">
+                {formatPKR(totals?.operatingExpenses ?? filteredTotals.expenses)}
+              </td>
+            </tr>
+            <tr className="bg-emerald-50 text-[#0c6b50] font-bold hover:bg-emerald-100/50">
+              <th scope="row" className="border border-slate-200 px-4 py-2 text-left font-bold">
+                Net Cash Movement (Collections − Paid Expenses)
+              </th>
+              <td className="w-48 whitespace-nowrap border border-slate-200 px-4 py-2 text-right font-mono font-bold tabular-nums">
+                {formatPKR(Number(totals?.collections ?? filteredTotals.collections) - Number(totals?.operatingExpenses ?? filteredTotals.expenses))}
+              </td>
+            </tr>
+            <tr className="text-slate-700 hover:bg-slate-50/50">
+              <th scope="row" className="border border-slate-200 px-4 py-2 text-left font-semibold">
+                Current Remaining Customer Dues (Outstanding Receivables)
+              </th>
+              <td className="w-48 whitespace-nowrap border border-slate-200 px-4 py-2 text-right font-mono font-bold tabular-nums text-amber-700">
+                {formatPKR(totals?.outstanding ?? filteredTotals.outstanding)}
+              </td>
+            </tr>
+          </tbody>
+        </table>
 
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              className="px-2 py-1 rounded border border-slate-200 bg-white text-slate-700 disabled:opacity-40 hover:bg-slate-100 flex items-center gap-1 cursor-pointer"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-              <span>Previous</span>
-            </button>
-            <button
-              type="button"
-              disabled={page >= totalPages}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              className="px-2 py-1 rounded border border-slate-200 bg-white text-slate-700 disabled:opacity-40 hover:bg-slate-100 flex items-center gap-1 cursor-pointer"
-            >
-              <span>Next</span>
-              <ChevronRight className="h-3.5 w-3.5" />
-            </button>
+        {/* ── Pagination Footer Bar (Default 25 Rows, matching HMS) ── */}
+        {totalRecords > 0 && (
+          <div className="p-3 border-t border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-600">
+            <div className="flex items-center gap-2">
+              <span>Show</span>
+              <select
+                value={limit}
+                onChange={(e) => {
+                  setLimit(Number(e.target.value));
+                  setPage(1);
+                }}
+                className="h-7 px-2 rounded border border-slate-200 bg-white font-semibold text-slate-800"
+              >
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+              <span>entries · Page {page} of {totalPages} ({totalRecords} records)</span>
+            </div>
+
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                className="px-2.5 py-1 rounded border border-slate-200 bg-white text-slate-700 font-semibold disabled:opacity-40 hover:bg-slate-100 flex items-center gap-1 cursor-pointer transition"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+                <span>Previous</span>
+              </button>
+              <button
+                type="button"
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                className="px-2.5 py-1 rounded border border-slate-200 bg-white text-slate-700 font-semibold disabled:opacity-40 hover:bg-slate-100 flex items-center gap-1 cursor-pointer transition"
+              >
+                <span>Next</span>
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
-      {/* ── Transaction Detail Modal ──────────────────────────────────── */}
+      {/* ── Transaction Detail Modal ── */}
       {detailRow && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-lg w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
             <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Receipt className="h-4 w-4 text-[#0f766e]" />
+                <Receipt className="h-4 w-4 text-[#0c6b50]" />
                 <h3 className="font-bold text-sm text-slate-900">Transaction Details</h3>
                 <span className="font-mono text-xs px-2 py-0.5 rounded bg-slate-200 text-slate-800">
                   {detailRow.reference}
@@ -859,11 +864,11 @@ export const PharmacyIncomeExpenseReportPage: React.FC<Props> = ({ onNavigate })
             <div className="p-5 space-y-4 text-xs">
               <div className="grid grid-cols-2 gap-3 pb-3 border-b border-slate-150">
                 <div>
-                  <span className="text-slate-500 block text-[11px]">Date & Time</span>
+                  <span className="text-slate-500 block text-[11px]">Date &amp; Time</span>
                   <span className="font-medium text-slate-900">{formatDateTime(detailRow.date)}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block text-[11px]">Transaction Type</span>
+                  <span className="text-slate-500 block text-[11px]">Channel / Type</span>
                   <span className="font-semibold text-slate-900">{detailRow.channel}</span>
                 </div>
                 <div>
