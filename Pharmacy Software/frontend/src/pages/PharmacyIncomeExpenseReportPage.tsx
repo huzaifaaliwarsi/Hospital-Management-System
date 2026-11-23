@@ -66,7 +66,8 @@ export interface UnifiedLedgerRow {
   id: string;
   date: string;
   reference: string;
-  sourceType: 'INVOICE' | 'EXPENSE';
+  sourceType: 'INVOICE' | 'COLLECTION' | 'RETURN' | 'EXPENSE';
+  transactionType: 'Original Sale' | 'Outstanding Invoice Collection' | 'Return / Refund' | 'Operating Expense';
   channel: 'RETAIL' | 'HMS' | 'EXPENSE';
   description: string;
   income: number;
@@ -76,6 +77,8 @@ export interface UnifiedLedgerRow {
   outstanding: number;
   user: string;
   status: string;
+  invoiceRef?: string;
+  receiptNumber?: string;
   raw: any;
 }
 
@@ -209,35 +212,207 @@ export const PharmacyIncomeExpenseReportPage: React.FC<Props> = ({ onNavigate })
   const rawInvoices: any[] = queryData?.invoices || [];
   const rawExpenses: any[] = queryData?.expenses || [];
 
-  // Build Unified Ledger Rows
+  // Build Unified Ledger Rows with Multi-Collection Split
   const allLedgerRows = useMemo<UnifiedLedgerRow[]>(() => {
     const rows: UnifiedLedgerRow[] = [];
 
-    // 1. Invoices
-    rawInvoices.forEach((inv) => {
-      const net = Number(inv.netBilling || inv.grossSales || 0);
-      const col = Number(inv.collections || 0);
-      const out = Number(inv.outstanding || 0);
+    // Helper to format ISO date string to PKT YYYY-MM-DD
+    const toDateKey = (d: string | Date | undefined) => {
+      if (!d) return '';
+      const dt = new Date(d);
+      if (isNaN(dt.getTime())) return '';
+      return new Date(dt.getTime() + 5 * 3600000).toISOString().slice(0, 10);
+    };
 
+    // 1. Invoices & Detailed Payment Collections
+    rawInvoices.forEach((inv) => {
+      const net = Number(inv.netBilling || inv.grossSales || inv.total || 0);
+      const invoiceDay = toDateKey(inv.createdAt);
+
+      const rawPayments: any[] = (inv.payments || []).slice().sort((a: any, b: any) =>
+        new Date(a.paidAt).getTime() - new Date(b.paidAt).getTime() || String(a.id).localeCompare(String(b.id))
+      );
+
+      const rawEvents: any[] = (inv.financialEvents || []).slice().sort((a: any, b: any) =>
+        new Date(a.occurredAt || 0).getTime() - new Date(b.occurredAt || 0).getTime() || String(a.id).localeCompare(String(b.id))
+      );
+
+      // If no payments breakdown returned, use single-row fallback
+      if (rawPayments.length === 0 && rawEvents.length === 0) {
+        const col = Number(inv.collections || 0);
+        const out = Number(inv.outstanding || 0);
+        rows.push({
+          id: `inv-${inv.invoiceNumber}`,
+          date: inv.createdAt,
+          reference: inv.invoiceNumber,
+          sourceType: 'INVOICE',
+          transactionType: 'Original Sale',
+          channel: inv.channel === 'HMS' ? 'HMS' : 'RETAIL',
+          description: inv.customerName || (inv.channel === 'HMS' ? 'HMS Inpatient Prescription' : 'Walk-In Customer'),
+          income: net,
+          collections: col,
+          expenses: 0,
+          paymentMethod: inv.paymentMethod || (col > 0 ? 'CASH' : 'CREDIT'),
+          outstanding: out,
+          user: inv.collectedBy || inv.soldBy || 'Staff',
+          status: inv.status || 'POSTED',
+          invoiceRef: inv.invoiceNumber,
+          receiptNumber: inv.invoiceNumber,
+          raw: inv,
+        });
+        return;
+      }
+
+      // Classify Initial Payments (made on invoice creation date) vs Subsequent Outstanding Collections
+      const firstPositivePayment = rawPayments.find((p: any) => Number(p.amount) > 0);
+      const isInitialPayment = (p: any) => {
+        if (p.isInitial === true) return true;
+        if (p.isInitial === false) return false;
+        const pDay = toDateKey(p.paidAt);
+        if (new Date(p.paidAt).getTime() === new Date(inv.createdAt).getTime()) return true;
+        if (p.id === firstPositivePayment?.id && pDay === invoiceDay) return true;
+        return false;
+      };
+
+      const initialPayments = rawPayments.filter(isInitialPayment);
+      const subsequentPayments = rawPayments.filter((p: any) => !isInitialPayment(p));
+
+      // Initial HMS event on creation day
+      const firstHmsEvent = rawEvents.find(
+        (e: any) => (e.kind || '').startsWith('HMS_') && e.occurredAt && Number(e.collectionDelta) > 0
+      );
+      const isInitialHms = firstHmsEvent && toDateKey(firstHmsEvent.occurredAt) === invoiceDay;
+      const initialHmsEvent = isInitialHms ? firstHmsEvent : null;
+      const subsequentEvents = rawEvents.filter((e: any) => e.id !== initialHmsEvent?.id);
+
+      const initialCollected =
+        initialPayments.reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0) +
+        Number(initialHmsEvent?.collectionDelta || 0);
+
+      const initialReceipt = [
+        ...initialPayments.map((p: any) => p.reference || `PAY-${String(p.id || '').slice(0, 8).toUpperCase()}`),
+        initialHmsEvent?.reference,
+      ].filter(Boolean).join(', ') || inv.invoiceNumber;
+
+      const initialMethod = [
+        ...initialPayments.map((p: any) => p.method),
+        initialHmsEvent?.method,
+      ].filter(Boolean).join(', ') || (initialCollected > 0 ? 'CASH' : 'CREDIT');
+
+      const initialCollector = [
+        ...initialPayments.map((p: any) => p.collectedByName),
+        initialHmsEvent ? (initialHmsEvent.actorId || 'HMS Front Desk') : null,
+      ].filter(Boolean).join(', ') || inv.collectedBy || inv.soldBy || 'Staff';
+
+      let runningBalance = net - initialCollected;
+      const initialOutstanding = Math.max(0, runningBalance);
+
+      // 1. Original Sale Row
       rows.push({
         id: `inv-${inv.invoiceNumber}`,
         date: inv.createdAt,
         reference: inv.invoiceNumber,
         sourceType: 'INVOICE',
+        transactionType: 'Original Sale',
         channel: inv.channel === 'HMS' ? 'HMS' : 'RETAIL',
         description: inv.customerName || (inv.channel === 'HMS' ? 'HMS Inpatient Prescription' : 'Walk-In Customer'),
         income: net,
-        collections: col,
+        collections: initialCollected,
         expenses: 0,
-        paymentMethod: inv.paymentMethod || (col > 0 ? 'CASH' : 'CREDIT'),
-        outstanding: out,
-        user: inv.collectedBy || inv.soldBy || 'Staff',
-        status: inv.status || 'POSTED',
+        paymentMethod: initialMethod,
+        outstanding: initialOutstanding,
+        user: inv.soldBy || initialCollector,
+        status: initialOutstanding <= 0 ? 'PAID' : (initialCollected > 0 ? 'PARTIALLY_PAID' : 'UNPAID'),
+        invoiceRef: inv.invoiceNumber,
+        receiptNumber: initialReceipt,
         raw: inv,
+      });
+
+      // 2. Subsequent Outstanding Invoice Collections
+      subsequentPayments.forEach((p: any) => {
+        const pAmt = Number(p.amount || 0);
+        runningBalance = Math.max(0, runningBalance - pAmt);
+        const outstandingAfterReceipt = runningBalance;
+        const pReceipt = p.reference || `PAY-${String(p.id || '').slice(0, 8).toUpperCase()}`;
+        const pCollector = p.collectedByName || 'Staff';
+
+        rows.push({
+          id: `pay-${p.id}`,
+          date: p.paidAt,
+          reference: pReceipt,
+          sourceType: 'COLLECTION',
+          transactionType: 'Outstanding Invoice Collection',
+          channel: inv.channel === 'HMS' ? 'HMS' : 'RETAIL',
+          description: `Outstanding Collection — ${inv.invoiceNumber}${inv.customerName ? ` (${inv.customerName})` : ''}`,
+          income: 0,
+          collections: pAmt,
+          expenses: 0,
+          paymentMethod: p.method || 'CASH',
+          outstanding: outstandingAfterReceipt,
+          user: pCollector,
+          status: outstandingAfterReceipt <= 0 ? 'PAID' : 'COLLECTED',
+          invoiceRef: inv.invoiceNumber,
+          receiptNumber: pReceipt,
+          raw: { ...p, linkedInvoice: inv },
+        });
+      });
+
+      // 3. Subsequent Returns & Reconciliations
+      subsequentEvents.forEach((e: any) => {
+        if (e.kind === 'RETURN') {
+          const saleDelta = Number(e.saleDelta || 0);
+          const colDelta = Number(e.collectionDelta || 0);
+          runningBalance = Math.max(0, runningBalance + saleDelta - colDelta);
+          const evtRef = e.reference || `EVT-${String(e.id || '').slice(0, 8).toUpperCase()}`;
+
+          rows.push({
+            id: `evt-${e.id}`,
+            date: e.occurredAt,
+            reference: evtRef,
+            sourceType: 'RETURN',
+            transactionType: 'Return / Refund',
+            channel: inv.channel === 'HMS' ? 'HMS' : 'RETAIL',
+            description: `Sales Return — ${inv.invoiceNumber}${inv.customerName ? ` (${inv.customerName})` : ''}`,
+            income: saleDelta,
+            collections: colDelta,
+            expenses: 0,
+            paymentMethod: e.method || 'CASH',
+            outstanding: runningBalance,
+            user: e.actorId || 'Staff',
+            status: 'REFUNDED',
+            invoiceRef: inv.invoiceNumber,
+            receiptNumber: evtRef,
+            raw: { ...e, linkedInvoice: inv },
+          });
+        } else if (Number(e.collectionDelta || 0) !== 0) {
+          const colDelta = Number(e.collectionDelta || 0);
+          runningBalance = Math.max(0, runningBalance - colDelta);
+          const evtRef = e.reference || `EVT-${String(e.id || '').slice(0, 8).toUpperCase()}`;
+
+          rows.push({
+            id: `evt-${e.id}`,
+            date: e.occurredAt,
+            reference: evtRef,
+            sourceType: 'COLLECTION',
+            transactionType: 'Outstanding Invoice Collection',
+            channel: inv.channel === 'HMS' ? 'HMS' : 'RETAIL',
+            description: `HMS Collection — ${inv.invoiceNumber}${inv.customerName ? ` (${inv.customerName})` : ''}`,
+            income: 0,
+            collections: colDelta,
+            expenses: 0,
+            paymentMethod: e.method || 'CASH',
+            outstanding: runningBalance,
+            user: e.actorId || 'HMS Front Desk',
+            status: runningBalance <= 0 ? 'PAID' : 'COLLECTED',
+            invoiceRef: inv.invoiceNumber,
+            receiptNumber: evtRef,
+            raw: { ...e, linkedInvoice: inv },
+          });
+        }
       });
     });
 
-    // 2. Expenses
+    // 4. Operating Expenses
     rawExpenses.forEach((exp) => {
       const amt = Number(exp.amount || 0);
       rows.push({
@@ -245,6 +420,7 @@ export const PharmacyIncomeExpenseReportPage: React.FC<Props> = ({ onNavigate })
         date: exp.date || exp.createdAt,
         reference: exp.expenseNumber || 'EXP-GEN',
         sourceType: 'EXPENSE',
+        transactionType: 'Operating Expense',
         channel: 'EXPENSE',
         description: `${exp.category || 'Operating Expense'}${exp.description ? ` · ${exp.description}` : ''}${exp.payeeOrVendor ? ` (${exp.payeeOrVendor})` : ''}`,
         income: 0,
@@ -258,13 +434,23 @@ export const PharmacyIncomeExpenseReportPage: React.FC<Props> = ({ onNavigate })
       });
     });
 
-    // Sort descending by date
-    return rows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    // Sort descending by date (newest transactions first)
+    return rows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime() || b.id.localeCompare(a.id));
   }, [rawInvoices, rawExpenses]);
 
-  // Apply In-Memory Filters (Search, Type, Channel, Method)
+  // Apply In-Memory Filters (Date Range, Search, Type, Channel, Method)
   const filteredRows = useMemo(() => {
     return allLedgerRows.filter((r) => {
+      // Date Filter: accurately evaluate row's actual transaction date in PKT
+      if (r.date) {
+        const dt = new Date(r.date);
+        if (!isNaN(dt.getTime())) {
+          const rowDateStr = new Date(dt.getTime() + 5 * 3600000).toISOString().slice(0, 10);
+          if (appliedFilters.fromDate && rowDateStr < appliedFilters.fromDate) return false;
+          if (appliedFilters.toDate && rowDateStr > appliedFilters.toDate) return false;
+        }
+      }
+
       // Type Filter
       if (appliedFilters.typeFilter === 'INCOME' && r.income <= 0) return false;
       if (appliedFilters.typeFilter === 'COLLECTION' && r.collections <= 0) return false;
@@ -280,10 +466,12 @@ export const PharmacyIncomeExpenseReportPage: React.FC<Props> = ({ onNavigate })
       if (appliedFilters.search.trim()) {
         const q = appliedFilters.search.toLowerCase();
         const matchesRef = r.reference.toLowerCase().includes(q);
+        const matchesInvRef = r.invoiceRef ? r.invoiceRef.toLowerCase().includes(q) : false;
         const matchesDesc = r.description.toLowerCase().includes(q);
         const matchesUser = r.user.toLowerCase().includes(q);
         const matchesStatus = r.status.toLowerCase().includes(q);
-        if (!matchesRef && !matchesDesc && !matchesUser && !matchesStatus) return false;
+        const matchesType = r.transactionType.toLowerCase().includes(q);
+        if (!matchesRef && !matchesInvRef && !matchesDesc && !matchesUser && !matchesStatus && !matchesType) return false;
       }
 
       return true;
@@ -303,13 +491,21 @@ export const PharmacyIncomeExpenseReportPage: React.FC<Props> = ({ onNavigate })
     let inc = 0;
     let col = 0;
     let exp = 0;
+    const seenInvoices = new Set<string>();
     let out = 0;
+
     filteredRows.forEach((r) => {
       inc += r.income;
       col += r.collections;
       exp += r.expenses;
-      out += r.outstanding;
+      const invRef = r.invoiceRef || (r.sourceType === 'INVOICE' ? r.reference : null);
+      if (invRef && !seenInvoices.has(invRef)) {
+        seenInvoices.add(invRef);
+        const currentInvOutstanding = Number(r.raw?.linkedInvoice?.outstanding ?? r.raw?.outstanding ?? 0);
+        out += currentInvOutstanding;
+      }
     });
+
     return {
       income: inc,
       collections: col,
@@ -324,14 +520,16 @@ export const PharmacyIncomeExpenseReportPage: React.FC<Props> = ({ onNavigate })
     const columns = [
       { header: 'Date & Time', format: (r: UnifiedLedgerRow) => formatDateTime(r.date) },
       { header: 'Reference ID', key: 'reference' },
-      { header: 'Channel / Type', key: 'channel' },
+      { header: 'Linked Invoice', format: (r: UnifiedLedgerRow) => r.invoiceRef || '—' },
+      { header: 'Transaction Type', key: 'transactionType' },
+      { header: 'Channel / Source', key: 'channel' },
       { header: 'Description / Customer / Payee', key: 'description' },
-      { header: 'Recognized Income (PKR)', format: (r: UnifiedLedgerRow) => (r.income > 0 ? formatPKR(r.income) : '—'), numeric: true },
-      { header: 'Actual Collections (PKR)', format: (r: UnifiedLedgerRow) => (r.collections > 0 ? formatPKR(r.collections) : '—'), numeric: true },
+      { header: 'Recognized Income (PKR)', format: (r: UnifiedLedgerRow) => (r.income !== 0 ? formatPKR(r.income) : '—'), numeric: true },
+      { header: 'Actual Collections (PKR)', format: (r: UnifiedLedgerRow) => (r.collections !== 0 ? formatPKR(r.collections) : '—'), numeric: true },
       { header: 'Operating Expenses (PKR)', format: (r: UnifiedLedgerRow) => (r.expenses > 0 ? formatPKR(r.expenses) : '—'), numeric: true },
       { header: 'Payment Method', key: 'paymentMethod' },
-      { header: 'Outstanding (PKR)', format: (r: UnifiedLedgerRow) => (r.outstanding > 0 ? formatPKR(r.outstanding) : '—'), numeric: true },
-      { header: 'Recorded By', key: 'user' },
+      { header: 'Remaining Balance (PKR)', format: (r: UnifiedLedgerRow) => formatPKR(r.outstanding), numeric: true },
+      { header: 'Recorded / Collected By', key: 'user' },
       { header: 'Status', key: 'status' },
     ];
 
@@ -650,18 +848,36 @@ export const PharmacyIncomeExpenseReportPage: React.FC<Props> = ({ onNavigate })
 
                     {/* Reference ID */}
                     <td className="py-2.5 px-3 whitespace-normal font-mono font-semibold text-[#0c6b50] text-[11.5px] hover:underline border-r border-slate-200">
-                      {row.reference}
+                      <div>{row.reference}</div>
+                      {row.invoiceRef && row.invoiceRef !== row.reference && (
+                        <div className="text-[10px] text-slate-500 font-mono font-normal">
+                          Inv: {row.invoiceRef}
+                        </div>
+                      )}
                     </td>
 
                     {/* Channel / Type */}
                     <td className="py-2.5 px-3 whitespace-normal text-xs border-r border-slate-200">
-                      {row.channel === 'HMS' ? (
-                        <span className="font-bold text-indigo-700">HMS Dispense</span>
-                      ) : row.channel === 'RETAIL' ? (
-                        <span className="font-bold text-[#0c6b50]">Retail POS</span>
+                      {row.transactionType === 'Original Sale' ? (
+                        <span className="inline-block px-1.5 py-0.5 rounded text-[10.5px] font-bold bg-emerald-50 text-[#0c6b50] border border-emerald-200">
+                          Original Sale
+                        </span>
+                      ) : row.transactionType === 'Outstanding Invoice Collection' ? (
+                        <span className="inline-block px-1.5 py-0.5 rounded text-[10.5px] font-bold bg-blue-50 text-blue-800 border border-blue-200">
+                          Collection
+                        </span>
+                      ) : row.transactionType === 'Return / Refund' ? (
+                        <span className="inline-block px-1.5 py-0.5 rounded text-[10.5px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                          Return / Refund
+                        </span>
                       ) : (
-                        <span className="font-bold text-amber-700">Expense</span>
+                        <span className="inline-block px-1.5 py-0.5 rounded text-[10.5px] font-bold bg-rose-50 text-rose-800 border border-rose-200">
+                          Expense
+                        </span>
                       )}
+                      <div className="text-[10px] text-slate-400 font-medium mt-0.5">
+                        {row.channel === 'HMS' ? 'HMS Dispense' : row.channel === 'RETAIL' ? 'Retail POS' : 'Overheads'}
+                      </div>
                     </td>
 
                     {/* Description / Customer / Payee */}
@@ -868,20 +1084,68 @@ export const PharmacyIncomeExpenseReportPage: React.FC<Props> = ({ onNavigate })
                   <span className="font-medium text-slate-900">{formatDateTime(detailRow.date)}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block text-[11px]">Channel / Type</span>
-                  <span className="font-semibold text-slate-900">{detailRow.channel}</span>
+                  <span className="text-slate-500 block text-[11px]">Transaction Type</span>
+                  <span className="font-semibold text-slate-900">{detailRow.transactionType}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block text-[11px]">Description</span>
-                  <span className="font-medium text-slate-900">{detailRow.description}</span>
+                  <span className="text-slate-500 block text-[11px]">Reference / Receipt</span>
+                  <span className="font-mono font-medium text-[#0c6b50]">{detailRow.reference}</span>
                 </div>
                 <div>
                   <span className="text-slate-500 block text-[11px]">Payment Method</span>
                   <span className="font-medium text-slate-900">{detailRow.paymentMethod}</span>
                 </div>
+                {detailRow.invoiceRef && (
+                  <div>
+                    <span className="text-slate-500 block text-[11px]">Linked Invoice</span>
+                    <span className="font-mono font-medium text-slate-800">{detailRow.invoiceRef}</span>
+                  </div>
+                )}
+                <div>
+                  <span className="text-slate-500 block text-[11px]">Channel / Source</span>
+                  <span className="font-medium text-slate-900">
+                    {detailRow.channel === 'HMS' ? 'HMS Inpatient Dispense' : detailRow.channel === 'RETAIL' ? 'Retail Walk-In POS' : 'Operating Expenses'}
+                  </span>
+                </div>
               </div>
 
-              {detailRow.sourceType === 'INVOICE' ? (
+              {detailRow.sourceType === 'COLLECTION' ? (
+                <div className="space-y-2 bg-slate-50 p-3 rounded-lg border border-slate-200">
+                  <div className="flex justify-between text-slate-600">
+                    <span>Transaction Class:</span>
+                    <span className="font-semibold text-blue-700">Outstanding Invoice Collection</span>
+                  </div>
+                  <div className="flex justify-between border-t border-slate-200 pt-1.5 text-emerald-700 font-bold">
+                    <span>Actual Collection Received:</span>
+                    <span className="font-mono">+{formatPKR(detailRow.collections)}</span>
+                  </div>
+                  <div className="flex justify-between text-amber-700 font-semibold border-t border-slate-200 pt-1.5">
+                    <span>Remaining Balance After Receipt:</span>
+                    <span className="font-mono">{formatPKR(detailRow.outstanding)}</span>
+                  </div>
+                  {detailRow.raw?.linkedInvoice?.outstanding != null && (
+                    <div className="flex justify-between text-slate-500 text-[11px]">
+                      <span>Current Invoice Balance:</span>
+                      <span className="font-mono">{formatPKR(Number(detailRow.raw.linkedInvoice.outstanding))}</span>
+                    </div>
+                  )}
+                </div>
+              ) : detailRow.sourceType === 'RETURN' ? (
+                <div className="space-y-2 bg-slate-50 p-3 rounded-lg border border-slate-200">
+                  <div className="flex justify-between text-slate-600">
+                    <span>Transaction Class:</span>
+                    <span className="font-semibold text-amber-700">Sales Return / Customer Refund</span>
+                  </div>
+                  <div className="flex justify-between border-t border-slate-200 pt-1.5 text-rose-700 font-bold">
+                    <span>Refund Paid Out / Reversed:</span>
+                    <span className="font-mono">{formatPKR(detailRow.collections)}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-700 font-semibold border-t border-slate-200 pt-1.5">
+                    <span>Remaining Balance:</span>
+                    <span className="font-mono">{formatPKR(detailRow.outstanding)}</span>
+                  </div>
+                </div>
+              ) : detailRow.sourceType === 'INVOICE' ? (
                 <div className="space-y-2 bg-slate-50 p-3 rounded-lg border border-slate-200">
                   <div className="flex justify-between">
                     <span className="text-slate-600">Gross Sales Value:</span>
@@ -898,15 +1162,13 @@ export const PharmacyIncomeExpenseReportPage: React.FC<Props> = ({ onNavigate })
                     <span className="font-mono">{formatPKR(detailRow.income)}</span>
                   </div>
                   <div className="flex justify-between text-emerald-700 font-bold">
-                    <span>Actual Collections Received:</span>
-                    <span className="font-mono">{formatPKR(detailRow.collections)}</span>
+                    <span>Initial Collection at Sale:</span>
+                    <span className="font-mono">+{formatPKR(detailRow.collections)}</span>
                   </div>
-                  {detailRow.outstanding > 0 && (
-                    <div className="flex justify-between text-amber-700 font-semibold border-t border-slate-200 pt-1.5">
-                      <span>Remaining Outstanding:</span>
-                      <span className="font-mono">{formatPKR(detailRow.outstanding)}</span>
-                    </div>
-                  )}
+                  <div className="flex justify-between text-amber-700 font-semibold border-t border-slate-200 pt-1.5">
+                    <span>Remaining Balance After Sale:</span>
+                    <span className="font-mono">{formatPKR(detailRow.outstanding)}</span>
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-2 bg-slate-50 p-3 rounded-lg border border-slate-200">
@@ -920,7 +1182,7 @@ export const PharmacyIncomeExpenseReportPage: React.FC<Props> = ({ onNavigate })
                   </div>
                   <div className="flex justify-between border-t border-slate-200 pt-1.5 font-bold text-rose-700">
                     <span>Approved Expense Amount:</span>
-                    <span className="font-mono">{formatPKR(detailRow.expenses)}</span>
+                    <span className="font-mono">−{formatPKR(detailRow.expenses)}</span>
                   </div>
                 </div>
               )}
