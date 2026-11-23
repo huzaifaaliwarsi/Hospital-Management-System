@@ -167,27 +167,37 @@ export const settlementService = {
     });
 
     try {
-      const submitterUser = await prisma.portalUser.findUnique({
-        where: { id: portalUserId },
-        select: { displayName: true, username: true, role: true },
-      });
+      const submitterUser = prisma.portalUser?.findUnique
+        ? await prisma.portalUser.findUnique({
+            where: { id: portalUserId },
+            select: { displayName: true, username: true, role: true },
+          })
+        : null;
       const submitterName = submitterUser?.displayName || submitterUser?.username || 'Cashier';
       const roleLabel = submitterUser?.role === 'FRONT_DESK_BILLING' || createdSettlement.moduleScope === 'BILLING' ? 'Front Desk' : submitterUser?.role || 'Staff';
       const handoverNum = Number(createdSettlement.handoverAmount ?? createdSettlement.physicalCash);
       const amountStr = handoverNum.toLocaleString('en-PK', { maximumFractionDigits: 0 });
 
-      for (const portal of ['super-admin', 'admin']) {
-        await notificationsService.createNotification({
-          title: `Shift Settlement Submitted: ${submitterName}`,
-          message: `${submitterName} (${roleLabel}) submitted a shift settlement of Rs. ${amountStr} awaiting review and acceptance.`,
-          type: 'urgent',
-          module: 'Finance',
-          targetPortal: portal,
-          actionUrl: `/${portal}/account_settlements`,
-          referenceId: createdSettlement.id,
-          createdById: portalUserId,
-        });
-      }
+      const receiver = createdSettlement.receiverUserId && prisma.portalUser?.findUnique
+        ? await prisma.portalUser.findUnique({
+            where: { id: createdSettlement.receiverUserId },
+            select: { id: true, role: true },
+          })
+        : null;
+      const targetPortal = receiver?.role === 'SUPER_ADMIN' ? 'super-admin' : 'admin';
+
+      await notificationsService.createNotification({
+        title: `Shift Settlement Submitted: ${submitterName}`,
+        message: `${submitterName} (${roleLabel}) submitted a shift settlement of Rs. ${amountStr} awaiting review and acceptance.`,
+        type: 'urgent',
+        module: 'Finance',
+        targetPortal,
+        actionUrl: `/${targetPortal}/account_settlements`,
+        referenceId: createdSettlement.id,
+        createdById: portalUserId,
+        recipientUserId: createdSettlement.receiverUserId,
+        isBroadcast: false,
+      });
     } catch (notifErr) {
       // eslint-disable-next-line no-console
       console.error('Failed to dispatch settlement notification:', notifErr);

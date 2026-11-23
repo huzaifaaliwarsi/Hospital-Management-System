@@ -489,6 +489,7 @@ export const pharmacyBridgeService = {
                 targetPortal: 'front-desk',
                 actionUrl: '/front-desk/billing_pending_discharges',
                 referenceId: admission.id,
+                isBroadcast: true,
               });
             }
           }

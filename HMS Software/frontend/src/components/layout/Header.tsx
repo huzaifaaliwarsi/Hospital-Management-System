@@ -70,11 +70,12 @@ export const Header: React.FC<HeaderProps> = ({
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
-  // Reset seen set when switching portal
+  // Reset seen set and notifications when switching portal or user session
   useEffect(() => {
     initialLoadRef.current = true;
     seenNotificationIdsRef.current.clear();
-  }, [activePortal]);
+    setNotifications([]);
+  }, [user?.id, activePortal]);
 
   // Dynamic live clock
   const [currentTimeStr, setCurrentTimeStr] = useState<string>(() => {

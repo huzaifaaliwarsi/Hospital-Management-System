@@ -4,6 +4,8 @@ import { Loader2, FileBarChart, Filter, RotateCcw, FileSpreadsheet, Download, Fi
 import apiClient from '../services/apiClient';
 import { useAuth } from '../context/AuthContext';
 import { formatPKR, formatNumber } from '../utils/format';
+import { PharmacyIncomeExpenseReportPage } from '../pages/PharmacyIncomeExpenseReportPage';
+import { PharmacyOperatingProfitReportPage } from '../pages/PharmacyOperatingProfitReportPage';
 
 export type ReportType =
   | 'INCOME_EXPENSE'
@@ -174,10 +176,17 @@ export const ALL_REPORTS_LIST = [
  * instead of switched via local state.
  */
 export const ReportView: React.FC<Props> = ({ type, title, subtitle, onNavigate, currentPage }) => {
+  if (type === 'INCOME_EXPENSE') {
+    return <PharmacyIncomeExpenseReportPage onNavigate={onNavigate} />;
+  }
+  if (type === 'OPERATING_PROFIT') {
+    return <PharmacyOperatingProfitReportPage onNavigate={onNavigate} />;
+  }
+
   const { currentUser } = useAuth();
   const isSales = currentUser?.role === 'SALES_DISPENSING';
   const today = new Date(Date.now() + 5 * 3600000).toISOString().slice(0, 10);
-  const isStatement = type === 'INCOME_EXPENSE' || type === 'OPERATING_PROFIT';
+  const isStatement = false;
   const [from, setFrom] = useState(isStatement ? today : '');
   const [to, setTo] = useState(isStatement ? today : '');
 

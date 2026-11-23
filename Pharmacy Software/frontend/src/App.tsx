@@ -21,6 +21,8 @@ import { UsersPage } from './pages/UsersPage';
 import { StockMovementsPage } from './pages/StockMovementsPage';
 import { HmsRequestQueuePage } from './pages/HmsRequestQueuePage';
 import { ReportView } from './components/ReportView';
+import { PharmacyIncomeExpenseReportPage } from './pages/PharmacyIncomeExpenseReportPage';
+import { PharmacyOperatingProfitReportPage } from './pages/PharmacyOperatingProfitReportPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ComingSoonPage } from './pages/ComingSoonPage';
 import { useHmsNotifications } from './context/HmsNotificationContext';
@@ -155,6 +157,10 @@ const App: React.FC = () => {
         return <UsersPage />;
       case 'settings':
         return <SettingsPage />;
+      case 'reports-income-expense':
+        return <PharmacyIncomeExpenseReportPage onNavigate={navigate} />;
+      case 'reports-operating-profit':
+        return <PharmacyOperatingProfitReportPage onNavigate={navigate} />;
       case 'reports':
         return (
           <ReportView

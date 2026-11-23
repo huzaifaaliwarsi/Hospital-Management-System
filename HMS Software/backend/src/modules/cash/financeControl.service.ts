@@ -364,14 +364,14 @@ export const financeControlService = {
     });
 
     try {
-      // Auto mark pending review notifications for this settlement as read
+      // Auto mark pending review notifications for this settlement as read for this reviewer
       await prisma.hospitalNotification.updateMany({
-        where: { referenceId: id },
+        where: { referenceId: id, recipientUserId: reviewerPortalUserId },
         data: { isRead: true },
       });
 
       const submitterRole = settlement.submittedByUser.role;
-      const targetPortal = submitterRole === 'FRONT_DESK_BILLING' || settlement.moduleScope === 'BILLING' ? 'front-desk' : 'all';
+      const targetPortal = submitterRole === 'FRONT_DESK_BILLING' || settlement.moduleScope === 'BILLING' ? 'front-desk' : submitterRole === 'ADMIN' ? 'admin' : 'super-admin';
       const returnedAmount = reviewed.handoverAmount ?? reviewed.physicalCash;
       const amountStr = Number(returnedAmount).toLocaleString('en-PK', { maximumFractionDigits: 0 });
       const reviewerName = reviewerUser.displayName || reviewerUser.username;
@@ -386,6 +386,8 @@ export const financeControlService = {
           actionUrl: '/front-desk/my_account_settlement',
           referenceId: reviewed.id,
           createdById: reviewerPortalUserId,
+          recipientUserId: settlement.portalUserId,
+          isBroadcast: false,
         });
       } else if (newStatus === 'RETURNED' || newStatus === 'REJECTED') {
         await notificationsService.createNotification({
@@ -397,6 +399,8 @@ export const financeControlService = {
           actionUrl: '/front-desk/my_account_settlement',
           referenceId: reviewed.id,
           createdById: reviewerPortalUserId,
+          recipientUserId: settlement.portalUserId,
+          isBroadcast: false,
         });
       }
     } catch (notifErr) {

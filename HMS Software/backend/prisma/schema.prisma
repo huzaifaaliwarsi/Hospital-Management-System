@@ -713,6 +713,8 @@ model PortalUser {
   highCostAttendantConfirmations HighCostMedicineAuthorization[] @relation("HighCostAttendantConfirmedBy")
   highCostManagementApprovals    HighCostMedicineAuthorization[] @relation("HighCostManagementApprovedBy")
   finalBillsGenerated            AdmissionRecord[]               @relation("AdmissionFinalBillGeneratedBy")
+  receivedNotifications          HospitalNotification[]          @relation("NotificationRecipient")
+  notificationReads              HospitalNotificationRead[]      @relation("UserNotificationReads")
   createdExpenses                Expense[]                       @relation("ExpenseCreatedBy")
   updatedExpenses                Expense[]                       @relation("ExpenseUpdatedBy")
   voidedExpenses                 Expense[]                       @relation("ExpenseVoidedBy")
@@ -2847,21 +2849,42 @@ model AuditLog {
 // ═══════════════════════════════════════════════════════════════════════
 
 model HospitalNotification {
-  id           String   @id @default(uuid())
-  title        String
-  message      String
-  type         String   @default("info") // "info" | "urgent" | "warning" | "success"
-  module       String   @default("General") // "Admissions" | "FrontDesk" | "Billing" | "Pharmacy"
-  targetPortal String?  @map("target_portal") // "admission" | "front-desk" | "all"
-  actionUrl    String?  @map("action_url")   // e.g. "/admission/planned_admissions", "/front-desk/billing_pending_discharges"
-  referenceId  String?  @map("reference_id") // e.g. admissionId, invoiceId
-  isRead       Boolean  @default(false) @map("is_read")
-  createdAt    DateTime @default(now()) @map("created_at")
-  createdById  String?  @map("created_by_id")
+  id              String   @id @default(uuid())
+  title           String
+  message         String
+  type            String   @default("info") // "info" | "urgent" | "warning" | "success"
+  module          String   @default("General") // "Admissions" | "FrontDesk" | "Billing" | "Pharmacy"
+  targetPortal    String?  @map("target_portal") // "admission" | "front-desk" | "all"
+  actionUrl       String?  @map("action_url")   // e.g. "/admission/planned_admissions", "/front-desk/billing_pending_discharges"
+  referenceId     String?  @map("reference_id") // e.g. admissionId, invoiceId
+  isRead          Boolean  @default(false) @map("is_read")
+  createdAt       DateTime @default(now()) @map("created_at")
+  createdById     String?  @map("created_by_id")
+  recipientUserId String?  @map("recipient_user_id")
+  isBroadcast     Boolean  @default(false) @map("is_broadcast")
+
+  recipientUser   PortalUser?                 @relation("NotificationRecipient", fields: [recipientUserId], references: [id], onDelete: SetNull)
+  reads           HospitalNotificationRead[]  @relation("NotificationReads")
 
   @@index([targetPortal, isRead])
+  @@index([recipientUserId, isRead])
+  @@index([targetPortal, isBroadcast])
   @@index([createdAt])
   @@map("hospital_notifications")
+}
+
+model HospitalNotificationRead {
+  id             String   @id @default(uuid())
+  notificationId String   @map("notification_id")
+  userId         String   @map("user_id")
+  readAt         DateTime @default(now()) @map("read_at")
+
+  notification   HospitalNotification @relation("NotificationReads", fields: [notificationId], references: [id], onDelete: Cascade)
+  user           PortalUser           @relation("UserNotificationReads", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, userId])
+  @@index([userId])
+  @@map("hospital_notification_reads")
 }
 
 
