@@ -196,6 +196,8 @@ export const Header: React.FC<HeaderProps> = ({
           : '/front-desk/admission_payment_requests';
       } else if (targetUrl === '/billing' || targetUrl === '/billing/invoices') {
         targetUrl = '/front-desk/hospital_invoices';
+      } else if (targetUrl.includes('account_settlements')) {
+        targetUrl = activePortal === 'admin' ? '/admin/account_settlements' : '/super-admin/account_settlements';
       }
 
       // Safe portal switching: only switch if targetPortal is allowed for this user

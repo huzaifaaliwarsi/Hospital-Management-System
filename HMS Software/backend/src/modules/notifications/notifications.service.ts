@@ -50,7 +50,11 @@ export const notificationsService = {
 
     const where: any = {};
     if (targetPortal && targetPortal !== 'all') {
-      where.targetPortal = targetPortal;
+      where.OR = [
+        { targetPortal },
+        { targetPortal: 'all' },
+        { targetPortal: null },
+      ];
     }
 
     return prisma.hospitalNotification.findMany({
@@ -70,7 +74,11 @@ export const notificationsService = {
   async markAllAsRead(targetPortal?: string) {
     const where: any = { isRead: false };
     if (targetPortal && targetPortal !== 'all') {
-      where.targetPortal = targetPortal;
+      where.OR = [
+        { targetPortal },
+        { targetPortal: 'all' },
+        { targetPortal: null },
+      ];
     }
     return prisma.hospitalNotification.updateMany({
       where,
@@ -202,6 +210,48 @@ export const notificationsService = {
               createdAt: req.requestedAt,
             },
           });
+        }
+      }
+
+      // 4. Check for active SUBMITTED AccountSettlements (Front Desk / Staff -> Admin & Super Admin)
+      const pendingSettlements = await prisma.accountSettlement.findMany({
+        where: { status: 'SUBMITTED' },
+        include: {
+          submittedByUser: { select: { id: true, username: true, displayName: true, role: true } },
+          receiverUser: { select: { id: true, username: true, displayName: true, role: true } },
+        },
+        take: 10,
+        orderBy: { submittedAt: 'desc' },
+      });
+
+      for (const st of pendingSettlements) {
+        const submitterName = st.submittedByUser?.displayName || st.submittedByUser?.username || 'Cashier';
+        const roleLabel = st.submittedByUser?.role === 'FRONT_DESK_BILLING' || st.moduleScope === 'BILLING' ? 'Front Desk' : st.submittedByUser?.role || 'Staff';
+        const handoverNum = Number(st.handoverAmount ?? st.physicalCash);
+        const amountStr = handoverNum.toLocaleString('en-PK', { maximumFractionDigits: 0 });
+
+        for (const portal of ['super-admin', 'admin']) {
+          const existing = await prisma.hospitalNotification.findFirst({
+            where: {
+              referenceId: st.id,
+              targetPortal: portal,
+            },
+          });
+
+          if (!existing) {
+            await prisma.hospitalNotification.create({
+              data: {
+                title: `Shift Settlement Submitted: ${submitterName}`,
+                message: `${submitterName} (${roleLabel}) submitted a shift settlement of Rs. ${amountStr} awaiting review and acceptance.`,
+                type: 'urgent',
+                module: 'Finance',
+                targetPortal: portal,
+                actionUrl: `/${portal}/account_settlements`,
+                referenceId: st.id,
+                createdAt: st.submittedAt || st.createdAt,
+              },
+            });
+          }
         }
       }
     } catch {
