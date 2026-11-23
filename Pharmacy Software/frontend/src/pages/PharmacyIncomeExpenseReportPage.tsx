@@ -801,9 +801,9 @@ export const PharmacyIncomeExpenseReportPage: React.FC<Props> = ({ onNavigate })
                 <col style={{ width: 44 }} />
                 <col style={{ width: 140 }} />
                 <col style={{ width: 130 }} />
-                <col style={{ width: 120 }} />
-                <col style={{ width: 240 }} />
-                <col style={{ width: 100 }} />
+                <col style={{ width: 130 }} />
+                <col style={{ width: 230 }} />
+                <col style={{ width: 125 }} />
                 <col style={{ width: 120 }} />
                 <col style={{ width: 120 }} />
                 <col style={{ width: 120 }} />
@@ -856,41 +856,33 @@ export const PharmacyIncomeExpenseReportPage: React.FC<Props> = ({ onNavigate })
                       )}
                     </td>
 
-                    {/* Channel / Type */}
+                    {/* Channel / Type (Clean ERP Plain Text, NO Pill Boxes or Background Colors) */}
                     <td className="py-2.5 px-3 whitespace-normal text-xs border-r border-slate-200">
-                      {row.transactionType === 'Original Sale' ? (
-                        <span className="inline-block px-1.5 py-0.5 rounded text-[10.5px] font-bold bg-emerald-50 text-[#0c6b50] border border-emerald-200">
-                          Original Sale
-                        </span>
-                      ) : row.transactionType === 'Outstanding Invoice Collection' ? (
-                        <span className="inline-block px-1.5 py-0.5 rounded text-[10.5px] font-bold bg-blue-50 text-blue-800 border border-blue-200">
-                          Collection
-                        </span>
-                      ) : row.transactionType === 'Return / Refund' ? (
-                        <span className="inline-block px-1.5 py-0.5 rounded text-[10.5px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                          Return / Refund
-                        </span>
-                      ) : (
-                        <span className="inline-block px-1.5 py-0.5 rounded text-[10.5px] font-bold bg-rose-50 text-rose-800 border border-rose-200">
-                          Expense
-                        </span>
-                      )}
-                      <div className="text-[10px] text-slate-400 font-medium mt-0.5">
-                        {row.channel === 'HMS' ? 'HMS Dispense' : row.channel === 'RETAIL' ? 'Retail POS' : 'Overheads'}
+                      <div className="font-semibold text-slate-800 leading-tight">
+                        {row.transactionType === 'Outstanding Invoice Collection' ? 'Collection' : row.transactionType}
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-medium mt-0.5 leading-tight">
+                        {row.channel === 'HMS' ? 'HMS Dispense' : row.channel === 'RETAIL' ? 'Retail POS' : 'Expense Overheads'}
                       </div>
                     </td>
 
                     {/* Description / Customer / Payee */}
-                    <td className="py-2.5 px-3 max-w-[240px] truncate border-r border-slate-200 overflow-hidden" title={row.description}>
+                    <td className="py-2.5 px-3 max-w-[230px] truncate border-r border-slate-200 overflow-hidden" title={row.description}>
                       <div className="font-bold text-slate-900 text-xs truncate block">{row.description}</div>
                     </td>
 
-                    {/* Status */}
-                    <td className="py-2.5 px-3 whitespace-normal text-xs border-r border-slate-200">
-                      {row.status.toUpperCase() === 'PAID' || row.status.toUpperCase() === 'COMPLETED' || row.status.toUpperCase() === 'APPROVED' ? (
-                        <span className="font-bold text-emerald-600">{row.status}</span>
+                    {/* Status (Formatted Clean Text, NO Overflow) */}
+                    <td className="py-2.5 px-3 whitespace-nowrap text-xs border-r border-slate-200">
+                      {row.status.toUpperCase() === 'PAID' || row.status.toUpperCase() === 'COMPLETED' || row.status.toUpperCase() === 'APPROVED' || row.status.toUpperCase() === 'COLLECTED' ? (
+                        <span className="font-bold text-emerald-600">
+                          {row.status.toUpperCase() === 'COLLECTED' ? 'Collected' : 'Paid'}
+                        </span>
                       ) : row.status.toUpperCase() === 'PARTIALLY_PAID' || row.status.toUpperCase() === 'PARTIAL' ? (
-                        <span className="font-bold text-amber-600">{row.status}</span>
+                        <span className="font-bold text-amber-600">Partially Paid</span>
+                      ) : row.status.toUpperCase() === 'REFUNDED' || row.status.toUpperCase() === 'REVERSED' || row.status.toUpperCase() === 'VOID' ? (
+                        <span className="font-bold text-rose-600">Refunded</span>
+                      ) : row.status.toUpperCase() === 'UNPAID' ? (
+                        <span className="font-semibold text-slate-400">Unpaid</span>
                       ) : (
                         <span className="font-semibold text-slate-500">{row.status}</span>
                       )}
